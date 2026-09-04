@@ -7,7 +7,6 @@ type AuthContextValue = {
   loading: boolean
   error: string | null
   loginWithEmail: (email: string, password: string) => Promise<void>
-  registerWithEmail: (email: string, password: string, displayName: string) => Promise<void>
   signOut: () => Promise<void>
   clearError: () => void
 }
@@ -64,25 +63,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const registerWithEmail = useCallback(async (email: string, password: string, displayName: string) => {
-    setError(null)
-    try {
-      const pair = await api.register(email, password, displayName)
-      setUser(pair.user)
-    } catch (registerError) {
-      setError(messageOf(registerError))
-      throw registerError
-    }
-  }, [])
-
   const signOut = useCallback(async () => {
     await api.logout()
     setUser(null)
   }, [])
 
   const value = useMemo(
-    () => ({ user, loading, error, loginWithEmail, registerWithEmail, signOut, clearError: () => setError(null) }),
-    [user, loading, error, loginWithEmail, registerWithEmail, signOut],
+    () => ({ user, loading, error, loginWithEmail, signOut, clearError: () => setError(null) }),
+    [user, loading, error, loginWithEmail, signOut],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
