@@ -54,18 +54,19 @@ async def run(text: str, *, dry_run: bool = False) -> int:
     return 0 if failed == 0 else 2
 
 
+async def run_and_close(text: str, *, dry_run: bool = False) -> int:
+    try:
+        return await run(text, dry_run=dry_run)
+    finally:
+        await dispose_engine()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Send an AuRoom message to all active Telegram users")
     parser.add_argument("--text", required=True, help="Message text")
     parser.add_argument("--dry-run", action="store_true", help="Only print recipient count")
     args = parser.parse_args()
-    try:
-        raise SystemExit(asyncio.run(run(args.text, dry_run=args.dry_run)))
-    finally:
-        try:
-            asyncio.run(dispose_engine())
-        except RuntimeError:
-            pass
+    raise SystemExit(asyncio.run(run_and_close(args.text, dry_run=args.dry_run)))
 
 
 if __name__ == "__main__":
