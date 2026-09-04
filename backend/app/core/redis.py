@@ -27,12 +27,9 @@ class LazyRedisClient:
     async def rpush(self, key: str, value: str) -> int:
         return int(await self._get().rpush(key, value))
 
-    async def blpop(self, key: str, timeout: int = 0) -> tuple[str, str] | None:
-        result = await self._get().blpop(key, timeout=timeout)
-        if result is None:
-            return None
-        queue, value = result
-        return str(queue), str(value)
+    async def lpop(self, key: str) -> str | None:
+        result = await self._get().lpop(key)
+        return None if result is None else str(result)
 
     async def aclose(self) -> None:
         if self._client is not None:
