@@ -3,6 +3,7 @@ export type User = {
   display_name: string
   avatar_url?: string | null
   status: 'active' | 'disabled'
+  credits_balance: number
   created_at: string
   updated_at: string
   capabilities?: { can_generate?: boolean }
@@ -77,4 +78,31 @@ export type Generation = {
 
 export type GenerationList = {
   items: Generation[]
+}
+
+export type BillingPackage = {
+  code: string
+  label: string
+  credits: number
+  amount: string
+  currency: string
+}
+
+export type BillingPayment = {
+  id: string
+  package_code: string
+  credits: number
+  amount: string
+  currency: string
+  status: string
+  confirmation_url: string | null
+  created_at: string
+  paid_at: string | null
+}
+
+export type BillingSummary = {
+  enabled: boolean
+  credits_balance: number
+  packages: BillingPackage[]
+  payments: BillingPayment[]
 }
