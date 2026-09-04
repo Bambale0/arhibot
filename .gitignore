@@ -1,0 +1,28 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+
+# Node
+node_modules/
+dist/
+
+# Generated contracts
+backend/openapi.json
+
+# Local runtime data
+backend/data/media/*
+!backend/data/media/.gitkeep
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store

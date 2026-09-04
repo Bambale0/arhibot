@@ -1,0 +1,45 @@
+# Example dedicated public media domain. Replace media.example.com and certificate paths.
+server {
+    listen 80;
+    server_name media.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name media.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/media.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/media.example.com/privkey.pem;
+
+    server_tokens off;
+    autoindex off;
+    client_max_body_size 21m;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        add_header Cache-Control "no-store" always;
+        return 200 "ok\n";
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+
+    location /uploads/ {
+        alias /srv/media/;
+        limit_except GET HEAD { deny all; }
+        add_header Cache-Control "public, max-age=86400" always;
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Cross-Origin-Resource-Policy "cross-origin" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        access_log off;
+        log_not_found off;
+    }
+
+    location / {
+        return 404;
+    }
+}
