@@ -1,4 +1,14 @@
-import type { Asset, Project, ProjectContext, ProjectList, TokenPair, User } from './types'
+import type {
+  Asset,
+  Generation,
+  GenerationList,
+  GenerationMode,
+  Project,
+  ProjectContext,
+  ProjectList,
+  TokenPair,
+  User,
+} from './types'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
 const ACCESS_KEY = 'auroom.access_token'
@@ -185,4 +195,27 @@ export async function uploadAsset(projectId: string, file: File, purpose: 'gener
 
 export function deleteAsset(assetId: string) {
   return request<void>(`/assets/${assetId}`, { method: 'DELETE' })
+}
+
+export function createGeneration(payload: {
+  project_id: string
+  input_asset_id: string
+  type: GenerationMode
+  prompt: string
+}) {
+  return request<Generation>('/generations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function getGeneration(generationId: string) {
+  return request<Generation>(`/generations/${generationId}`)
+}
+
+export function listGenerations(projectId?: string, limit = 50) {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (projectId) params.set('project_id', projectId)
+  return request<GenerationList>(`/generations?${params}`)
 }
