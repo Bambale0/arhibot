@@ -27,13 +27,27 @@ services:
       - api
     restart: unless-stopped
 
+  worker:
+    build: .
+    command: ["python", "-m", "app.workers.generation_worker"]
+    env_file:
+      - .env
+    volumes:
+      - media_data:/data/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   frontend:
     build:
       context: ../frontend
       args:
         VITE_API_BASE_URL: /api/v1
         VITE_APP_NAME: ${FRONTEND_APP_NAME:-AuRoom}
-        VITE_DEMO_GENERATION: ${VITE_DEMO_GENERATION:-true}
+        VITE_DEMO_GENERATION: ${VITE_DEMO_GENERATION:-false}
     expose:
       - "80"
     restart: unless-stopped
