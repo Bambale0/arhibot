@@ -60,8 +60,7 @@ jobs:
 
           echo "deploy=true" >> "${GITHUB_OUTPUT}"
 
-      - name: Check deploy configuration
-        id: config
+      - name: Require server deploy configuration
         if: steps.target.outputs.deploy == 'true'
         shell: bash
         run: |
@@ -74,16 +73,14 @@ jobs:
           done
 
           if (( ${#missing[@]} > 0 )); then
-            echo "configured=false" >> "${GITHUB_OUTPUT}"
-            printf 'Auto deploy is not active yet. Missing repository secrets: %s\n' "${missing[*]}"
-            exit 0
+            printf 'Server deploy is mandatory. Missing repository secrets: %s\n' "${missing[*]}" >&2
+            exit 1
           fi
 
-          echo "configured=true" >> "${GITHUB_OUTPUT}"
           echo "DEPLOY_SSH_PORT=${DEPLOY_SSH_PORT:-22}" >> "${GITHUB_ENV}"
 
       - name: Package immutable candidate
-        if: steps.target.outputs.deploy == 'true' && steps.config.outputs.configured == 'true'
+        if: steps.target.outputs.deploy == 'true'
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -91,7 +88,7 @@ jobs:
           sha256sum arhibot-source.tar.gz > arhibot-source.tar.gz.sha256
 
       - name: Configure SSH
-        if: steps.target.outputs.deploy == 'true' && steps.config.outputs.configured == 'true'
+        if: steps.target.outputs.deploy == 'true'
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -102,7 +99,7 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
 
       - name: Transfer candidate
-        if: steps.target.outputs.deploy == 'true' && steps.config.outputs.configured == 'true'
+        if: steps.target.outputs.deploy == 'true'
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -115,7 +112,7 @@ jobs:
             "${remote}:${DEPLOY_APP_DIR}/.release/"
 
       - name: Build, migrate and deploy
-        if: steps.target.outputs.deploy == 'true' && steps.config.outputs.configured == 'true'
+        if: steps.target.outputs.deploy == 'true'
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -131,18 +128,10 @@ jobs:
           REMOTE
 
       - name: Upload deploy log
-        if: always() && steps.target.outputs.deploy == 'true' && steps.config.outputs.configured == 'true'
+        if: always() && steps.target.outputs.deploy == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: arhibot-deploy-${{ env.DEPLOY_SHA }}
           path: deploy.log
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Deploy configuration required
-        if: steps.target.outputs.deploy == 'true' && steps.config.outputs.configured == 'false'
-        run: |
-          echo "Add the same SSH deploy secrets used by stupidbot to Bambale0/arhibot."
-          echo "Required: DEPLOY_SSH_HOST, DEPLOY_SSH_USER, DEPLOY_SSH_PRIVATE_KEY, DEPLOY_SSH_KNOWN_HOSTS."
-          echo "Optional: DEPLOY_SSH_PORT (defaults to 22)."
-          echo "Server also needs /root/arhibot/backend/.env with TELEGRAM_BOT_TOKEN and TELEGRAM_WEBAPP_URL."
