@@ -1,5 +1,7 @@
 import type {
   Asset,
+  BillingPayment,
+  BillingSummary,
   Generation,
   GenerationList,
   GenerationMode,
@@ -218,4 +220,20 @@ export function listGenerations(projectId?: string, limit = 50) {
   const params = new URLSearchParams({ limit: String(limit) })
   if (projectId) params.set('project_id', projectId)
   return request<GenerationList>(`/generations?${params}`)
+}
+
+export function getBillingSummary() {
+  return request<BillingSummary>('/billing')
+}
+
+export function createBillingPayment(packageCode: string) {
+  return request<BillingPayment>('/billing/payments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ package_code: packageCode }),
+  })
+}
+
+export function getBillingPayment(paymentId: string) {
+  return request<BillingPayment>(`/billing/payments/${paymentId}`)
 }
