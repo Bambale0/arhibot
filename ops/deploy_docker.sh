@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+unset DOCKER_HOST DOCKER_CONTEXT
+
 app_dir=${1:-/root/arhibot}
 release_sha=${2:?release SHA is required}
 compose_file="${app_dir}/backend/docker-compose.yml"
