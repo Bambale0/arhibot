@@ -14,7 +14,7 @@ from app.main import app  # noqa: E402
 
 @pytest.mark.asyncio
 async def test_email_register_me_refresh_login_flow() -> None:
-    email = f"auth-{uuid4()}@example.test"
+    email = f"auth-{uuid4()}@example.com"
     password = "correct-horse-battery-staple"
     transport = ASGITransport(app=app)
 
