@@ -72,9 +72,15 @@ class NexusImageProvider:
                 )
 
             payload = response.json()
+            immediate_url = self._extract_image_url(payload, payload.get("result") or {})
             task_id = str(payload.get("task_id") or "").strip()
+            if immediate_url:
+                return NexusImageResult(task_id=task_id or "sync", image_url=immediate_url)
             if not task_id:
-                raise NexusProviderError("Nexus response did not include task_id", retryable=True)
+                raise NexusProviderError(
+                    "Nexus response did not include task_id or image URL",
+                    retryable=True,
+                )
 
             deadline = monotonic() + self.timeout_seconds
             while monotonic() < deadline:
