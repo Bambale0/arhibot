@@ -1,8 +1,23 @@
 import type { Asset, Project, ProjectContext, ProjectList, TokenPair, User } from './types'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
-const ACCESS_KEY = 'archiai.access_token'
-const REFRESH_KEY = 'archiai.refresh_token'
+const ACCESS_KEY = 'auroom.access_token'
+const REFRESH_KEY = 'auroom.refresh_token'
+const LEGACY_ACCESS_KEY = 'archiai.access_token'
+const LEGACY_REFRESH_KEY = 'archiai.refresh_token'
+
+function migrateLegacyTokens() {
+  if (!localStorage.getItem(ACCESS_KEY) && localStorage.getItem(LEGACY_ACCESS_KEY)) {
+    localStorage.setItem(ACCESS_KEY, localStorage.getItem(LEGACY_ACCESS_KEY) || '')
+  }
+  if (!localStorage.getItem(REFRESH_KEY) && localStorage.getItem(LEGACY_REFRESH_KEY)) {
+    localStorage.setItem(REFRESH_KEY, localStorage.getItem(LEGACY_REFRESH_KEY) || '')
+  }
+  localStorage.removeItem(LEGACY_ACCESS_KEY)
+  localStorage.removeItem(LEGACY_REFRESH_KEY)
+}
+
+migrateLegacyTokens()
 
 export class ApiError extends Error {
   status: number
@@ -26,6 +41,8 @@ function saveTokens(pair: TokenPair) {
 export function clearTokens() {
   localStorage.removeItem(ACCESS_KEY)
   localStorage.removeItem(REFRESH_KEY)
+  localStorage.removeItem(LEGACY_ACCESS_KEY)
+  localStorage.removeItem(LEGACY_REFRESH_KEY)
 }
 
 export function hasStoredSession() {
@@ -97,17 +114,6 @@ export async function login(email: string, password: string): Promise<TokenPair>
     auth: false,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
-  })
-  saveTokens(pair)
-  return pair
-}
-
-export async function register(email: string, password: string, displayName: string): Promise<TokenPair> {
-  const pair = await request<TokenPair>('/auth/register', {
-    method: 'POST',
-    auth: false,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, display_name: displayName }),
   })
   saveTokens(pair)
   return pair
