@@ -14,15 +14,31 @@ function Loader() {
   return <div className="boot-loader"><div className="wordmark"><span className="wordmark-dot" />AuRoom</div><div className="loader-line"><span /></div></div>
 }
 
+function TelegramAuthError({ message }: { message?: string | null }) {
+  return (
+    <div className="boot-loader">
+      <div className="wordmark"><span className="wordmark-dot" />AuRoom</div>
+      <div className="empty-state">
+        <h2>Не удалось войти через Telegram</h2>
+        <p>{message || 'Telegram-сессия не была подтверждена. Повторите вход.'}</p>
+        <button className="primary-button" onClick={() => window.location.reload()}>Повторить вход</button>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
-  const { user, loading } = useAuth()
+  const { user, loading, error } = useAuth()
   const [section, setSection] = useState<AppSection>('home')
   const [activeProject, setActiveProject] = useState<Project | null>(null)
   const [workspaceMode, setWorkspaceMode] = useState<GenerationMode>('floor_plan')
   const [createMode, setCreateMode] = useState<GenerationMode | null>(null)
 
   if (loading) return <Loader />
-  if (!user) return <AuthScreen />
+  if (!user) {
+    if (window.Telegram?.WebApp?.initData) return <TelegramAuthError message={error} />
+    return <AuthScreen />
+  }
   if (activeProject) return <WorkspaceScreen project={activeProject} initialMode={workspaceMode} onBack={() => setActiveProject(null)} onProjectChange={setActiveProject} />
 
   function openWorkspace(project: Project, mode: GenerationMode = 'floor_plan') {
