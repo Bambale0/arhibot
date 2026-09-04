@@ -55,12 +55,13 @@ export type Asset = {
   created_at: string
 }
 
-export type GenerationMode = 'facade' | 'interior' | 'redesign'
+export type GenerationMode = 'floor_plan' | 'facade' | 'master_plan' | 'interior'
 
 export type DemoGeneration = {
   id: string
   mode: GenerationMode
   prompt: string
   sourceUrl: string
+  projectName: string
   createdAt: string
 }
