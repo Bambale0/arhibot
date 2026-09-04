@@ -14,8 +14,8 @@ class Settings(BaseSettings):
     )
 
     app_env: str = "local"
-    app_name: str = "AI Architecture Platform API"
-    app_version: str = "0.3.0"
+    app_name: str = "AuRoom API"
+    app_version: str = "0.4.0"
     api_v1_prefix: str = "/api/v1"
     log_level: str = "INFO"
 
@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_webapp_url: str | None = None
     telegram_init_data_ttl_seconds: int = 3600
+
+    nexus_api_key: str | None = None
+    nexus_base_url: str = "https://nexusapi.dev"
+    nexus_primary_model: str = "nano-banana-pro"
+    nexus_fallback_model: str = "gpt-image-2"
+    nexus_task_timeout_seconds: int = 180
+    nexus_poll_interval_seconds: float = 2.0
 
     media_root: str = "/data/media"
     media_public_base_url: str = "http://localhost:8000"
@@ -60,6 +67,10 @@ class Settings(BaseSettings):
             raise ValueError("MAX_IMAGE_SIZE_BYTES must be at least 1 MiB")
         if self.max_image_pixels < 1_000_000:
             raise ValueError("MAX_IMAGE_PIXELS must be at least 1,000,000")
+        if self.nexus_task_timeout_seconds < 30:
+            raise ValueError("NEXUS_TASK_TIMEOUT_SECONDS must be at least 30")
+        if self.nexus_poll_interval_seconds < 0.5:
+            raise ValueError("NEXUS_POLL_INTERVAL_SECONDS must be at least 0.5")
         if self.is_production:
             insecure = {
                 "local-only-change-me-access-secret-32-bytes",
