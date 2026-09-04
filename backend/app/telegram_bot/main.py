@@ -9,9 +9,15 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+BOT_NAME = "AuRoom"
+BOT_SHORT_DESCRIPTION = "AI-концепции фасадов и интерьеров"
+BOT_DESCRIPTION = (
+    "AuRoom — AI-сервис для архитектурных и интерьерных концепций. "
+    "Загрузите фото и создайте вариант фасада, интерьера или редизайна."
+)
 START_TEXT = (
-    "Привет! Я ArchiAI — помощник по архитектурным и интерьерным концепциям.\n\n"
-    "Открой приложение, создай проект, загрузи фото и выбери сценарий генерации."
+    "Привет! Это AuRoom — AI-сервис для концепций фасадов и интерьеров.\n\n"
+    "Откройте AuRoom, создайте проект, загрузите фото и выберите сценарий."
 )
 
 
@@ -20,7 +26,7 @@ def mini_app_keyboard(webapp_url: str) -> dict[str, Any]:
         "inline_keyboard": [
             [
                 {
-                    "text": "Открыть приложение",
+                    "text": "Открыть AuRoom",
                     "web_app": {"url": webapp_url},
                 }
             ]
@@ -31,7 +37,7 @@ def mini_app_keyboard(webapp_url: str) -> dict[str, Any]:
 def menu_button(webapp_url: str) -> dict[str, Any]:
     return {
         "type": "web_app",
-        "text": "Открыть приложение",
+        "text": "Открыть AuRoom",
         "web_app": {"url": webapp_url},
     }
 
@@ -77,12 +83,15 @@ def send_start(api: TelegramBotApi, chat_id: int | str, webapp_url: str) -> None
 
 def configure_bot(api: TelegramBotApi, webapp_url: str) -> None:
     api.call("deleteWebhook", {"drop_pending_updates": False})
+    api.call("setMyName", {"name": BOT_NAME})
+    api.call("setMyShortDescription", {"short_description": BOT_SHORT_DESCRIPTION})
+    api.call("setMyDescription", {"description": BOT_DESCRIPTION})
     api.call(
         "setMyCommands",
         {
             "commands": [
-                {"command": "start", "description": "Открыть ArchiAI"},
-                {"command": "app", "description": "Открыть приложение"},
+                {"command": "start", "description": "Открыть AuRoom"},
+                {"command": "app", "description": "Запустить AuRoom"},
             ]
         },
     )
