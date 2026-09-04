@@ -20,6 +20,7 @@ class CurrentUserResponse(BaseModel):
                     "display_name": "Игорь",
                     "avatar_url": None,
                     "status": "active",
+                    "credits_balance": 0,
                     "created_at": "2026-09-03T11:40:32Z",
                     "updated_at": "2026-09-03T11:40:32Z",
                     "capabilities": {"can_generate": True},
@@ -32,6 +33,7 @@ class CurrentUserResponse(BaseModel):
     display_name: str
     avatar_url: str | None = None
     status: UserStatus
+    credits_balance: int = 0
     created_at: datetime
     updated_at: datetime
     capabilities: UserCapabilities = Field(default_factory=UserCapabilities)
