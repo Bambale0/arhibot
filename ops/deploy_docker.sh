@@ -15,9 +15,18 @@ restore_root="${release_root}/rollback-${release_sha}"
 mutation_started=0
 rollout_succeeded=0
 
-compose() {
-  docker compose --project-directory "${app_dir}/backend" -f "${compose_file}" "$@"
-}
+if docker compose version >/dev/null 2>&1; then
+  compose() {
+    docker compose --project-directory "${app_dir}/backend" -f "${compose_file}" "$@"
+  }
+elif command -v docker-compose >/dev/null 2>&1; then
+  compose() {
+    docker-compose --project-directory "${app_dir}/backend" -f "${compose_file}" "$@"
+  }
+else
+  echo "Docker Compose is not installed" >&2
+  exit 1
+fi
 
 rollback_code() {
   if [[ ! -s "${code_backup}" ]]; then
