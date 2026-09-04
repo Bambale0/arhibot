@@ -81,12 +81,27 @@ def send_start(api: TelegramBotApi, chat_id: int | str, webapp_url: str) -> None
     )
 
 
+def _best_effort_setup(api: TelegramBotApi, method: str, payload: dict[str, Any]) -> None:
+    try:
+        api.call(method, payload)
+    except RuntimeError as exc:
+        logger.warning("Telegram setup skipped for %s: %s", method, exc)
+
+
 def configure_bot(api: TelegramBotApi, webapp_url: str) -> None:
+    # Polling requires webhook mode to be disabled. Branding/menu updates are
+    # best-effort: Telegram can rate-limit these calls, and that must never stop
+    # the bot from answering /start or /app.
     api.call("deleteWebhook", {"drop_pending_updates": False})
-    api.call("setMyName", {"name": BOT_NAME})
-    api.call("setMyShortDescription", {"short_description": BOT_SHORT_DESCRIPTION})
-    api.call("setMyDescription", {"description": BOT_DESCRIPTION})
-    api.call(
+    _best_effort_setup(api, "setMyName", {"name": BOT_NAME})
+    _best_effort_setup(
+        api,
+        "setMyShortDescription",
+        {"short_description": BOT_SHORT_DESCRIPTION},
+    )
+    _best_effort_setup(api, "setMyDescription", {"description": BOT_DESCRIPTION})
+    _best_effort_setup(
+        api,
         "setMyCommands",
         {
             "commands": [
@@ -95,7 +110,7 @@ def configure_bot(api: TelegramBotApi, webapp_url: str) -> None:
             ]
         },
     )
-    api.call("setChatMenuButton", {"menu_button": menu_button(webapp_url)})
+    _best_effort_setup(api, "setChatMenuButton", {"menu_button": menu_button(webapp_url)})
 
 
 def run_polling() -> None:
