@@ -1,0 +1,92 @@
+name: Server smoke
+
+on:
+  workflow_run:
+    workflows: [Deploy]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arhibot-server-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Test deployed MVP on server
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      github.event_name == 'workflow_dispatch'
+    env:
+      DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+      DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
+      DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+      DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+      DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+      DEPLOY_APP_DIR: /root/arhibot
+    steps:
+      - name: Require server access
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          missing=()
+          for name in DEPLOY_SSH_HOST DEPLOY_SSH_USER DEPLOY_SSH_PRIVATE_KEY DEPLOY_SSH_KNOWN_HOSTS; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("${name}")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Server smoke is mandatory. Missing repository secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+          echo "DEPLOY_SSH_PORT=${DEPLOY_SSH_PORT:-22}" >> "${GITHUB_ENV}"
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${DEPLOY_SSH_PRIVATE_KEY}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${DEPLOY_SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Run smoke checks on production host
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          remote="${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}"
+          ssh -p "${DEPLOY_SSH_PORT}" "${remote}" bash -s -- "${DEPLOY_APP_DIR}" <<'REMOTE'
+          set -Eeuo pipefail
+          app_dir=$1
+          cd "${app_dir}/backend"
+
+          if docker compose version >/dev/null 2>&1; then
+            compose=(docker compose)
+          elif command -v docker-compose >/dev/null 2>&1; then
+            compose=(docker-compose)
+          else
+            echo "Docker Compose is not installed" >&2
+            exit 1
+          fi
+
+          "${compose[@]}" ps
+
+          curl -fsS http://127.0.0.1:18080/health/live >/dev/null
+          curl -fsS http://127.0.0.1:18080/health/ready >/dev/null
+          curl -fsS http://127.0.0.1:18080/ | grep -q '<div id="root"></div>'
+
+          for service in api bot frontend nginx postgres redis; do
+            container_id=$("${compose[@]}" ps -q "${service}")
+            [[ -n "${container_id}" ]] || { echo "Missing container: ${service}" >&2; exit 1; }
+            running=$(docker inspect -f '{{.State.Running}}' "${container_id}")
+            [[ "${running}" == "true" ]] || { echo "Container is not running: ${service}" >&2; exit 1; }
+          done
+
+          echo "Production API, frontend and Telegram bot are running"
+          REMOTE

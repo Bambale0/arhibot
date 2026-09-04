@@ -31,7 +31,7 @@ services:
       args:
         VITE_API_BASE_URL: /api/v1
         VITE_APP_NAME: ${FRONTEND_APP_NAME:-ArchiAI}
-        VITE_DEMO_GENERATION: ${VITE_DEMO_GENERATION:-false}
+        VITE_DEMO_GENERATION: ${VITE_DEMO_GENERATION:-true}
     expose:
       - "80"
     restart: unless-stopped
