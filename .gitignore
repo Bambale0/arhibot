@@ -21,6 +21,9 @@ backend/openapi.json
 # Local runtime data
 backend/data/media/*
 !backend/data/media/.gitkeep
+.release/
+backups/
+*.log
 
 # IDE / OS
 .vscode/
