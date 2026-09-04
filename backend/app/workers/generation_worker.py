@@ -177,10 +177,10 @@ async def run_worker() -> None:
     )
     while True:
         try:
-            item = await redis_client.blpop(GENERATION_QUEUE_KEY, timeout=5)
-            if item is None:
+            raw_id = await redis_client.lpop(GENERATION_QUEUE_KEY)
+            if raw_id is None:
+                await asyncio.sleep(1)
                 continue
-            _, raw_id = item
             await process_generation(UUID(raw_id), settings)
         except asyncio.CancelledError:
             raise
