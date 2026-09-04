@@ -28,6 +28,14 @@ class GenerationService:
         self.asset_service: AssetService = build_asset_service(session, settings)
 
     async def create(self, user: User, payload: GenerationCreate) -> GenerationResponse:
+        if not (self.settings.nexus_api_key or "").strip():
+            raise AppError(
+                type="generation_provider_not_configured",
+                title="Generation provider not configured",
+                status=503,
+                detail="NexusAPI is not configured for this environment.",
+            )
+
         project = await self.projects.get_owned(payload.project_id, user.id)
         if not project:
             raise AppError(
