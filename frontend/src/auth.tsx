@@ -17,6 +17,15 @@ function messageOf(error: unknown) {
   return error instanceof Error ? error.message : 'Что-то пошло не так'
 }
 
+function shouldRetryTelegramAuth(error: unknown) {
+  if (!(error instanceof api.ApiError)) return true
+  return error.status === 408 || error.status === 429 || error.status >= 500
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
@@ -29,19 +38,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     let cancelled = false
     async function bootstrap() {
+      let lastError: unknown = null
       try {
         if (api.hasStoredSession()) {
-          const current = await api.getMe()
-          if (!cancelled) setUser(current)
+          try {
+            const current = await api.getMe()
+            if (!cancelled) {
+              setUser(current)
+              setError(null)
+            }
+            return
+          } catch (sessionError) {
+            lastError = sessionError
+            api.clearTokens()
+          }
+        }
+
+        const initData = telegram?.initData?.trim()
+        if (!initData) {
+          if (lastError && !cancelled) setError(messageOf(lastError))
           return
         }
-        if (telegram?.initData) {
-          const pair = await api.loginTelegram(telegram.initData)
-          if (!cancelled) setUser(pair.user)
+
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          try {
+            const pair = await api.loginTelegram(initData)
+            if (!cancelled) {
+              setUser(pair.user)
+              setError(null)
+            }
+            return
+          } catch (telegramError) {
+            lastError = telegramError
+            api.clearTokens()
+            const retry = shouldRetryTelegramAuth(telegramError) && attempt < 3
+            if (!retry) break
+            await wait(800 * (attempt + 1))
+            if (cancelled) return
+          }
         }
-      } catch (bootstrapError) {
-        api.clearTokens()
-        if (!cancelled) setError(messageOf(bootstrapError))
+
+        if (!cancelled && lastError) setError(messageOf(lastError))
       } finally {
         if (!cancelled) setLoading(false)
       }
