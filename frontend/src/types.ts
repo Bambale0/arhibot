@@ -56,12 +56,25 @@ export type Asset = {
 }
 
 export type GenerationMode = 'floor_plan' | 'facade' | 'master_plan' | 'interior'
+export type GenerationStatus = 'queued' | 'processing' | 'completed' | 'failed'
 
-export type DemoGeneration = {
+export type Generation = {
   id: string
-  mode: GenerationMode
+  project_id: string
+  input_asset_id: string
+  output_asset: Asset | null
+  type: GenerationMode
+  status: GenerationStatus
   prompt: string
-  sourceUrl: string
-  projectName: string
-  createdAt: string
+  model_name: string | null
+  fallback_used: boolean
+  error: string | null
+  created_at: string
+  updated_at: string
+  started_at: string | null
+  completed_at: string | null
+}
+
+export type GenerationList = {
+  items: Generation[]
 }
