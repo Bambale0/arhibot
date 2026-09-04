@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     refresh_token_secret: str = "local-only-change-me-refresh-secret-32-bytes"
 
     telegram_bot_token: str | None = None
+    telegram_webapp_url: str | None = None
     telegram_init_data_ttl_seconds: int = 3600
 
     media_root: str = "/data/media"
