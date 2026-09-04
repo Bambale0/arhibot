@@ -15,6 +15,7 @@ class UserService:
             display_name=user.display_name,
             avatar_url=None,
             status=user.status,
+            credits_balance=user.credits_balance,
             created_at=user.created_at,
             updated_at=user.updated_at,
             capabilities=UserCapabilities(can_generate=user.status == UserStatus.ACTIVE),
