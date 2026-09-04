@@ -23,6 +23,17 @@ services:
       - api
     restart: unless-stopped
 
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        VITE_API_BASE_URL: /api/v1
+        VITE_APP_NAME: ${FRONTEND_APP_NAME:-ArchiAI}
+        VITE_DEMO_GENERATION: ${VITE_DEMO_GENERATION:-false}
+    expose:
+      - "80"
+    restart: unless-stopped
+
   nginx:
     image: nginx:1.28-alpine
     ports:
@@ -32,6 +43,7 @@ services:
       - media_data:/srv/media:ro
     depends_on:
       - api
+      - frontend
     restart: unless-stopped
 
   postgres:
