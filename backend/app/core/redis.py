@@ -24,9 +24,20 @@ class LazyRedisClient:
     async def ping(self) -> bool:
         return bool(await self._get().ping())
 
+    async def rpush(self, key: str, value: str) -> int:
+        return int(await self._get().rpush(key, value))
+
+    async def blpop(self, key: str, timeout: int = 0) -> tuple[str, str] | None:
+        result = await self._get().blpop(key, timeout=timeout)
+        if result is None:
+            return None
+        queue, value = result
+        return str(queue), str(value)
+
     async def aclose(self) -> None:
         if self._client is not None:
             await self._client.aclose()
+            self._client = None
 
 
 redis_client = LazyRedisClient()
