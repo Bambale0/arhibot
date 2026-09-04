@@ -112,7 +112,7 @@ compose up -d --remove-orphans
 
 health_passed=0
 for attempt in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:8000/health/live >/dev/null 2>&1; then
+  if curl -fsS http://127.0.0.1:18000/health/live >/dev/null 2>&1; then
     health_passed=1
     break
   fi

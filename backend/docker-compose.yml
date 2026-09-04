@@ -1,6 +1,8 @@
 services:
   api:
     build: .
+    ports:
+      - "127.0.0.1:18000:8000"
     env_file:
       - .env
     expose:
@@ -37,7 +39,7 @@ services:
   nginx:
     image: nginx:1.28-alpine
     ports:
-      - "8000:80"
+      - "127.0.0.1:18080:80"
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
       - media_data:/srv/media:ro
@@ -52,8 +54,6 @@ services:
       POSTGRES_DB: app
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -65,8 +65,6 @@ services:
   redis:
     image: redis:8-alpine
     command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
