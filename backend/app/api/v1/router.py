@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.v1.assets import router as assets_router
 from app.api.v1.auth import router as auth_router
+from app.api.v1.billing import router as billing_router
 from app.api.v1.generations import router as generations_router
 from app.api.v1.projects import router as projects_router
 from app.api.v1.users import router as users_router
@@ -29,3 +30,4 @@ router.include_router(users_router)
 router.include_router(projects_router)
 router.include_router(assets_router)
 router.include_router(generations_router)
+router.include_router(billing_router)
