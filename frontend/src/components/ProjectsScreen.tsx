@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as api from '../api'
-import { useAuth } from '../auth'
 import type { Project } from '../types'
-import { ArrowIcon, HomeIcon, LogOutIcon, PlusIcon } from './Icons'
+import { ArrowIcon, HomeIcon, PlusIcon } from './Icons'
 import { ProjectModal, type NewProjectPayload } from './ProjectModal'
 
 function formatDate(value: string) {
@@ -27,7 +26,6 @@ function ProjectCard({ project, onOpen }: { project: Project; onOpen: () => void
 }
 
 export function ProjectsScreen({ onOpenProject }: { onOpenProject: (project: Project) => void }) {
-  const { user, signOut } = useAuth()
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -48,7 +46,7 @@ export function ProjectsScreen({ onOpenProject }: { onOpenProject: (project: Pro
 
   useEffect(() => { void load() }, [])
 
-  const subtitle = useMemo(() => projects.length === 0 ? 'Создайте первый проект и загрузите исходное фото.' : `${projects.length} ${projects.length === 1 ? 'проект' : projects.length < 5 ? 'проекта' : 'проектов'} в работе`, [projects.length])
+  const subtitle = useMemo(() => projects.length === 0 ? 'Создайте первый проект и начните проектирование в AuRoom.' : `${projects.length} ${projects.length === 1 ? 'проект' : projects.length < 5 ? 'проекта' : 'проектов'} в работе`, [projects.length])
 
   async function handleCreate(payload: NewProjectPayload) {
     const created = await api.createProject(payload)
@@ -58,27 +56,21 @@ export function ProjectsScreen({ onOpenProject }: { onOpenProject: (project: Pro
   }
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div className="wordmark"><span className="wordmark-dot" />{import.meta.env.VITE_APP_NAME || 'ArchiAI'}</div>
-        <div className="topbar-user"><div className="avatar">{user?.display_name?.slice(0, 1).toUpperCase()}</div><span>{user?.display_name}</span><button className="icon-button subtle" title="Выйти" onClick={() => void signOut()}><LogOutIcon /></button></div>
-      </header>
-      <section className="page-content projects-page">
-        <div className="page-heading-row">
-          <div><span className="eyebrow">ВАША СТУДИЯ</span><h1>Проекты</h1><p>{subtitle}</p></div>
-          <button className="primary-button" onClick={() => setShowCreate(true)}><PlusIcon /> Новый проект</button>
-        </div>
+    <section className="page-content projects-page">
+      <div className="page-heading-row">
+        <div><span className="eyebrow">ВАША СТУДИЯ</span><h1>Главная</h1><p>{subtitle}</p></div>
+        <button className="primary-button" onClick={() => setShowCreate(true)}><PlusIcon /> Новый проект</button>
+      </div>
 
-        {error && <div className="banner-error">{error}<button onClick={() => void load()}>Повторить</button></div>}
-        {loading ? (
-          <div className="project-grid"><div className="project-card skeleton-card"/><div className="project-card skeleton-card"/></div>
-        ) : projects.length ? (
-          <div className="project-grid">{projects.map((p) => <ProjectCard key={p.id} project={p} onOpen={() => onOpenProject(p)} />)}<button className="new-project-tile" onClick={() => setShowCreate(true)}><PlusIcon /><strong>Новый проект</strong><span>Создать чистое пространство</span></button></div>
-        ) : (
-          <div className="empty-state"><div className="empty-icon"><HomeIcon /></div><h2>Первый проект — за минуту</h2><p>Название, пара параметров и исходное фото. Остальное можно добавить позже.</p><button className="primary-button" onClick={() => setShowCreate(true)}><PlusIcon /> Создать проект</button></div>
-        )}
-      </section>
+      {error && <div className="banner-error">{error}<button onClick={() => void load()}>Повторить</button></div>}
+      {loading ? (
+        <div className="project-grid"><div className="project-card skeleton-card"/><div className="project-card skeleton-card"/></div>
+      ) : projects.length ? (
+        <div className="project-grid">{projects.map((p) => <ProjectCard key={p.id} project={p} onOpen={() => onOpenProject(p)} />)}<button className="new-project-tile" onClick={() => setShowCreate(true)}><PlusIcon /><strong>Новый проект</strong><span>Создать пространство в AuRoom</span></button></div>
+      ) : (
+        <div className="empty-state"><div className="empty-icon"><HomeIcon /></div><h2>Первый проект — за минуту</h2><p>Название, пара параметров и можно переходить к планировке, фасаду, участку или интерьеру.</p><button className="primary-button" onClick={() => setShowCreate(true)}><PlusIcon /> Создать проект</button></div>
+      )}
       {showCreate && <ProjectModal onClose={() => setShowCreate(false)} onCreate={handleCreate} />}
-    </main>
+    </section>
   )
 }
