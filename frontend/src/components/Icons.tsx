@@ -14,3 +14,8 @@ export const MoreIcon = (p: P) => <svg {...base} {...p}><circle cx="5" cy="12" r
 export const TrashIcon = (p: P) => <svg {...base} {...p}><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" /><path d="M10 11v5M14 11v5" /></svg>
 export const ImageIcon = (p: P) => <svg {...base} {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m21 15-5-5L5 20" /></svg>
 export const LogOutIcon = (p: P) => <svg {...base} {...p}><path d="M10 5H5v14h5M14 8l4 4-4 4M18 12H9" /></svg>
+export const IdeaIcon = (p: P) => <svg {...base} {...p}><path d="M9 18h6M10 22h4"/><path d="M8.3 14.5A6 6 0 1 1 15.7 14.5c-.9.8-1.5 1.7-1.7 2.5h-4c-.2-.8-.8-1.7-1.7-2.5Z"/></svg>
+export const HistoryIcon = (p: P) => <svg {...base} {...p}><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>
+export const UserIcon = (p: P) => <svg {...base} {...p}><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+export const PlanIcon = (p: P) => <svg {...base} {...p}><path d="M4 4h16v16H4zM9 4v7h11M4 15h8v5M12 11v9"/></svg>
+export const SiteIcon = (p: P) => <svg {...base} {...p}><path d="M4 19V5l5-2 6 3 5-2v14l-5 2-6-3-5 2Z"/><path d="M9 3v14M15 6v14"/></svg>
