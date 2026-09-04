@@ -27,9 +27,13 @@ function TelegramAuthError({ message }: { message?: string | null }) {
   )
 }
 
+function initialSection(): AppSection {
+  return new URLSearchParams(window.location.search).get('billing') === 'return' ? 'profile' : 'home'
+}
+
 export default function App() {
   const { user, loading, error } = useAuth()
-  const [section, setSection] = useState<AppSection>('home')
+  const [section, setSection] = useState<AppSection>(initialSection)
   const [activeProject, setActiveProject] = useState<Project | null>(null)
   const [workspaceMode, setWorkspaceMode] = useState<GenerationMode>('floor_plan')
   const [createMode, setCreateMode] = useState<GenerationMode | null>(null)
