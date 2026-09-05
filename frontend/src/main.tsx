@@ -4,6 +4,7 @@ import { AuthProvider } from './auth'
 import './styles.css'
 import './auroom.css'
 import './billing.css'
+import './admin.css'
 
 createRoot(document.getElementById('root')!).render(
   <AuthProvider><App /></AuthProvider>,
