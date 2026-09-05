@@ -9,7 +9,7 @@ from app.schemas.assets import AssetResponse
 
 class GenerationCreate(BaseModel):
     project_id: UUID
-    input_asset_id: UUID
+    input_asset_id: UUID | None = None
     type: GenerationType
     prompt: str = Field(default="", max_length=4000)
 
@@ -19,11 +19,12 @@ class GenerationResponse(BaseModel):
 
     id: UUID
     project_id: UUID
-    input_asset_id: UUID
+    input_asset_id: UUID | None
     output_asset: AssetResponse | None = None
     type: GenerationType
     status: GenerationStatus
     prompt: str
+    credits_charged: int = 0
     model_name: str | None = None
     fallback_used: bool = False
     error: str | None = None
