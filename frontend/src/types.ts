@@ -244,6 +244,15 @@ export type AdminBroadcast = {
   sent_at: string | null
 }
 
+export type AdminOperationalSettings = {
+  auth_rate_limit_per_minute: number | null
+  generation_rate_limit_per_minute: number | null
+  payment_rate_limit_per_minute: number | null
+  media_retention_days: number | null
+  backup_retention_days: number | null
+  updated_at: string | null
+}
+
 export type AdminAudit = {
   id: string
   actor_user_id: string | null
