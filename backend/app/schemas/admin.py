@@ -152,6 +152,18 @@ class GenerationRuntimeResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+class GenerationPriceUpdate(BaseModel):
+    credits: int = Field(gt=0, le=1_000_000)
+    is_active: bool = True
+
+
+class GenerationPriceResponse(BaseModel):
+    generation_type: GenerationType
+    credits: int
+    is_active: bool
+    updated_at: datetime
+
+
 class PromptTemplateUpdate(BaseModel):
     template: str = Field(min_length=1, max_length=20_000)
 
@@ -182,6 +194,19 @@ class CreditAdjustmentRequest(BaseModel):
         if value == 0:
             raise ValueError("Credit delta must not be zero")
         return value
+
+
+class CreditTransactionResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    amount: int
+    balance_after: int
+    kind: str
+    reference_type: str | None
+    reference_id: str | None
+    reason: str | None
+    actor_user_id: UUID | None
+    created_at: datetime
 
 
 class UserStateUpdate(BaseModel):
