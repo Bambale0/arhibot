@@ -292,6 +292,7 @@ class OperationalSettingsUpdate(BaseModel):
     generation_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
     payment_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
     media_retention_days: int | None = Field(default=None, ge=1, le=3650)
+    backup_interval_hours: int | None = Field(default=None, ge=1, le=8760)
     backup_retention_days: int | None = Field(default=None, ge=1, le=3650)
 
 
