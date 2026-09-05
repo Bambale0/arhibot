@@ -122,6 +122,7 @@ export function deleteAsset(assetId: string) { return request<void>(`/assets/${a
 export function createGeneration(payload: { project_id: string; input_asset_id?: string | null; type: GenerationMode; prompt: string }) {
   return request<Generation>('/generations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 }
+export function repeatGeneration(generationId: string) { return request<Generation>(`/generations/${generationId}/repeat`, { method: 'POST' }) }
 export function getGeneration(generationId: string) { return request<Generation>(`/generations/${generationId}`) }
 export function listGenerations(projectId?: string, limit = 50, cursor?: string | null) {
   const params = new URLSearchParams({ limit: String(limit) }); if (projectId) params.set('project_id', projectId); if (cursor) params.set('cursor', cursor)
