@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+from app.core.cursor import decode_cursor, encode_cursor
 from app.core.errors import AppError
 from app.core.redis import redis_client
 from app.db.models.generations import Generation
@@ -144,6 +145,7 @@ class GenerationService:
         user: User,
         *,
         project_id: UUID | None = None,
+        cursor: str | None = None,
         limit: int = 50,
     ) -> GenerationListResponse:
         if project_id is not None and not await self.projects.get_owned(project_id, user.id):
@@ -153,8 +155,25 @@ class GenerationService:
                 status=404,
                 detail="The project does not exist or is not available to this user.",
             )
-        items = await self.repository.list_owned(user.id, project_id=project_id, limit=limit)
-        return GenerationListResponse(items=[await self.to_response(item) for item in items])
+        decoded_cursor = decode_cursor(cursor) if cursor else None
+        rows = await self.repository.list_owned(
+            user.id,
+            project_id=project_id,
+            cursor=decoded_cursor,
+            limit=limit + 1,
+        )
+        has_more = len(rows) > limit
+        visible = rows[:limit]
+        next_cursor = (
+            encode_cursor(visible[-1].created_at, visible[-1].id)
+            if has_more and visible
+            else None
+        )
+        return GenerationListResponse(
+            items=[await self.to_response(item) for item in visible],
+            next_cursor=next_cursor,
+            has_more=has_more,
+        )
 
     async def to_response(self, generation: Generation) -> GenerationResponse:
         output_asset: AssetResponse | None = None
