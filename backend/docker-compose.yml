@@ -53,6 +53,18 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  maintenance:
+    build: .
+    command: ["python", "-m", "app.workers.maintenance_worker"]
+    env_file:
+      - .env
+    volumes:
+      - media_data:/data/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   frontend:
     build:
       context: ../frontend
