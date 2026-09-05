@@ -23,6 +23,15 @@ class YooKassaPayment:
     confirmation_url: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class YooKassaRefund:
+    id: str
+    payment_id: str
+    status: str
+    amount: Decimal
+    currency: str
+
+
 class YooKassaProvider:
     def __init__(self, settings: Settings) -> None:
         shop_id = (settings.yookassa_shop_id or "").strip()
@@ -41,6 +50,7 @@ class YooKassaProvider:
         return_url: str,
         metadata: dict[str, str],
         idempotence_key: str,
+        receipt: dict[str, Any] | None = None,
     ) -> YooKassaPayment:
         payload: dict[str, Any] = {
             "amount": {"value": f"{amount:.2f}", "currency": currency},
@@ -49,28 +59,62 @@ class YooKassaProvider:
             "description": description[:128],
             "metadata": metadata,
         }
+        if receipt is not None:
+            payload["receipt"] = receipt
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), auth=self.auth) as client:
             response = await client.post(
                 f"{self.base_url}/payments",
                 headers={"Idempotence-Key": idempotence_key},
                 json=payload,
             )
-        return self._parse_response(response, operation="create payment")
+        return self._parse_payment(response, operation="create payment")
 
     async def get_payment(self, payment_id: str) -> YooKassaPayment:
         async with httpx.AsyncClient(timeout=httpx.Timeout(20.0), auth=self.auth) as client:
             response = await client.get(f"{self.base_url}/payments/{payment_id}")
-        return self._parse_response(response, operation="get payment")
+        return self._parse_payment(response, operation="get payment")
+
+    async def create_refund(
+        self,
+        *,
+        payment_id: str,
+        amount: Decimal,
+        currency: str,
+        description: str,
+        idempotence_key: str,
+    ) -> YooKassaRefund:
+        payload = {
+            "payment_id": payment_id,
+            "amount": {"value": f"{amount:.2f}", "currency": currency},
+            "description": description[:250],
+        }
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), auth=self.auth) as client:
+            response = await client.post(
+                f"{self.base_url}/refunds",
+                headers={"Idempotence-Key": idempotence_key},
+                json=payload,
+            )
+        return self._parse_refund(response, operation="create refund")
+
+    async def get_refund(self, refund_id: str) -> YooKassaRefund:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0), auth=self.auth) as client:
+            response = await client.get(f"{self.base_url}/refunds/{refund_id}")
+        return self._parse_refund(response, operation="get refund")
 
     @staticmethod
-    def _parse_response(response: httpx.Response, *, operation: str) -> YooKassaPayment:
+    def _error_message(response: httpx.Response) -> str:
+        try:
+            payload = response.json()
+            return str(payload.get("description") or payload.get("code") or payload)
+        except ValueError:
+            return response.text[:300]
+
+    @classmethod
+    def _parse_payment(cls, response: httpx.Response, *, operation: str) -> YooKassaPayment:
         if response.status_code >= 400:
-            try:
-                payload = response.json()
-                message = payload.get("description") or payload.get("code") or str(payload)
-            except ValueError:
-                message = response.text[:300]
-            raise YooKassaError(f"YooKassa {operation} failed ({response.status_code}): {message}")
+            raise YooKassaError(
+                f"YooKassa {operation} failed ({response.status_code}): {cls._error_message(response)}"
+            )
 
         payload = response.json()
         amount = payload.get("amount") or {}
@@ -91,4 +135,25 @@ class YooKassaProvider:
                 if confirmation.get("confirmation_url")
                 else None
             ),
+        )
+
+    @classmethod
+    def _parse_refund(cls, response: httpx.Response, *, operation: str) -> YooKassaRefund:
+        if response.status_code >= 400:
+            raise YooKassaError(
+                f"YooKassa {operation} failed ({response.status_code}): {cls._error_message(response)}"
+            )
+        payload = response.json()
+        amount = payload.get("amount") or {}
+        refund_id = str(payload.get("id") or "").strip()
+        payment_id = str(payload.get("payment_id") or "").strip()
+        status = str(payload.get("status") or "").strip()
+        if not refund_id or not payment_id or not status or not amount.get("value") or not amount.get("currency"):
+            raise YooKassaError(f"YooKassa {operation} returned an incomplete refund object")
+        return YooKassaRefund(
+            id=refund_id,
+            payment_id=payment_id,
+            status=status,
+            amount=Decimal(str(amount["value"])),
+            currency=str(amount["currency"]),
         )

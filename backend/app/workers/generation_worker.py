@@ -19,11 +19,14 @@ from app.prompt_builders.generation import build_generation_prompt
 from app.providers.nexus import NexusImageProvider, NexusProviderError
 from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
+from app.repositories.generations import GenerationRepository
 from app.repositories.projects import ProjectRepository
 from app.services.asset_service import AssetService
+from app.services.credit_service import CreditService
 from app.services.generation_service import GENERATION_QUEUE_KEY
 
 logger = logging.getLogger(__name__)
+GENERATION_PROCESSING_KEY = "auroom:generation_processing"
 
 
 async def _download_image(url: str, settings: Settings) -> bytes:
@@ -39,29 +42,47 @@ async def _download_image(url: str, settings: Settings) -> bytes:
     return data
 
 
-async def _mark_failed(generation_id: UUID, error: Exception) -> None:
+async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -> None:
     async with get_session_factory()() as session:
         generation = await session.get(Generation, generation_id)
-        if generation is None:
+        if generation is None or generation.status == GenerationStatus.COMPLETED:
             return
         generation.status = GenerationStatus.FAILED
-        generation.error = str(error)[:1000] or error.__class__.__name__
+        generation.error = str(error)[:1000] or "Generation failed"
         generation.completed_at = datetime.now(UTC)
+        if generation.credits_charged > 0:
+            await CreditService(session).apply(
+                user_id=generation.user_id,
+                amount=generation.credits_charged,
+                kind="generation_refund",
+                idempotency_key=f"generation:{generation.id}:refund",
+                reference_type="generation",
+                reference_id=str(generation.id),
+                reason=generation.error,
+            )
         await session.commit()
 
 
 async def process_generation(generation_id: UUID, settings: Settings) -> None:
     async with get_session_factory()() as session:
-        generation = await session.get(Generation, generation_id)
+        generation = await GenerationRepository(session).get_for_update(generation_id)
         if generation is None or generation.status != GenerationStatus.QUEUED:
             return
         project = await session.get(Project, generation.project_id)
-        input_asset = await session.get(Asset, generation.input_asset_id)
-        if project is None or input_asset is None or input_asset.deleted_at is not None:
-            generation.status = GenerationStatus.FAILED
-            generation.error = "Generation input is no longer available."
-            generation.completed_at = datetime.now(UTC)
-            await session.commit()
+        input_asset = (
+            await session.get(Asset, generation.input_asset_id)
+            if generation.input_asset_id is not None
+            else None
+        )
+        if project is None:
+            await session.rollback()
+            await _mark_failed_and_refund(generation_id, "Generation project is no longer available.")
+            return
+        if generation.input_asset_id is not None and (
+            input_asset is None or input_asset.deleted_at is not None
+        ):
+            await session.rollback()
+            await _mark_failed_and_refund(generation_id, "Generation input is no longer available.")
             return
 
         admin_repository = AdminRepository(session)
@@ -73,10 +94,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             or prompt_template is None
             or not prompt_template.template.strip()
         ):
-            generation.status = GenerationStatus.FAILED
-            generation.error = "Generation is not configured in AuRoom admin."
-            generation.completed_at = datetime.now(UTC)
-            await session.commit()
+            await session.rollback()
+            await _mark_failed_and_refund(
+                generation_id,
+                "Generation is not configured in AuRoom admin.",
+            )
             return
 
         generation.status = GenerationStatus.PROCESSING
@@ -89,7 +111,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             ProjectRepository(session),
             settings,
         )
-        source_url = asset_service.storage.public_url(input_asset.storage_path)
+        source_url = (
+            asset_service.storage.public_url(input_asset.storage_path)
+            if input_asset is not None
+            else None
+        )
         prompt = build_generation_prompt(prompt_template.template, generation.prompt, project)
         mode_params = dict((runtime.mode_params or {}).get(generation.type.value) or {})
         primary_params = {**dict(runtime.primary_params or {}), **mode_params}
@@ -174,7 +200,52 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             )
     except Exception as exc:
         logger.exception("Generation %s failed", generation_id)
-        await _mark_failed(generation_id, exc)
+        await _mark_failed_and_refund(generation_id, exc)
+
+
+async def _recover_reserved_jobs() -> None:
+    reserved = await redis_client.lrange(GENERATION_PROCESSING_KEY, 0, -1)
+    if not reserved:
+        return
+    recovered = 0
+    for raw_id in reserved:
+        try:
+            generation_id = UUID(raw_id)
+        except (TypeError, ValueError):
+            await redis_client.lrem(GENERATION_PROCESSING_KEY, 0, raw_id)
+            continue
+        should_requeue = False
+        async with get_session_factory()() as session:
+            generation = await session.get(Generation, generation_id)
+            if generation is not None and generation.status in {
+                GenerationStatus.QUEUED,
+                GenerationStatus.PROCESSING,
+            }:
+                generation.status = GenerationStatus.QUEUED
+                generation.started_at = None
+                generation.error = None
+                await session.commit()
+                should_requeue = True
+        await redis_client.lrem(GENERATION_PROCESSING_KEY, 0, raw_id)
+        if should_requeue:
+            await redis_client.rpush(GENERATION_QUEUE_KEY, raw_id)
+            recovered += 1
+    if recovered:
+        logger.warning("Recovered %s reserved generation job(s) after worker restart", recovered)
+
+
+async def _reserve_job() -> str | None:
+    raw_id = await redis_client.lmove(
+        GENERATION_QUEUE_KEY,
+        GENERATION_PROCESSING_KEY,
+        "LEFT",
+        "RIGHT",
+    )
+    return raw_id
+
+
+async def _ack_job(raw_id: str) -> None:
+    await redis_client.lrem(GENERATION_PROCESSING_KEY, 1, raw_id)
 
 
 async def run_worker() -> None:
@@ -183,14 +254,23 @@ async def run_worker() -> None:
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    logger.info("AuRoom generation worker started; runtime model configuration is DB-backed")
+    logger.info("AuRoom generation worker started; queue uses reserve/ack recovery")
+    await _recover_reserved_jobs()
     while True:
         try:
-            raw_id = await redis_client.lpop(GENERATION_QUEUE_KEY)
+            raw_id = await _reserve_job()
             if raw_id is None:
                 await asyncio.sleep(1)
                 continue
-            await process_generation(UUID(raw_id), settings)
+            try:
+                await process_generation(UUID(raw_id), settings)
+            except Exception:
+                # Keep the reservation in the processing list. It will be recovered
+                # on worker restart instead of silently losing a paid generation.
+                logger.exception("Reserved generation %s crashed before terminal state", raw_id)
+                await asyncio.sleep(2)
+            else:
+                await _ack_job(raw_id)
         except asyncio.CancelledError:
             raise
         except Exception:

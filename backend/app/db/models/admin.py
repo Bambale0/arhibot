@@ -36,7 +36,10 @@ class BillingPlan(Base):
 
 class IdeaTemplate(Base):
     __tablename__ = "idea_templates"
-    __table_args__ = (Index("ix_idea_templates_active_order", "is_active", "sort_order"),)
+    __table_args__ = (
+        Index("ix_idea_templates_active_order", "is_active", "sort_order"),
+        Index("ix_idea_templates_image_asset_id", "image_asset_id"),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     title: Mapped[str] = mapped_column(String(160), nullable=False)
@@ -44,6 +47,9 @@ class IdeaTemplate(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     generation_type: Mapped[str] = mapped_column(String(32), nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    image_asset_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("assets.id", ondelete="SET NULL"), nullable=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -84,7 +90,10 @@ class GenerationPromptTemplate(Base):
 
 class BroadcastCampaign(Base):
     __tablename__ = "broadcast_campaigns"
-    __table_args__ = (Index("ix_broadcast_campaigns_created_at", "created_at"),)
+    __table_args__ = (
+        Index("ix_broadcast_campaigns_created_at", "created_at"),
+        Index("ix_broadcast_campaigns_status_schedule", "status", "scheduled_at"),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     created_by_user_id: Mapped[UUID | None] = mapped_column(
@@ -92,9 +101,12 @@ class BroadcastCampaign(Base):
     )
     text: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft", server_default="draft")
+    segment: Mapped[str] = mapped_column(String(32), nullable=False, default="all", server_default="all")
     recipient_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     sent_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()

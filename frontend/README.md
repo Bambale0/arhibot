@@ -1,42 +1,45 @@
-# AuRoom MVP App
+# AuRoom web / Telegram Mini App
 
-Адаптивный React-клиент для AuRoom: web + Telegram Mini App.
+React-клиент AuRoom для web и Telegram Mini App.
 
-## Основные страницы
+## Пользовательские разделы
 
-- Главная — проекты пользователя;
-- Идеи — лента готовых направлений;
-- Создать — четыре сценария проектирования;
-- История — результаты тестовых генераций в песочнице;
-- Профиль — текущий пользователь и управление сессией.
+- **Главная** — проекты пользователя;
+- **Идеи** — опубликованные визуальные референсы из БД;
+- **Создать** — планировка, фасад, мастер-план участка, интерьер;
+- **История** — серверная история генераций с cursor pagination;
+- **Профиль** — баланс кредитов, тарифы и платежи YooKassa.
 
-## Сценарии «Создать»
+Пользователи с ролью `admin`/`superadmin` получают доступ к **Веб-админке**.
 
-1. Планировка дома;
-2. Внешний облик дома / фасад;
-3. Мастер-план участка;
-4. Дизайн помещений.
+## Генерации
 
-## Что подключено к backend
+Frontend использует реальный Generation API:
 
-- автоматический Telegram Mini App login через `initData`;
-- веб-вход тестового аккаунта без публичной регистрации;
-- access + rotating refresh token;
-- проекты: список, создание, открытие, архивирование;
-- локальная загрузка JPEG / PNG / WebP через `POST /api/v1/assets`;
-- удаление загруженного asset.
+- `floor_plan` и `master_plan` поддерживают text-to-image без обязательного исходника;
+- `facade` и `interior` требуют reference image;
+- стоимость каждого сценария задаётся в webadmin и списывается через credit ledger;
+- при техническом падении генерации зарезервированные кредиты возвращаются;
+- primary/fallback Nexus-модели и prompt templates управляются из webadmin.
 
-API берётся из `VITE_API_BASE_URL` и по умолчанию равен `/api/v1`.
+Demo/sandbox generation в production-клиенте не используется.
 
-## Sandbox generation
+## Billing
 
-Реального `/generations` endpoint и AI-провайдера в текущем backend пока нет. Для проверки полного клиентского flow используется:
+Профиль получает тарифы из backend. YooKassa payment создаётся сервером. При включённой фискализации frontend запрашивает email для чека. Secret key и другие credentials никогда не попадают в frontend.
 
-```env
-VITE_DEMO_GENERATION=true
-```
+## Webadmin
 
-Sandbox явно помечает результат и сохраняет его в локальную «Историю». Он не выдаёт исходное изображение за реальный AI output.
+Оператор управляет через UI:
+
+- тарифами и фискальными настройками YooKassa;
+- стоимостью генераций, AI-моделями, параметрами и prompt templates;
+- Ideas и их изображениями;
+- пользователями и credit ledger;
+- платежами, reconciliation и полным refund;
+- Telegram-рассылками, сегментами, scheduling/cancel/retry;
+- rate limits, media retention и backup policy;
+- audit log.
 
 ## Development
 
@@ -46,37 +49,15 @@ npm install
 npm run dev
 ```
 
-## Build
+## Проверка
 
 ```bash
 npm run typecheck
 npm run build
 ```
 
-## Docker
-
-```bash
-docker build \
-  --build-arg VITE_API_BASE_URL=/api/v1 \
-  --build-arg VITE_APP_NAME=AuRoom \
-  -t auroom-app .
-
-docker run --rm -p 8080:80 auroom-app
-```
+`VITE_API_BASE_URL` по умолчанию `/api/v1`.
 
 ## Telegram Mini App
 
-`index.html` подключает официальный `telegram-web-app.js`. При наличии `window.Telegram.WebApp.initData` приложение автоматически вызывает `/api/v1/auth/telegram`.
-
-## Рассылка
-
-Рассылка не показывается обычному пользователю. Операторская команда backend отправляет текст всем активным Telegram identity:
-
-```bash
-python -m app.telegram_bot.broadcast --text "Сообщение"
-python -m app.telegram_bot.broadcast --text "Сообщение" --dry-run
-```
-
-## Следующий backend-срез
-
-Нужен Generation API + один реальный AI-провайдер. После этого песочничная история заменяется серверной историей генераций.
+`index.html` подключает официальный `telegram-web-app.js`. При наличии `window.Telegram.WebApp.initData` приложение автоматически выполняет Telegram auth через backend.

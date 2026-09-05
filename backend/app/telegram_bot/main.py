@@ -21,6 +21,12 @@ START_TEXT = (
 )
 
 
+class TelegramApiError(RuntimeError):
+    def __init__(self, message: str, *, retry_after: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 def mini_app_keyboard(webapp_url: str) -> dict[str, Any]:
     return {
         "inline_keyboard": [
@@ -57,11 +63,33 @@ class TelegramBotApi:
         try:
             with urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed Telegram API host
                 data = json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, TimeoutError) as exc:
-            raise RuntimeError(f"Telegram API request failed: {method}") from exc
+        except HTTPError as exc:
+            retry_after = None
+            description = f"HTTP {exc.code}"
+            try:
+                payload_error = json.loads(exc.read().decode("utf-8"))
+                description = str(payload_error.get("description") or description)
+                parameters = payload_error.get("parameters") or {}
+                raw_retry = parameters.get("retry_after")
+                if isinstance(raw_retry, int) and raw_retry > 0:
+                    retry_after = raw_retry
+            except (ValueError, OSError):
+                pass
+            raise TelegramApiError(
+                f"Telegram API request failed in {method}: {description}",
+                retry_after=retry_after,
+            ) from exc
+        except (URLError, TimeoutError) as exc:
+            raise TelegramApiError(f"Telegram API request failed: {method}") from exc
 
         if not data.get("ok"):
-            raise RuntimeError(f"Telegram API error in {method}: {data.get('description', 'unknown error')}")
+            parameters = data.get("parameters") or {}
+            raw_retry = parameters.get("retry_after")
+            retry_after = raw_retry if isinstance(raw_retry, int) and raw_retry > 0 else None
+            raise TelegramApiError(
+                f"Telegram API error in {method}: {data.get('description', 'unknown error')}",
+                retry_after=retry_after,
+            )
         return data.get("result")
 
 
@@ -159,9 +187,12 @@ def run_polling() -> None:
 
                 if normalize_command(text) in {"/start", "/app"}:
                     send_start(api, chat_id, webapp_url)
+        except TelegramApiError as exc:
+            logger.warning("Telegram polling error: %s", exc)
+            time.sleep(max(exc.retry_after or 2, 1))
         except Exception:
-            logger.exception("Telegram polling iteration failed")
-            time.sleep(3)
+            logger.exception("Unexpected Telegram polling failure")
+            time.sleep(2)
 
 
 if __name__ == "__main__":

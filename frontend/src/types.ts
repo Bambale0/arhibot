@@ -65,11 +65,12 @@ export type GenerationStatus = 'queued' | 'processing' | 'completed' | 'failed'
 export type Generation = {
   id: string
   project_id: string
-  input_asset_id: string
+  input_asset_id: string | null
   output_asset: Asset | null
   type: GenerationMode
   status: GenerationStatus
   prompt: string
+  credits_charged: number
   model_name: string | null
   fallback_used: boolean
   error: string | null
@@ -81,6 +82,8 @@ export type Generation = {
 
 export type GenerationList = {
   items: Generation[]
+  next_cursor: string | null
+  has_more: boolean
 }
 
 export type BillingPackage = {
@@ -99,12 +102,16 @@ export type BillingPayment = {
   currency: string
   status: string
   confirmation_url: string | null
+  receipt_email: string | null
+  refund_status: string | null
   created_at: string
   paid_at: string | null
+  refunded_at: string | null
 }
 
 export type BillingSummary = {
   enabled: boolean
+  receipt_required: boolean
   credits_balance: number
   packages: BillingPackage[]
   payments: BillingPayment[]
@@ -117,6 +124,7 @@ export type Idea = {
   text: string
   generation_type: GenerationMode
   prompt: string
+  image_url: string | null
 }
 
 export type AdminOverview = {
@@ -139,7 +147,16 @@ export type AdminTariff = {
   updated_at: string
 }
 
+export type AdminBillingSettings = {
+  receipts_enabled: boolean
+  vat_code: number | null
+  payment_subject: string | null
+  payment_mode: string | null
+  updated_at: string | null
+}
+
 export type AdminIdea = Idea & {
+  image_asset_id: string | null
   is_active: boolean
   sort_order: number
   created_at: string
@@ -147,11 +164,18 @@ export type AdminIdea = Idea & {
 }
 
 export type AdminGenerationSettings = {
-  primary_model: string
+  primary_model: string | null
   fallback_model: string | null
   primary_params: Record<string, unknown>
   fallback_params: Record<string, unknown>
   mode_params: Record<string, Record<string, unknown>>
+  updated_at: string | null
+}
+
+export type AdminGenerationPrice = {
+  generation_type: GenerationMode
+  credits: number
+  is_active: boolean
   updated_at: string
 }
 
@@ -171,6 +195,19 @@ export type AdminUser = {
   updated_at: string
 }
 
+export type AdminCreditTransaction = {
+  id: string
+  user_id: string
+  amount: number
+  balance_after: number
+  kind: string
+  reference_type: string | null
+  reference_id: string | null
+  reason: string | null
+  actor_user_id: string | null
+  created_at: string
+}
+
 export type AdminPayment = {
   id: string
   user_id: string
@@ -180,22 +217,41 @@ export type AdminPayment = {
   currency: string
   status: string
   yookassa_payment_id: string | null
+  receipt_email: string | null
+  refund_id: string | null
+  refund_status: string | null
   provider_error: string | null
   created_at: string
   updated_at: string
   paid_at: string | null
+  refunded_at: string | null
 }
+
+export type BroadcastSegment = 'all' | 'with_credits' | 'without_credits'
 
 export type AdminBroadcast = {
   id: string
   text: string
   status: string
+  segment: BroadcastSegment
   recipient_count: number
   sent_count: number
   failed_count: number
+  scheduled_at: string | null
+  canceled_at: string | null
   created_at: string
   updated_at: string
   sent_at: string | null
+}
+
+export type AdminOperationalSettings = {
+  auth_rate_limit_per_minute: number | null
+  generation_rate_limit_per_minute: number | null
+  payment_rate_limit_per_minute: number | null
+  media_retention_days: number | null
+  backup_interval_hours: number | null
+  backup_retention_days: number | null
+  updated_at: string | null
 }
 
 export type AdminAudit = {

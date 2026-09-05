@@ -47,7 +47,7 @@ rollback_code() {
     --exclude='.release/' \
     "${restore_root}/" "${app_dir}/"
 
-  compose build api bot worker frontend || true
+  compose build api bot worker broadcast-worker maintenance frontend || true
   compose up -d --remove-orphans || true
   compose up -d --force-recreate nginx || true
 }
@@ -80,6 +80,7 @@ rm -rf "${candidate}"
 mkdir -p "${candidate}"
 tar -xzf "${archive}" -C "${candidate}"
 python3 -m compileall -q "${candidate}/backend/app" "${candidate}/backend/scripts"
+bash -n "${candidate}/ops/backup_runtime.sh" "${candidate}/ops/restore_runtime.sh"
 
 if find "${app_dir}" -mindepth 1 -maxdepth 1 \
   ! -name '.release' ! -name 'backups' -print -quit | grep -q .; then
@@ -91,6 +92,9 @@ if find "${app_dir}" -mindepth 1 -maxdepth 1 \
     --exclude='./backend/.env' \
     -czf "${code_backup}" -C "${app_dir}" .
   sha256sum "${code_backup}" > "${code_backup}.sha256"
+
+  echo "Creating runtime DB/media backup before migrations"
+  "${candidate}/ops/backup_runtime.sh" "${app_dir}" "${app_dir}/backups/runtime" force
 fi
 
 mutation_started=1
@@ -102,21 +106,19 @@ rsync --archive --delete \
   "${candidate}/" "${app_dir}/"
 
 cd "${app_dir}"
-echo "Building API, bot, worker and frontend"
-compose build api bot worker frontend
+echo "Building API, bot, workers and frontend"
+compose build api bot worker broadcast-worker maintenance frontend
 
 echo "Applying database migrations"
 compose run --rm api alembic upgrade head
 
 echo "Starting production stack"
 compose up -d --remove-orphans
-# The Nginx config is bind-mounted and Docker service IPs can change on rollout.
-# Recreate it so every release loads the current config and upstream addresses.
 compose up -d --force-recreate nginx
 
 health_passed=0
 for attempt in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:18000/health/live >/dev/null 2>&1 && \
+  if curl -fsS http://127.0.0.1:18000/health/ready >/dev/null 2>&1 && \
      curl -fsS http://127.0.0.1:18080/health/live >/dev/null 2>&1; then
     health_passed=1
     break
@@ -127,12 +129,12 @@ done
 if (( health_passed == 0 )); then
   echo "HTTP health check failed" >&2
   compose ps >&2 || true
-  compose logs --tail 100 api nginx frontend worker 2>&1 \
+  compose logs --tail 100 api nginx frontend worker broadcast-worker maintenance 2>&1 \
     | sed -E 's/(token|password|secret|api[_-]?key)=([^[:space:]]+)/\1=[REDACTED]/Ig' >&2 || true
   exit 1
 fi
 
-for service in bot worker; do
+for service in bot worker broadcast-worker maintenance; do
   service_id=$(compose ps -q "${service}")
   if [[ -z "${service_id}" ]] || [[ "$(docker inspect -f '{{.State.Running}}' "${service_id}" 2>/dev/null || true)" != "true" ]]; then
     echo "${service} container is not running" >&2
@@ -141,6 +143,13 @@ for service in bot worker; do
     exit 1
   fi
 done
+
+if command -v crontab >/dev/null 2>&1; then
+  backup_cron="17 * * * * ${app_dir}/ops/backup_runtime.sh ${app_dir} ${app_dir}/backups/runtime scheduled >> ${app_dir}/backups/runtime.log 2>&1 # AuRoom runtime backup"
+  (crontab -l 2>/dev/null | grep -v 'AuRoom runtime backup' || true; echo "${backup_cron}") | crontab -
+else
+  echo "Warning: crontab is unavailable; scheduled runtime backups will require an external scheduler" >&2
+fi
 
 rollout_succeeded=1
 echo "Deploy SHA: ${release_sha}"

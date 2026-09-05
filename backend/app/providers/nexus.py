@@ -39,15 +39,16 @@ class NexusImageProvider:
         *,
         model_name: str,
         prompt: str,
-        image_url: str,
+        image_url: str | None,
         model_params: dict[str, object] | None,
         idempotency_key: str,
     ) -> NexusImageResult:
         params: dict[str, object] = {
             "model_name": model_name,
             "prompt": prompt,
-            "image_urls": [image_url],
         }
+        if image_url:
+            params["image_urls"] = [image_url]
         params.update(model_params or {})
 
         headers = {**self.headers, "Idempotency-Key": idempotency_key}
