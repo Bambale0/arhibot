@@ -21,6 +21,7 @@ from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
 from app.repositories.projects import ProjectRepository
 from app.services.asset_service import AssetService
+from app.services.credit_service import CreditService
 from app.services.generation_service import GENERATION_QUEUE_KEY
 
 logger = logging.getLogger(__name__)
@@ -39,14 +40,24 @@ async def _download_image(url: str, settings: Settings) -> bytes:
     return data
 
 
-async def _mark_failed(generation_id: UUID, error: Exception) -> None:
+async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -> None:
     async with get_session_factory()() as session:
         generation = await session.get(Generation, generation_id)
-        if generation is None:
+        if generation is None or generation.status == GenerationStatus.COMPLETED:
             return
         generation.status = GenerationStatus.FAILED
-        generation.error = str(error)[:1000] or error.__class__.__name__
+        generation.error = str(error)[:1000] or "Generation failed"
         generation.completed_at = datetime.now(UTC)
+        if generation.credits_charged > 0:
+            await CreditService(session).apply(
+                user_id=generation.user_id,
+                amount=generation.credits_charged,
+                kind="generation_refund",
+                idempotency_key=f"generation:{generation.id}:refund",
+                reference_type="generation",
+                reference_id=str(generation.id),
+                reason=generation.error,
+            )
         await session.commit()
 
 
@@ -56,12 +67,20 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         if generation is None or generation.status != GenerationStatus.QUEUED:
             return
         project = await session.get(Project, generation.project_id)
-        input_asset = await session.get(Asset, generation.input_asset_id)
-        if project is None or input_asset is None or input_asset.deleted_at is not None:
-            generation.status = GenerationStatus.FAILED
-            generation.error = "Generation input is no longer available."
-            generation.completed_at = datetime.now(UTC)
-            await session.commit()
+        input_asset = (
+            await session.get(Asset, generation.input_asset_id)
+            if generation.input_asset_id is not None
+            else None
+        )
+        if project is None:
+            await session.rollback()
+            await _mark_failed_and_refund(generation_id, "Generation project is no longer available.")
+            return
+        if generation.input_asset_id is not None and (
+            input_asset is None or input_asset.deleted_at is not None
+        ):
+            await session.rollback()
+            await _mark_failed_and_refund(generation_id, "Generation input is no longer available.")
             return
 
         admin_repository = AdminRepository(session)
@@ -73,10 +92,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             or prompt_template is None
             or not prompt_template.template.strip()
         ):
-            generation.status = GenerationStatus.FAILED
-            generation.error = "Generation is not configured in AuRoom admin."
-            generation.completed_at = datetime.now(UTC)
-            await session.commit()
+            await session.rollback()
+            await _mark_failed_and_refund(
+                generation_id,
+                "Generation is not configured in AuRoom admin.",
+            )
             return
 
         generation.status = GenerationStatus.PROCESSING
@@ -89,7 +109,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             ProjectRepository(session),
             settings,
         )
-        source_url = asset_service.storage.public_url(input_asset.storage_path)
+        source_url = (
+            asset_service.storage.public_url(input_asset.storage_path)
+            if input_asset is not None
+            else None
+        )
         prompt = build_generation_prompt(prompt_template.template, generation.prompt, project)
         mode_params = dict((runtime.mode_params or {}).get(generation.type.value) or {})
         primary_params = {**dict(runtime.primary_params or {}), **mode_params}
@@ -174,7 +198,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             )
     except Exception as exc:
         logger.exception("Generation %s failed", generation_id)
-        await _mark_failed(generation_id, exc)
+        await _mark_failed_and_refund(generation_id, exc)
 
 
 async def run_worker() -> None:
