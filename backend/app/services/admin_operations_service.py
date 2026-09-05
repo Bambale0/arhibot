@@ -22,6 +22,7 @@ class AdminOperationsService:
             generation_rate_limit_per_minute=row.generation_rate_limit_per_minute if row else None,
             payment_rate_limit_per_minute=row.payment_rate_limit_per_minute if row else None,
             media_retention_days=row.media_retention_days if row else None,
+            backup_interval_hours=row.backup_interval_hours if row else None,
             backup_retention_days=row.backup_retention_days if row else None,
             updated_at=row.updated_at if row else None,
         )
