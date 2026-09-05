@@ -25,6 +25,7 @@ from app.services.credit_service import CreditService
 from app.services.generation_service import GENERATION_QUEUE_KEY
 
 logger = logging.getLogger(__name__)
+GENERATION_PROCESSING_KEY = "auroom:generation_processing"
 
 
 async def _download_image(url: str, settings: Settings) -> bytes:
@@ -201,20 +202,69 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         await _mark_failed_and_refund(generation_id, exc)
 
 
+async def _recover_reserved_jobs() -> None:
+    reserved = await redis_client.lrange(GENERATION_PROCESSING_KEY, 0, -1)
+    if not reserved:
+        return
+    recovered = 0
+    for raw_id in reserved:
+        try:
+            generation_id = UUID(raw_id)
+        except (TypeError, ValueError):
+            await redis_client.lrem(GENERATION_PROCESSING_KEY, 0, raw_id)
+            continue
+        should_requeue = False
+        async with get_session_factory()() as session:
+            generation = await session.get(Generation, generation_id)
+            if generation is not None and generation.status in {
+                GenerationStatus.QUEUED,
+                GenerationStatus.PROCESSING,
+            }:
+                generation.status = GenerationStatus.QUEUED
+                generation.started_at = None
+                generation.error = None
+                await session.commit()
+                should_requeue = True
+        await redis_client.lrem(GENERATION_PROCESSING_KEY, 0, raw_id)
+        if should_requeue:
+            await redis_client.rpush(GENERATION_QUEUE_KEY, raw_id)
+            recovered += 1
+    if recovered:
+        logger.warning("Recovered %s reserved generation job(s) after worker restart", recovered)
+
+
+async def _reserve_job() -> str | None:
+    raw_id = await redis_client.lmove(
+        GENERATION_QUEUE_KEY,
+        GENERATION_PROCESSING_KEY,
+        "LEFT",
+        "RIGHT",
+    )
+    return raw_id
+
+
+async def _ack_job(raw_id: str) -> None:
+    await redis_client.lrem(GENERATION_PROCESSING_KEY, 1, raw_id)
+
+
 async def run_worker() -> None:
     settings = get_settings()
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    logger.info("AuRoom generation worker started; runtime model configuration is DB-backed")
+    logger.info("AuRoom generation worker started; queue uses reserve/ack recovery")
+    await _recover_reserved_jobs()
     while True:
         try:
-            raw_id = await redis_client.lpop(GENERATION_QUEUE_KEY)
+            raw_id = await _reserve_job()
             if raw_id is None:
                 await asyncio.sleep(1)
                 continue
-            await process_generation(UUID(raw_id), settings)
+            try:
+                await process_generation(UUID(raw_id), settings)
+            finally:
+                await _ack_job(raw_id)
         except asyncio.CancelledError:
             raise
         except Exception:
