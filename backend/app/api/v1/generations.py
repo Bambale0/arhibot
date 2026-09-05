@@ -58,6 +58,28 @@ async def list_generations(
     )
 
 
+@router.post(
+    "/{generation_id}/repeat",
+    operation_id="repeatGeneration",
+    summary="Repeat generation",
+    description="Creates a new generation from a previous request using the current credit price and runtime configuration.",
+    response_model=GenerationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        404: {"model": ProblemDetails, "description": "Generation or its source is not available."},
+        409: {"model": ProblemDetails, "description": "Insufficient credits."},
+        503: {"model": ProblemDetails, "description": "Provider, price, or queue unavailable."},
+    },
+)
+async def repeat_generation(
+    generation_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> GenerationResponse:
+    return await build_generation_service(session, settings).repeat(user, generation_id)
+
+
 @router.get(
     "/{generation_id}",
     operation_id="getGeneration",
