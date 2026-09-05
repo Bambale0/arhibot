@@ -305,6 +305,7 @@ async def run_worker() -> None:
         try:
             reconcile_tick += 1
             if reconcile_tick >= 60:
+                await _recover_reserved_jobs()
                 await _reconcile_database_jobs(settings)
                 reconcile_tick = 0
             raw_id = await _reserve_job()
@@ -318,6 +319,7 @@ async def run_worker() -> None:
                 # on worker restart instead of silently losing a paid generation.
                 logger.exception("Reserved generation %s crashed before terminal state", raw_id)
                 await asyncio.sleep(2)
+                await _recover_reserved_jobs()
             else:
                 await _ack_job(raw_id)
         except asyncio.CancelledError:

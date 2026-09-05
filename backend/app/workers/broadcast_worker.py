@@ -219,7 +219,7 @@ async def run_worker() -> None:
                 await _schedule_due_campaigns()
                 schedule_tick = 0
             if recovery_tick >= 60:
-                await _rehydrate_database_campaigns()
+                await _recover_interrupted_work()
                 recovery_tick = 0
             raw_id = await _reserve_campaign()
             if raw_id is None:
@@ -232,6 +232,7 @@ async def run_worker() -> None:
                 # Startup recovery will return it to the queue without losing recipients.
                 logger.exception("Reserved broadcast %s crashed before a safe checkpoint", raw_id)
                 await asyncio.sleep(2)
+                await _recover_interrupted_work()
             else:
                 await _ack_campaign(raw_id)
         except asyncio.CancelledError:
