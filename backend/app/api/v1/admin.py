@@ -14,6 +14,8 @@ from app.schemas.admin import (
     BillingPlanCreate,
     BillingPlanResponse,
     BillingPlanUpdate,
+    BillingSettingsResponse,
+    BillingSettingsUpdate,
     BroadcastCreate,
     BroadcastResponse,
     CreditAdjustmentRequest,
@@ -29,6 +31,7 @@ from app.schemas.admin import (
     PromptTemplateUpdate,
     UserStateUpdate,
 )
+from app.services.admin_billing_service import AdminBillingService
 from app.services.admin_credit_service import AdminCreditService
 from app.services.admin_service import AdminService
 
@@ -86,6 +89,25 @@ async def archive_tariff(
     settings: Settings = Depends(get_settings),
 ) -> BillingPlanResponse:
     return await service(session, settings).archive_plan(admin, plan_id)
+
+
+@router.get("/billing-settings", response_model=BillingSettingsResponse)
+async def get_billing_settings(
+    _admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> BillingSettingsResponse:
+    return await AdminBillingService(session, settings).get_settings()
+
+
+@router.put("/billing-settings", response_model=BillingSettingsResponse)
+async def update_billing_settings(
+    payload: BillingSettingsUpdate,
+    admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> BillingSettingsResponse:
+    return await AdminBillingService(session, settings).update_settings(admin, payload)
 
 
 @router.get("/ideas", response_model=list[IdeaResponse])
@@ -231,7 +253,7 @@ async def list_payments(
     session: DbSession,
     settings: Settings = Depends(get_settings),
 ) -> list[AdminPaymentResponse]:
-    return await service(session, settings).list_payments()
+    return await AdminBillingService(session, settings).list_payments()
 
 
 @router.post("/payments/{payment_id}/reconcile", response_model=AdminPaymentResponse)
@@ -241,7 +263,17 @@ async def reconcile_payment(
     session: DbSession,
     settings: Settings = Depends(get_settings),
 ) -> AdminPaymentResponse:
-    return await service(session, settings).reconcile_payment(admin, payment_id)
+    return await AdminBillingService(session, settings).reconcile_payment(admin, payment_id)
+
+
+@router.post("/payments/{payment_id}/refund", response_model=AdminPaymentResponse)
+async def refund_payment(
+    payment_id: UUID,
+    admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> AdminPaymentResponse:
+    return await AdminBillingService(session, settings).refund_payment(admin, payment_id)
 
 
 @router.get("/broadcasts", response_model=list[BroadcastResponse])
