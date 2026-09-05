@@ -100,3 +100,15 @@ class BroadcastRepository:
             row.last_error = None
             count += 1
         return count
+
+    async def reset_interrupted_deliveries(self) -> int:
+        rows = await self.session.execute(
+            select(BroadcastDelivery).where(BroadcastDelivery.status == "sending")
+        )
+        count = 0
+        for row in rows.scalars().all():
+            row.status = "retry"
+            row.next_attempt_at = None
+            row.last_error = "Delivery interrupted by worker restart"
+            count += 1
+        return count
