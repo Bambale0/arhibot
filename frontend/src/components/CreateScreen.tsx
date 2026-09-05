@@ -10,7 +10,15 @@ const modes: { id: GenerationMode; title: string; text: string; icon: typeof Hom
   { id: 'interior', title: 'Дизайн помещений', text: 'Создать интерьерную концепцию комнаты по фотографии и пожеланиям.', icon: RoomIcon },
 ]
 
-export function CreateScreen({ initialMode, onOpenProject }: { initialMode?: GenerationMode | null; onOpenProject: (project: Project, mode: GenerationMode) => void }) {
+export function CreateScreen({
+  initialMode,
+  initialPrompt,
+  onOpenProject,
+}: {
+  initialMode?: GenerationMode | null
+  initialPrompt?: string
+  onOpenProject: (project: Project, mode: GenerationMode, prompt?: string) => void
+}) {
   const [mode, setMode] = useState<GenerationMode>(initialMode || 'floor_plan')
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
@@ -31,7 +39,7 @@ export function CreateScreen({ initialMode, onOpenProject }: { initialMode?: Gen
         <div className="section-title-row"><div><span className="eyebrow">ПРОЕКТ</span><h2>Выберите проект</h2></div><span>{projects.length} активных</span></div>
         {error && <div className="banner-error">{error}</div>}
         {loading ? <div className="create-project-list"><div className="project-pick skeleton-card"/></div> : projects.length ? (
-          <div className="create-project-list">{projects.map((project) => <button className="project-pick" key={project.id} onClick={() => onOpenProject(project, mode)}><div><strong>{project.name}</strong><span>{project.context.architecture_style || 'Без выбранного стиля'}</span></div><ArrowIcon /></button>)}</div>
+          <div className="create-project-list">{projects.map((project) => <button className="project-pick" key={project.id} onClick={() => onOpenProject(project, mode, initialPrompt)}><div><strong>{project.name}</strong><span>{project.context.architecture_style || 'Без выбранного стиля'}</span></div><ArrowIcon /></button>)}</div>
         ) : <div className="empty-inline"><p>Пока нет активных проектов. Создайте проект на главной странице и вернитесь сюда.</p></div>}
       </div>
     </section>
