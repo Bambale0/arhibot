@@ -200,7 +200,12 @@ async def run_worker() -> None:
                 continue
             try:
                 await _process_campaign(UUID(raw_id), api)
-            finally:
+            except Exception:
+                # Keep the campaign reserved on unexpected infrastructure errors.
+                # Startup recovery will return it to the queue without losing recipients.
+                logger.exception("Reserved broadcast %s crashed before a safe checkpoint", raw_id)
+                await asyncio.sleep(2)
+            else:
                 await _ack_campaign(raw_id)
         except asyncio.CancelledError:
             raise
