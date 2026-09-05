@@ -9,7 +9,7 @@ from app.core.errors import AppError
 from app.core.security import decode_access_token
 from app.db.models.users import User
 from app.db.session import get_db_session
-from app.domain.users.enums import UserStatus
+from app.domain.users.enums import UserRole, UserStatus
 from app.repositories.users import UserRepository
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -46,5 +46,17 @@ async def get_current_user(
     return user
 
 
+async def get_current_admin(user: Annotated[User, Depends(get_current_user)]) -> User:
+    if user.role not in {UserRole.ADMIN, UserRole.SUPERADMIN}:
+        raise AppError(
+            type="admin_access_required",
+            title="Admin access required",
+            status=403,
+            detail="This operation is available only to AuRoom administrators.",
+        )
+    return user
+
+
 CurrentUser = Annotated[User, Depends(get_current_user)]
+AdminUser = Annotated[User, Depends(get_current_admin)]
 DbSession = Annotated[AsyncSession, Depends(get_db_session)]
