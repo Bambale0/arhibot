@@ -63,7 +63,9 @@ Current control-plane coverage must include:
 - AI model/runtime selection;
 - users and credit balance adjustments;
 - payments visibility/reconciliation status;
-- broadcasts.
+- broadcasts;
+- Telegram bot public content/branding;
+- operational runtime policies such as rate limits, retention, and backup cadence.
 
 Any new operator-managed feature must ship with web-admin management in the same change unless the user explicitly scopes it out.
 

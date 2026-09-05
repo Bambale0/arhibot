@@ -63,3 +63,7 @@ The per-recipient delivery state for one Broadcast Campaign. Delivery attempts a
 ## Operational Settings
 
 Admin-managed runtime protections and lifecycle settings such as rate limits, media retention, backup cadence, and backup retention. These are operational controls, not Secret Configuration.
+
+## Telegram Content
+
+The public non-secret bot copy managed through the Control Plane: bot name, descriptions, `/start` welcome text, Mini App button text and command descriptions. The Telegram token remains Secret Configuration. The bot periodically refreshes Telegram Content from the AuRoom API so copy changes do not require a release.

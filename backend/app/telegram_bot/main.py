@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -8,17 +9,18 @@ from urllib.request import Request, urlopen
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
+CONTENT_REFRESH_SECONDS = 30
 
-BOT_NAME = "AuRoom"
-BOT_SHORT_DESCRIPTION = "AI-концепции фасадов и интерьеров"
-BOT_DESCRIPTION = (
-    "AuRoom — AI-сервис для архитектурных и интерьерных концепций. "
-    "Загрузите фото и создайте вариант фасада, интерьера или редизайна."
-)
-START_TEXT = (
-    "Привет! Это AuRoom — AI-сервис для концепций фасадов и интерьеров.\n\n"
-    "Откройте AuRoom, создайте проект, загрузите фото и выберите сценарий."
-)
+
+@dataclass(frozen=True, slots=True)
+class TelegramBotContent:
+    bot_name: str
+    short_description: str
+    description: str
+    start_text: str
+    open_button_text: str
+    start_command_description: str
+    app_command_description: str
 
 
 class TelegramApiError(RuntimeError):
@@ -27,12 +29,44 @@ class TelegramApiError(RuntimeError):
         self.retry_after = retry_after
 
 
-def mini_app_keyboard(webapp_url: str) -> dict[str, Any]:
+def parse_bot_content(payload: object) -> TelegramBotContent | None:
+    if not isinstance(payload, dict) or payload.get("configured") is not True:
+        return None
+    keys = (
+        "bot_name",
+        "short_description",
+        "description",
+        "start_text",
+        "open_button_text",
+        "start_command_description",
+        "app_command_description",
+    )
+    values: dict[str, str] = {}
+    for key in keys:
+        value = payload.get(key)
+        if not isinstance(value, str) or not value.strip():
+            return None
+        values[key] = value.strip()
+    return TelegramBotContent(**values)
+
+
+def load_bot_content(url: str) -> TelegramBotContent | None:
+    request = Request(url, headers={"Accept": "application/json"}, method="GET")
+    try:
+        with urlopen(request, timeout=5) as response:  # noqa: S310 - configured AuRoom API URL
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
+        logger.warning("Could not load Telegram content from AuRoom API: %s", exc)
+        return None
+    return parse_bot_content(payload)
+
+
+def mini_app_keyboard(webapp_url: str, content: TelegramBotContent) -> dict[str, Any]:
     return {
         "inline_keyboard": [
             [
                 {
-                    "text": "Открыть AuRoom",
+                    "text": content.open_button_text,
                     "web_app": {"url": webapp_url},
                 }
             ]
@@ -40,10 +74,10 @@ def mini_app_keyboard(webapp_url: str) -> dict[str, Any]:
     }
 
 
-def menu_button(webapp_url: str) -> dict[str, Any]:
+def menu_button(webapp_url: str, content: TelegramBotContent) -> dict[str, Any]:
     return {
         "type": "web_app",
-        "text": "Открыть AuRoom",
+        "text": content.open_button_text,
         "web_app": {"url": webapp_url},
     }
 
@@ -52,7 +86,13 @@ class TelegramBotApi:
     def __init__(self, token: str) -> None:
         self.base_url = f"https://api.telegram.org/bot{token}"
 
-    def call(self, method: str, payload: dict[str, Any] | None = None, *, timeout: int = 15) -> Any:
+    def call(
+        self,
+        method: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        timeout: int = 15,
+    ) -> Any:
         body = json.dumps(payload or {}).encode("utf-8")
         request = Request(
             f"{self.base_url}/{method}",
@@ -98,13 +138,18 @@ def normalize_command(text: str) -> str:
     return token.split("@", maxsplit=1)[0].lower()
 
 
-def send_start(api: TelegramBotApi, chat_id: int | str, webapp_url: str) -> None:
+def send_start(
+    api: TelegramBotApi,
+    chat_id: int | str,
+    webapp_url: str,
+    content: TelegramBotContent,
+) -> None:
     api.call(
         "sendMessage",
         {
             "chat_id": chat_id,
-            "text": START_TEXT,
-            "reply_markup": mini_app_keyboard(webapp_url),
+            "text": content.start_text,
+            "reply_markup": mini_app_keyboard(webapp_url, content),
         },
     )
 
@@ -116,29 +161,44 @@ def _best_effort_setup(api: TelegramBotApi, method: str, payload: dict[str, Any]
         logger.warning("Telegram setup skipped for %s: %s", method, exc)
 
 
-def configure_bot(api: TelegramBotApi, webapp_url: str) -> None:
-    # Polling requires webhook mode to be disabled. Branding/menu updates are
-    # best-effort: Telegram can rate-limit these calls, and that must never stop
-    # the bot from answering /start or /app.
-    api.call("deleteWebhook", {"drop_pending_updates": False})
-    _best_effort_setup(api, "setMyName", {"name": BOT_NAME})
+def apply_bot_content(
+    api: TelegramBotApi,
+    webapp_url: str,
+    content: TelegramBotContent,
+) -> None:
+    _best_effort_setup(api, "setMyName", {"name": content.bot_name})
     _best_effort_setup(
         api,
         "setMyShortDescription",
-        {"short_description": BOT_SHORT_DESCRIPTION},
+        {"short_description": content.short_description},
     )
-    _best_effort_setup(api, "setMyDescription", {"description": BOT_DESCRIPTION})
+    _best_effort_setup(api, "setMyDescription", {"description": content.description})
     _best_effort_setup(
         api,
         "setMyCommands",
         {
             "commands": [
-                {"command": "start", "description": "Открыть AuRoom"},
-                {"command": "app", "description": "Запустить AuRoom"},
+                {"command": "start", "description": content.start_command_description},
+                {"command": "app", "description": content.app_command_description},
             ]
         },
     )
-    _best_effort_setup(api, "setChatMenuButton", {"menu_button": menu_button(webapp_url)})
+    _best_effort_setup(
+        api,
+        "setChatMenuButton",
+        {"menu_button": menu_button(webapp_url, content)},
+    )
+
+
+def configure_bot(
+    api: TelegramBotApi,
+    webapp_url: str,
+    content: TelegramBotContent,
+) -> None:
+    # Polling requires webhook mode to be disabled. Branding/menu updates remain
+    # best-effort because Telegram can rate-limit them independently of polling.
+    api.call("deleteWebhook", {"drop_pending_updates": False})
+    apply_bot_content(api, webapp_url, content)
 
 
 def run_polling() -> None:
@@ -159,12 +219,31 @@ def run_polling() -> None:
     )
 
     api = TelegramBotApi(token)
-    configure_bot(api, webapp_url)
+    content_url = (
+        f"{settings.bot_internal_api_base_url.rstrip('/')}"
+        f"{settings.api_v1_prefix}/telegram/content"
+    )
+    content = load_bot_content(content_url)
+    api.call("deleteWebhook", {"drop_pending_updates": False})
+    if content is not None:
+        apply_bot_content(api, webapp_url, content)
+    else:
+        logger.warning("Telegram content is not configured yet; polling will stay online")
     logger.info("Telegram bot started with Mini App URL %s", webapp_url)
 
     offset: int | None = None
+    last_content_refresh = time.monotonic()
     while True:
         try:
+            now = time.monotonic()
+            if now - last_content_refresh >= CONTENT_REFRESH_SECONDS:
+                loaded = load_bot_content(content_url)
+                last_content_refresh = now
+                if loaded is not None and loaded != content:
+                    content = loaded
+                    apply_bot_content(api, webapp_url, content)
+                    logger.info("Telegram bot content refreshed from control plane")
+
             payload: dict[str, Any] = {
                 "timeout": 30,
                 "allowed_updates": ["message"],
@@ -186,7 +265,14 @@ def run_polling() -> None:
                     continue
 
                 if normalize_command(text) in {"/start", "/app"}:
-                    send_start(api, chat_id, webapp_url)
+                    if content is None:
+                        content = load_bot_content(content_url)
+                        if content is not None:
+                            apply_bot_content(api, webapp_url, content)
+                    if content is not None:
+                        send_start(api, chat_id, webapp_url, content)
+                    else:
+                        logger.warning("Cannot answer Telegram command until content is configured")
         except TelegramApiError as exc:
             logger.warning("Telegram polling error: %s", exc)
             time.sleep(max(exc.retry_after or 2, 1))

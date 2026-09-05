@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_webapp_url: str | None = None
     telegram_init_data_ttl_seconds: int = 3600
+    bot_internal_api_base_url: str = "http://api:8000"
 
     # Provider credentials/infrastructure only. Model selection and model params live in DB/admin.
     nexus_api_key: str | None = None

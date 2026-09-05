@@ -81,6 +81,7 @@ The control plane manages:
 - users, account state, roles and audited credit adjustments;
 - YooKassa payment visibility/reconciliation;
 - Telegram broadcast campaigns;
+- Telegram bot public content/branding;
 - audit log.
 
 ## Backend
