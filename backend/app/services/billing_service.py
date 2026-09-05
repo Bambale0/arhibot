@@ -1,53 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.errors import AppError
+from app.db.models.admin import BillingPlan
 from app.db.models.billing import BillingPayment
 from app.db.models.users import User
 from app.providers.yookassa import YooKassaError, YooKassaPayment, YooKassaProvider
 from app.repositories.billing import BillingRepository
-from app.schemas.billing import (
-    BillingPackageResponse,
-    BillingPaymentResponse,
-    BillingSummaryResponse,
-)
-
-
-@dataclass(frozen=True, slots=True)
-class BillingPackage:
-    code: str
-    credits: int
-    amount: Decimal
-    label: str
-    currency: str = "RUB"
-
-
-def parse_packages(raw: str) -> list[BillingPackage]:
-    packages: list[BillingPackage] = []
-    for entry in raw.split(";"):
-        entry = entry.strip()
-        if not entry:
-            continue
-        parts = [part.strip() for part in entry.split(":", 3)]
-        if len(parts) != 4:
-            raise ValueError("YOOKASSA_PACKAGES entries must be code:credits:amount:label")
-        code, credits_raw, amount_raw, label = parts
-        try:
-            credits = int(credits_raw)
-            amount = Decimal(amount_raw).quantize(Decimal("0.01"))
-        except (ValueError, InvalidOperation) as exc:
-            raise ValueError("Invalid YOOKASSA_PACKAGES credits or amount") from exc
-        if not code or not label or credits <= 0 or amount <= 0:
-            raise ValueError("YOOKASSA_PACKAGES values must be positive and non-empty")
-        packages.append(BillingPackage(code=code, credits=credits, amount=amount, label=label))
-    return packages
+from app.schemas.billing import BillingPackageResponse, BillingPaymentResponse, BillingSummaryResponse
 
 
 class BillingService:
@@ -55,28 +21,26 @@ class BillingService:
         self.session = session
         self.settings = settings
         self.repository = BillingRepository(session)
-        self.packages = parse_packages(settings.yookassa_packages)
 
     @property
-    def enabled(self) -> bool:
+    def provider_configured(self) -> bool:
         return bool(
             (self.settings.yookassa_shop_id or "").strip()
             and (self.settings.yookassa_secret_key or "").strip()
-            and self.packages
         )
 
-    def _package(self, code: str) -> BillingPackage:
-        package = next((item for item in self.packages if item.code == code), None)
-        if package is None:
-            raise AppError(
-                type="billing_package_not_found",
-                title="Billing package not found",
-                status=404,
-                detail="The selected billing package is not available.",
-            )
-        return package
+    @staticmethod
+    def _package_response(plan: BillingPlan) -> BillingPackageResponse:
+        return BillingPackageResponse(
+            code=plan.code,
+            label=plan.name,
+            credits=plan.credits,
+            amount=plan.amount_value,
+            currency=plan.currency,
+        )
 
-    def _payment_response(self, payment: BillingPayment) -> BillingPaymentResponse:
+    @staticmethod
+    def _payment_response(payment: BillingPayment) -> BillingPaymentResponse:
         return BillingPaymentResponse(
             id=payment.id,
             package_code=payment.package_code,
@@ -91,31 +55,31 @@ class BillingService:
 
     async def summary(self, user: User) -> BillingSummaryResponse:
         payments = await self.repository.list_owned(user.id)
+        plans = await self.repository.list_plans(active_only=True)
         return BillingSummaryResponse(
-            enabled=self.enabled,
+            enabled=self.provider_configured and bool(plans),
             credits_balance=user.credits_balance,
-            packages=[
-                BillingPackageResponse(
-                    code=item.code,
-                    label=item.label,
-                    credits=item.credits,
-                    amount=item.amount,
-                    currency=item.currency,
-                )
-                for item in self.packages
-            ],
+            packages=[self._package_response(item) for item in plans],
             payments=[self._payment_response(item) for item in payments],
         )
 
     async def create_payment(self, user: User, package_code: str) -> BillingPaymentResponse:
-        if not self.enabled:
+        if not self.provider_configured:
             raise AppError(
                 type="billing_not_configured",
                 title="Billing is not configured",
                 status=503,
-                detail="YooKassa credentials or billing packages are not configured.",
+                detail="YooKassa credentials are not configured.",
             )
-        package = self._package(package_code)
+        package = await self.repository.get_active_plan_by_code(package_code)
+        if package is None:
+            raise AppError(
+                type="billing_package_not_found",
+                title="Billing package not found",
+                status=404,
+                detail="The selected billing package is not available.",
+            )
+
         local_id = uuid4()
         idempotence_key = str(uuid4())
         payment = BillingPayment(
@@ -123,7 +87,7 @@ class BillingService:
             user_id=user.id,
             package_code=package.code,
             credits=package.credits,
-            amount_value=package.amount,
+            amount_value=Decimal(package.amount_value).quantize(Decimal("0.01")),
             currency=package.currency,
             status="creating",
             idempotence_key=idempotence_key,
@@ -151,9 +115,9 @@ class BillingService:
         provider = YooKassaProvider(self.settings)
         try:
             remote = await provider.create_payment(
-                amount=package.amount,
-                currency=package.currency,
-                description=f"AuRoom: {package.label}",
+                amount=payment.amount_value,
+                currency=payment.currency,
+                description=f"AuRoom: {package.name}",
                 return_url=return_url,
                 metadata={
                     "billing_payment_id": str(payment.id),
@@ -190,11 +154,20 @@ class BillingService:
                 status=404,
                 detail="The payment does not exist or belongs to another user.",
             )
-        if payment.yookassa_payment_id and payment.status not in {"succeeded", "canceled", "failed"} and self.enabled:
-            remote = await YooKassaProvider(self.settings).get_payment(payment.yookassa_payment_id)
-            await self.apply_remote(remote, expected_local_id=payment.id)
+        if (
+            payment.yookassa_payment_id
+            and payment.status not in {"succeeded", "canceled", "failed"}
+            and self.provider_configured
+        ):
+            await self.sync_payment(payment)
             payment = await self.repository.get_owned(payment.id, user.id) or payment
         return self._payment_response(payment)
+
+    async def sync_payment(self, payment: BillingPayment) -> None:
+        if not payment.yookassa_payment_id or not self.provider_configured:
+            return
+        remote = await YooKassaProvider(self.settings).get_payment(payment.yookassa_payment_id)
+        await self.apply_remote(remote, expected_local_id=payment.id)
 
     async def apply_remote(self, remote: YooKassaPayment, *, expected_local_id: UUID | None = None) -> None:
         local_id_raw = remote.metadata.get("billing_payment_id")
@@ -242,7 +215,7 @@ class BillingService:
         provider_id = str(obj.get("id") or "").strip()
         if event not in {"payment.succeeded", "payment.canceled", "payment.waiting_for_capture"} or not provider_id:
             return
-        if not self.enabled:
+        if not self.provider_configured:
             raise YooKassaError("YooKassa webhook received while billing is not configured")
         remote = await YooKassaProvider(self.settings).get_payment(provider_id)
         await self.apply_remote(remote)
