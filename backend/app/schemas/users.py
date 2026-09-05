@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.domain.users.enums import UserStatus
+from app.domain.users.enums import UserRole, UserStatus
 
 
 class UserCapabilities(BaseModel):
@@ -20,6 +20,7 @@ class CurrentUserResponse(BaseModel):
                     "display_name": "Игорь",
                     "avatar_url": None,
                     "status": "active",
+                    "role": "user",
                     "credits_balance": 0,
                     "created_at": "2026-09-03T11:40:32Z",
                     "updated_at": "2026-09-03T11:40:32Z",
@@ -33,6 +34,7 @@ class CurrentUserResponse(BaseModel):
     display_name: str
     avatar_url: str | None = None
     status: UserStatus
+    role: UserRole
     credits_balance: int = 0
     created_at: datetime
     updated_at: datetime
