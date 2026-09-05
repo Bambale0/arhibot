@@ -107,6 +107,22 @@ def upgrade() -> None:
     )
     op.create_index("ix_admin_audit_log_created_at", "admin_audit_log", ["created_at"], unique=False)
 
+    # Structural bootstrap only: business values remain empty and are configured in web admin.
+    op.execute(
+        sa.text(
+            "INSERT INTO generation_runtime_settings "
+            "(id, primary_model, primary_params, fallback_params, mode_params) "
+            "VALUES (1, '', '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)"
+        )
+    )
+    for generation_type in ("floor_plan", "facade", "master_plan", "interior"):
+        op.execute(
+            sa.text(
+                "INSERT INTO generation_prompt_templates (generation_type, template) "
+                "VALUES (:generation_type, '')"
+            ).bindparams(generation_type=generation_type)
+        )
+
 
 def downgrade() -> None:
     op.drop_index("ix_admin_audit_log_created_at", table_name="admin_audit_log")
