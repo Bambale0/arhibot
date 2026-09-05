@@ -8,6 +8,7 @@ from app.db.models.admin import (
 )
 from app.db.models.assets import Asset
 from app.db.models.billing import BillingPayment
+from app.db.models.credits import CreditTransaction, GenerationCreditPrice
 from app.db.models.generations import Generation
 from app.db.models.projects import Project
 from app.db.models.users import AuthIdentity, RefreshToken, User
@@ -19,7 +20,9 @@ __all__ = [
     "BillingPayment",
     "BillingPlan",
     "BroadcastCampaign",
+    "CreditTransaction",
     "Generation",
+    "GenerationCreditPrice",
     "GenerationPromptTemplate",
     "GenerationRuntimeSettings",
     "IdeaTemplate",
