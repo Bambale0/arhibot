@@ -22,7 +22,9 @@ router = APIRouter(prefix="/generations", tags=["Generations"])
     responses={
         401: {"model": ProblemDetails, "description": "Authentication required."},
         404: {"model": ProblemDetails, "description": "Project or input asset not found."},
-        503: {"model": ProblemDetails, "description": "Queue unavailable."},
+        409: {"model": ProblemDetails, "description": "Insufficient credits."},
+        422: {"model": ProblemDetails, "description": "Reference image required for this scenario."},
+        503: {"model": ProblemDetails, "description": "Provider, price, or queue unavailable."},
     },
 )
 async def create_generation(
@@ -44,12 +46,14 @@ async def list_generations(
     user: CurrentUser,
     session: DbSession,
     project_id: UUID | None = None,
+    cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     settings: Settings = Depends(get_settings),
 ) -> GenerationListResponse:
     return await build_generation_service(session, settings).list(
         user,
         project_id=project_id,
+        cursor=cursor,
         limit=limit,
     )
 
