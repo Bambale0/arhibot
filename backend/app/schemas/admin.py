@@ -45,7 +45,7 @@ class BillingPlanUpdate(BaseModel):
     amount: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     is_active: bool | None = None
-    sort_order: int | None = Field(default=None, ge=-100_000, le=100_000)
+    sort_order: int | None = Field(default=0, ge=-100_000, le=100_000)
 
     @field_validator("currency")
     @classmethod
@@ -100,6 +100,7 @@ class IdeaCreate(BaseModel):
     text: str = Field(min_length=1, max_length=3000)
     generation_type: GenerationType
     prompt: str = Field(default="", max_length=5000)
+    image_asset_id: UUID | None = None
     is_active: bool = True
     sort_order: int = Field(default=0, ge=-100_000, le=100_000)
 
@@ -110,6 +111,7 @@ class IdeaUpdate(BaseModel):
     text: str | None = Field(default=None, min_length=1, max_length=3000)
     generation_type: GenerationType | None = None
     prompt: str | None = Field(default=None, max_length=5000)
+    image_asset_id: UUID | None = None
     is_active: bool | None = None
     sort_order: int | None = Field(default=None, ge=-100_000, le=100_000)
 
@@ -121,6 +123,8 @@ class IdeaResponse(BaseModel):
     text: str
     generation_type: GenerationType
     prompt: str
+    image_asset_id: UUID | None
+    image_url: str | None
     is_active: bool
     sort_order: int
     created_at: datetime
@@ -134,6 +138,7 @@ class PublicIdeaResponse(BaseModel):
     text: str
     generation_type: GenerationType
     prompt: str
+    image_url: str | None
 
 
 class GenerationRuntimeUpdate(BaseModel):
