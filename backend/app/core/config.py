@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     app_env: str = "local"
     app_name: str = "AuRoom API"
-    app_version: str = "0.5.0"
+    app_version: str = "0.6.0"
     api_v1_prefix: str = "/api/v1"
     log_level: str = "INFO"
 
@@ -35,18 +35,17 @@ class Settings(BaseSettings):
     telegram_webapp_url: str | None = None
     telegram_init_data_ttl_seconds: int = 3600
 
+    # Provider credentials/infrastructure only. Model selection and model params live in DB/admin.
     nexus_api_key: str | None = None
     nexus_base_url: str = "https://nexusapi.dev"
-    nexus_primary_model: str = "nano-banana-pro"
-    nexus_fallback_model: str = "gpt-image-2"
     nexus_task_timeout_seconds: int = 180
     nexus_poll_interval_seconds: float = 2.0
 
+    # YooKassa credentials/infrastructure only. Tariffs live in DB/admin.
     yookassa_shop_id: str | None = None
     yookassa_secret_key: str | None = None
     yookassa_base_url: str = "https://api.yookassa.ru/v3"
     yookassa_return_url: str | None = None
-    yookassa_packages: str = ""
 
     media_root: str = "/data/media"
     media_public_base_url: str = "http://localhost:8000"
