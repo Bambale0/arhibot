@@ -8,6 +8,7 @@ from app.providers.yookassa import YooKassaError
 from app.schemas.billing import BillingPaymentCreate, BillingPaymentResponse, BillingSummaryResponse
 from app.schemas.errors import ProblemDetails
 from app.services.billing_service import build_billing_service
+from app.services.rate_limit_service import RateLimitService
 
 router = APIRouter(prefix="/billing", tags=["Billing"])
 
@@ -35,6 +36,7 @@ async def billing_summary(
     responses={
         404: {"model": ProblemDetails, "description": "Billing package not found."},
         422: {"model": ProblemDetails, "description": "Receipt email is required."},
+        429: {"model": ProblemDetails, "description": "Rate limit exceeded."},
         502: {"model": ProblemDetails, "description": "YooKassa unavailable."},
         503: {"model": ProblemDetails, "description": "Billing not configured."},
     },
@@ -45,6 +47,7 @@ async def create_billing_payment(
     session: DbSession,
     settings: Settings = Depends(get_settings),
 ) -> BillingPaymentResponse:
+    await RateLimitService(session).enforce("payment", str(user.id))
     return await build_billing_service(session, settings).create_payment(
         user,
         payload.package_code,
