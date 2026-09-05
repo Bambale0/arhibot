@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.admin import BillingPlan
-from app.db.models.billing import BillingPayment
+from app.db.models.billing import BillingPayment, BillingSettings
 
 
 class BillingRepository:
@@ -16,6 +16,16 @@ class BillingRepository:
 
     def add_plan(self, plan: BillingPlan) -> None:
         self.session.add(plan)
+
+    def add_settings(self, settings: BillingSettings) -> None:
+        self.session.add(settings)
+
+    async def get_settings(self, *, for_update: bool = False) -> BillingSettings | None:
+        stmt = select(BillingSettings).where(BillingSettings.id == 1)
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def get_active_plan_by_code(self, code: str) -> BillingPlan | None:
         result = await self.session.execute(
@@ -51,10 +61,24 @@ class BillingRepository:
     async def get_payment(self, payment_id: UUID) -> BillingPayment | None:
         return await self.session.get(BillingPayment, payment_id)
 
+    async def get_payment_for_update(self, payment_id: UUID) -> BillingPayment | None:
+        result = await self.session.execute(
+            select(BillingPayment).where(BillingPayment.id == payment_id).with_for_update()
+        )
+        return result.scalar_one_or_none()
+
     async def get_by_provider_id_for_update(self, provider_id: str) -> BillingPayment | None:
         result = await self.session.execute(
             select(BillingPayment)
             .where(BillingPayment.yookassa_payment_id == provider_id)
+            .with_for_update()
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_refund_id_for_update(self, refund_id: str) -> BillingPayment | None:
+        result = await self.session.execute(
+            select(BillingPayment)
+            .where(BillingPayment.refund_id == refund_id)
             .with_for_update()
         )
         return result.scalar_one_or_none()
