@@ -34,6 +34,7 @@ from app.schemas.admin import (
 from app.services.admin_billing_service import AdminBillingService
 from app.services.admin_credit_service import AdminCreditService
 from app.services.admin_service import AdminService
+from app.services.idea_service import AdminIdeaService
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -116,7 +117,7 @@ async def list_ideas(
     session: DbSession,
     settings: Settings = Depends(get_settings),
 ) -> list[IdeaResponse]:
-    return await service(session, settings).list_ideas()
+    return await AdminIdeaService(session, settings).list_all()
 
 
 @router.post("/ideas", response_model=IdeaResponse, status_code=status.HTTP_201_CREATED)
@@ -126,7 +127,7 @@ async def create_idea(
     session: DbSession,
     settings: Settings = Depends(get_settings),
 ) -> IdeaResponse:
-    return await service(session, settings).create_idea(admin, payload)
+    return await AdminIdeaService(session, settings).create(admin, payload)
 
 
 @router.patch("/ideas/{idea_id}", response_model=IdeaResponse)
@@ -137,7 +138,7 @@ async def update_idea(
     session: DbSession,
     settings: Settings = Depends(get_settings),
 ) -> IdeaResponse:
-    return await service(session, settings).update_idea(admin, idea_id, payload)
+    return await AdminIdeaService(session, settings).update(admin, idea_id, payload)
 
 
 @router.delete("/ideas/{idea_id}", response_model=IdeaResponse)
@@ -147,7 +148,7 @@ async def archive_idea(
     session: DbSession,
     settings: Settings = Depends(get_settings),
 ) -> IdeaResponse:
-    return await service(session, settings).archive_idea(admin, idea_id)
+    return await AdminIdeaService(session, settings).archive(admin, idea_id)
 
 
 @router.get("/generation", response_model=GenerationRuntimeResponse)
