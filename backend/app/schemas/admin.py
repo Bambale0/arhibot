@@ -287,6 +287,18 @@ class BroadcastResponse(BaseModel):
     sent_at: datetime | None
 
 
+class OperationalSettingsUpdate(BaseModel):
+    auth_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
+    generation_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
+    payment_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
+    media_retention_days: int | None = Field(default=None, ge=1, le=3650)
+    backup_retention_days: int | None = Field(default=None, ge=1, le=3650)
+
+
+class OperationalSettingsResponse(OperationalSettingsUpdate):
+    updated_at: datetime | None = None
+
+
 class AuditLogResponse(BaseModel):
     id: UUID
     actor_user_id: UUID | None
