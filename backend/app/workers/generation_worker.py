@@ -67,7 +67,12 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         admin_repository = AdminRepository(session)
         runtime = await admin_repository.get_generation_settings()
         prompt_template = await admin_repository.get_prompt_template(generation.type.value)
-        if runtime is None or prompt_template is None:
+        if (
+            runtime is None
+            or not runtime.primary_model.strip()
+            or prompt_template is None
+            or not prompt_template.template.strip()
+        ):
             generation.status = GenerationStatus.FAILED
             generation.error = "Generation is not configured in AuRoom admin."
             generation.completed_at = datetime.now(UTC)
