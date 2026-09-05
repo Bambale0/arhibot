@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -45,7 +45,7 @@ class BillingPlanUpdate(BaseModel):
     amount: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     is_active: bool | None = None
-    sort_order: int | None = Field(default=0, ge=-100_000, le=100_000)
+    sort_order: int | None = Field(default=None, ge=-100_000, le=100_000)
 
     @field_validator("currency")
     @classmethod
@@ -263,17 +263,25 @@ class AdminPaymentResponse(BaseModel):
     refunded_at: datetime | None
 
 
+BroadcastSegment = Literal["all", "with_credits", "without_credits"]
+
+
 class BroadcastCreate(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
+    segment: BroadcastSegment = "all"
+    scheduled_at: datetime | None = None
 
 
 class BroadcastResponse(BaseModel):
     id: UUID
     text: str
     status: str
+    segment: BroadcastSegment
     recipient_count: int
     sent_count: int
     failed_count: int
+    scheduled_at: datetime | None
+    canceled_at: datetime | None
     created_at: datetime
     updated_at: datetime
     sent_at: datetime | None
