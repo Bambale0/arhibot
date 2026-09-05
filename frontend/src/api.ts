@@ -1,15 +1,26 @@
 import type {
+  AdminAudit,
+  AdminBroadcast,
+  AdminGenerationSettings,
+  AdminIdea,
+  AdminOverview,
+  AdminPayment,
+  AdminPrompt,
+  AdminTariff,
+  AdminUser,
   Asset,
   BillingPayment,
   BillingSummary,
   Generation,
   GenerationList,
   GenerationMode,
+  Idea,
   Project,
   ProjectContext,
   ProjectList,
   TokenPair,
   User,
+  UserRole,
 } from './types'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
@@ -222,6 +233,10 @@ export function listGenerations(projectId?: string, limit = 50) {
   return request<GenerationList>(`/generations?${params}`)
 }
 
+export function listIdeas() {
+  return request<Idea[]>('/ideas')
+}
+
 export function getBillingSummary() {
   return request<BillingSummary>('/billing')
 }
@@ -236,4 +251,161 @@ export function createBillingPayment(packageCode: string) {
 
 export function getBillingPayment(paymentId: string) {
   return request<BillingPayment>(`/billing/payments/${paymentId}`)
+}
+
+export function adminOverview() {
+  return request<AdminOverview>('/admin/overview')
+}
+
+export function adminListTariffs() {
+  return request<AdminTariff[]>('/admin/tariffs')
+}
+
+export function adminCreateTariff(payload: {
+  code: string
+  name: string
+  description?: string | null
+  credits: number
+  amount: string
+  currency: string
+  is_active: boolean
+  sort_order: number
+}) {
+  return request<AdminTariff>('/admin/tariffs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function adminUpdateTariff(id: string, payload: Partial<{
+  name: string
+  description: string | null
+  credits: number
+  amount: string
+  currency: string
+  is_active: boolean
+  sort_order: number
+}>) {
+  return request<AdminTariff>(`/admin/tariffs/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function adminArchiveTariff(id: string) {
+  return request<AdminTariff>(`/admin/tariffs/${id}`, { method: 'DELETE' })
+}
+
+export function adminListIdeas() {
+  return request<AdminIdea[]>('/admin/ideas')
+}
+
+export function adminCreateIdea(payload: {
+  title: string
+  category: string
+  text: string
+  generation_type: GenerationMode
+  prompt: string
+  is_active: boolean
+  sort_order: number
+}) {
+  return request<AdminIdea>('/admin/ideas', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function adminUpdateIdea(id: string, payload: Partial<{
+  title: string
+  category: string
+  text: string
+  generation_type: GenerationMode
+  prompt: string
+  is_active: boolean
+  sort_order: number
+}>) {
+  return request<AdminIdea>(`/admin/ideas/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function adminArchiveIdea(id: string) {
+  return request<AdminIdea>(`/admin/ideas/${id}`, { method: 'DELETE' })
+}
+
+export function adminGetGenerationSettings() {
+  return request<AdminGenerationSettings>('/admin/generation')
+}
+
+export function adminUpdateGenerationSettings(payload: Omit<AdminGenerationSettings, 'updated_at'>) {
+  return request<AdminGenerationSettings>('/admin/generation', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function adminListPrompts() {
+  return request<AdminPrompt[]>('/admin/prompts')
+}
+
+export function adminUpdatePrompt(mode: GenerationMode, template: string) {
+  return request<AdminPrompt>(`/admin/prompts/${mode}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ template }),
+  })
+}
+
+export function adminListUsers() {
+  return request<AdminUser[]>('/admin/users')
+}
+
+export function adminAdjustCredits(userId: string, delta: number, reason: string) {
+  return request<AdminUser>(`/admin/users/${userId}/credits`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ delta, reason }),
+  })
+}
+
+export function adminUpdateUser(userId: string, payload: { status?: 'active' | 'disabled'; role?: UserRole }) {
+  return request<AdminUser>(`/admin/users/${userId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function adminListPayments() {
+  return request<AdminPayment[]>('/admin/payments')
+}
+
+export function adminReconcilePayment(paymentId: string) {
+  return request<AdminPayment>(`/admin/payments/${paymentId}/reconcile`, { method: 'POST' })
+}
+
+export function adminListBroadcasts() {
+  return request<AdminBroadcast[]>('/admin/broadcasts')
+}
+
+export function adminCreateBroadcast(text: string) {
+  return request<AdminBroadcast>('/admin/broadcasts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+}
+
+export function adminSendBroadcast(id: string) {
+  return request<AdminBroadcast>(`/admin/broadcasts/${id}/send`, { method: 'POST' })
+}
+
+export function adminListAudit() {
+  return request<AdminAudit[]>('/admin/audit')
 }
