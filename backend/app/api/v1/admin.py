@@ -33,12 +33,14 @@ from app.schemas.admin import (
     PromptTemplateUpdate,
     UserStateUpdate,
 )
+from app.schemas.telegram import TelegramContentResponse, TelegramContentUpdate
 from app.services.admin_billing_service import AdminBillingService
 from app.services.admin_credit_service import AdminCreditService
 from app.services.admin_operations_service import AdminOperationsService
 from app.services.admin_service import AdminService
 from app.services.broadcast_service import BroadcastService
 from app.services.idea_service import AdminIdeaService
+from app.services.telegram_content_service import TelegramContentService
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -190,6 +192,20 @@ async def retry_broadcast(campaign_id: UUID, admin: AdminUser, session: DbSessio
 @router.post("/broadcasts/{campaign_id}/cancel", response_model=BroadcastResponse)
 async def cancel_broadcast(campaign_id: UUID, admin: AdminUser, session: DbSession) -> BroadcastResponse:
     return await BroadcastService(session).cancel(admin, campaign_id)
+
+
+@router.get("/telegram-content", response_model=TelegramContentResponse)
+async def get_telegram_content(_admin: AdminUser, session: DbSession) -> TelegramContentResponse:
+    return await TelegramContentService(session).get()
+
+
+@router.put("/telegram-content", response_model=TelegramContentResponse)
+async def update_telegram_content(
+    payload: TelegramContentUpdate,
+    admin: AdminUser,
+    session: DbSession,
+) -> TelegramContentResponse:
+    return await TelegramContentService(session).update(admin, payload)
 
 
 @router.get("/operations", response_model=OperationalSettingsResponse)

@@ -244,6 +244,19 @@ export type AdminBroadcast = {
   sent_at: string | null
 }
 
+
+export type AdminTelegramContent = {
+  configured: boolean
+  bot_name: string | null
+  short_description: string | null
+  description: string | null
+  start_text: string | null
+  open_button_text: string | null
+  start_command_description: string | null
+  app_command_description: string | null
+  updated_at: string | null
+}
+
 export type AdminOperationalSettings = {
   auth_rate_limit_per_minute: number | null
   generation_rate_limit_per_minute: number | null

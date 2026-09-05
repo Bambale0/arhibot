@@ -13,6 +13,7 @@ import type {
   AdminPayment,
   AdminPrompt,
   AdminTariff,
+  AdminTelegramContent,
   AdminUser,
   BroadcastSegment,
   GenerationMode,
@@ -26,7 +27,7 @@ const modes: { id: GenerationMode; label: string }[] = [
   { id: 'interior', label: 'Интерьер' },
 ]
 
-type Tab = 'tariffs' | 'ideas' | 'generation' | 'users' | 'payments' | 'broadcasts' | 'system' | 'audit'
+type Tab = 'tariffs' | 'ideas' | 'generation' | 'users' | 'payments' | 'broadcasts' | 'telegram' | 'system' | 'audit'
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : 'Не удалось выполнить операцию'
@@ -59,6 +60,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   const [payments, setPayments] = useState<AdminPayment[]>([])
   const [broadcasts, setBroadcasts] = useState<AdminBroadcast[]>([])
   const [operations, setOperations] = useState<AdminOperationalSettings | null>(null)
+  const [telegramContent, setTelegramContent] = useState<AdminTelegramContent | null>(null)
   const [audit, setAudit] = useState<AdminAudit[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -66,7 +68,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   async function reload() {
     setError(null)
     try {
-      const [o, t, bs, i, g, gp, p, u, tx, pay, b, ops, a] = await Promise.all([
+      const [o, t, bs, i, g, gp, p, u, tx, pay, b, tg, ops, a] = await Promise.all([
         api.adminOverview(),
         api.adminListTariffs(),
         api.adminGetBillingSettings(),
@@ -78,6 +80,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
         api.adminListCreditTransactions(),
         api.adminListPayments(),
         api.adminListBroadcasts(),
+        api.adminGetTelegramContent(),
         api.adminGetOperationalSettings(),
         api.adminListAudit(),
       ])
@@ -92,6 +95,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       setTransactions(tx)
       setPayments(pay)
       setBroadcasts(b)
+      setTelegramContent(tg)
       setOperations(ops)
       setAudit(a)
     } catch (err) {
@@ -114,7 +118,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       <nav className="admin-tabs">
         {([
           ['tariffs','Тарифы и касса'], ['ideas','Идеи'], ['generation','AI и стоимость'], ['users','Пользователи и кредиты'],
-          ['payments','Платежи'], ['broadcasts','Рассылки'], ['system','Система'], ['audit','Аудит'],
+          ['payments','Платежи'], ['broadcasts','Рассылки'], ['telegram','Telegram'], ['system','Система'], ['audit','Аудит'],
         ] as [Tab,string][]).map(([id,label]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>)}
       </nav>
       {loading ? <div className="admin-loading">Загружаем настройки…</div> : (
@@ -125,6 +129,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
           {tab === 'users' && <UsersPanel items={users} transactions={transactions} onItems={setUsers} onTransactions={setTransactions} onError={setError} />}
           {tab === 'payments' && <PaymentsPanel items={payments} onItems={setPayments} onError={setError} />}
           {tab === 'broadcasts' && <BroadcastsPanel items={broadcasts} onItems={setBroadcasts} onError={setError} />}
+          {tab === 'telegram' && telegramContent && <TelegramContentPanel settings={telegramContent} onSaved={setTelegramContent} onError={setError} />}
           {tab === 'system' && operations && <OperationsPanel settings={operations} onSaved={setOperations} onError={setError} />}
           {tab === 'audit' && <AuditPanel items={audit} />}
         </div>
@@ -302,6 +307,20 @@ function BroadcastsPanel({items,onItems,onError}:{items:AdminBroadcast[];onItems
   async function create(){if(!text.trim())return;setBusy('create');try{const iso=scheduled?new Date(scheduled).toISOString():null;const saved=await api.adminCreateBroadcast(text.trim(),segment,iso);onItems([saved,...items]);setText('');setScheduled('')}catch(err){onError(errorText(err))}finally{setBusy(null)}}
   async function action(item:AdminBroadcast,kind:'send'|'retry'|'cancel'){setBusy(item.id);try{const saved=kind==='send'?await api.adminSendBroadcast(item.id):kind==='retry'?await api.adminRetryBroadcast(item.id):await api.adminCancelBroadcast(item.id);onItems(items.map(x=>x.id===saved.id?saved:x))}catch(err){onError(errorText(err))}finally{setBusy(null)}}
   return <section className="admin-panel"><div className="admin-panel-title"><div><h2>Рассылки</h2><p>Очередь, сегменты, расписание и повторы работают через отдельный worker.</p></div></div><div className="admin-broadcast-compose"><textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Сообщение пользователям Telegram"/><div className="admin-broadcast-options"><select value={segment} onChange={e=>setSegment(e.target.value as BroadcastSegment)}><option value="all">Все активные</option><option value="with_credits">С кредитами</option><option value="without_credits">Без кредитов</option></select><input type="datetime-local" value={scheduled} onChange={e=>setScheduled(e.target.value)}/><button className="primary-button" disabled={busy!==null||!text.trim()} onClick={()=>void create()}>{scheduled?'Запланировать':'Создать'}</button></div></div><div className="admin-card-list">{items.map(item=><article className="admin-list-card" key={item.id}><div><strong>{item.text}</strong><span>{item.segment} · {item.status} · {item.sent_count}/{item.recipient_count} · ошибок {item.failed_count}</span><p>{item.scheduled_at?`Запланировано: ${formatDate(item.scheduled_at)}`:item.sent_at?`Завершено: ${formatDate(item.sent_at)}`:`Создано: ${formatDate(item.created_at)}`}</p></div><div>{!['sent','canceled','scheduled'].includes(item.status)&&<button disabled={busy!==null} onClick={()=>void action(item,'send')}>В очередь</button>}{item.status==='scheduled'&&<span className="status-pill">Запланирована</span>}{item.failed_count>0&&<button disabled={busy!==null} onClick={()=>void action(item,'retry')}>Повторить ошибки</button>}{!['sent','canceled'].includes(item.status)&&<button disabled={busy!==null} onClick={()=>void action(item,'cancel')}>Отменить</button>}</div></article>)}</div></section>
+}
+
+function TelegramContentPanel({settings,onSaved,onError}:{settings:AdminTelegramContent;onSaved:(v:AdminTelegramContent)=>void;onError:(v:string|null)=>void}){
+  const [botName,setBotName]=useState(settings.bot_name||'')
+  const [shortDescription,setShortDescription]=useState(settings.short_description||'')
+  const [description,setDescription]=useState(settings.description||'')
+  const [startText,setStartText]=useState(settings.start_text||'')
+  const [buttonText,setButtonText]=useState(settings.open_button_text||'')
+  const [startCommand,setStartCommand]=useState(settings.start_command_description||'')
+  const [appCommand,setAppCommand]=useState(settings.app_command_description||'')
+  const [busy,setBusy]=useState(false)
+  async function save(){setBusy(true);onError(null);try{onSaved(await api.adminUpdateTelegramContent({bot_name:botName.trim(),short_description:shortDescription.trim(),description:description.trim(),start_text:startText.trim(),open_button_text:buttonText.trim(),start_command_description:startCommand.trim(),app_command_description:appCommand.trim()}))}catch(err){onError(errorText(err))}finally{setBusy(false)}}
+  const valid=[botName,shortDescription,description,startText,buttonText,startCommand,appCommand].every(value=>value.trim())
+  return <section className="admin-panel"><div className="admin-panel-title"><div><h2>Telegram</h2><p>Имя, описание, приветствие и подписи кнопок бота хранятся в БД.</p></div><span className={`status-pill ${settings.configured?'':'muted'}`}>{settings.configured?'Настроено':'Нужно заполнить'}</span></div><div className="admin-form-grid"><label>Имя бота<input maxLength={64} value={botName} onChange={e=>setBotName(e.target.value)}/></label><label>Кнопка Mini App<input maxLength={64} value={buttonText} onChange={e=>setButtonText(e.target.value)}/></label><label className="admin-span-2">Короткое описание<input maxLength={120} value={shortDescription} onChange={e=>setShortDescription(e.target.value)}/></label><label className="admin-span-2">Описание<textarea maxLength={512} value={description} onChange={e=>setDescription(e.target.value)}/></label><label className="admin-span-2">Текст /start и /app<textarea maxLength={4096} value={startText} onChange={e=>setStartText(e.target.value)}/></label><label>/start — описание команды<input maxLength={256} value={startCommand} onChange={e=>setStartCommand(e.target.value)}/></label><label>/app — описание команды<input maxLength={256} value={appCommand} onChange={e=>setAppCommand(e.target.value)}/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy||!valid} onClick={()=>void save()}>Сохранить Telegram</button></div></div><div className="admin-subpanel"><small>Изменения применяются ботом автоматически после включения DB-конфига. Последнее изменение: {formatDate(settings.updated_at)}</small></div></section>
 }
 
 function OperationsPanel({settings,onSaved,onError}:{settings:AdminOperationalSettings;onSaved:(v:AdminOperationalSettings)=>void;onError:(v:string|null)=>void}){

@@ -7,6 +7,7 @@ from app.api.v1.billing import router as billing_router
 from app.api.v1.generations import router as generations_router
 from app.api.v1.ideas import router as ideas_router
 from app.api.v1.projects import router as projects_router
+from app.api.v1.telegram import router as telegram_router
 from app.api.v1.users import router as users_router
 from app.core.config import get_settings
 from app.schemas.api import ApiInfoResponse
@@ -34,4 +35,5 @@ router.include_router(assets_router)
 router.include_router(generations_router)
 router.include_router(ideas_router)
 router.include_router(billing_router)
+router.include_router(telegram_router)
 router.include_router(admin_router)

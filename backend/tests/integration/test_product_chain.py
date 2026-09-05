@@ -375,3 +375,32 @@ async def test_workers_rehydrate_accepted_jobs_when_redis_transport_is_lost() ->
             BROADCAST_QUEUE_KEY,
             BROADCAST_PROCESSING_KEY,
         )
+
+
+@pytest.mark.asyncio
+async def test_telegram_content_is_admin_managed_and_publicly_readable() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _tokens, headers = await _register_admin(client)
+        payload = {
+            "bot_name": "Integration Bot",
+            "short_description": "Integration short description",
+            "description": "Integration Telegram bot description",
+            "start_text": "Integration welcome text",
+            "open_button_text": "Open integration app",
+            "start_command_description": "Open integration",
+            "app_command_description": "Launch integration",
+        }
+        updated = await client.put(
+            "/api/v1/admin/telegram-content",
+            headers=headers,
+            json=payload,
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["configured"] is True
+
+        public = await client.get("/api/v1/telegram/content")
+        assert public.status_code == 200, public.text
+        assert public.json()["configured"] is True
+        for key, value in payload.items():
+            assert public.json()[key] == value

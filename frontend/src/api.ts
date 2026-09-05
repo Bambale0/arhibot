@@ -11,6 +11,7 @@ import type {
   AdminPayment,
   AdminPrompt,
   AdminTariff,
+  AdminTelegramContent,
   AdminUser,
   Asset,
   BillingPayment,
@@ -181,6 +182,9 @@ export function adminCreateBroadcast(text: string, segment: BroadcastSegment = '
 export function adminSendBroadcast(id: string) { return request<AdminBroadcast>(`/admin/broadcasts/${id}/send`, { method: 'POST' }) }
 export function adminRetryBroadcast(id: string) { return request<AdminBroadcast>(`/admin/broadcasts/${id}/retry`, { method: 'POST' }) }
 export function adminCancelBroadcast(id: string) { return request<AdminBroadcast>(`/admin/broadcasts/${id}/cancel`, { method: 'POST' }) }
+
+export function adminGetTelegramContent() { return request<AdminTelegramContent>('/admin/telegram-content') }
+export function adminUpdateTelegramContent(payload: Omit<AdminTelegramContent, 'configured' | 'updated_at'>) { return request<AdminTelegramContent>('/admin/telegram-content', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
 
 export function adminGetOperationalSettings() { return request<AdminOperationalSettings>('/admin/operations') }
 export function adminUpdateOperationalSettings(payload: Omit<AdminOperationalSettings, 'updated_at'>) { return request<AdminOperationalSettings>('/admin/operations', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
