@@ -17,6 +17,7 @@ from app.schemas.assets import AssetResponse
 from app.schemas.generations import GenerationCreate, GenerationListResponse, GenerationResponse
 from app.services.asset_service import AssetService, build_asset_service
 from app.services.credit_service import CreditService
+from app.services.rate_limit_service import RateLimitService
 
 GENERATION_QUEUE_KEY = "auroom:generation_queue"
 REFERENCE_REQUIRED_TYPES = {GenerationType.FACADE, GenerationType.INTERIOR}
@@ -34,6 +35,7 @@ class GenerationService:
         self.asset_service: AssetService = build_asset_service(session, settings)
 
     async def create(self, user: User, payload: GenerationCreate) -> GenerationResponse:
+        await RateLimitService(self.session).enforce("generation", str(user.id))
         if not (self.settings.nexus_api_key or "").strip():
             raise AppError(
                 type="generation_provider_not_configured",
