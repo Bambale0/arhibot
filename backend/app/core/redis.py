@@ -31,6 +31,27 @@ class LazyRedisClient:
         result = await self._get().lpop(key)
         return None if result is None else str(result)
 
+    async def lmove(self, source: str, destination: str, wherefrom: str, whereto: str) -> str | None:
+        result = await self._get().lmove(source, destination, wherefrom, whereto)
+        return None if result is None else str(result)
+
+    async def lrange(self, key: str, start: int, end: int) -> list[str]:
+        return [str(value) for value in await self._get().lrange(key, start, end)]
+
+    async def lrem(self, key: str, count: int, value: str) -> int:
+        return int(await self._get().lrem(key, count, value))
+
+    async def incr(self, key: str) -> int:
+        return int(await self._get().incr(key))
+
+    async def expire(self, key: str, seconds: int) -> bool:
+        return bool(await self._get().expire(key, seconds))
+
+    async def delete(self, *keys: str) -> int:
+        if not keys:
+            return 0
+        return int(await self._get().delete(*keys))
+
     async def aclose(self) -> None:
         if self._client is not None:
             await self._client.aclose()
