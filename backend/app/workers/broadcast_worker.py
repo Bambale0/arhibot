@@ -15,6 +15,7 @@ from app.telegram_bot.main import TelegramApiError, TelegramBotApi
 
 logger = logging.getLogger(__name__)
 MAX_DELIVERY_ATTEMPTS = 3
+BROADCAST_PROCESSING_KEY = "auroom:broadcast_processing"
 
 
 async def _prepare_campaign(campaign_id: UUID) -> bool:
@@ -79,6 +80,7 @@ async def _deliver_one(campaign_id: UUID, api: TelegramBotApi) -> bool:
         delivery.status = "sending"
         delivery.attempts += 1
         attempt = delivery.attempts
+        delivery_id = delivery.id
         recipient_id = delivery.recipient_id
         text = campaign.text
         await session.commit()
@@ -87,7 +89,7 @@ async def _deliver_one(campaign_id: UUID, api: TelegramBotApi) -> bool:
         await asyncio.to_thread(api.call, "sendMessage", {"chat_id": recipient_id, "text": text})
     except TelegramApiError as exc:
         async with get_session_factory()() as session:
-            delivery = await session.get(BroadcastDelivery, delivery.id)
+            delivery = await session.get(BroadcastDelivery, delivery_id)
             if delivery is None:
                 return True
             delivery.last_error = str(exc)[:1000]
@@ -102,7 +104,7 @@ async def _deliver_one(campaign_id: UUID, api: TelegramBotApi) -> bool:
         return True
     except Exception as exc:
         async with get_session_factory()() as session:
-            delivery = await session.get(BroadcastDelivery, delivery.id)
+            delivery = await session.get(BroadcastDelivery, delivery_id)
             if delivery is None:
                 return True
             delivery.last_error = str(exc)[:1000]
@@ -116,7 +118,7 @@ async def _deliver_one(campaign_id: UUID, api: TelegramBotApi) -> bool:
         return True
 
     async with get_session_factory()() as session:
-        delivery = await session.get(BroadcastDelivery, delivery.id)
+        delivery = await session.get(BroadcastDelivery, delivery_id)
         if delivery is not None:
             delivery.status = "sent"
             delivery.last_error = None
@@ -138,6 +140,41 @@ async def _process_campaign(campaign_id: UUID, api: TelegramBotApi) -> None:
             await asyncio.sleep(1)
 
 
+async def _recover_interrupted_work() -> None:
+    async with get_session_factory()() as session:
+        repository = BroadcastRepository(session)
+        reset = await repository.reset_interrupted_deliveries()
+        if reset:
+            await session.commit()
+            logger.warning("Recovered %s interrupted broadcast delivery record(s)", reset)
+
+    reserved = await redis_client.lrange(BROADCAST_PROCESSING_KEY, 0, -1)
+    recovered = 0
+    for raw_id in reserved:
+        await redis_client.lrem(BROADCAST_PROCESSING_KEY, 0, raw_id)
+        try:
+            UUID(raw_id)
+        except (TypeError, ValueError):
+            continue
+        await redis_client.rpush(BROADCAST_QUEUE_KEY, raw_id)
+        recovered += 1
+    if recovered:
+        logger.warning("Recovered %s reserved broadcast campaign(s)", recovered)
+
+
+async def _reserve_campaign() -> str | None:
+    return await redis_client.lmove(
+        BROADCAST_QUEUE_KEY,
+        BROADCAST_PROCESSING_KEY,
+        "LEFT",
+        "RIGHT",
+    )
+
+
+async def _ack_campaign(raw_id: str) -> None:
+    await redis_client.lrem(BROADCAST_PROCESSING_KEY, 1, raw_id)
+
+
 async def run_worker() -> None:
     settings = get_settings()
     token = (settings.telegram_bot_token or "").strip()
@@ -148,7 +185,8 @@ async def run_worker() -> None:
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    logger.info("AuRoom broadcast worker started")
+    logger.info("AuRoom broadcast worker started; queue uses reserve/ack recovery")
+    await _recover_interrupted_work()
     schedule_tick = 0
     while True:
         try:
@@ -156,11 +194,14 @@ async def run_worker() -> None:
             if schedule_tick >= 5:
                 await _schedule_due_campaigns()
                 schedule_tick = 0
-            raw_id = await redis_client.lpop(BROADCAST_QUEUE_KEY)
+            raw_id = await _reserve_campaign()
             if raw_id is None:
                 await asyncio.sleep(1)
                 continue
-            await _process_campaign(UUID(raw_id), api)
+            try:
+                await _process_campaign(UUID(raw_id), api)
+            finally:
+                await _ack_campaign(raw_id)
         except asyncio.CancelledError:
             raise
         except Exception:
