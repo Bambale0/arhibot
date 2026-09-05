@@ -8,7 +8,9 @@ function rub(value: string) {
   return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(Number(value))
 }
 
-function paymentLabel(status: string) {
+function paymentLabel(status: string, refundStatus?: string | null) {
+  if (refundStatus === 'succeeded') return 'Возвращён'
+  if (refundStatus && refundStatus !== 'failed') return 'Возврат обрабатывается'
   if (status === 'succeeded') return 'Оплачен'
   if (status === 'canceled') return 'Отменён'
   if (status === 'failed') return 'Ошибка'
@@ -18,6 +20,7 @@ function paymentLabel(status: string) {
 export function ProfileScreen({ onOpenAdmin }: { onOpenAdmin?: () => void }) {
   const { user, signOut } = useAuth()
   const [billing, setBilling] = useState<BillingSummary | null>(null)
+  const [receiptEmail, setReceiptEmail] = useState('')
   const [billingError, setBillingError] = useState<string | null>(null)
   const [busyPackage, setBusyPackage] = useState<string | null>(null)
   const [paymentNotice, setPaymentNotice] = useState<string | null>(null)
@@ -42,11 +45,13 @@ export function ProfileScreen({ onOpenAdmin }: { onOpenAdmin?: () => void }) {
           const payment = await api.getBillingPayment(paymentId)
           if (!cancelled) {
             setPaymentNotice(
-              payment.status === 'succeeded'
-                ? `Оплата прошла. Начислено ${payment.credits} кредитов.`
-                : payment.status === 'canceled'
-                  ? 'Платёж отменён.'
-                  : 'Платёж обрабатывается. Баланс обновится после подтверждения YooKassa.',
+              payment.refund_status === 'succeeded'
+                ? 'Платёж возвращён. Кредиты списаны с баланса.'
+                : payment.status === 'succeeded'
+                  ? `Оплата прошла. Начислено ${payment.credits} кредитов.`
+                  : payment.status === 'canceled'
+                    ? 'Платёж отменён.'
+                    : 'Платёж обрабатывается. Баланс обновится после подтверждения YooKassa.',
             )
           }
           params.delete('billing')
@@ -65,10 +70,14 @@ export function ProfileScreen({ onOpenAdmin }: { onOpenAdmin?: () => void }) {
   }, [])
 
   async function buy(packageCode: string) {
+    if (billing?.receipt_required && !/^\S+@\S+\.\S+$/.test(receiptEmail.trim())) {
+      setBillingError('Для фискального чека укажите корректный email.')
+      return
+    }
     setBusyPackage(packageCode)
     setBillingError(null)
     try {
-      const payment = await api.createBillingPayment(packageCode)
+      const payment = await api.createBillingPayment(packageCode, billing?.receipt_required ? receiptEmail.trim() : null)
       if (!payment.confirmation_url) throw new Error('YooKassa не вернула ссылку на оплату')
       window.location.assign(payment.confirmation_url)
     } catch (error) {
@@ -103,18 +112,23 @@ export function ProfileScreen({ onOpenAdmin }: { onOpenAdmin?: () => void }) {
         ) : !billing.enabled ? (
           <div className="empty-inline">Оплата ещё не активирована. Администратор публикует тарифы в веб-админке; YooKassa credentials хранятся только на сервере.</div>
         ) : (
-          <div className="billing-packages">
-            {billing.packages.map((item) => (
-              <article className="billing-package" key={item.code}>
-                <span className="eyebrow">{item.credits} КРЕДИТОВ</span>
-                <h3>{item.label}</h3>
-                <strong className="billing-price">{rub(item.amount)}</strong>
-                <button className="primary-button" disabled={busyPackage !== null} onClick={() => void buy(item.code)}>
-                  {busyPackage === item.code ? 'Создаём платёж…' : 'Оплатить'}
-                </button>
-              </article>
-            ))}
-          </div>
+          <>
+            {billing.receipt_required && (
+              <label className="billing-receipt-email">Email для фискального чека<input type="email" value={receiptEmail} onChange={(e) => setReceiptEmail(e.target.value)} placeholder="name@example.com" autoComplete="email" /></label>
+            )}
+            <div className="billing-packages">
+              {billing.packages.map((item) => (
+                <article className="billing-package" key={item.code}>
+                  <span className="eyebrow">{item.credits} КРЕДИТОВ</span>
+                  <h3>{item.label}</h3>
+                  <strong className="billing-price">{rub(item.amount)}</strong>
+                  <button className="primary-button" disabled={busyPackage !== null} onClick={() => void buy(item.code)}>
+                    {busyPackage === item.code ? 'Создаём платёж…' : 'Оплатить'}
+                  </button>
+                </article>
+              ))}
+            </div>
+          </>
         )}
       </section>
 
@@ -125,7 +139,7 @@ export function ProfileScreen({ onOpenAdmin }: { onOpenAdmin?: () => void }) {
             {billing.payments.slice(0, 8).map((payment) => (
               <div className="billing-history-row" key={payment.id}>
                 <div><strong>{payment.credits} кредитов</strong><span>{new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(payment.created_at))}</span></div>
-                <div><strong>{rub(payment.amount)}</strong><span className={`payment-status status-${payment.status}`}>{paymentLabel(payment.status)}</span></div>
+                <div><strong>{rub(payment.amount)}</strong><span className={`payment-status status-${payment.status}`}>{paymentLabel(payment.status, payment.refund_status)}</span></div>
               </div>
             ))}
           </div>
