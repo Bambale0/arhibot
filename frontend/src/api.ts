@@ -6,6 +6,7 @@ import type {
   AdminGenerationPrice,
   AdminGenerationSettings,
   AdminIdea,
+  AdminOperationalSettings,
   AdminOverview,
   AdminPayment,
   AdminPrompt,
@@ -181,4 +182,6 @@ export function adminSendBroadcast(id: string) { return request<AdminBroadcast>(
 export function adminRetryBroadcast(id: string) { return request<AdminBroadcast>(`/admin/broadcasts/${id}/retry`, { method: 'POST' }) }
 export function adminCancelBroadcast(id: string) { return request<AdminBroadcast>(`/admin/broadcasts/${id}/cancel`, { method: 'POST' }) }
 
+export function adminGetOperationalSettings() { return request<AdminOperationalSettings>('/admin/operations') }
+export function adminUpdateOperationalSettings(payload: Omit<AdminOperationalSettings, 'updated_at'>) { return request<AdminOperationalSettings>('/admin/operations', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
 export function adminListAudit() { return request<AdminAudit[]>('/admin/audit') }
