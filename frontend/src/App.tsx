@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import * as api from './api'
 import { useAuth } from './auth'
-import type { GenerationMode, Project } from './types'
+import type { Asset, Generation, GenerationMode, Project } from './types'
 import { AdminScreen } from './components/AdminScreen'
 import { AppFrame, type AppSection } from './components/AppFrame'
 import { AuthScreen } from './components/AuthScreen'
@@ -42,6 +43,7 @@ export default function App() {
   const [activeProject, setActiveProject] = useState<Project | null>(null)
   const [workspaceMode, setWorkspaceMode] = useState<GenerationMode>('floor_plan')
   const [workspacePrompt, setWorkspacePrompt] = useState('')
+  const [workspaceAsset, setWorkspaceAsset] = useState<Asset | null>(null)
   const [createMode, setCreateMode] = useState<GenerationMode | null>(null)
   const [createPrompt, setCreatePrompt] = useState('')
   const [adminOpen, setAdminOpen] = useState(initialAdmin)
@@ -54,12 +56,31 @@ export default function App() {
 
   const isAdmin = user.role === 'admin' || user.role === 'superadmin'
   if (adminOpen && isAdmin) return <AdminScreen onClose={() => setAdminOpen(false)} />
-  if (activeProject) return <WorkspaceScreen project={activeProject} initialMode={workspaceMode} initialPrompt={workspacePrompt} onBack={() => setActiveProject(null)} onProjectChange={setActiveProject} />
+  if (activeProject) return (
+    <WorkspaceScreen
+      project={activeProject}
+      initialMode={workspaceMode}
+      initialPrompt={workspacePrompt}
+      initialAsset={workspaceAsset}
+      onBack={() => { setActiveProject(null); setWorkspaceAsset(null) }}
+      onProjectChange={setActiveProject}
+    />
+  )
 
-  function openWorkspace(project: Project, mode: GenerationMode = 'floor_plan', prompt = '') {
+  function openWorkspace(project: Project, mode: GenerationMode = 'floor_plan', prompt = '', asset: Asset | null = null) {
     setWorkspaceMode(mode)
     setWorkspacePrompt(prompt)
+    setWorkspaceAsset(asset)
     setActiveProject(project)
+  }
+
+  async function openHistoryGeneration(generation: Generation, useOutput: boolean) {
+    const project = await api.getProject(generation.project_id)
+    let asset: Asset | null = useOutput ? generation.output_asset : null
+    if (!useOutput && generation.input_asset_id) {
+      try { asset = await api.getAsset(generation.input_asset_id) } catch { asset = null }
+    }
+    openWorkspace(project, generation.type, generation.prompt, asset)
   }
 
   function navigate(next: AppSection) {
@@ -74,8 +95,8 @@ export default function App() {
     <AppFrame active={section} onNavigate={navigate}>
       {section === 'home' && <ProjectsScreen onOpenProject={(project) => openWorkspace(project, 'floor_plan')} />}
       {section === 'ideas' && <IdeasScreen onUseIdea={(mode, prompt) => { setCreateMode(mode); setCreatePrompt(prompt); setSection('create') }} />}
-      {section === 'create' && <CreateScreen initialMode={createMode} initialPrompt={createPrompt} onOpenProject={openWorkspace} />}
-      {section === 'history' && <HistoryScreen />}
+      {section === 'create' && <CreateScreen initialMode={createMode} initialPrompt={createPrompt} onOpenProject={(project, mode, prompt) => openWorkspace(project, mode, prompt)} />}
+      {section === 'history' && <HistoryScreen onOpenGeneration={(generation) => { void openHistoryGeneration(generation, false) }} onUseAsSource={(generation) => { void openHistoryGeneration(generation, true) }} />}
       {section === 'profile' && <ProfileScreen onOpenAdmin={isAdmin ? () => setAdminOpen(true) : undefined} />}
     </AppFrame>
   )
