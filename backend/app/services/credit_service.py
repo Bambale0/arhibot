@@ -29,10 +29,8 @@ class CreditService:
         if amount == 0:
             raise ValueError("Credit transaction amount must not be zero")
 
-        existing = await self.repository.get_by_idempotency_key(idempotency_key)
-        if existing is not None:
-            return existing
-
+        # Serialize all movements for one balance first. This also makes an
+        # idempotency replay safe when duplicate webhooks arrive concurrently.
         user = await self.repository.get_user_for_update(user_id)
         if user is None:
             raise AppError(
@@ -41,6 +39,11 @@ class CreditService:
                 status=404,
                 detail="User does not exist.",
             )
+
+        existing = await self.repository.get_by_idempotency_key(idempotency_key)
+        if existing is not None:
+            return existing
+
         balance_after = user.credits_balance + amount
         if balance_after < 0:
             raise AppError(

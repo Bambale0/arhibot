@@ -26,6 +26,12 @@ class GenerationRepository:
     async def get(self, generation_id: UUID) -> Generation | None:
         return await self.session.get(Generation, generation_id)
 
+    async def get_for_update(self, generation_id: UUID) -> Generation | None:
+        result = await self.session.execute(
+            select(Generation).where(Generation.id == generation_id).with_for_update()
+        )
+        return result.scalar_one_or_none()
+
     async def list_owned(
         self,
         user_id: UUID,

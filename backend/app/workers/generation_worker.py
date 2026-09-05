@@ -19,6 +19,7 @@ from app.prompt_builders.generation import build_generation_prompt
 from app.providers.nexus import NexusImageProvider, NexusProviderError
 from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
+from app.repositories.generations import GenerationRepository
 from app.repositories.projects import ProjectRepository
 from app.services.asset_service import AssetService
 from app.services.credit_service import CreditService
@@ -64,7 +65,7 @@ async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -
 
 async def process_generation(generation_id: UUID, settings: Settings) -> None:
     async with get_session_factory()() as session:
-        generation = await session.get(Generation, generation_id)
+        generation = await GenerationRepository(session).get_for_update(generation_id)
         if generation is None or generation.status != GenerationStatus.QUEUED:
             return
         project = await session.get(Project, generation.project_id)
@@ -263,7 +264,12 @@ async def run_worker() -> None:
                 continue
             try:
                 await process_generation(UUID(raw_id), settings)
-            finally:
+            except Exception:
+                # Keep the reservation in the processing list. It will be recovered
+                # on worker restart instead of silently losing a paid generation.
+                logger.exception("Reserved generation %s crashed before terminal state", raw_id)
+                await asyncio.sleep(2)
+            else:
                 await _ack_job(raw_id)
         except asyncio.CancelledError:
             raise
