@@ -1,8 +1,11 @@
+export type UserRole = 'user' | 'admin' | 'superadmin'
+
 export type User = {
   id: string
   display_name: string
   avatar_url?: string | null
   status: 'active' | 'disabled'
+  role: UserRole
   credits_balance: number
   created_at: string
   updated_at: string
@@ -105,4 +108,102 @@ export type BillingSummary = {
   credits_balance: number
   packages: BillingPackage[]
   payments: BillingPayment[]
+}
+
+export type Idea = {
+  id: string
+  title: string
+  category: string
+  text: string
+  generation_type: GenerationMode
+  prompt: string
+}
+
+export type AdminOverview = {
+  yookassa_configured: boolean
+  nexus_configured: boolean
+  telegram_configured: boolean
+}
+
+export type AdminTariff = {
+  id: string
+  code: string
+  name: string
+  description: string | null
+  credits: number
+  amount: string
+  currency: string
+  is_active: boolean
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export type AdminIdea = Idea & {
+  is_active: boolean
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export type AdminGenerationSettings = {
+  primary_model: string
+  fallback_model: string | null
+  primary_params: Record<string, unknown>
+  fallback_params: Record<string, unknown>
+  mode_params: Record<string, Record<string, unknown>>
+  updated_at: string
+}
+
+export type AdminPrompt = {
+  generation_type: GenerationMode
+  template: string
+  updated_at: string
+}
+
+export type AdminUser = {
+  id: string
+  display_name: string
+  status: 'active' | 'disabled'
+  role: UserRole
+  credits_balance: number
+  created_at: string
+  updated_at: string
+}
+
+export type AdminPayment = {
+  id: string
+  user_id: string
+  package_code: string
+  credits: number
+  amount: string
+  currency: string
+  status: string
+  yookassa_payment_id: string | null
+  provider_error: string | null
+  created_at: string
+  updated_at: string
+  paid_at: string | null
+}
+
+export type AdminBroadcast = {
+  id: string
+  text: string
+  status: string
+  recipient_count: number
+  sent_count: number
+  failed_count: number
+  created_at: string
+  updated_at: string
+  sent_at: string | null
+}
+
+export type AdminAudit = {
+  id: string
+  actor_user_id: string | null
+  action: string
+  entity_type: string
+  entity_id: string | null
+  details: Record<string, unknown>
+  created_at: string
 }
