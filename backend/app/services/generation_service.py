@@ -7,15 +7,18 @@ from app.core.errors import AppError
 from app.core.redis import redis_client
 from app.db.models.generations import Generation
 from app.db.models.users import User
-from app.domain.generations.enums import GenerationStatus
+from app.domain.generations.enums import GenerationStatus, GenerationType
 from app.repositories.assets import AssetRepository
+from app.repositories.credits import CreditRepository
 from app.repositories.generations import GenerationRepository
 from app.repositories.projects import ProjectRepository
 from app.schemas.assets import AssetResponse
 from app.schemas.generations import GenerationCreate, GenerationListResponse, GenerationResponse
 from app.services.asset_service import AssetService, build_asset_service
+from app.services.credit_service import CreditService
 
 GENERATION_QUEUE_KEY = "auroom:generation_queue"
+REFERENCE_REQUIRED_TYPES = {GenerationType.FACADE, GenerationType.INTERIOR}
 
 
 class GenerationService:
@@ -25,6 +28,8 @@ class GenerationService:
         self.repository = GenerationRepository(session)
         self.assets = AssetRepository(session)
         self.projects = ProjectRepository(session)
+        self.credit_repository = CreditRepository(session)
+        self.credit_service = CreditService(session)
         self.asset_service: AssetService = build_asset_service(session, settings)
 
     async def create(self, user: User, payload: GenerationCreate) -> GenerationResponse:
@@ -44,26 +49,59 @@ class GenerationService:
                 status=404,
                 detail="The project does not exist or is not available to this user.",
             )
-        asset = await self.assets.get_owned(payload.input_asset_id, user.id)
-        if not asset or asset.project_id != project.id:
+
+        asset = None
+        if payload.input_asset_id is not None:
+            asset = await self.assets.get_owned(payload.input_asset_id, user.id)
+            if not asset or asset.project_id != project.id:
+                raise AppError(
+                    type="asset_not_found",
+                    title="Asset not found",
+                    status=404,
+                    detail="The input asset does not belong to this project.",
+                )
+        elif payload.type in REFERENCE_REQUIRED_TYPES:
             raise AppError(
-                type="asset_not_found",
-                title="Asset not found",
-                status=404,
-                detail="The input asset does not belong to this project.",
+                type="generation_reference_required",
+                title="Reference image required",
+                status=422,
+                detail="Facade and interior generation require a reference image.",
+            )
+
+        price = await self.credit_repository.get_price(payload.type.value)
+        if price is None or not price.is_active:
+            raise AppError(
+                type="generation_price_not_configured",
+                title="Generation price not configured",
+                status=503,
+                detail="The credit price for this generation scenario is not configured.",
             )
 
         generation = Generation(
             id=uuid4(),
             user_id=user.id,
             project_id=project.id,
-            input_asset_id=asset.id,
+            input_asset_id=asset.id if asset else None,
             type=payload.type,
             status=GenerationStatus.QUEUED,
             prompt=payload.prompt.strip(),
+            credits_charged=price.credits,
         )
         self.repository.add(generation)
-        await self.session.commit()
+        try:
+            await self.credit_service.apply(
+                user_id=user.id,
+                amount=-price.credits,
+                kind="generation_reserve",
+                idempotency_key=f"generation:{generation.id}:reserve",
+                reference_type="generation",
+                reference_id=str(generation.id),
+                reason=f"AuRoom generation: {payload.type.value}",
+            )
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
         await self.session.refresh(generation)
 
         try:
@@ -71,12 +109,21 @@ class GenerationService:
         except Exception as exc:
             generation.status = GenerationStatus.FAILED
             generation.error = "Generation queue is unavailable."
+            await self.credit_service.apply(
+                user_id=user.id,
+                amount=generation.credits_charged,
+                kind="generation_refund",
+                idempotency_key=f"generation:{generation.id}:refund",
+                reference_type="generation",
+                reference_id=str(generation.id),
+                reason="Generation queue unavailable",
+            )
             await self.session.commit()
             raise AppError(
                 type="generation_queue_unavailable",
                 title="Generation queue unavailable",
                 status=503,
-                detail="Generation could not be queued. Please try again.",
+                detail="Generation could not be queued. Reserved credits were returned.",
             ) from exc
 
         return await self.to_response(generation)
@@ -123,6 +170,7 @@ class GenerationService:
             type=generation.type,
             status=generation.status,
             prompt=generation.prompt,
+            credits_charged=generation.credits_charged,
             model_name=generation.model_name,
             fallback_used=generation.fallback_used,
             error=generation.error,
