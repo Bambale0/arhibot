@@ -27,12 +27,15 @@ from app.schemas.admin import (
     IdeaCreate,
     IdeaResponse,
     IdeaUpdate,
+    OperationalSettingsResponse,
+    OperationalSettingsUpdate,
     PromptTemplateResponse,
     PromptTemplateUpdate,
     UserStateUpdate,
 )
 from app.services.admin_billing_service import AdminBillingService
 from app.services.admin_credit_service import AdminCreditService
+from app.services.admin_operations_service import AdminOperationsService
 from app.services.admin_service import AdminService
 from app.services.broadcast_service import BroadcastService
 from app.services.idea_service import AdminIdeaService
@@ -187,6 +190,16 @@ async def retry_broadcast(campaign_id: UUID, admin: AdminUser, session: DbSessio
 @router.post("/broadcasts/{campaign_id}/cancel", response_model=BroadcastResponse)
 async def cancel_broadcast(campaign_id: UUID, admin: AdminUser, session: DbSession) -> BroadcastResponse:
     return await BroadcastService(session).cancel(admin, campaign_id)
+
+
+@router.get("/operations", response_model=OperationalSettingsResponse)
+async def get_operational_settings(_admin: AdminUser, session: DbSession) -> OperationalSettingsResponse:
+    return await AdminOperationsService(session).get()
+
+
+@router.put("/operations", response_model=OperationalSettingsResponse)
+async def update_operational_settings(payload: OperationalSettingsUpdate, admin: AdminUser, session: DbSession) -> OperationalSettingsResponse:
+    return await AdminOperationsService(session).update(admin, payload)
 
 
 @router.get("/audit", response_model=list[AuditLogResponse])
