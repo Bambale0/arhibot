@@ -9,6 +9,7 @@ import type {
   AdminGenerationSettings,
   AdminIdea,
   AdminOverview,
+  AdminOperationalSettings,
   AdminPayment,
   AdminPrompt,
   AdminTariff,
@@ -25,7 +26,7 @@ const modes: { id: GenerationMode; label: string }[] = [
   { id: 'interior', label: 'Интерьер' },
 ]
 
-type Tab = 'tariffs' | 'ideas' | 'generation' | 'users' | 'payments' | 'broadcasts' | 'audit'
+type Tab = 'tariffs' | 'ideas' | 'generation' | 'users' | 'payments' | 'broadcasts' | 'system' | 'audit'
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : 'Не удалось выполнить операцию'
@@ -57,6 +58,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   const [transactions, setTransactions] = useState<AdminCreditTransaction[]>([])
   const [payments, setPayments] = useState<AdminPayment[]>([])
   const [broadcasts, setBroadcasts] = useState<AdminBroadcast[]>([])
+  const [operations, setOperations] = useState<AdminOperationalSettings | null>(null)
   const [audit, setAudit] = useState<AdminAudit[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -64,7 +66,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   async function reload() {
     setError(null)
     try {
-      const [o, t, bs, i, g, gp, p, u, tx, pay, b, a] = await Promise.all([
+      const [o, t, bs, i, g, gp, p, u, tx, pay, b, ops, a] = await Promise.all([
         api.adminOverview(),
         api.adminListTariffs(),
         api.adminGetBillingSettings(),
@@ -76,6 +78,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
         api.adminListCreditTransactions(),
         api.adminListPayments(),
         api.adminListBroadcasts(),
+        api.adminGetOperationalSettings(),
         api.adminListAudit(),
       ])
       setOverview(o)
@@ -89,6 +92,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       setTransactions(tx)
       setPayments(pay)
       setBroadcasts(b)
+      setOperations(ops)
       setAudit(a)
     } catch (err) {
       setError(errorText(err))
@@ -110,7 +114,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       <nav className="admin-tabs">
         {([
           ['tariffs','Тарифы и касса'], ['ideas','Идеи'], ['generation','AI и стоимость'], ['users','Пользователи и кредиты'],
-          ['payments','Платежи'], ['broadcasts','Рассылки'], ['audit','Аудит'],
+          ['payments','Платежи'], ['broadcasts','Рассылки'], ['system','Система'], ['audit','Аудит'],
         ] as [Tab,string][]).map(([id,label]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>)}
       </nav>
       {loading ? <div className="admin-loading">Загружаем настройки…</div> : (
@@ -121,6 +125,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
           {tab === 'users' && <UsersPanel items={users} transactions={transactions} onItems={setUsers} onTransactions={setTransactions} onError={setError} />}
           {tab === 'payments' && <PaymentsPanel items={payments} onItems={setPayments} onError={setError} />}
           {tab === 'broadcasts' && <BroadcastsPanel items={broadcasts} onItems={setBroadcasts} onError={setError} />}
+          {tab === 'system' && operations && <OperationsPanel settings={operations} onSaved={setOperations} onError={setError} />}
           {tab === 'audit' && <AuditPanel items={audit} />}
         </div>
       )}
@@ -297,6 +302,19 @@ function BroadcastsPanel({items,onItems,onError}:{items:AdminBroadcast[];onItems
   async function create(){if(!text.trim())return;setBusy('create');try{const iso=scheduled?new Date(scheduled).toISOString():null;const saved=await api.adminCreateBroadcast(text.trim(),segment,iso);onItems([saved,...items]);setText('');setScheduled('')}catch(err){onError(errorText(err))}finally{setBusy(null)}}
   async function action(item:AdminBroadcast,kind:'send'|'retry'|'cancel'){setBusy(item.id);try{const saved=kind==='send'?await api.adminSendBroadcast(item.id):kind==='retry'?await api.adminRetryBroadcast(item.id):await api.adminCancelBroadcast(item.id);onItems(items.map(x=>x.id===saved.id?saved:x))}catch(err){onError(errorText(err))}finally{setBusy(null)}}
   return <section className="admin-panel"><div className="admin-panel-title"><div><h2>Рассылки</h2><p>Очередь, сегменты, расписание и повторы работают через отдельный worker.</p></div></div><div className="admin-broadcast-compose"><textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Сообщение пользователям Telegram"/><div className="admin-broadcast-options"><select value={segment} onChange={e=>setSegment(e.target.value as BroadcastSegment)}><option value="all">Все активные</option><option value="with_credits">С кредитами</option><option value="without_credits">Без кредитов</option></select><input type="datetime-local" value={scheduled} onChange={e=>setScheduled(e.target.value)}/><button className="primary-button" disabled={busy!==null||!text.trim()} onClick={()=>void create()}>{scheduled?'Запланировать':'Создать'}</button></div></div><div className="admin-card-list">{items.map(item=><article className="admin-list-card" key={item.id}><div><strong>{item.text}</strong><span>{item.segment} · {item.status} · {item.sent_count}/{item.recipient_count} · ошибок {item.failed_count}</span><p>{item.scheduled_at?`Запланировано: ${formatDate(item.scheduled_at)}`:item.sent_at?`Завершено: ${formatDate(item.sent_at)}`:`Создано: ${formatDate(item.created_at)}`}</p></div><div>{!['sent','canceled','scheduled'].includes(item.status)&&<button disabled={busy!==null} onClick={()=>void action(item,'send')}>В очередь</button>}{item.status==='scheduled'&&<span className="status-pill">Запланирована</span>}{item.failed_count>0&&<button disabled={busy!==null} onClick={()=>void action(item,'retry')}>Повторить ошибки</button>}{!['sent','canceled'].includes(item.status)&&<button disabled={busy!==null} onClick={()=>void action(item,'cancel')}>Отменить</button>}</div></article>)}</div></section>
+}
+
+function OperationsPanel({settings,onSaved,onError}:{settings:AdminOperationalSettings;onSaved:(v:AdminOperationalSettings)=>void;onError:(v:string|null)=>void}){
+  const [authLimit,setAuthLimit]=useState(settings.auth_rate_limit_per_minute?.toString()||'')
+  const [generationLimit,setGenerationLimit]=useState(settings.generation_rate_limit_per_minute?.toString()||'')
+  const [paymentLimit,setPaymentLimit]=useState(settings.payment_rate_limit_per_minute?.toString()||'')
+  const [mediaRetention,setMediaRetention]=useState(settings.media_retention_days?.toString()||'')
+  const [backupInterval,setBackupInterval]=useState(settings.backup_interval_hours?.toString()||'')
+  const [backupRetention,setBackupRetention]=useState(settings.backup_retention_days?.toString()||'')
+  const [busy,setBusy]=useState(false)
+  const optionalInt=(value:string)=>value.trim()?Number(value):null
+  async function save(){setBusy(true);onError(null);try{onSaved(await api.adminUpdateOperationalSettings({auth_rate_limit_per_minute:optionalInt(authLimit),generation_rate_limit_per_minute:optionalInt(generationLimit),payment_rate_limit_per_minute:optionalInt(paymentLimit),media_retention_days:optionalInt(mediaRetention),backup_interval_hours:optionalInt(backupInterval),backup_retention_days:optionalInt(backupRetention)}))}catch(err){onError(errorText(err))}finally{setBusy(false)}}
+  return <section className="admin-panel"><div className="admin-panel-title"><div><h2>Система</h2><p>Лимиты, очистка media и backup-политика управляются из БД. Пустое поле отключает соответствующую политику.</p></div></div><div className="admin-form-grid"><label>Auth / мин<input type="number" min="1" value={authLimit} onChange={e=>setAuthLimit(e.target.value)} placeholder="без лимита"/></label><label>Генерации / мин<input type="number" min="1" value={generationLimit} onChange={e=>setGenerationLimit(e.target.value)} placeholder="без лимита"/></label><label>Платежи / мин<input type="number" min="1" value={paymentLimit} onChange={e=>setPaymentLimit(e.target.value)} placeholder="без лимита"/></label><label>Soft-deleted media, дней<input type="number" min="1" value={mediaRetention} onChange={e=>setMediaRetention(e.target.value)} placeholder="не удалять"/></label><label>Backup каждые, часов<input type="number" min="1" value={backupInterval} onChange={e=>setBackupInterval(e.target.value)} placeholder="автобэкап выключен"/></label><label>Хранить backup, дней<input type="number" min="1" value={backupRetention} onChange={e=>setBackupRetention(e.target.value)} placeholder="без автоочистки"/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={()=>void save()}>Сохранить систему</button></div></div><div className="admin-subpanel"><p><strong>Секреты</strong> Nexus, YooKassa и Telegram здесь не хранятся — только operational-настройки.</p><small>Последнее изменение: {formatDate(settings.updated_at)}</small></div></section>
 }
 
 function AuditPanel({items}:{items:AdminAudit[]}){

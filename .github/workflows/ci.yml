@@ -79,6 +79,10 @@ jobs:
       MEDIA_ROOT: /tmp/arhibot-media
       MEDIA_PUBLIC_BASE_URL: http://localhost:8000
       RUN_INTEGRATION_TESTS: '1'
+      NEXUS_API_KEY: integration-nexus-key
+      YOOKASSA_SHOP_ID: integration-shop
+      YOOKASSA_SECRET_KEY: integration-secret
+      YOOKASSA_RETURN_URL: https://example.test/return
     defaults:
       run:
         working-directory: backend
