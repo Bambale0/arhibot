@@ -36,3 +36,5 @@ class GenerationResponse(BaseModel):
 
 class GenerationListResponse(BaseModel):
     items: list[GenerationResponse]
+    next_cursor: str | None = None
+    has_more: bool = False
