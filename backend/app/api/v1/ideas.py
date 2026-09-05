@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends
 from app.api.dependencies.auth import CurrentUser, DbSession
 from app.core.config import Settings, get_settings
 from app.schemas.admin import PublicIdeaResponse
-from app.services.admin_service import AdminService
+from app.services.idea_service import IdeaService
 
 router = APIRouter(prefix="/ideas", tags=["Ideas"])
 
@@ -14,4 +14,4 @@ async def list_ideas(
     session: DbSession,
     settings: Settings = Depends(get_settings),
 ) -> list[PublicIdeaResponse]:
-    return await AdminService(session, settings).list_public_ideas()
+    return await IdeaService(session, settings).list_public()
