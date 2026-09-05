@@ -40,17 +40,15 @@ class NexusImageProvider:
         model_name: str,
         prompt: str,
         image_url: str,
-        aspect_ratio: str,
+        model_params: dict[str, object] | None,
         idempotency_key: str,
     ) -> NexusImageResult:
         params: dict[str, object] = {
             "model_name": model_name,
             "prompt": prompt,
             "image_urls": [image_url],
-            "aspect_ratio": aspect_ratio,
         }
-        if model_name == "nano-banana-pro":
-            params["image_size"] = "2K"
+        params.update(model_params or {})
 
         headers = {**self.headers, "Idempotency-Key": idempotency_key}
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
