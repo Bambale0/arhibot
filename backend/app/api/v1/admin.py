@@ -1,6 +1,7 @@
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.api.dependencies.auth import AdminUser, DbSession
 from app.core.config import Settings, get_settings
@@ -16,6 +17,9 @@ from app.schemas.admin import (
     BroadcastCreate,
     BroadcastResponse,
     CreditAdjustmentRequest,
+    CreditTransactionResponse,
+    GenerationPriceResponse,
+    GenerationPriceUpdate,
     GenerationRuntimeResponse,
     GenerationRuntimeUpdate,
     IdeaCreate,
@@ -25,6 +29,7 @@ from app.schemas.admin import (
     PromptTemplateUpdate,
     UserStateUpdate,
 )
+from app.services.admin_credit_service import AdminCreditService
 from app.services.admin_service import AdminService
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -142,6 +147,24 @@ async def update_generation_settings(
     return await service(session, settings).update_generation_settings(admin, payload)
 
 
+@router.get("/generation-prices", response_model=list[GenerationPriceResponse])
+async def list_generation_prices(
+    _admin: AdminUser,
+    session: DbSession,
+) -> list[GenerationPriceResponse]:
+    return await AdminCreditService(session).list_prices()
+
+
+@router.put("/generation-prices/{generation_type}", response_model=GenerationPriceResponse)
+async def update_generation_price(
+    generation_type: GenerationType,
+    payload: GenerationPriceUpdate,
+    admin: AdminUser,
+    session: DbSession,
+) -> GenerationPriceResponse:
+    return await AdminCreditService(session).update_price(admin, generation_type, payload)
+
+
 @router.get("/prompts", response_model=list[PromptTemplateResponse])
 async def list_prompts(
     _admin: AdminUser,
@@ -177,9 +200,18 @@ async def adjust_user_credits(
     payload: CreditAdjustmentRequest,
     admin: AdminUser,
     session: DbSession,
-    settings: Settings = Depends(get_settings),
 ) -> AdminUserResponse:
-    return await service(session, settings).adjust_credits(admin, user_id, payload)
+    return await AdminCreditService(session).adjust_credits(admin, user_id, payload)
+
+
+@router.get("/credit-transactions", response_model=list[CreditTransactionResponse])
+async def list_credit_transactions(
+    _admin: AdminUser,
+    session: DbSession,
+    user_id: UUID | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+) -> list[CreditTransactionResponse]:
+    return await AdminCreditService(session).list_transactions(user_id=user_id, limit=limit)
 
 
 @router.patch("/users/{user_id}", response_model=AdminUserResponse)
