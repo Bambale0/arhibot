@@ -143,8 +143,13 @@ class GenerationRuntimeUpdate(BaseModel):
         return self
 
 
-class GenerationRuntimeResponse(GenerationRuntimeUpdate):
-    updated_at: datetime
+class GenerationRuntimeResponse(BaseModel):
+    primary_model: str | None = None
+    fallback_model: str | None = None
+    primary_params: dict[str, Any] = Field(default_factory=dict)
+    fallback_params: dict[str, Any] = Field(default_factory=dict)
+    mode_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    updated_at: datetime | None = None
 
 
 class PromptTemplateUpdate(BaseModel):
