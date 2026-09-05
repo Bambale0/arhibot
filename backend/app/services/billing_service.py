@@ -14,6 +14,7 @@ from app.db.models.users import User
 from app.providers.yookassa import YooKassaError, YooKassaPayment, YooKassaProvider
 from app.repositories.billing import BillingRepository
 from app.schemas.billing import BillingPackageResponse, BillingPaymentResponse, BillingSummaryResponse
+from app.services.credit_service import CreditService
 
 
 class BillingService:
@@ -197,10 +198,15 @@ class BillingService:
         payment.provider_error = None
         if remote.status == "succeeded":
             if payment.status != "succeeded":
-                user = await self.session.get(User, payment.user_id, with_for_update=True)
-                if user is None:
-                    raise YooKassaError("Payment user no longer exists")
-                user.credits_balance += payment.credits
+                await CreditService(self.session).apply(
+                    user_id=payment.user_id,
+                    amount=payment.credits,
+                    kind="payment_credit",
+                    idempotency_key=f"payment:{payment.id}:credit",
+                    reference_type="billing_payment",
+                    reference_id=str(payment.id),
+                    reason=f"YooKassa payment {payment.package_code}",
+                )
                 payment.status = "succeeded"
                 payment.paid_at = datetime.now(UTC)
         elif remote.status == "canceled":
