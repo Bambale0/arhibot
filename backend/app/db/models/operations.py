@@ -18,6 +18,7 @@ class OperationalSettings(Base):
     generation_rate_limit_per_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
     payment_rate_limit_per_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
     media_retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    backup_interval_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
     backup_retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_by_user_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
