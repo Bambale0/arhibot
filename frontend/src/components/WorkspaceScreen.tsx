@@ -33,11 +33,11 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-export function WorkspaceScreen({ project, initialMode, onBack, onProjectChange }: { project: Project; initialMode?: GenerationMode; onBack: () => void; onProjectChange: (project: Project) => void }) {
+export function WorkspaceScreen({ project, initialMode, initialPrompt, onBack, onProjectChange }: { project: Project; initialMode?: GenerationMode; initialPrompt?: string; onBack: () => void; onProjectChange: (project: Project) => void }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [asset, setAsset] = useState<Asset | null>(null)
   const [mode, setMode] = useState<GenerationMode>(initialMode || 'floor_plan')
-  const [prompt, setPrompt] = useState('')
+  const [prompt, setPrompt] = useState(initialPrompt || '')
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
@@ -99,7 +99,7 @@ export function WorkspaceScreen({ project, initialMode, onBack, onProjectChange 
       }
     } catch (err) {
       if (err instanceof api.ApiError && err.status === 503) {
-        setError('Генерация пока не настроена на сервере. Нужен активный NexusAPI-ключ.')
+        setError('Генерация пока не настроена. Проверьте Nexus credentials и AI-настройки в веб-админке.')
       } else {
         setError(err instanceof Error ? err.message : 'Не удалось запустить генерацию')
       }
@@ -146,13 +146,13 @@ export function WorkspaceScreen({ project, initialMode, onBack, onProjectChange 
 
           <section className="work-section"><div className="section-number">02</div><div className="section-body"><div className="section-title"><h3>Сценарий</h3><span>4 функции AuRoom</span></div><div className="mode-grid four-modes">{modes.map((item) => { const Icon=item.icon; return <button key={item.id} disabled={generationBusy} className={`mode-card ${mode === item.id ? 'selected' : ''}`} onClick={() => {setMode(item.id); setGeneration(null)}}><span className="mode-icon"><Icon/></span><strong>{item.title}</strong><p>{item.text}</p><span className="radio-dot" /></button>})}</div></div></section>
 
-          <section className="work-section"><div className="section-number">03</div><div className="section-body"><div className="section-title"><h3>Пожелания</h3><span>Необязательно</span></div><textarea className="prompt-input" disabled={generationBusy} value={prompt} onChange={(e) => {setPrompt(e.target.value); setGeneration(null)}} placeholder="Например: современный минимализм, натуральные материалы, три спальни, приватная терраса, мягкий вечерний свет…" maxLength={4000}/><div className="prompt-footer"><span>{prompt.length}/4000</span><button disabled={generationBusy} onClick={() => setPrompt('Современный минимализм, натуральные материалы, спокойная палитра, функциональная планировка и реалистичная подача.')}>Заполнить пример</button></div></div></section>
+          <section className="work-section"><div className="section-number">03</div><div className="section-body"><div className="section-title"><h3>Пожелания</h3><span>Необязательно</span></div><textarea className="prompt-input" disabled={generationBusy} value={prompt} onChange={(e) => {setPrompt(e.target.value); setGeneration(null)}} placeholder="Например: современный минимализм, натуральные материалы, три спальни, приватная терраса, мягкий вечерний свет…" maxLength={4000}/><div className="prompt-footer"><span>{prompt.length}/4000</span></div></div></section>
 
           {error && <div className="banner-error workspace-error">{error}<button onClick={() => setError(null)}>Закрыть</button></div>}
 
           {generation && <section className="demo-result"><div className="demo-result-head"><div><span className="eyebrow">AUROOM AI</span><h3>{statusText[generation.status]}</h3></div><span className="status-pill">{generation.fallback_used ? 'Резервная модель' : generation.status === 'completed' ? 'Готово' : 'AI'}</span></div>{resultReady ? <><div className="demo-result-image"><img src={generation.output_asset!.url} alt="Результат AuRoom"/></div><p>Результат сохранён на сервере и уже доступен в истории генераций.</p></> : <p>{generation.status === 'failed' ? (generation.error || 'Генерация завершилась с ошибкой.') : 'Задача отправлена в AI-модель. Можно оставаться на этой странице — результат появится автоматически.'}</p>}</section>}
 
-          <div className="generate-bar"><div><SparkIcon/><span><strong>{asset ? (generationBusy ? 'AuRoom создаёт изображение…' : 'Всё готово для генерации') : 'Сначала добавьте исходник'}</strong><small>Основная модель с автоматическим резервным переключением</small></span></div><button className="primary-button generate-button" disabled={!asset || generationBusy} onClick={() => void runGeneration()}>{generationBusy ? 'Генерируем…' : 'Создать'} <SparkIcon/></button></div>
+          <div className="generate-bar"><div><SparkIcon/><span><strong>{asset ? (generationBusy ? 'AuRoom создаёт изображение…' : 'Всё готово для генерации') : 'Сначала добавьте исходник'}</strong><small>AI-модели и параметры задаются администратором</small></span></div><button className="primary-button generate-button" disabled={!asset || generationBusy} onClick={() => void runGeneration()}>{generationBusy ? 'Генерируем…' : 'Создать'} <SparkIcon/></button></div>
         </div>
       </section>
     </main>
