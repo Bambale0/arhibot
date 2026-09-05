@@ -161,6 +161,28 @@ async def _recover_interrupted_work() -> None:
     if recovered:
         logger.warning("Recovered %s reserved broadcast campaign(s)", recovered)
 
+    await _rehydrate_database_campaigns()
+
+
+async def _rehydrate_database_campaigns() -> None:
+    """Restore accepted queued campaigns when Redis transport state is missing."""
+    queued_raw = await redis_client.lrange(BROADCAST_QUEUE_KEY, 0, -1)
+    processing_raw = await redis_client.lrange(BROADCAST_PROCESSING_KEY, 0, -1)
+    redis_ids = {str(value) for value in [*queued_raw, *processing_raw]}
+    async with get_session_factory()() as session:
+        repository = BroadcastRepository(session)
+        campaigns = await repository.list_recoverable_queued()
+    rehydrated = 0
+    for campaign in campaigns:
+        raw_id = str(campaign.id)
+        if raw_id in redis_ids:
+            continue
+        await redis_client.rpush(BROADCAST_QUEUE_KEY, raw_id)
+        redis_ids.add(raw_id)
+        rehydrated += 1
+    if rehydrated:
+        logger.warning("Rehydrated %s broadcast campaign(s) from PostgreSQL", rehydrated)
+
 
 async def _reserve_campaign() -> str | None:
     return await redis_client.lmove(
@@ -188,12 +210,17 @@ async def run_worker() -> None:
     logger.info("AuRoom broadcast worker started; queue uses reserve/ack recovery")
     await _recover_interrupted_work()
     schedule_tick = 0
+    recovery_tick = 0
     while True:
         try:
             schedule_tick += 1
+            recovery_tick += 1
             if schedule_tick >= 5:
                 await _schedule_due_campaigns()
                 schedule_tick = 0
+            if recovery_tick >= 60:
+                await _rehydrate_database_campaigns()
+                recovery_tick = 0
             raw_id = await _reserve_campaign()
             if raw_id is None:
                 await asyncio.sleep(1)

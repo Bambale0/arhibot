@@ -261,3 +261,118 @@ async def test_yookassa_payment_webhook_credits_once_and_full_refund(monkeypatch
         movements = [(item["kind"], item["amount"]) for item in ledger.json()]
         assert movements.count(("payment_credit", 7)) == 1
         assert movements.count(("payment_refund_debit", -7)) == 1
+
+
+@pytest.mark.asyncio
+async def test_workers_rehydrate_accepted_jobs_when_redis_transport_is_lost() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.db.models.admin import BroadcastCampaign
+    from app.db.models.generations import Generation
+    from app.domain.generations.enums import GenerationStatus
+    from app.services.broadcast_service import BROADCAST_QUEUE_KEY
+    from app.workers.broadcast_worker import (
+        BROADCAST_PROCESSING_KEY,
+        _rehydrate_database_campaigns,
+        _recover_interrupted_work,
+    )
+    from app.workers.generation_worker import (
+        GENERATION_PROCESSING_KEY,
+        _reconcile_database_jobs,
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        tokens, headers = await _register_admin(client)
+        user_id = tokens["user"]["id"]
+
+        runtime = await client.put(
+            "/api/v1/admin/generation",
+            headers=headers,
+            json={
+                "primary_model": "integration-image-model",
+                "fallback_model": None,
+                "primary_params": {},
+                "fallback_params": {},
+                "mode_params": {},
+            },
+        )
+        assert runtime.status_code == 200, runtime.text
+        prompt = await client.put(
+            "/api/v1/admin/prompts/floor_plan",
+            headers=headers,
+            json={"template": "Create a floor plan. {user_prompt}"},
+        )
+        assert prompt.status_code == 200, prompt.text
+        price = await client.put(
+            "/api/v1/admin/generation-prices/floor_plan",
+            headers=headers,
+            json={"credits": 1, "is_active": True},
+        )
+        assert price.status_code == 200, price.text
+        credit = await client.post(
+            f"/api/v1/admin/users/{user_id}/credits",
+            headers=headers,
+            json={"delta": 3, "reason": "recovery integration budget"},
+        )
+        assert credit.status_code == 200, credit.text
+
+        project = await client.post(
+            "/api/v1/projects",
+            headers=headers,
+            json={"name": "Recovery plan", "context": {}},
+        )
+        assert project.status_code == 201, project.text
+        created = await client.post(
+            "/api/v1/generations",
+            headers=headers,
+            json={
+                "project_id": project.json()["id"],
+                "type": "floor_plan",
+                "prompt": "Recovery test",
+            },
+        )
+        assert created.status_code == 202, created.text
+        generation_id = UUID(created.json()["id"])
+
+        # Simulate complete Redis transport loss after the API accepted the paid job.
+        await redis_client.delete(GENERATION_QUEUE_KEY, GENERATION_PROCESSING_KEY)
+        async with get_session_factory()() as session:
+            generation = await session.get(Generation, generation_id)
+            assert generation is not None
+            generation.status = GenerationStatus.PROCESSING
+            generation.started_at = datetime.now(UTC) - timedelta(minutes=10)
+            await session.commit()
+
+        await _reconcile_database_jobs(get_settings())
+        queued_generations = await redis_client.lrange(GENERATION_QUEUE_KEY, 0, -1)
+        assert str(generation_id) in queued_generations
+        async with get_session_factory()() as session:
+            generation = await session.get(Generation, generation_id)
+            assert generation is not None
+            assert generation.status == GenerationStatus.QUEUED
+            assert generation.started_at is None
+
+        campaign_id = uuid4()
+        async with get_session_factory()() as session:
+            session.add(
+                BroadcastCampaign(
+                    id=campaign_id,
+                    created_by_user_id=UUID(user_id),
+                    text="Recovery broadcast",
+                    status="queued",
+                )
+            )
+            await session.commit()
+
+        await redis_client.delete(BROADCAST_QUEUE_KEY, BROADCAST_PROCESSING_KEY)
+        await _rehydrate_database_campaigns()
+        queued_broadcasts = await redis_client.lrange(BROADCAST_QUEUE_KEY, 0, -1)
+        assert str(campaign_id) in queued_broadcasts
+
+        await redis_client.delete(
+            GENERATION_QUEUE_KEY,
+            GENERATION_PROCESSING_KEY,
+            BROADCAST_QUEUE_KEY,
+            BROADCAST_PROCESSING_KEY,
+        )

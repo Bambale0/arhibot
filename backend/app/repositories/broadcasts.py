@@ -73,6 +73,16 @@ class BroadcastRepository:
         )
         return {str(status): int(count) for status, count in result.all()}
 
+
+    async def list_recoverable_queued(self, *, limit: int = 500) -> list[BroadcastCampaign]:
+        result = await self.session.execute(
+            select(BroadcastCampaign)
+            .where(BroadcastCampaign.status == "queued")
+            .order_by(BroadcastCampaign.updated_at.asc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
     async def list_due_scheduled(self, now: datetime, *, limit: int = 50) -> list[BroadcastCampaign]:
         result = await self.session.execute(
             select(BroadcastCampaign)

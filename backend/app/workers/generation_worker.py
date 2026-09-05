@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import httpx
+from sqlalchemy import select
 
 from app.core.config import Settings, get_settings
 from app.core.redis import redis_client
@@ -203,6 +204,48 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         await _mark_failed_and_refund(generation_id, exc)
 
 
+async def _reconcile_database_jobs(settings: Settings) -> None:
+    """Rehydrate Redis from PostgreSQL after Redis/AOF loss.
+
+    QUEUED rows are always safe to enqueue when they are absent from both Redis lists.
+    PROCESSING rows are recovered only after the provider timeout window, which avoids
+    stealing genuinely active work during a short worker overlap.
+    """
+    queued_raw = await redis_client.lrange(GENERATION_QUEUE_KEY, 0, -1)
+    processing_raw = await redis_client.lrange(GENERATION_PROCESSING_KEY, 0, -1)
+    redis_ids = {str(value) for value in [*queued_raw, *processing_raw]}
+    stale_before = datetime.now(UTC) - timedelta(
+        seconds=max(int(settings.nexus_task_timeout_seconds) + 60, 300)
+    )
+    recovered: list[str] = []
+
+    async with get_session_factory()() as session:
+        result = await session.execute(
+            select(Generation)
+            .where(Generation.status.in_([GenerationStatus.QUEUED, GenerationStatus.PROCESSING]))
+            .order_by(Generation.created_at.asc())
+            .with_for_update(skip_locked=True)
+        )
+        for generation in result.scalars().all():
+            raw_id = str(generation.id)
+            if raw_id in redis_ids:
+                continue
+            if generation.status == GenerationStatus.PROCESSING:
+                if generation.started_at is not None and generation.started_at > stale_before:
+                    continue
+                generation.status = GenerationStatus.QUEUED
+                generation.started_at = None
+                generation.error = None
+            recovered.append(raw_id)
+        if recovered:
+            await session.commit()
+
+    for raw_id in recovered:
+        await redis_client.rpush(GENERATION_QUEUE_KEY, raw_id)
+    if recovered:
+        logger.warning("Rehydrated %s generation job(s) from PostgreSQL", len(recovered))
+
+
 async def _recover_reserved_jobs() -> None:
     reserved = await redis_client.lrange(GENERATION_PROCESSING_KEY, 0, -1)
     if not reserved:
@@ -256,8 +299,14 @@ async def run_worker() -> None:
     )
     logger.info("AuRoom generation worker started; queue uses reserve/ack recovery")
     await _recover_reserved_jobs()
+    await _reconcile_database_jobs(settings)
+    reconcile_tick = 0
     while True:
         try:
+            reconcile_tick += 1
+            if reconcile_tick >= 60:
+                await _reconcile_database_jobs(settings)
+                reconcile_tick = 0
             raw_id = await _reserve_job()
             if raw_id is None:
                 await asyncio.sleep(1)
