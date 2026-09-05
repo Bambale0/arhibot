@@ -15,12 +15,13 @@ function paymentLabel(status: string) {
   return 'Ожидает оплаты'
 }
 
-export function ProfileScreen() {
+export function ProfileScreen({ onOpenAdmin }: { onOpenAdmin?: () => void }) {
   const { user, signOut } = useAuth()
   const [billing, setBilling] = useState<BillingSummary | null>(null)
   const [billingError, setBillingError] = useState<string | null>(null)
   const [busyPackage, setBusyPackage] = useState<string | null>(null)
   const [paymentNotice, setPaymentNotice] = useState<string | null>(null)
+  const isAdmin = user?.role === 'admin' || user?.role === 'superadmin'
 
   async function loadBilling() {
     try {
@@ -78,14 +79,14 @@ export function ProfileScreen() {
 
   return (
     <section className="page-content profile-page">
-      <div className="page-heading-row"><div><span className="eyebrow">АККАУНТ AUROOM</span><h1>Профиль</h1><p>Аккаунт, баланс и оплата генераций.</p></div></div>
+      <div className="page-heading-row"><div><span className="eyebrow">АККАУНТ AUROOM</span><h1>Профиль</h1><p>Аккаунт, баланс и оплата генераций.</p></div>{isAdmin && onOpenAdmin && <button className="primary-button" onClick={onOpenAdmin}>Веб-админка</button>}</div>
 
       {paymentNotice && <div className="billing-notice">{paymentNotice}</div>}
       {billingError && <div className="banner-error">{billingError}<button onClick={() => setBillingError(null)}>Закрыть</button></div>}
 
       <div className="profile-card">
         <div className="profile-avatar"><UserIcon /></div>
-        <div className="profile-main"><h2>{user?.display_name || 'Пользователь AuRoom'}</h2><span className="status-pill">Активен</span></div>
+        <div className="profile-main"><h2>{user?.display_name || 'Пользователь AuRoom'}</h2><span className="status-pill">{user?.role || 'user'}</span></div>
         <dl className="profile-details">
           <div><dt>Баланс</dt><dd><strong>{billing?.credits_balance ?? user?.credits_balance ?? 0} кредитов</strong></dd></div>
           <div><dt>ID</dt><dd>{user?.id}</dd></div>
@@ -100,7 +101,7 @@ export function ProfileScreen() {
         {!billing ? (
           <div className="empty-inline">Загружаем тарифы…</div>
         ) : !billing.enabled ? (
-          <div className="empty-inline">Оплата ещё не активирована. Нужны shopId, secretKey и тарифы YooKassa.</div>
+          <div className="empty-inline">Оплата ещё не активирована. Администратор публикует тарифы в веб-админке; YooKassa credentials хранятся только на сервере.</div>
         ) : (
           <div className="billing-packages">
             {billing.packages.map((item) => (
