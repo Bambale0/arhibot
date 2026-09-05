@@ -129,6 +129,25 @@ class GenerationService:
 
         return await self.to_response(generation)
 
+    async def repeat(self, user: User, generation_id: UUID) -> GenerationResponse:
+        source = await self.repository.get_owned(generation_id, user.id)
+        if source is None:
+            raise AppError(
+                type="generation_not_found",
+                title="Generation not found",
+                status=404,
+                detail="The generation does not exist or is not available to this user.",
+            )
+        return await self.create(
+            user,
+            GenerationCreate(
+                project_id=source.project_id,
+                input_asset_id=source.input_asset_id,
+                type=source.type,
+                prompt=source.prompt,
+            ),
+        )
+
     async def get(self, user: User, generation_id: UUID) -> GenerationResponse:
         generation = await self.repository.get_owned(generation_id, user.id)
         if not generation:
