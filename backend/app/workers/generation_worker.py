@@ -14,22 +14,16 @@ from app.db.models.generations import Generation
 from app.db.models.projects import Project
 from app.db.session import dispose_engine, get_session_factory
 from app.domain.assets.enums import AssetPurpose, AssetType
-from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.domain.generations.enums import GenerationStatus
 from app.prompt_builders.generation import build_generation_prompt
 from app.providers.nexus import NexusImageProvider, NexusProviderError
+from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
 from app.repositories.projects import ProjectRepository
 from app.services.asset_service import AssetService
 from app.services.generation_service import GENERATION_QUEUE_KEY
 
 logger = logging.getLogger(__name__)
-
-ASPECT_RATIOS: dict[GenerationType, str] = {
-    GenerationType.FLOOR_PLAN: "1:1",
-    GenerationType.FACADE: "16:9",
-    GenerationType.MASTER_PLAN: "1:1",
-    GenerationType.INTERIOR: "16:9",
-}
 
 
 async def _download_image(url: str, settings: Settings) -> bytes:
@@ -70,6 +64,16 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             await session.commit()
             return
 
+        admin_repository = AdminRepository(session)
+        runtime = await admin_repository.get_generation_settings()
+        prompt_template = await admin_repository.get_prompt_template(generation.type.value)
+        if runtime is None or prompt_template is None:
+            generation.status = GenerationStatus.FAILED
+            generation.error = "Generation is not configured in AuRoom admin."
+            generation.completed_at = datetime.now(UTC)
+            await session.commit()
+            return
+
         generation.status = GenerationStatus.PROCESSING
         generation.started_at = datetime.now(UTC)
         generation.error = None
@@ -81,11 +85,15 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             settings,
         )
         source_url = asset_service.storage.public_url(input_asset.storage_path)
-        prompt = build_generation_prompt(generation.type, generation.prompt, project)
-        aspect_ratio = ASPECT_RATIOS[generation.type]
+        prompt = build_generation_prompt(prompt_template.template, generation.prompt, project)
+        mode_params = dict((runtime.mode_params or {}).get(generation.type.value) or {})
+        primary_params = {**dict(runtime.primary_params or {}), **mode_params}
+        fallback_params = {**dict(runtime.fallback_params or {}), **mode_params}
+        primary_model = runtime.primary_model
+        fallback_model = runtime.fallback_model
 
     provider = NexusImageProvider(settings)
-    model_name = settings.nexus_primary_model
+    model_name = primary_model
     fallback_used = False
     try:
         try:
@@ -93,24 +101,24 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 model_name=model_name,
                 prompt=prompt,
                 image_url=source_url,
-                aspect_ratio=aspect_ratio,
+                model_params=primary_params,
                 idempotency_key=f"auroom-{generation_id}-primary",
             )
         except NexusProviderError as primary_error:
-            if not primary_error.retryable:
+            if not primary_error.retryable or not fallback_model:
                 raise
             logger.warning(
-                "Primary Nexus model failed for %s; using fallback: %s",
+                "Primary Nexus model failed for %s; using admin-configured fallback: %s",
                 generation_id,
                 primary_error,
             )
-            model_name = settings.nexus_fallback_model
+            model_name = fallback_model
             fallback_used = True
             result = await provider.generate(
                 model_name=model_name,
                 prompt=prompt,
                 image_url=source_url,
-                aspect_ratio=aspect_ratio,
+                model_params=fallback_params,
                 idempotency_key=f"auroom-{generation_id}-fallback",
             )
 
@@ -170,11 +178,7 @@ async def run_worker() -> None:
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    logger.info(
-        "AuRoom generation worker started: primary=%s fallback=%s",
-        settings.nexus_primary_model,
-        settings.nexus_fallback_model,
-    )
+    logger.info("AuRoom generation worker started; runtime model configuration is DB-backed")
     while True:
         try:
             raw_id = await redis_client.lpop(GENERATION_QUEUE_KEY)
