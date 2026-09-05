@@ -69,6 +69,31 @@ class BillingPlanResponse(BaseModel):
     updated_at: datetime
 
 
+class BillingSettingsUpdate(BaseModel):
+    receipts_enabled: bool = False
+    vat_code: int | None = Field(default=None, ge=1, le=12)
+    payment_subject: str | None = Field(default=None, max_length=64)
+    payment_mode: str | None = Field(default=None, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_receipt_fields(self) -> "BillingSettingsUpdate":
+        if self.receipts_enabled and (
+            self.vat_code is None
+            or not (self.payment_subject or "").strip()
+            or not (self.payment_mode or "").strip()
+        ):
+            raise ValueError("VAT code, payment subject and payment mode are required for receipts")
+        return self
+
+
+class BillingSettingsResponse(BaseModel):
+    receipts_enabled: bool
+    vat_code: int | None
+    payment_subject: str | None
+    payment_mode: str | None
+    updated_at: datetime | None = None
+
+
 class IdeaCreate(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     category: str = Field(min_length=1, max_length=64)
@@ -223,10 +248,14 @@ class AdminPaymentResponse(BaseModel):
     currency: str
     status: str
     yookassa_payment_id: str | None
+    receipt_email: str | None
+    refund_id: str | None
+    refund_status: str | None
     provider_error: str | None
     created_at: datetime
     updated_at: datetime
     paid_at: datetime | None
+    refunded_at: datetime | None
 
 
 class BroadcastCreate(BaseModel):
