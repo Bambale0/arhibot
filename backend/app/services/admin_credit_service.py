@@ -121,4 +121,7 @@ class AdminCreditService:
                 status=404,
                 detail="User does not exist.",
             )
+        # updated_at is server-generated on balance updates and may be expired
+        # even with expire_on_commit=False. Refresh before synchronous serialization.
+        await self.session.refresh(user)
         return self.user_response(user)
