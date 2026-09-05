@@ -274,7 +274,6 @@ async def test_workers_rehydrate_accepted_jobs_when_redis_transport_is_lost() ->
     from app.workers.broadcast_worker import (
         BROADCAST_PROCESSING_KEY,
         _rehydrate_database_campaigns,
-        _recover_interrupted_work,
     )
     from app.workers.generation_worker import (
         GENERATION_PROCESSING_KEY,

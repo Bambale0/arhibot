@@ -116,3 +116,16 @@ GitHub Actions runs on every push and pull request to `main`:
 4. frontend TypeScript check + production Vite build.
 
 No production secrets are stored in the workflow; CI uses disposable test credentials only.
+
+
+## Runtime backup and recovery
+
+Production deploys create a PostgreSQL + media backup before migrations. A root cron entry also runs `ops/backup_runtime.sh` on the cadence stored in **Operational Settings** in web admin.
+
+Backups can be checked without changing runtime state:
+
+```bash
+./ops/restore_runtime.sh /root/arhibot /root/arhibot/backups/runtime/<timestamp> VERIFY
+```
+
+An actual restore is intentionally destructive and requires the explicit third argument `RESTORE`. Never use it as a health check; use `VERIFY` instead.

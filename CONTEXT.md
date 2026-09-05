@@ -39,3 +39,27 @@ An admin-created Telegram message with lifecycle/status and delivery counters. S
 ## Admin Audit Log
 
 Append-only operational trace of admin changes such as tariff edits, AI configuration changes, credit adjustments, payment reconciliation and broadcast sending.
+
+## Generation Price
+
+The admin-managed number of Credits reserved when a user starts one Generation of a specific mode. A disabled or missing price makes that mode unavailable for paid generation until an operator configures it.
+
+## Credit Transaction
+
+An immutable balance movement that records why Credits changed, the resulting balance, and the related business object when one exists. Payment credits, Generation reserves/refunds, refund debits/rollbacks, and admin adjustments are represented as Credit Transactions and must be idempotent where an external or retryable action is involved.
+
+## Payment Refund
+
+A full reversal of a successful YooKassa Payment. AuRoom reserves the purchased Credits before requesting the provider refund, rolls that reservation back if the provider rejects or cancels the refund, and marks the Payment refunded only after YooKassa confirms success.
+
+## Billing Settings
+
+Admin-managed fiscal behavior for YooKassa receipts, such as whether receipts are enabled and the configured VAT/payment classifications. Provider credentials remain Secret Configuration.
+
+## Broadcast Delivery
+
+The per-recipient delivery state for one Broadcast Campaign. Delivery attempts are retryable and rate-limit aware; a Campaign is terminal only when no pending, retrying, or sending deliveries remain.
+
+## Operational Settings
+
+Admin-managed runtime protections and lifecycle settings such as rate limits, media retention, backup cadence, and backup retention. These are operational controls, not Secret Configuration.

@@ -6,7 +6,10 @@ backup_dir=${2:?backup directory is required}
 confirm=${3:-}
 compose_file="${app_dir}/backend/docker-compose.yml"
 
-[[ "${confirm}" == "RESTORE" ]] || { echo "Refusing restore without explicit RESTORE confirmation" >&2; exit 2; }
+[[ "${confirm}" == "RESTORE" || "${confirm}" == "VERIFY" ]] || {
+  echo "Use VERIFY for a non-destructive backup check or RESTORE for an actual restore" >&2
+  exit 2
+}
 [[ -s "${backup_dir}/postgres.dump" ]] || { echo "Missing postgres.dump" >&2; exit 1; }
 [[ -s "${backup_dir}/media.tar.gz" ]] || { echo "Missing media.tar.gz" >&2; exit 1; }
 [[ -s "${backup_dir}/SHA256SUMS" ]] || { echo "Missing SHA256SUMS" >&2; exit 1; }
@@ -18,6 +21,13 @@ elif command -v docker-compose >/dev/null 2>&1; then
   compose() { docker-compose --project-directory "${app_dir}/backend" -f "${compose_file}" "$@"; }
 else
   echo "Docker Compose is not installed" >&2; exit 1
+fi
+
+if [[ "${confirm}" == "VERIFY" ]]; then
+  tar -tzf "${backup_dir}/media.tar.gz" >/dev/null
+  compose exec -T postgres pg_restore --list < "${backup_dir}/postgres.dump" >/dev/null
+  echo "AuRoom runtime backup verified: ${backup_dir}"
+  exit 0
 fi
 
 compose stop api bot worker broadcast-worker maintenance nginx frontend

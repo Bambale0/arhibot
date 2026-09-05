@@ -38,6 +38,10 @@ jobs:
       - name: Compile
         run: python -m compileall -q app tests
 
+      - name: Validate operations scripts
+        working-directory: .
+        run: bash -n ops/deploy_docker.sh ops/backup_runtime.sh ops/restore_runtime.sh
+
       - name: Unit and contract tests
         run: pytest -q -m 'not integration'
 
