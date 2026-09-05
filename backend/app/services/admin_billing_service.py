@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import AppError
 from app.db.models.billing import BillingSettings
 from app.db.models.users import User
 from app.repositories.admin import AdminRepository
@@ -85,15 +86,43 @@ class AdminBillingService:
             refunded_at=payment.refunded_at,
         )
 
+    async def list_payments(self) -> list[AdminPaymentResponse]:
+        return [self.payment_response(row) for row in await self.repository.list_all_payments()]
+
+    async def reconcile_payment(self, actor: User, payment_id: UUID) -> AdminPaymentResponse:
+        payment = await self.repository.get_payment(payment_id)
+        if payment is None:
+            raise AppError(
+                type="billing_payment_not_found",
+                title="Payment not found",
+                status=404,
+                detail="Payment does not exist.",
+            )
+        billing = BillingService(self.session, self.settings)
+        if payment.yookassa_payment_id:
+            await billing.sync_payment(payment)
+        payment = await self.repository.get_payment(payment_id) or payment
+        if payment.refund_id:
+            await billing.sync_refund(payment)
+        payment = await self.repository.get_payment(payment_id) or payment
+        self.audit.add_audit(
+            actor_user_id=actor.id,
+            action="payment.reconcile",
+            entity_type="billing_payment",
+            entity_id=str(payment.id),
+        )
+        await self.session.commit()
+        return self.payment_response(payment)
+
     async def refund_payment(self, actor: User, payment_id: UUID) -> AdminPaymentResponse:
-        payment = await BillingService(self.session, self.settings).request_full_refund(payment_id)
+        result = await BillingService(self.session, self.settings).request_full_refund(payment_id)
         current = await self.repository.get_payment(payment_id)
         self.audit.add_audit(
             actor_user_id=actor.id,
             action="payment.refund",
             entity_type="billing_payment",
             entity_id=str(payment_id),
-            details={"status": payment.refund_status},
+            details={"status": result.refund_status},
         )
         await self.session.commit()
         if current is None:
