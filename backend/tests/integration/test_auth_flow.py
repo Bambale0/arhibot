@@ -33,6 +33,14 @@ async def test_email_register_me_refresh_login_flow() -> None:
         )
         assert me.status_code == 200, me.text
         assert me.json()["display_name"] == "Integration User"
+        assert me.json()["role"] == "user"
+
+        admin = await client.get(
+            "/api/v1/admin/overview",
+            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+        )
+        assert admin.status_code == 403, admin.text
+        assert admin.json()["type"] == "admin_access_required"
 
         refresh = await client.post(
             "/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
