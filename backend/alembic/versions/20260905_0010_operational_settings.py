@@ -25,6 +25,7 @@ def upgrade() -> None:
         sa.Column("generation_rate_limit_per_minute", sa.Integer(), nullable=True),
         sa.Column("payment_rate_limit_per_minute", sa.Integer(), nullable=True),
         sa.Column("media_retention_days", sa.Integer(), nullable=True),
+        sa.Column("backup_interval_hours", sa.Integer(), nullable=True),
         sa.Column("backup_retention_days", sa.Integer(), nullable=True),
         sa.Column("updated_by_user_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
