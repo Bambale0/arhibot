@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, String, Text, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,8 +26,8 @@ class Generation(Base):
     project_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
-    input_asset_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("assets.id", ondelete="RESTRICT"), nullable=False
+    input_asset_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("assets.id", ondelete="RESTRICT"), nullable=True
     )
     output_asset_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("assets.id", ondelete="SET NULL"), nullable=True
@@ -51,6 +51,7 @@ class Generation(Base):
         server_default=GenerationStatus.QUEUED.value,
     )
     prompt: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    credits_charged: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     model_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
     fallback_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     provider_task_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
