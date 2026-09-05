@@ -47,7 +47,7 @@ rollback_code() {
     --exclude='.release/' \
     "${restore_root}/" "${app_dir}/"
 
-  compose build api bot worker frontend || true
+  compose build api bot worker broadcast-worker frontend || true
   compose up -d --remove-orphans || true
   compose up -d --force-recreate nginx || true
 }
@@ -102,16 +102,14 @@ rsync --archive --delete \
   "${candidate}/" "${app_dir}/"
 
 cd "${app_dir}"
-echo "Building API, bot, worker and frontend"
-compose build api bot worker frontend
+echo "Building API, bot, workers and frontend"
+compose build api bot worker broadcast-worker frontend
 
 echo "Applying database migrations"
 compose run --rm api alembic upgrade head
 
 echo "Starting production stack"
 compose up -d --remove-orphans
-# The Nginx config is bind-mounted and Docker service IPs can change on rollout.
-# Recreate it so every release loads the current config and upstream addresses.
 compose up -d --force-recreate nginx
 
 health_passed=0
@@ -127,12 +125,12 @@ done
 if (( health_passed == 0 )); then
   echo "HTTP health check failed" >&2
   compose ps >&2 || true
-  compose logs --tail 100 api nginx frontend worker 2>&1 \
+  compose logs --tail 100 api nginx frontend worker broadcast-worker 2>&1 \
     | sed -E 's/(token|password|secret|api[_-]?key)=([^[:space:]]+)/\1=[REDACTED]/Ig' >&2 || true
   exit 1
 fi
 
-for service in bot worker; do
+for service in bot worker broadcast-worker; do
   service_id=$(compose ps -q "${service}")
   if [[ -z "${service_id}" ]] || [[ "$(docker inspect -f '{{.State.Running}}' "${service_id}" 2>/dev/null || true)" != "true" ]]; then
     echo "${service} container is not running" >&2
