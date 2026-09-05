@@ -8,6 +8,7 @@ from app.db.models.admin import (
 )
 from app.db.models.assets import Asset
 from app.db.models.billing import BillingPayment, BillingSettings
+from app.db.models.broadcasts import BroadcastDelivery
 from app.db.models.credits import CreditTransaction, GenerationCreditPrice
 from app.db.models.generations import Generation
 from app.db.models.projects import Project
@@ -21,6 +22,7 @@ __all__ = [
     "BillingPlan",
     "BillingSettings",
     "BroadcastCampaign",
+    "BroadcastDelivery",
     "CreditTransaction",
     "Generation",
     "GenerationCreditPrice",
