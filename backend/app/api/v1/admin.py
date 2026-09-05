@@ -34,6 +34,7 @@ from app.schemas.admin import (
 from app.services.admin_billing_service import AdminBillingService
 from app.services.admin_credit_service import AdminCreditService
 from app.services.admin_service import AdminService
+from app.services.broadcast_service import BroadcastService
 from app.services.idea_service import AdminIdeaService
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -44,272 +45,150 @@ def service(session: DbSession, settings: Settings) -> AdminService:
 
 
 @router.get("/overview", response_model=AdminOverviewResponse)
-async def overview(
-    _admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> AdminOverviewResponse:
+async def overview(_admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> AdminOverviewResponse:
     return service(session, settings).overview()
 
 
 @router.get("/tariffs", response_model=list[BillingPlanResponse])
-async def list_tariffs(
-    _admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> list[BillingPlanResponse]:
+async def list_tariffs(_admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> list[BillingPlanResponse]:
     return await service(session, settings).list_plans()
 
 
 @router.post("/tariffs", response_model=BillingPlanResponse, status_code=status.HTTP_201_CREATED)
-async def create_tariff(
-    payload: BillingPlanCreate,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> BillingPlanResponse:
+async def create_tariff(payload: BillingPlanCreate, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> BillingPlanResponse:
     return await service(session, settings).create_plan(admin, payload)
 
 
 @router.patch("/tariffs/{plan_id}", response_model=BillingPlanResponse)
-async def update_tariff(
-    plan_id: UUID,
-    payload: BillingPlanUpdate,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> BillingPlanResponse:
+async def update_tariff(plan_id: UUID, payload: BillingPlanUpdate, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> BillingPlanResponse:
     return await service(session, settings).update_plan(admin, plan_id, payload)
 
 
 @router.delete("/tariffs/{plan_id}", response_model=BillingPlanResponse)
-async def archive_tariff(
-    plan_id: UUID,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> BillingPlanResponse:
+async def archive_tariff(plan_id: UUID, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> BillingPlanResponse:
     return await service(session, settings).archive_plan(admin, plan_id)
 
 
 @router.get("/billing-settings", response_model=BillingSettingsResponse)
-async def get_billing_settings(
-    _admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> BillingSettingsResponse:
+async def get_billing_settings(_admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> BillingSettingsResponse:
     return await AdminBillingService(session, settings).get_settings()
 
 
 @router.put("/billing-settings", response_model=BillingSettingsResponse)
-async def update_billing_settings(
-    payload: BillingSettingsUpdate,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> BillingSettingsResponse:
+async def update_billing_settings(payload: BillingSettingsUpdate, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> BillingSettingsResponse:
     return await AdminBillingService(session, settings).update_settings(admin, payload)
 
 
 @router.get("/ideas", response_model=list[IdeaResponse])
-async def list_ideas(
-    _admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> list[IdeaResponse]:
+async def list_ideas(_admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> list[IdeaResponse]:
     return await AdminIdeaService(session, settings).list_all()
 
 
 @router.post("/ideas", response_model=IdeaResponse, status_code=status.HTTP_201_CREATED)
-async def create_idea(
-    payload: IdeaCreate,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> IdeaResponse:
+async def create_idea(payload: IdeaCreate, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> IdeaResponse:
     return await AdminIdeaService(session, settings).create(admin, payload)
 
 
 @router.patch("/ideas/{idea_id}", response_model=IdeaResponse)
-async def update_idea(
-    idea_id: UUID,
-    payload: IdeaUpdate,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> IdeaResponse:
+async def update_idea(idea_id: UUID, payload: IdeaUpdate, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> IdeaResponse:
     return await AdminIdeaService(session, settings).update(admin, idea_id, payload)
 
 
 @router.delete("/ideas/{idea_id}", response_model=IdeaResponse)
-async def archive_idea(
-    idea_id: UUID,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> IdeaResponse:
+async def archive_idea(idea_id: UUID, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> IdeaResponse:
     return await AdminIdeaService(session, settings).archive(admin, idea_id)
 
 
 @router.get("/generation", response_model=GenerationRuntimeResponse)
-async def get_generation_settings(
-    _admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> GenerationRuntimeResponse:
+async def get_generation_settings(_admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> GenerationRuntimeResponse:
     return await service(session, settings).get_generation_settings()
 
 
 @router.put("/generation", response_model=GenerationRuntimeResponse)
-async def update_generation_settings(
-    payload: GenerationRuntimeUpdate,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> GenerationRuntimeResponse:
+async def update_generation_settings(payload: GenerationRuntimeUpdate, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> GenerationRuntimeResponse:
     return await service(session, settings).update_generation_settings(admin, payload)
 
 
 @router.get("/generation-prices", response_model=list[GenerationPriceResponse])
-async def list_generation_prices(
-    _admin: AdminUser,
-    session: DbSession,
-) -> list[GenerationPriceResponse]:
+async def list_generation_prices(_admin: AdminUser, session: DbSession) -> list[GenerationPriceResponse]:
     return await AdminCreditService(session).list_prices()
 
 
 @router.put("/generation-prices/{generation_type}", response_model=GenerationPriceResponse)
-async def update_generation_price(
-    generation_type: GenerationType,
-    payload: GenerationPriceUpdate,
-    admin: AdminUser,
-    session: DbSession,
-) -> GenerationPriceResponse:
+async def update_generation_price(generation_type: GenerationType, payload: GenerationPriceUpdate, admin: AdminUser, session: DbSession) -> GenerationPriceResponse:
     return await AdminCreditService(session).update_price(admin, generation_type, payload)
 
 
 @router.get("/prompts", response_model=list[PromptTemplateResponse])
-async def list_prompts(
-    _admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> list[PromptTemplateResponse]:
+async def list_prompts(_admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> list[PromptTemplateResponse]:
     return await service(session, settings).list_prompts()
 
 
 @router.put("/prompts/{generation_type}", response_model=PromptTemplateResponse)
-async def update_prompt(
-    generation_type: GenerationType,
-    payload: PromptTemplateUpdate,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> PromptTemplateResponse:
+async def update_prompt(generation_type: GenerationType, payload: PromptTemplateUpdate, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> PromptTemplateResponse:
     return await service(session, settings).update_prompt(admin, generation_type, payload)
 
 
 @router.get("/users", response_model=list[AdminUserResponse])
-async def list_users(
-    _admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> list[AdminUserResponse]:
+async def list_users(_admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> list[AdminUserResponse]:
     return await service(session, settings).list_users()
 
 
 @router.post("/users/{user_id}/credits", response_model=AdminUserResponse)
-async def adjust_user_credits(
-    user_id: UUID,
-    payload: CreditAdjustmentRequest,
-    admin: AdminUser,
-    session: DbSession,
-) -> AdminUserResponse:
+async def adjust_user_credits(user_id: UUID, payload: CreditAdjustmentRequest, admin: AdminUser, session: DbSession) -> AdminUserResponse:
     return await AdminCreditService(session).adjust_credits(admin, user_id, payload)
 
 
 @router.get("/credit-transactions", response_model=list[CreditTransactionResponse])
-async def list_credit_transactions(
-    _admin: AdminUser,
-    session: DbSession,
-    user_id: UUID | None = None,
-    limit: Annotated[int, Query(ge=1, le=500)] = 200,
-) -> list[CreditTransactionResponse]:
+async def list_credit_transactions(_admin: AdminUser, session: DbSession, user_id: UUID | None = None, limit: Annotated[int, Query(ge=1, le=500)] = 200) -> list[CreditTransactionResponse]:
     return await AdminCreditService(session).list_transactions(user_id=user_id, limit=limit)
 
 
 @router.patch("/users/{user_id}", response_model=AdminUserResponse)
-async def update_user_state(
-    user_id: UUID,
-    payload: UserStateUpdate,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> AdminUserResponse:
+async def update_user_state(user_id: UUID, payload: UserStateUpdate, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> AdminUserResponse:
     return await service(session, settings).update_user_state(admin, user_id, payload)
 
 
 @router.get("/payments", response_model=list[AdminPaymentResponse])
-async def list_payments(
-    _admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> list[AdminPaymentResponse]:
+async def list_payments(_admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> list[AdminPaymentResponse]:
     return await AdminBillingService(session, settings).list_payments()
 
 
 @router.post("/payments/{payment_id}/reconcile", response_model=AdminPaymentResponse)
-async def reconcile_payment(
-    payment_id: UUID,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> AdminPaymentResponse:
+async def reconcile_payment(payment_id: UUID, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> AdminPaymentResponse:
     return await AdminBillingService(session, settings).reconcile_payment(admin, payment_id)
 
 
 @router.post("/payments/{payment_id}/refund", response_model=AdminPaymentResponse)
-async def refund_payment(
-    payment_id: UUID,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> AdminPaymentResponse:
+async def refund_payment(payment_id: UUID, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> AdminPaymentResponse:
     return await AdminBillingService(session, settings).refund_payment(admin, payment_id)
 
 
 @router.get("/broadcasts", response_model=list[BroadcastResponse])
-async def list_broadcasts(
-    _admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> list[BroadcastResponse]:
-    return await service(session, settings).list_broadcasts()
+async def list_broadcasts(_admin: AdminUser, session: DbSession) -> list[BroadcastResponse]:
+    return await BroadcastService(session).list()
 
 
 @router.post("/broadcasts", response_model=BroadcastResponse, status_code=status.HTTP_201_CREATED)
-async def create_broadcast(
-    payload: BroadcastCreate,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> BroadcastResponse:
-    return await service(session, settings).create_broadcast(admin, payload)
+async def create_broadcast(payload: BroadcastCreate, admin: AdminUser, session: DbSession) -> BroadcastResponse:
+    return await BroadcastService(session).create(admin, payload)
 
 
 @router.post("/broadcasts/{campaign_id}/send", response_model=BroadcastResponse)
-async def send_broadcast(
-    campaign_id: UUID,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> BroadcastResponse:
-    return await service(session, settings).send_broadcast(admin, campaign_id)
+async def send_broadcast(campaign_id: UUID, admin: AdminUser, session: DbSession) -> BroadcastResponse:
+    return await BroadcastService(session).queue(admin, campaign_id)
+
+
+@router.post("/broadcasts/{campaign_id}/retry", response_model=BroadcastResponse)
+async def retry_broadcast(campaign_id: UUID, admin: AdminUser, session: DbSession) -> BroadcastResponse:
+    return await BroadcastService(session).retry_failed(admin, campaign_id)
+
+
+@router.post("/broadcasts/{campaign_id}/cancel", response_model=BroadcastResponse)
+async def cancel_broadcast(campaign_id: UUID, admin: AdminUser, session: DbSession) -> BroadcastResponse:
+    return await BroadcastService(session).cancel(admin, campaign_id)
 
 
 @router.get("/audit", response_model=list[AuditLogResponse])
-async def list_audit(
-    _admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> list[AuditLogResponse]:
+async def list_audit(_admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> list[AuditLogResponse]:
     return await service(session, settings).list_audit()
