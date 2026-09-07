@@ -31,7 +31,7 @@ export function IdeasScreen({ onUseIdea }: { onUseIdea: (mode: GenerationMode, p
           {ideas.map((idea, index) => { const Icon = iconByMode[idea.generation_type]; return (
             <article className="idea-card" key={idea.id}>
               <div className={`idea-visual idea-tone-${(index % 4) + 1} ${idea.image_url ? 'has-image' : ''}`}>
-                {idea.image_url ? <img src={idea.image_url} alt={idea.title} loading="lazy" /> : <Icon />}
+                {idea.image_url ? <img src={idea.image_url} alt={idea.title} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : <Icon />}
                 <span>{idea.category}</span>
               </div>
               <div className="idea-body"><div><h3>{idea.title}</h3><p>{idea.text}</p></div><button className="secondary-button" onClick={() => onUseIdea(idea.generation_type, idea.prompt)}>Использовать идею</button></div>
