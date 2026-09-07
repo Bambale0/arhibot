@@ -2,9 +2,9 @@ name: Server smoke
 
 on:
   workflow_run:
-    workflows: [Deploy]
+    workflows: [Deploy dev]
     types: [completed]
-    branches: [main]
+    branches: [dev]
   workflow_dispatch:
 
 permissions:
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   smoke:
-    name: Test deployed MVP on server
+    name: Test deployed dev on server
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: >-
@@ -56,7 +56,7 @@ jobs:
           printf '%s\n' "${DEPLOY_SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Run smoke checks on production host
+      - name: Run smoke checks on development host
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -88,5 +88,5 @@ jobs:
             [[ "${running}" == "true" ]] || { echo "Container is not running: ${service}" >&2; exit 1; }
           done
 
-          echo "Production API, frontend, Telegram bot and generation worker are running"
+          echo "Development API, frontend, Telegram bot and generation worker are running"
           REMOTE

@@ -1,0 +1,24 @@
+name: Main promotion guard
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    name: Main promotion source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require dev as production promotion source
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "${HEAD_REF}" == "dev" ]] || {
+            echo "main accepts production promotion PRs from dev only; got ${HEAD_REF}." >&2
+            exit 1
+          }

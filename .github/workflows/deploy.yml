@@ -1,32 +1,24 @@
-name: Deploy
+name: Deploy dev
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: arhibot-production-deploy
+  group: arhibot-dev-deploy
   cancel-in-progress: false
 
 jobs:
   deploy:
-    name: Deploy production
+    name: Deploy green dev manually
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: >-
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    if: github.ref == 'refs/heads/dev'
     env:
-      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      DEPLOY_SHA: ${{ github.sha }}
       DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
       DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
       DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
@@ -34,34 +26,44 @@ jobs:
       DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
       DEPLOY_APP_DIR: /root/arhibot
     steps:
-      - name: Checkout gated revision
+      - name: Checkout selected dev revision
         uses: actions/checkout@v7
         with:
           ref: ${{ env.DEPLOY_SHA }}
 
-      - name: Verify immutable release target
-        id: target
+      - name: Require latest green dev commit
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -Eeuo pipefail
+
+          [[ "${GITHUB_REF}" == "refs/heads/dev" ]] || {
+            echo "Development deploys may only be dispatched from dev." >&2
+            exit 1
+          }
+
           checked_out=$(git rev-parse HEAD)
           [[ "${checked_out}" == "${DEPLOY_SHA}" ]] || {
             echo "Checked out ${checked_out}, expected ${DEPLOY_SHA}" >&2
             exit 1
           }
 
-          git fetch --no-tags --depth=1 origin refs/heads/main
-          current_main=$(git rev-parse FETCH_HEAD)
-          if [[ "${DEPLOY_SHA}" != "${current_main}" ]]; then
-            echo "deploy=false" >> "${GITHUB_OUTPUT}"
-            echo "Skipping stale candidate ${DEPLOY_SHA}; current main is ${current_main}"
-            exit 0
+          git fetch --no-tags --depth=1 origin refs/heads/dev
+          current_dev=$(git rev-parse FETCH_HEAD)
+          [[ "${DEPLOY_SHA}" == "${current_dev}" ]] || {
+            echo "Refusing stale dev candidate ${DEPLOY_SHA}; current dev is ${current_dev}." >&2
+            exit 1
+          }
+
+          successful_runs=$(gh api --method GET             "/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs"             -f branch=dev             -f head_sha="${DEPLOY_SHA}"             -f event=push             -f status=success             -f per_page=20             --jq '.total_count')
+
+          if [[ "${successful_runs}" -lt 1 ]]; then
+            echo "Refusing deploy: CI is not green for dev SHA ${DEPLOY_SHA}." >&2
+            exit 1
           fi
 
-          echo "deploy=true" >> "${GITHUB_OUTPUT}"
-
       - name: Require server deploy configuration
-        if: steps.target.outputs.deploy == 'true'
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -73,14 +75,14 @@ jobs:
           done
 
           if (( ${#missing[@]} > 0 )); then
-            printf 'Server deploy is mandatory. Missing repository secrets: %s\n' "${missing[*]}" >&2
+            printf 'Development server deploy configuration is missing: %s
+' "${missing[*]}" >&2
             exit 1
           fi
 
           echo "DEPLOY_SSH_PORT=${DEPLOY_SSH_PORT:-22}" >> "${GITHUB_ENV}"
 
       - name: Package immutable candidate
-        if: steps.target.outputs.deploy == 'true'
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -88,37 +90,31 @@ jobs:
           sha256sum arhibot-source.tar.gz > arhibot-source.tar.gz.sha256
 
       - name: Configure SSH
-        if: steps.target.outputs.deploy == 'true'
         shell: bash
         run: |
           set -Eeuo pipefail
           install -d -m 700 ~/.ssh
-          printf '%s\n' "${DEPLOY_SSH_PRIVATE_KEY}" > ~/.ssh/id_ed25519
+          printf '%s
+' "${DEPLOY_SSH_PRIVATE_KEY}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' "${DEPLOY_SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          printf '%s
+' "${DEPLOY_SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
       - name: Transfer candidate
-        if: steps.target.outputs.deploy == 'true'
         shell: bash
         run: |
           set -Eeuo pipefail
           remote="${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}"
           ssh -p "${DEPLOY_SSH_PORT}" "${remote}" "mkdir -p '${DEPLOY_APP_DIR}/.release'"
-          scp -P "${DEPLOY_SSH_PORT}" \
-            arhibot-source.tar.gz \
-            arhibot-source.tar.gz.sha256 \
-            ops/deploy_docker.sh \
-            "${remote}:${DEPLOY_APP_DIR}/.release/"
+          scp -P "${DEPLOY_SSH_PORT}"             arhibot-source.tar.gz             arhibot-source.tar.gz.sha256             ops/deploy_docker.sh             "${remote}:${DEPLOY_APP_DIR}/.release/"
 
-      - name: Build, migrate and deploy
-        if: steps.target.outputs.deploy == 'true'
+      - name: Build, migrate and deploy development
         shell: bash
         run: |
           set -Eeuo pipefail
           remote="${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}"
-          ssh -p "${DEPLOY_SSH_PORT}" "${remote}" bash -s -- \
-            "${DEPLOY_APP_DIR}" "${DEPLOY_SHA}" <<'REMOTE' 2>&1 | tee deploy.log
+          ssh -p "${DEPLOY_SSH_PORT}" "${remote}" bash -s --             "${DEPLOY_APP_DIR}" "${DEPLOY_SHA}" <<'REMOTE' 2>&1 | tee deploy.log
           set -Eeuo pipefail
           app_dir=$1
           release_sha=$2
@@ -128,10 +124,10 @@ jobs:
           REMOTE
 
       - name: Upload deploy log
-        if: always() && steps.target.outputs.deploy == 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: arhibot-deploy-${{ env.DEPLOY_SHA }}
+          name: arhibot-dev-deploy-${{ env.DEPLOY_SHA }}
           path: deploy.log
           if-no-files-found: ignore
           retention-days: 14
