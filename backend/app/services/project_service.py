@@ -97,7 +97,11 @@ class ProjectService:
         if "status" in fields and payload.status is not None:
             project.status = payload.status
         if "context" in fields and payload.context is not None:
-            project.context = payload.context.model_dump(exclude_none=True)
+            updated_context = payload.context.model_dump(exclude_none=True)
+            existing_architecture = (project.context or {}).get("architecture")
+            if existing_architecture is not None and "architecture" not in updated_context:
+                updated_context["architecture"] = existing_architecture
+            project.context = updated_context
         await self.repository.session.commit()
         await self.repository.session.refresh(project)
         return self.to_response(project)

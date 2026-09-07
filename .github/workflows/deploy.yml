@@ -56,7 +56,14 @@ jobs:
             exit 1
           }
 
-          successful_runs=$(gh api --method GET             "/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs"             -f branch=dev             -f head_sha="${DEPLOY_SHA}"             -f event=push             -f status=success             -f per_page=20             --jq '.total_count')
+          successful_runs=$(gh api --method GET \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+            -f branch=dev \
+            -f head_sha="${DEPLOY_SHA}" \
+            -f event=push \
+            -f status=success \
+            -f per_page=20 \
+            --jq '.total_count')
 
           if [[ "${successful_runs}" -lt 1 ]]; then
             echo "Refusing deploy: CI is not green for dev SHA ${DEPLOY_SHA}." >&2
@@ -75,8 +82,7 @@ jobs:
           done
 
           if (( ${#missing[@]} > 0 )); then
-            printf 'Development server deploy configuration is missing: %s
-' "${missing[*]}" >&2
+            printf 'Development server deploy configuration is missing: %s\n' "${missing[*]}" >&2
             exit 1
           fi
 
@@ -94,11 +100,9 @@ jobs:
         run: |
           set -Eeuo pipefail
           install -d -m 700 ~/.ssh
-          printf '%s
-' "${DEPLOY_SSH_PRIVATE_KEY}" > ~/.ssh/id_ed25519
+          printf '%s\n' "${DEPLOY_SSH_PRIVATE_KEY}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          printf '%s
-' "${DEPLOY_SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          printf '%s\n' "${DEPLOY_SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
       - name: Transfer candidate
@@ -107,14 +111,19 @@ jobs:
           set -Eeuo pipefail
           remote="${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}"
           ssh -p "${DEPLOY_SSH_PORT}" "${remote}" "mkdir -p '${DEPLOY_APP_DIR}/.release'"
-          scp -P "${DEPLOY_SSH_PORT}"             arhibot-source.tar.gz             arhibot-source.tar.gz.sha256             ops/deploy_docker.sh             "${remote}:${DEPLOY_APP_DIR}/.release/"
+          scp -P "${DEPLOY_SSH_PORT}" \
+            arhibot-source.tar.gz \
+            arhibot-source.tar.gz.sha256 \
+            ops/deploy_docker.sh \
+            "${remote}:${DEPLOY_APP_DIR}/.release/"
 
       - name: Build, migrate and deploy development
         shell: bash
         run: |
           set -Eeuo pipefail
           remote="${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}"
-          ssh -p "${DEPLOY_SSH_PORT}" "${remote}" bash -s --             "${DEPLOY_APP_DIR}" "${DEPLOY_SHA}" <<'REMOTE' 2>&1 | tee deploy.log
+          ssh -p "${DEPLOY_SSH_PORT}" "${remote}" bash -s -- \
+            "${DEPLOY_APP_DIR}" "${DEPLOY_SHA}" <<'REMOTE' 2>&1 | tee deploy.log
           set -Eeuo pipefail
           app_dir=$1
           release_sha=$2

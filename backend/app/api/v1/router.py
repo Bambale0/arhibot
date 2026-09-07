@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.admin import router as admin_router
+from app.api.v1.architecture import router as architecture_router
 from app.api.v1.assets import router as assets_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.billing import router as billing_router
@@ -31,6 +32,7 @@ async def api_v1_info() -> ApiInfoResponse:
 router.include_router(auth_router)
 router.include_router(users_router)
 router.include_router(projects_router)
+router.include_router(architecture_router)
 router.include_router(assets_router)
 router.include_router(generations_router)
 router.include_router(ideas_router)
