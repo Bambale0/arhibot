@@ -347,7 +347,7 @@ Keep the AuRoom client-facing MVP simple, but production-safe:
 - do not open or merge feature branches directly into `main`;
 - `main` is the production line and may only be updated by a `dev` -> `main` pull request after all required CI checks are green;
 - never bypass GitHub branch protection, required checks, or the `Main promotion source` guard;
-- the development-server deployment workflow is manual-only and may deploy only the latest `dev` SHA with a successful `CI` push run;
+- the development server automatically deploys only the latest `dev` SHA after a successful `CI` push run; manual dispatch is retained only as a recovery path and must enforce the same latest-green-SHA gate;
 - do not deploy a feature branch or `main` with the development deployment workflow;
 - production promotion or deployment requires an explicit operator instruction. Do not infer permission from a green build, an approved PR, or a previous production release.
 

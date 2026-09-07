@@ -1,6 +1,10 @@
 name: Deploy dev
 
 on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [dev]
   workflow_dispatch:
 
 permissions:
@@ -13,12 +17,16 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy green dev manually
+    name: Deploy latest green dev
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: github.ref == 'refs/heads/dev'
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'dev') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev')
     env:
-      DEPLOY_SHA: ${{ github.sha }}
+      DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
       DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
       DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
       DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
@@ -37,11 +45,6 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-
-          [[ "${GITHUB_REF}" == "refs/heads/dev" ]] || {
-            echo "Development deploys may only be dispatched from dev." >&2
-            exit 1
-          }
 
           checked_out=$(git rev-parse HEAD)
           [[ "${checked_out}" == "${DEPLOY_SHA}" ]] || {
