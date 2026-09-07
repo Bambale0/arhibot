@@ -94,3 +94,18 @@ Keep the AuRoom client-facing MVP simple, but production-safe:
 - run backend tests/integration/migrations and frontend typecheck/build before claiming completion;
 - never commit real secrets or customer data;
 - do not silently fall back to demo behavior in production.
+
+## 7. Branch and release policy
+
+`dev` is the mandatory integration branch. Until the operator explicitly instructs in the current conversation/request to promote or merge to production:
+
+- every feature, fix, refactor, documentation change and operational change must target `dev` through a pull request;
+- do not push directly to `dev` after the one-time branch-policy bootstrap;
+- do not open or merge feature branches directly into `main`;
+- `main` is the production line and may only be updated by a `dev` -> `main` pull request after all required CI checks are green;
+- never bypass GitHub branch protection, required checks, or the `Main promotion source` guard;
+- the development-server deployment workflow is manual-only and may deploy only the latest `dev` SHA with a successful `CI` push run;
+- do not deploy a feature branch or `main` with the development deployment workflow;
+- production promotion/deployment requires an explicit operator instruction. Do not infer permission from a green build, an approved PR, or a previous production release.
+
+If an instruction conflicts with this policy, stop and ask for explicit production-promotion permission rather than guessing.
