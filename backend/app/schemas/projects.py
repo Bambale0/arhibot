@@ -3,6 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.architecture.schemas import ArchitecturePackage
 from app.domain.projects.enums import ProjectStatus
 
 
@@ -15,6 +16,7 @@ class ProjectContext(BaseModel):
     bedrooms: int | None = Field(default=None, ge=0, le=30)
     bathrooms: int | None = Field(default=None, ge=0, le=30)
     architecture_style: str | None = Field(default=None, max_length=80)
+    architecture: ArchitecturePackage | None = None
 
 
 class ProjectCreateRequest(BaseModel):
