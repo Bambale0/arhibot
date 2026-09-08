@@ -11,7 +11,10 @@ from app.architecture.schemas import (
 from app.core.config import Settings, get_settings
 from app.repositories.architecture_renders import ArchitectureRenderRepository
 from app.repositories.projects import ProjectRepository
-from app.schemas.architecture_renders import ArchitectureRenderCreateRequest, ArchitectureRenderResponse
+from app.schemas.architecture_renders import (
+    ArchitectureRenderCreateRequest,
+    ArchitectureRenderResponse,
+)
 from app.schemas.errors import ProblemDetails
 from app.services.architecture_render_service import ArchitectureRenderService
 from app.services.architecture_service import ArchitectureService
