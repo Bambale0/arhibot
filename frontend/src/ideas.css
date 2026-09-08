@@ -25,13 +25,15 @@
 
 .idea-stage-shell{position:relative;min-height:430px;margin-top:2px;padding-right:76px;display:flex;align-items:stretch}
 .idea-3d-pill{position:absolute;z-index:8;left:0;top:5px;height:44px;padding:0 16px;border-radius:99px;border:1px solid rgba(20,35,45,.12);background:rgba(255,255,255,.82);backdrop-filter:blur(12px);box-shadow:0 7px 24px rgba(33,27,20,.05);display:flex;gap:8px;align-items:center;font-weight:750;color:#14232d;cursor:default}
-.idea-3d-pill svg:first-child{width:22px;height:22px}.idea-3d-pill svg:last-child{width:16px;height:16px;margin-left:3px}
-.idea-3d-viewer{position:relative;width:100%;min-height:430px;overflow:hidden;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 77%,rgba(174,157,135,.15),transparent 43%)}
-.idea-3d-poster{position:absolute;inset:6% 2% 10%;width:96%;height:84%;object-fit:contain;transition:opacity .35s ease,filter .35s ease;filter:saturate(.92) contrast(.98);mix-blend-mode:multiply}
-.idea-3d-viewer.is-ready .idea-3d-poster{opacity:.08;filter:blur(7px) saturate(.7)}
-.idea-3d-canvas{position:absolute;inset:0;z-index:2;touch-action:none;cursor:grab}
+.idea-3d-pill svg:first-child{width:22px;height:22px}.idea-3d-pill svg:last-child{width:16px;height:16px;margin-left:3px}.idea-3d-pill.poster-mode{color:#626b70;background:rgba(255,255,255,.7)}
+.idea-3d-viewer{position:relative;width:100%;min-height:430px;overflow:hidden;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 76%,rgba(181,164,143,.16),transparent 46%)}
+.idea-3d-poster{position:absolute;inset:3% 1% 8%;width:98%;height:89%;object-fit:contain;object-position:center;transition:opacity .35s ease,filter .35s ease;filter:saturate(1.02) contrast(1.01) drop-shadow(0 24px 42px rgba(45,35,27,.12))}
+.idea-3d-viewer.is-ready .idea-3d-poster{opacity:.035;filter:blur(9px) saturate(.7)}
+.idea-3d-viewer.poster-only .idea-3d-poster{opacity:1;filter:saturate(1.03) contrast(1.015) drop-shadow(0 24px 42px rgba(45,35,27,.12))}
+.idea-3d-viewer.has-model:after{content:"";position:absolute;z-index:1;left:10%;right:10%;bottom:7%;height:13%;border-radius:50%;background:radial-gradient(ellipse,rgba(73,61,49,.12),transparent 70%);filter:blur(12px);pointer-events:none}
+.idea-3d-canvas{position:absolute;inset:0;z-index:3;touch-action:none;cursor:grab}
 .idea-3d-canvas:active{cursor:grabbing}.idea-3d-canvas canvas{display:block;width:100%;height:100%}
-.idea-3d-loading,.idea-3d-empty{position:relative;z-index:3;padding:8px 12px;border-radius:99px;background:rgba(248,244,237,.8);color:#85837e;font-size:11px;backdrop-filter:blur(10px)}
+.idea-3d-loading,.idea-3d-empty{position:relative;z-index:6;padding:8px 12px;border-radius:99px;background:rgba(248,244,237,.8);color:#85837e;font-size:11px;backdrop-filter:blur(10px)}
 .idea-3d-empty{margin-top:40px}
 .idea-orbit-hint{position:absolute;z-index:6;bottom:22px;left:12%;right:16%;height:46px;border-bottom:1px solid rgba(255,255,255,.85);border-radius:50%;display:flex;align-items:flex-end;justify-content:center;gap:22px;padding-bottom:3px;color:#45515a;pointer-events:none}
 .idea-orbit-hint:before,.idea-orbit-hint:after{content:"";position:absolute;bottom:-3px;width:11px;height:7px;border-top:1px solid #fff}

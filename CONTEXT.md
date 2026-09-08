@@ -32,6 +32,10 @@ An admin-managed prompt body for one generation mode. The stable placeholders ar
 
 An admin-managed item in the public authenticated Ideas feed. It can preselect a generation mode and a user prompt when the user starts a generation from the idea.
 
+### Exact 3D model
+
+An Idea may have one operator-uploaded, self-contained glTF 2.0 `.glb` model. This GLB is the only source for an interactive 360° object in the Ideas feed: the client must render the imported mesh/materials and must not synthesize a fake 3D object by wrapping photos around primitive geometry. If no GLB is configured, the feed shows the hero visualization as a non-interactive image. Canonical Architecture geometry remains the source for derived floor-plan schemes, not a substitute for the exact presentation mesh.
+
 ## Broadcast Campaign
 
 An admin-created Telegram message with lifecycle/status and delivery counters. Sending is an explicit operator action and is recorded in the audit log.

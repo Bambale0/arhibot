@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     media_public_base_url: str = "http://localhost:8000"
     max_image_size_bytes: int = 20 * 1024 * 1024
     max_image_pixels: int = 80_000_000
+    max_model_size_bytes: int = 80 * 1024 * 1024
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -73,6 +74,8 @@ class Settings(BaseSettings):
             raise ValueError("MAX_IMAGE_SIZE_BYTES must be at least 1 MiB")
         if self.max_image_pixels < 1_000_000:
             raise ValueError("MAX_IMAGE_PIXELS must be at least 1,000,000")
+        if self.max_model_size_bytes < 1_048_576:
+            raise ValueError("MAX_MODEL_SIZE_BYTES must be at least 1 MiB")
         if self.nexus_task_timeout_seconds < 30:
             raise ValueError("NEXUS_TASK_TIMEOUT_SECONDS must be at least 30")
         if self.nexus_poll_interval_seconds < 0.5:

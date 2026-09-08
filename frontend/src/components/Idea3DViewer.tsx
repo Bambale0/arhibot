@@ -1,216 +1,136 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ArchitecturePackage } from '../types'
+import { useEffect, useRef, useState } from 'react'
 
 type ViewerProps = {
   active: boolean
   imageUrl: string | null
-  textureUrls: string[]
-  architecture: ArchitecturePackage | null
+  modelUrl: string | null
   title: string
 }
 
-type ModelDimensions = {
-  width: number
-  depth: number
-  height: number
-  levels: { z: number; height: number; width: number; depth: number }[]
-  roofType: 'gable' | 'hip' | 'flat'
-  roofRise: number
-}
-
-function bounds(points: { x: number; y: number }[]) {
-  if (!points.length) return { width: 1, depth: 1 }
-  const xs = points.map((point) => point.x)
-  const ys = points.map((point) => point.y)
-  return {
-    width: Math.max(Math.max(...xs) - Math.min(...xs), 0.5),
-    depth: Math.max(Math.max(...ys) - Math.min(...ys), 0.5),
-  }
-}
-
-function modelDimensions(architecture: ArchitecturePackage | null): ModelDimensions {
-  const sourceLevels = architecture?.geometry.levels || []
-  if (!sourceLevels.length) {
-    return {
-      width: 3.8,
-      depth: 2.7,
-      height: 2.5,
-      levels: [{ z: 0, height: 2.5, width: 3.8, depth: 2.7 }],
-      roofType: 'gable',
-      roofRise: 1.15,
-    }
-  }
-
-  const rawLevels = sourceLevels.map((level) => {
-    const size = bounds(level.footprint.points)
-    return { z: level.z, height: level.height, width: size.width, depth: size.depth }
-  })
-  const minZ = Math.min(...rawLevels.map((level) => level.z))
-  const maxZ = Math.max(...rawLevels.map((level) => level.z + level.height))
-  const rawWidth = Math.max(...rawLevels.map((level) => level.width))
-  const rawDepth = Math.max(...rawLevels.map((level) => level.depth))
-  const rawHeight = Math.max(maxZ - minZ, 0.5)
-  const scale = 4.2 / Math.max(rawWidth, rawDepth, rawHeight)
-  const roof = architecture?.geometry.roof
-  const roofRiseRaw = roof && roof.type !== 'flat' ? Math.max(roof.ridge_z - roof.eave_z, rawWidth * 0.18) : 0.18
-
-  return {
-    width: rawWidth * scale,
-    depth: rawDepth * scale,
-    height: rawHeight * scale,
-    levels: rawLevels.map((level) => ({
-      z: (level.z - minZ) * scale,
-      height: level.height * scale,
-      width: level.width * scale,
-      depth: level.depth * scale,
-    })),
-    roofType: roof?.type || 'gable',
-    roofRise: roofRiseRaw * scale,
-  }
-}
-
-function uniqueUrls(primary: string | null, urls: string[]) {
-  const values = [primary, ...urls].filter((value): value is string => Boolean(value))
-  return values.filter((value, index) => values.indexOf(value) === index).slice(0, 4)
-}
-
-export function Idea3DViewer({ active, imageUrl, textureUrls, architecture, title }: ViewerProps) {
+export function Idea3DViewer({ active, imageUrl, modelUrl, title }: ViewerProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const [ready, setReady] = useState(false)
   const [failed, setFailed] = useState(false)
-  const urls = useMemo(() => uniqueUrls(imageUrl, textureUrls), [imageUrl, textureUrls])
 
   useEffect(() => {
     setReady(false)
     setFailed(false)
-    if (!active || !hostRef.current || !urls.length) return
+    if (!active || !hostRef.current || !modelUrl) return
 
     const host = hostRef.current
     let disposed = false
     let cleanup = () => {}
 
-    Promise.all([
+    void Promise.all([
       import('three'),
       import('three/examples/jsm/controls/OrbitControls.js'),
-    ]).then(([THREE, controlsModule]) => {
+      import('three/examples/jsm/loaders/GLTFLoader.js'),
+      import('three/examples/jsm/environments/RoomEnvironment.js'),
+    ]).then(async ([THREE, controlsModule, loaderModule, environmentModule]) => {
       if (disposed) return
       const { OrbitControls } = controlsModule
+      const { GLTFLoader } = loaderModule
+      const { RoomEnvironment } = environmentModule
+
       const scene = new THREE.Scene()
-      const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'high-performance' })
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75))
+      const renderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: true,
+        powerPreference: 'high-performance',
+      })
+      renderer.setClearColor(0x000000, 0)
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
       renderer.outputColorSpace = THREE.SRGBColorSpace
       renderer.toneMapping = THREE.ACESFilmicToneMapping
-      renderer.toneMappingExposure = 1.05
+      renderer.toneMappingExposure = 1.08
       renderer.shadowMap.enabled = true
       renderer.shadowMap.type = THREE.PCFSoftShadowMap
-      renderer.domElement.setAttribute('aria-label', `3D-обзор: ${title}`)
+      renderer.domElement.setAttribute('aria-label', `Точная 3D-модель: ${title}`)
       host.replaceChildren(renderer.domElement)
 
-      const dimensions = modelDimensions(architecture)
-      const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100)
-      const cameraDistance = Math.max(dimensions.width, dimensions.depth, dimensions.height + dimensions.roofRise) * 2.15
-      camera.position.set(cameraDistance * 0.72, cameraDistance * 0.48, cameraDistance)
-
+      const camera = new THREE.PerspectiveCamera(31, 1, 0.01, 200)
       const controls = new OrbitControls(camera, renderer.domElement)
       controls.enableDamping = true
-      controls.dampingFactor = 0.075
+      controls.dampingFactor = 0.065
       controls.enablePan = false
       controls.enableZoom = false
-      controls.minPolarAngle = Math.PI * 0.18
-      controls.maxPolarAngle = Math.PI * 0.48
-      controls.target.set(0, dimensions.height * 0.48, 0)
+      controls.minPolarAngle = Math.PI * 0.16
+      controls.maxPolarAngle = Math.PI * 0.49
+      controls.autoRotate = true
+      controls.autoRotateSpeed = 0.42
 
-      const group = new THREE.Group()
-      group.rotation.y = -0.42
-      scene.add(group)
+      const pmrem = new THREE.PMREMGenerator(renderer)
+      const room = new RoomEnvironment()
+      const environment = pmrem.fromScene(room, 0.035).texture
+      scene.environment = environment
+      room.dispose()
+      pmrem.dispose()
 
-      scene.add(new THREE.HemisphereLight(0xfff8e9, 0x5a5f61, 2.0))
-      const key = new THREE.DirectionalLight(0xfff2dc, 3.0)
-      key.position.set(5, 8, 6)
+      const hemisphere = new THREE.HemisphereLight(0xfff8ed, 0x697174, 1.8)
+      scene.add(hemisphere)
+      const key = new THREE.DirectionalLight(0xfff0d8, 4.2)
+      key.position.set(6.5, 9, 7)
       key.castShadow = true
-      key.shadow.mapSize.set(1024, 1024)
+      key.shadow.mapSize.set(2048, 2048)
+      key.shadow.bias = -0.0002
+      key.shadow.normalBias = 0.025
       scene.add(key)
-      const fill = new THREE.DirectionalLight(0xdde8ff, 1.35)
-      fill.position.set(-5, 4, -3)
+      const fill = new THREE.DirectionalLight(0xdde8f4, 1.35)
+      fill.position.set(-6, 4.5, -4)
       scene.add(fill)
+      const rim = new THREE.DirectionalLight(0xffdfbd, 1.15)
+      rim.position.set(-2, 6, 7)
+      scene.add(rim)
 
-      const textureLoader = new THREE.TextureLoader()
-      textureLoader.setCrossOrigin('anonymous')
-      const textures = urls.map((url) => {
-        const texture = textureLoader.load(url)
-        texture.colorSpace = THREE.SRGBColorSpace
-        texture.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 8)
-        return texture
-      })
+      const root = new THREE.Group()
+      scene.add(root)
 
-      const faceMaterial = (textureIndex: number, roughness = 0.72) => new THREE.MeshStandardMaterial({
-        map: textures[textureIndex % textures.length],
-        roughness,
-        metalness: 0.04,
-      })
-      const neutral = new THREE.MeshStandardMaterial({ color: 0xd9d2c7, roughness: 0.86, metalness: 0.02 })
-      const underside = new THREE.MeshStandardMaterial({ color: 0xb9aa96, roughness: 0.88 })
-      const roofMaterial = new THREE.MeshStandardMaterial({ color: 0x343739, roughness: 0.55, metalness: 0.34 })
-      const materialsToDispose: InstanceType<typeof THREE.Material>[] = [neutral, underside, roofMaterial]
-      const geometriesToDispose: InstanceType<typeof THREE.BufferGeometry>[] = []
-
-      for (const level of dimensions.levels) {
-        const geometry = new THREE.BoxGeometry(level.width, level.height, level.depth)
-        geometriesToDispose.push(geometry)
-        const right = faceMaterial(1)
-        const left = faceMaterial(2)
-        const top = neutral.clone()
-        const bottom = underside.clone()
-        const front = faceMaterial(0, 0.66)
-        const back = faceMaterial(3)
-        materialsToDispose.push(right, left, top, bottom, front, back)
-        const mesh = new THREE.Mesh(geometry, [right, left, top, bottom, front, back])
-        mesh.position.y = level.z + level.height / 2
-        mesh.castShadow = true
-        mesh.receiveShadow = true
-        group.add(mesh)
-      }
-
-      const topY = Math.max(...dimensions.levels.map((level) => level.z + level.height))
-      if (dimensions.roofType === 'flat') {
-        const geometry = new THREE.BoxGeometry(dimensions.width * 1.06, 0.12, dimensions.depth * 1.08)
-        geometriesToDispose.push(geometry)
-        const roof = new THREE.Mesh(geometry, roofMaterial)
-        roof.position.y = topY + 0.08
-        roof.castShadow = true
-        group.add(roof)
-      } else {
-        const rise = Math.max(dimensions.roofRise, dimensions.width * 0.15)
-        const halfWidth = dimensions.width / 2
-        const slopeLength = Math.sqrt(halfWidth * halfWidth + rise * rise)
-        const angle = Math.atan2(rise, halfWidth)
-        const roofDepth = dimensions.depth * 1.1
-        const slabGeometry = new THREE.BoxGeometry(slopeLength * 1.04, 0.1, roofDepth)
-        geometriesToDispose.push(slabGeometry)
-        const leftRoof = new THREE.Mesh(slabGeometry, roofMaterial)
-        const rightRoof = new THREE.Mesh(slabGeometry, roofMaterial)
-        leftRoof.rotation.z = angle
-        rightRoof.rotation.z = -angle
-        leftRoof.position.set(-dimensions.width * 0.245, topY + rise * 0.52, 0)
-        rightRoof.position.set(dimensions.width * 0.245, topY + rise * 0.52, 0)
-        leftRoof.castShadow = true
-        rightRoof.castShadow = true
-        group.add(leftRoof, rightRoof)
-      }
-
-      const groundGeometry = new THREE.CircleGeometry(Math.max(dimensions.width, dimensions.depth) * 0.88, 64)
-      const groundMaterial = new THREE.MeshBasicMaterial({ color: 0x8b8174, transparent: true, opacity: 0.11, depthWrite: false })
-      geometriesToDispose.push(groundGeometry)
-      materialsToDispose.push(groundMaterial)
-      const ground = new THREE.Mesh(groundGeometry, groundMaterial)
-      ground.rotation.x = -Math.PI / 2
-      ground.position.y = -0.03
-      scene.add(ground)
-
-      const onPointerDown = () => host.dataset.interacted = 'true'
-      renderer.domElement.addEventListener('pointerdown', onPointerDown, { passive: true })
-
+      let modelRoot: InstanceType<typeof THREE.Object3D> | null = null
+      let floor: InstanceType<typeof THREE.Mesh> | null = null
+      let halo: InstanceType<typeof THREE.Mesh> | null = null
+      let resizeObserver: ResizeObserver | null = null
       let animationFrame = 0
+
+      const onInteract = () => {
+        controls.autoRotate = false
+        host.dataset.interacted = 'true'
+      }
+      renderer.domElement.addEventListener('pointerdown', onInteract, { passive: true })
+      renderer.domElement.addEventListener('wheel', onInteract, { passive: true })
+
+      const disposeModel = () => {
+        if (!modelRoot) return
+        modelRoot.traverse((object) => {
+          if (!(object instanceof THREE.Mesh)) return
+          object.geometry?.dispose()
+          const materials = Array.isArray(object.material) ? object.material : [object.material]
+          materials.forEach((material) => {
+            const candidate = material as InstanceType<typeof THREE.Material> & Record<string, unknown>
+            for (const value of Object.values(candidate)) {
+              if (value instanceof THREE.Texture) value.dispose()
+            }
+            material.dispose()
+          })
+        })
+      }
+
+      cleanup = () => {
+        window.cancelAnimationFrame(animationFrame)
+        resizeObserver?.disconnect()
+        controls.dispose()
+        renderer.domElement.removeEventListener('pointerdown', onInteract)
+        renderer.domElement.removeEventListener('wheel', onInteract)
+        disposeModel()
+        floor?.geometry.dispose()
+        if (floor) (floor.material as InstanceType<typeof THREE.Material>).dispose()
+        halo?.geometry.dispose()
+        if (halo) (halo.material as InstanceType<typeof THREE.Material>).dispose()
+        environment.dispose()
+        renderer.dispose()
+        renderer.forceContextLoss()
+        host.replaceChildren()
+      }
+
       const render = () => {
         controls.update()
         renderer.render(scene, camera)
@@ -224,39 +144,124 @@ export function Idea3DViewer({ active, imageUrl, textureUrls, architecture, titl
         camera.aspect = rect.width / rect.height
         camera.updateProjectionMatrix()
       }
-      const observer = new ResizeObserver(resize)
-      observer.observe(host)
+      resizeObserver = new ResizeObserver(resize)
+      resizeObserver.observe(host)
       resize()
       render()
-      setReady(true)
 
-      cleanup = () => {
-        window.cancelAnimationFrame(animationFrame)
-        observer.disconnect()
-        controls.dispose()
-        renderer.domElement.removeEventListener('pointerdown', onPointerDown)
-        geometriesToDispose.forEach((geometry) => geometry.dispose())
-        materialsToDispose.forEach((material) => material.dispose())
-        textures.forEach((texture) => texture.dispose())
-        renderer.dispose()
-        renderer.forceContextLoss()
-        host.replaceChildren()
+      const gltf = await new GLTFLoader().loadAsync(modelUrl)
+      if (disposed) {
+        modelRoot = gltf.scene
+        cleanup()
+        return
       }
+      modelRoot = gltf.scene
+      if (!modelRoot.children.length) throw new Error('GLB scene is empty')
+
+      modelRoot.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return
+        object.castShadow = true
+        object.receiveShadow = true
+        const materials = Array.isArray(object.material) ? object.material : [object.material]
+        materials.forEach((material) => {
+          if (material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshPhysicalMaterial) {
+            material.envMapIntensity = 0.8
+            material.needsUpdate = true
+          }
+        })
+      })
+      root.add(modelRoot)
+
+      const rawBox = new THREE.Box3().setFromObject(modelRoot)
+      if (rawBox.isEmpty()) throw new Error('GLB has no renderable bounds')
+      const rawSize = rawBox.getSize(new THREE.Vector3())
+      const longest = Math.max(rawSize.x, rawSize.y, rawSize.z)
+      if (!Number.isFinite(longest) || longest <= 0) throw new Error('GLB bounds are invalid')
+
+      const scale = 4.9 / longest
+      modelRoot.scale.setScalar(scale)
+      modelRoot.updateMatrixWorld(true)
+      const scaledBox = new THREE.Box3().setFromObject(modelRoot)
+      const center = scaledBox.getCenter(new THREE.Vector3())
+      modelRoot.position.x -= center.x
+      modelRoot.position.z -= center.z
+      modelRoot.position.y -= scaledBox.min.y
+      modelRoot.updateMatrixWorld(true)
+
+      // Fit in model-local/world-aligned space first, then apply the presentation angle.
+      // This keeps the imported mesh centered even for long/asymmetric buildings.
+      root.rotation.y = -0.5
+      root.updateMatrixWorld(true)
+
+      const fittedBox = new THREE.Box3().setFromObject(modelRoot)
+      const fittedSize = fittedBox.getSize(new THREE.Vector3())
+      const horizontal = Math.max(fittedSize.x, fittedSize.z)
+      const modelHeight = Math.max(fittedSize.y, 0.5)
+      const targetY = modelHeight * 0.43
+
+      const floorGeometry = new THREE.PlaneGeometry(horizontal * 2.05, horizontal * 1.72)
+      const floorMaterial = new THREE.ShadowMaterial({ color: 0x685f54, opacity: 0.18 })
+      floor = new THREE.Mesh(floorGeometry, floorMaterial)
+      floor.rotation.x = -Math.PI / 2
+      floor.position.y = -0.018
+      floor.receiveShadow = true
+      scene.add(floor)
+
+      const haloGeometry = new THREE.CircleGeometry(horizontal * 0.82, 96)
+      const haloMaterial = new THREE.MeshBasicMaterial({
+        color: 0x9d8f7c,
+        transparent: true,
+        opacity: 0.075,
+        depthWrite: false,
+      })
+      halo = new THREE.Mesh(haloGeometry, haloMaterial)
+      halo.rotation.x = -Math.PI / 2
+      halo.scale.y = 0.72
+      halo.position.y = -0.028
+      scene.add(halo)
+
+      const viewSpan = Math.max(horizontal, modelHeight * 0.92)
+      const fovRadians = THREE.MathUtils.degToRad(camera.fov)
+      const distance = (viewSpan / (2 * Math.tan(fovRadians / 2))) * 1.34
+      camera.position.set(distance * 0.78, targetY + distance * 0.24, distance * 0.92)
+      camera.near = Math.max(distance / 1000, 0.01)
+      camera.far = distance * 12
+      camera.updateProjectionMatrix()
+      controls.target.set(0, targetY, 0)
+      controls.minDistance = distance * 0.82
+      controls.maxDistance = distance * 1.18
+      controls.update()
+
+      const shadowSpan = horizontal * 1.35
+      key.shadow.camera.left = -shadowSpan
+      key.shadow.camera.right = shadowSpan
+      key.shadow.camera.top = shadowSpan
+      key.shadow.camera.bottom = -shadowSpan
+      key.shadow.camera.near = 0.5
+      key.shadow.camera.far = 30
+      key.shadow.camera.updateProjectionMatrix()
+
+      setReady(true)
     }).catch(() => {
-      if (!disposed) setFailed(true)
+      if (!disposed) {
+        cleanup()
+        setFailed(true)
+      }
     })
 
     return () => {
       disposed = true
       cleanup()
     }
-  }, [active, architecture, title, urls])
+  }, [active, modelUrl, title])
 
+  const hasModel = Boolean(modelUrl)
   return (
-    <div className={`idea-3d-viewer ${ready ? 'is-ready' : ''} ${failed ? 'is-fallback' : ''}`}>
-      {imageUrl ? <img className="idea-3d-poster" src={imageUrl} alt={title} loading={active ? 'eager' : 'lazy'} /> : <div className="idea-3d-empty">Добавьте визуализацию в веб-админке</div>}
-      {active && urls.length > 0 && !failed && <div className="idea-3d-canvas" ref={hostRef} />}
-      {active && !ready && urls.length > 0 && !failed && <div className="idea-3d-loading">Собираем 3D…</div>}
+    <div className={`idea-3d-viewer ${ready ? 'is-ready' : ''} ${failed ? 'is-fallback' : ''} ${hasModel ? 'has-model' : 'poster-only'}`}>
+      {imageUrl ? <img className="idea-3d-poster" src={imageUrl} alt={title} loading={active ? 'eager' : 'lazy'} /> : !hasModel ? <div className="idea-3d-empty">Добавьте визуализацию или GLB в веб-админке</div> : null}
+      {active && hasModel && !failed && <div className="idea-3d-canvas" ref={hostRef} />}
+      {active && hasModel && !ready && !failed && <div className="idea-3d-loading">Загружаем точную 3D-модель…</div>}
+      {active && hasModel && failed && <div className="idea-3d-loading">3D временно недоступно · показываем визуализацию</div>}
     </div>
   )
 }
