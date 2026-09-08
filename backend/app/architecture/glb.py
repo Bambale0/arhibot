@@ -39,6 +39,11 @@ def _source_polygon(polygon: Polygon2D) -> Polygon:
     return Polygon([(point.x, point.y) for point in polygon.points])
 
 
+def _ring_edges(shape: Polygon):
+    coords = list(shape.exterior.coords)
+    return zip(coords[:-1], coords[1:], strict=True)
+
+
 def _to_gltf(point: Vec3) -> Vec3:
     # Canonical AuRoom is X=east, Y=north, Z=up. glTF is Y-up and right-handed.
     x, y, z = point
@@ -77,8 +82,7 @@ def _surface_triangles(shape: Polygon, z: float, *, reverse: bool = False) -> li
 def _extrude_shape(shape: Polygon, bottom_z: float, top_z: float) -> list[Triangle]:
     triangles = _surface_triangles(shape, top_z)
     triangles.extend(_surface_triangles(shape, bottom_z, reverse=True))
-    coords = list(shape.exterior.coords)
-    for first, second in zip(coords, coords[1:], strict=True):
+    for first, second in _ring_edges(shape):
         x1, y1 = float(first[0]), float(first[1])
         x2, y2 = float(second[0]), float(second[1])
         triangles.extend(
@@ -102,7 +106,6 @@ def _gable_roof_triangles(
     ridge_start: tuple[float, float],
     ridge_end: tuple[float, float],
 ) -> tuple[list[Triangle], list[str]]:
-    warnings: list[str] = []
     ridge = LineString([ridge_start, ridge_end])
     if ridge.length <= _EPSILON:
         return [], ["gable_ridge_has_zero_length"]
@@ -117,7 +120,11 @@ def _gable_roof_triangles(
             (ridge_end[0] + dx * extent, ridge_end[1] + dy * extent),
         ]
     )
-    parts = [geometry for geometry in split(footprint, cutter).geoms if isinstance(geometry, Polygon)]
+    parts = [
+        geometry
+        for geometry in split(footprint, cutter).geoms
+        if isinstance(geometry, Polygon)
+    ]
     if len(parts) < 2:
         return [], ["gable_ridge_does_not_split_footprint"]
 
@@ -134,12 +141,11 @@ def _gable_roof_triangles(
                 points.append((xy[0], xy[1], z_value))
             triangles.append((points[0], points[1], points[2]))
 
-    boundary_coords = list(footprint.exterior.coords)
+    warnings: list[str] = []
     for ridge_point in (ridge_start, ridge_end):
         matching_edge: tuple[tuple[float, float], tuple[float, float]] | None = None
-        for first, second in zip(boundary_coords, boundary_coords[1:], strict=True):
-            edge = LineString([first, second])
-            if _point_on_segment(ridge_point, edge):
+        for first, second in _ring_edges(footprint):
+            if _point_on_segment(ridge_point, LineString([first, second])):
                 matching_edge = (
                     (float(first[0]), float(first[1])),
                     (float(second[0]), float(second[1])),
@@ -169,9 +175,8 @@ def _hip_roof_triangles(
         return [], ["concave_hip_roof_requires_richer_roof_geometry"]
     apex = footprint.representative_point()
     apex_point = (float(apex.x), float(apex.y), ridge_z)
-    coords = list(footprint.exterior.coords)
     triangles: list[Triangle] = []
-    for first, second in zip(coords, coords[1:], strict=True):
+    for first, second in _ring_edges(footprint):
         triangles.append(
             (
                 (float(first[0]), float(first[1]), eave_z),
@@ -256,77 +261,86 @@ class CanonicalGlbBuilder:
 
         for level in levels:
             shape = _source_polygon(level.footprint)
-            triangles = _extrude_shape(shape, level.z, level.z + level.height)
             primitives.append(
                 _Primitive(
                     name=f"level:{level.id}",
                     material_index=0,
-                    triangles=tuple(triangles),
+                    triangles=tuple(_extrude_shape(shape, level.z, level.z + level.height)),
                 )
             )
 
         for item in package.geometry.external_objects:
             shape = _source_polygon(item.polygon)
-            height = max(item.height, 0.05)
             material_index = 3 if item.type == ExternalObjectType.POOL else 2
             primitives.append(
                 _Primitive(
                     name=f"external:{item.id}",
                     material_index=material_index,
-                    triangles=tuple(_extrude_shape(shape, item.z, item.z + height)),
+                    triangles=tuple(
+                        _extrude_shape(shape, item.z, item.z + max(item.height, 0.05))
+                    ),
                 )
             )
 
-        roof = package.geometry.roof
-        if roof is not None:
-            footprint = _source_polygon(levels[-1].footprint)
-            roof_triangles: list[Triangle] = []
-            roof_warnings: list[str] = []
-            if roof.type == RoofType.FLAT:
-                roof_shape = footprint
-                if roof.overhang_m > 0:
-                    buffered = footprint.buffer(roof.overhang_m, join_style="mitre")
-                    if isinstance(buffered, Polygon):
-                        roof_shape = buffered
-                    else:
-                        roof_warnings.append("flat_roof_overhang_buffer_is_not_single_polygon")
-                roof_triangles = _extrude_shape(roof_shape, roof.eave_z, roof.eave_z + 0.15)
-            elif roof.type == RoofType.GABLE:
-                if roof.ridge_start is None or roof.ridge_end is None:
-                    roof_warnings.append("gable_roof_missing_ridge")
-                else:
-                    roof_triangles, roof_warnings = _gable_roof_triangles(
-                        footprint,
-                        eave_z=roof.eave_z,
-                        ridge_z=roof.ridge_z,
-                        ridge_start=(roof.ridge_start.x, roof.ridge_start.y),
-                        ridge_end=(roof.ridge_end.x, roof.ridge_end.y),
-                    )
-                    if roof.overhang_m > 0:
-                        roof_warnings.append("pitched_roof_overhang_not_meshed_in_canonical_v1")
-            else:
-                roof_triangles, roof_warnings = _hip_roof_triangles(
-                    footprint,
-                    eave_z=roof.eave_z,
-                    ridge_z=roof.ridge_z,
-                )
-                if roof.overhang_m > 0:
-                    roof_warnings.append("pitched_roof_overhang_not_meshed_in_canonical_v1")
-            warnings.extend(roof_warnings)
-            if roof_triangles:
-                primitives.append(
-                    _Primitive(
-                        name="roof",
-                        material_index=1,
-                        triangles=tuple(roof_triangles),
-                    )
-                )
+        roof_primitive, roof_warnings = self._roof_primitive(package, levels[-1].footprint)
+        warnings.extend(roof_warnings)
+        if roof_primitive is not None:
+            primitives.append(roof_primitive)
 
         primitives = [primitive for primitive in primitives if primitive.triangles]
         if not primitives:
             raise ValueError("Architecture package produced no mesh geometry.")
+        unique_warnings = tuple(dict.fromkeys(warnings))
+        return self._encode(package, primitives, unique_warnings)
 
-        return self._encode(package, primitives, tuple(dict.fromkeys(warnings)))
+    def _roof_primitive(
+        self,
+        package: ArchitecturePackage,
+        top_footprint: Polygon2D,
+    ) -> tuple[_Primitive | None, list[str]]:
+        roof = package.geometry.roof
+        if roof is None:
+            return None, []
+        footprint = _source_polygon(top_footprint)
+        warnings: list[str] = []
+        triangles: list[Triangle] = []
+
+        if roof.type == RoofType.FLAT:
+            roof_shape = footprint
+            if roof.overhang_m > 0:
+                buffered = footprint.buffer(roof.overhang_m, join_style="mitre")
+                if isinstance(buffered, Polygon):
+                    roof_shape = buffered
+                else:
+                    warnings.append("flat_roof_overhang_buffer_is_not_single_polygon")
+            triangles = _extrude_shape(roof_shape, roof.eave_z, roof.eave_z + 0.15)
+        elif roof.type == RoofType.GABLE:
+            if roof.ridge_start is None or roof.ridge_end is None:
+                warnings.append("gable_roof_missing_ridge")
+            else:
+                triangles, roof_warnings = _gable_roof_triangles(
+                    footprint,
+                    eave_z=roof.eave_z,
+                    ridge_z=roof.ridge_z,
+                    ridge_start=(roof.ridge_start.x, roof.ridge_start.y),
+                    ridge_end=(roof.ridge_end.x, roof.ridge_end.y),
+                )
+                warnings.extend(roof_warnings)
+                if roof.overhang_m > 0:
+                    warnings.append("pitched_roof_overhang_not_meshed_in_canonical_v1")
+        else:
+            triangles, roof_warnings = _hip_roof_triangles(
+                footprint,
+                eave_z=roof.eave_z,
+                ridge_z=roof.ridge_z,
+            )
+            warnings.extend(roof_warnings)
+            if roof.overhang_m > 0:
+                warnings.append("pitched_roof_overhang_not_meshed_in_canonical_v1")
+
+        if not triangles:
+            return None, warnings
+        return _Primitive(name="roof", material_index=1, triangles=tuple(triangles)), warnings
 
     def _encode(
         self,
@@ -341,70 +355,21 @@ class CanonicalGlbBuilder:
         nodes: list[dict] = []
 
         for primitive in primitives:
-            position_values: list[float] = []
-            normal_values: list[float] = []
-            position_vectors: list[Vec3] = []
-            for source_triangle in primitive.triangles:
-                triangle = tuple(_to_gltf(point) for point in source_triangle)
-                normal = _triangle_normal(triangle[0], triangle[1], triangle[2])
-                for point in triangle:
-                    position_vectors.append(point)
-                    position_values.extend(point)
-                    normal_values.extend(normal)
-
-            position_blob = _pack_floats(position_values)
-            position_offset = len(binary)
-            binary.extend(position_blob)
-            while len(binary) % 4:
-                binary.append(0)
-            position_view = len(buffer_views)
-            buffer_views.append(
-                {
-                    "buffer": 0,
-                    "byteOffset": position_offset,
-                    "byteLength": len(position_blob),
-                    "target": _ARRAY_BUFFER_TARGET,
-                }
+            position_vectors, normal_vectors = self._vertex_data(primitive)
+            position_accessor = self._append_vec3_accessor(
+                binary,
+                buffer_views,
+                accessors,
+                position_vectors,
+                include_bounds=True,
             )
-            xs = [point[0] for point in position_vectors]
-            ys = [point[1] for point in position_vectors]
-            zs = [point[2] for point in position_vectors]
-            position_accessor = len(accessors)
-            accessors.append(
-                {
-                    "bufferView": position_view,
-                    "componentType": _FLOAT_COMPONENT_TYPE,
-                    "count": len(position_vectors),
-                    "type": "VEC3",
-                    "min": [min(xs), min(ys), min(zs)],
-                    "max": [max(xs), max(ys), max(zs)],
-                }
+            normal_accessor = self._append_vec3_accessor(
+                binary,
+                buffer_views,
+                accessors,
+                normal_vectors,
+                include_bounds=False,
             )
-
-            normal_blob = _pack_floats(normal_values)
-            normal_offset = len(binary)
-            binary.extend(normal_blob)
-            while len(binary) % 4:
-                binary.append(0)
-            normal_view = len(buffer_views)
-            buffer_views.append(
-                {
-                    "buffer": 0,
-                    "byteOffset": normal_offset,
-                    "byteLength": len(normal_blob),
-                    "target": _ARRAY_BUFFER_TARGET,
-                }
-            )
-            normal_accessor = len(accessors)
-            accessors.append(
-                {
-                    "bufferView": normal_view,
-                    "componentType": _FLOAT_COMPONENT_TYPE,
-                    "count": len(position_vectors),
-                    "type": "VEC3",
-                }
-            )
-
             mesh_index = len(meshes)
             meshes.append(
                 {
@@ -457,3 +422,51 @@ class CanonicalGlbBuilder:
             warnings=warnings,
             mesh_count=len(meshes),
         )
+
+    def _vertex_data(self, primitive: _Primitive) -> tuple[list[Vec3], list[Vec3]]:
+        positions: list[Vec3] = []
+        normals: list[Vec3] = []
+        for source_triangle in primitive.triangles:
+            triangle = tuple(_to_gltf(point) for point in source_triangle)
+            normal = _triangle_normal(triangle[0], triangle[1], triangle[2])
+            positions.extend(triangle)
+            normals.extend([normal, normal, normal])
+        return positions, normals
+
+    def _append_vec3_accessor(
+        self,
+        binary: bytearray,
+        buffer_views: list[dict],
+        accessors: list[dict],
+        vectors: list[Vec3],
+        *,
+        include_bounds: bool,
+    ) -> int:
+        values = [component for vector in vectors for component in vector]
+        blob = _pack_floats(values)
+        offset = len(binary)
+        binary.extend(blob)
+        while len(binary) % 4:
+            binary.append(0)
+
+        view_index = len(buffer_views)
+        buffer_views.append(
+            {
+                "buffer": 0,
+                "byteOffset": offset,
+                "byteLength": len(blob),
+                "target": _ARRAY_BUFFER_TARGET,
+            }
+        )
+        accessor: dict = {
+            "bufferView": view_index,
+            "componentType": _FLOAT_COMPONENT_TYPE,
+            "count": len(vectors),
+            "type": "VEC3",
+        }
+        if include_bounds:
+            accessor["min"] = [min(vector[index] for vector in vectors) for index in range(3)]
+            accessor["max"] = [max(vector[index] for vector in vectors) for index in range(3)]
+        accessor_index = len(accessors)
+        accessors.append(accessor)
+        return accessor_index
