@@ -224,3 +224,19 @@ class ArchitectureRenderService:
                 detail="The render batch does not exist or is not available to this user.",
             )
         return self._to_batch_response(renders)
+
+    async def get_target_batch(
+        self,
+        user: User,
+        target_idea_id: UUID,
+        batch_id: UUID,
+    ) -> ArchitectureRenderBatchResponse:
+        renders = await self.repository.list_batch_owned(batch_id, user.id)
+        if not renders or any(render.target_idea_id != target_idea_id for render in renders):
+            raise AppError(
+                type="architecture_render_batch_not_found",
+                title="Architecture render batch not found",
+                status=404,
+                detail="The render batch does not exist or is not available for this Idea.",
+            )
+        return self._to_batch_response(renders)
