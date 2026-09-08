@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Depends, Response, status
 
 from app.api.dependencies.auth import CurrentUser, DbSession
 from app.architecture.schemas import (
@@ -8,8 +8,12 @@ from app.architecture.schemas import (
     ArchitectureSaveResponse,
     GeometryValidationReport,
 )
+from app.core.config import Settings, get_settings
+from app.repositories.architecture_renders import ArchitectureRenderRepository
 from app.repositories.projects import ProjectRepository
+from app.schemas.architecture_renders import ArchitectureRenderResponse
 from app.schemas.errors import ProblemDetails
+from app.services.architecture_render_service import ArchitectureRenderService
 from app.services.architecture_service import ArchitectureService
 
 router = APIRouter(prefix="/projects/{project_id}/architecture", tags=["Architecture"])
@@ -71,6 +75,61 @@ async def get_architecture(
     session: DbSession,
 ) -> ArchitecturePackage:
     return await ArchitectureService(ProjectRepository(session)).get(user, project_id)
+
+
+@router.post(
+    "/renders",
+    operation_id="createProjectArchitectureRender",
+    summary="Queue a geometry-locked Blender hero render",
+    description=(
+        "Snapshots the saved ArchitecturePackage and queues a separate renderer worker. "
+        "The render consumes that immutable snapshot rather than re-reading mutable project state."
+    ),
+    response_model=ArchitectureRenderResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        401: {"model": ProblemDetails, "description": "Authentication required."},
+        404: {"model": ProblemDetails, "description": "Project or architecture not found."},
+        422: {"model": ProblemDetails, "description": "Saved geometry is invalid."},
+    },
+)
+async def create_architecture_render(
+    project_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> ArchitectureRenderResponse:
+    service = ArchitectureRenderService(
+        ArchitectureRenderRepository(session),
+        ProjectRepository(session),
+        settings,
+    )
+    return await service.create(user, project_id)
+
+
+@router.get(
+    "/renders/{render_id}",
+    operation_id="getProjectArchitectureRender",
+    summary="Get architecture render job status",
+    response_model=ArchitectureRenderResponse,
+    responses={
+        401: {"model": ProblemDetails, "description": "Authentication required."},
+        404: {"model": ProblemDetails, "description": "Architecture render not found."},
+    },
+)
+async def get_architecture_render(
+    project_id: UUID,
+    render_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> ArchitectureRenderResponse:
+    service = ArchitectureRenderService(
+        ArchitectureRenderRepository(session),
+        ProjectRepository(session),
+        settings,
+    )
+    return await service.get(user, project_id, render_id)
 
 
 @router.get(
