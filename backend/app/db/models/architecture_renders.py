@@ -42,6 +42,9 @@ class ArchitectureRender(Base):
     renderer_profile: Mapped[str] = mapped_column(
         String(80), nullable=False, default="blender_eevee_v1", server_default="blender_eevee_v1"
     )
+    camera_profile: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="hero_corner", server_default="hero_corner"
+    )
     renderer_version: Mapped[str | None] = mapped_column(String(120), nullable=True)
     storage_path: Mapped[str | None] = mapped_column(String(512), nullable=True, unique=True)
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
