@@ -207,6 +207,21 @@ def _wall_rectangle(
     ]
 
 
+def _cell_is_opening(
+    horizontal_midpoint: float,
+    vertical_midpoint: float,
+    openings: list[FacadeOpening],
+) -> bool:
+    for opening in openings:
+        bottom, top = _opening_vertical_bounds(opening)
+        if (
+            opening.offset_m < horizontal_midpoint < opening.offset_m + opening.width_m
+            and bottom < vertical_midpoint < top
+        ):
+            return True
+    return False
+
+
 def build_level_facade_mesh(level: LevelGeometry) -> LevelFacadeMesh:
     """Build wall surfaces with exact rectangular apertures and explicit window/door panels."""
 
@@ -221,37 +236,45 @@ def build_level_facade_mesh(level: LevelGeometry) -> LevelFacadeMesh:
 
     walls: list[Triangle] = []
     surfaces: list[OpeningSurface] = []
-    level_bottom = level.z
-    level_top = level.z + level.height
 
     for edge_index, edge in enumerate(edges):
         edge_length = _edge_length(edge)
-        openings = sorted(
-            openings_by_edge.get(edge_index, []),
-            key=lambda opening: (opening.offset_m, opening.sill_height_m, opening.id),
-        )
-        cursor = 0.0
+        openings = openings_by_edge.get(edge_index, [])
+        horizontal_cuts = {0.0, edge_length}
+        vertical_cuts = {0.0, level.height}
         for opening in openings:
-            opening_start = opening.offset_m
-            opening_end = opening.offset_m + opening.width_m
-            opening_bottom = level.z + opening.sill_height_m
-            opening_top = opening_bottom + opening.height_m
+            horizontal_cuts.update(
+                {opening.offset_m, opening.offset_m + opening.width_m}
+            )
+            bottom, top = _opening_vertical_bounds(opening)
+            vertical_cuts.update({bottom, top})
 
-            walls.extend(
-                _wall_rectangle(edge, cursor, opening_start, level_bottom, level_top)
-            )
-            walls.extend(
-                _wall_rectangle(edge, opening_start, opening_end, level_bottom, opening_bottom)
-            )
-            walls.extend(
-                _wall_rectangle(edge, opening_start, opening_end, opening_top, level_top)
-            )
+        horizontal = sorted(horizontal_cuts)
+        vertical = sorted(vertical_cuts)
+        for start_m, end_m in zip(horizontal, horizontal[1:], strict=True):
+            horizontal_midpoint = (start_m + end_m) / 2
+            for bottom_m, top_m in zip(vertical, vertical[1:], strict=True):
+                vertical_midpoint = (bottom_m + top_m) / 2
+                if _cell_is_opening(horizontal_midpoint, vertical_midpoint, openings):
+                    continue
+                walls.extend(
+                    _wall_rectangle(
+                        edge,
+                        start_m,
+                        end_m,
+                        level.z + bottom_m,
+                        level.z + top_m,
+                    )
+                )
+
+        for opening in openings:
+            bottom, top = _opening_vertical_bounds(opening)
             panel = _wall_rectangle(
                 edge,
-                opening_start,
-                opening_end,
-                opening_bottom,
-                opening_top,
+                opening.offset_m,
+                opening.offset_m + opening.width_m,
+                level.z + bottom,
+                level.z + top,
             )
             surfaces.append(
                 OpeningSurface(
@@ -260,8 +283,5 @@ def build_level_facade_mesh(level: LevelGeometry) -> LevelFacadeMesh:
                     triangles=tuple(panel),
                 )
             )
-            cursor = max(cursor, opening_end)
-
-        walls.extend(_wall_rectangle(edge, cursor, edge_length, level_bottom, level_top))
 
     return LevelFacadeMesh(wall_triangles=tuple(walls), opening_surfaces=tuple(surfaces))
