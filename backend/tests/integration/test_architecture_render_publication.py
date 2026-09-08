@@ -228,6 +228,17 @@ async def test_render_batch_publishes_winner_and_rejects_stale_architecture() ->
         )
         assert stale.status_code == 202, stale.text
         stale_batch = stale.json()
+        stale_render_asset_ids = [
+            await _upload_project_image(
+                client, headers, project_id, "stale-hero.png", (155, 135, 115)
+            ),
+            await _upload_project_image(
+                client, headers, project_id, "stale-reverse.png", (110, 120, 130)
+            ),
+            await _upload_project_image(
+                client, headers, project_id, "stale-elevated.png", (170, 155, 140)
+            ),
+        ]
 
         changed = await client.put(
             f"/api/v1/projects/{project_id}/architecture",
@@ -238,7 +249,7 @@ async def test_render_batch_publishes_winner_and_rejects_stale_architecture() ->
 
         await _complete_batch(
             stale_batch,
-            render_asset_ids,
+            stale_render_asset_ids,
             [(0.99, True), (0.80, True), (0.75, True)],
         )
         async with get_session_factory()() as session:
