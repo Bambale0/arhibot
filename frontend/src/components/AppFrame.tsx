@@ -15,8 +15,8 @@ const items: { id: AppSection; label: string; icon: typeof HomeIcon }[] = [
 export function AppFrame({ active, onNavigate, children }: { active: AppSection; onNavigate: (section: AppSection) => void; children: ReactNode }) {
   const { user, signOut } = useAuth()
   return (
-    <main className="app-shell with-bottom-nav">
-      <header className="topbar">
+    <main className={`app-shell with-bottom-nav ${active === 'ideas' ? 'ideas-shell' : ''}`}>
+      {active !== 'ideas' && <header className="topbar">
         <button className="brand-button" onClick={() => onNavigate('home')}>
           <span className="wordmark"><span className="wordmark-dot" />AuRoom</span>
         </button>
@@ -25,7 +25,7 @@ export function AppFrame({ active, onNavigate, children }: { active: AppSection;
           <span className="desktop-user-name">{user?.display_name}</span>
           <button className="icon-button subtle" title="Выйти" onClick={() => void signOut()}><LogOutIcon /></button>
         </div>
-      </header>
+      </header>}
       {children}
       <nav className="bottom-nav" aria-label="Основная навигация">
         {items.map((item) => {
