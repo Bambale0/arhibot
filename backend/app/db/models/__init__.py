@@ -6,6 +6,7 @@ from app.db.models.admin import (
     GenerationRuntimeSettings,
     IdeaTemplate,
 )
+from app.db.models.architecture_renders import ArchitectureRender
 from app.db.models.assets import Asset
 from app.db.models.billing import BillingPayment, BillingSettings
 from app.db.models.broadcasts import BroadcastDelivery
@@ -18,6 +19,7 @@ from app.db.models.users import AuthIdentity, RefreshToken, User
 
 __all__ = [
     "AdminAuditLog",
+    "ArchitectureRender",
     "Asset",
     "AuthIdentity",
     "BillingPayment",

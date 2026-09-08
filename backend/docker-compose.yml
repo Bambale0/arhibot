@@ -41,6 +41,21 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  renderer-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.renderer
+    env_file:
+      - .env
+    volumes:
+      - media_data:/data/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   broadcast-worker:
     build: .
     command: ["python", "-m", "app.workers.broadcast_worker"]

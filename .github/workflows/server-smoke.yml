@@ -81,12 +81,12 @@ jobs:
           curl -fsS http://127.0.0.1:18080/health/ready >/dev/null
           curl -fsS http://127.0.0.1:18080/ | grep -q '<div id="root"></div>'
 
-          for service in api bot worker frontend nginx postgres redis; do
+          for service in api bot worker renderer-worker frontend nginx postgres redis; do
             container_id=$("${compose[@]}" ps -q "${service}")
             [[ -n "${container_id}" ]] || { echo "Missing container: ${service}" >&2; exit 1; }
             running=$(docker inspect -f '{{.State.Running}}' "${container_id}")
             [[ "${running}" == "true" ]] || { echo "Container is not running: ${service}" >&2; exit 1; }
           done
 
-          echo "Development API, frontend, Telegram bot and generation worker are running"
+          echo "Development API, frontend, Telegram bot, generation worker and renderer worker are running"
           REMOTE
