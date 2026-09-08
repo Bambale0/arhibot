@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from app.architecture.glb import CanonicalGlbBuilder, GlbBuildResult
 from app.architecture.rendering import MassingRenderer, PlanSheetRenderer
 from app.architecture.schemas import (
     ArchitecturePackage,
@@ -16,13 +17,18 @@ from app.repositories.projects import ProjectRepository
 
 
 class ArchitectureService:
-    """Project-level seam for canonical geometry persistence and rendering."""
+    """Project-level seam for canonical geometry persistence and deterministic renderers."""
 
-    def __init__(self, repository: ProjectRepository) -> None:
+    def __init__(
+        self,
+        repository: ProjectRepository,
+        glb_builder: CanonicalGlbBuilder | None = None,
+    ) -> None:
         self.repository = repository
         self.validator = GeometryValidator()
         self.plan_renderer = PlanSheetRenderer()
         self.massing_renderer = MassingRenderer()
+        self.glb_builder = glb_builder or CanonicalGlbBuilder()
 
     async def _get_project(self, user: User, project_id: UUID) -> Project:
         project = await self.repository.get_owned(project_id, user.id)
@@ -37,6 +43,20 @@ class ArchitectureService:
 
     def validate(self, package: ArchitecturePackage) -> GeometryValidationReport:
         return self.validator.validate(package.geometry, package=package)
+
+    def _require_valid(self, package: ArchitecturePackage) -> GeometryValidationReport:
+        report = self.validate(package)
+        if report.valid:
+            return report
+        summary = "; ".join(
+            issue.message for issue in report.issues if issue.severity == "error"
+        )
+        raise AppError(
+            type="invalid_architectural_geometry",
+            title="Architectural geometry is invalid",
+            status=422,
+            detail=summary[:2000] or "The geometry failed validation.",
+        )
 
     async def validate_project(
         self,
@@ -54,17 +74,7 @@ class ArchitectureService:
         package: ArchitecturePackage,
     ) -> ArchitectureSaveResponse:
         project = await self._get_project(user, project_id)
-        report = self.validate(package)
-        if not report.valid:
-            summary = "; ".join(
-                issue.message for issue in report.issues if issue.severity == "error"
-            )
-            raise AppError(
-                type="invalid_architectural_geometry",
-                title="Architectural geometry is invalid",
-                status=422,
-                detail=summary[:2000] or "The geometry failed validation.",
-            )
+        report = self._require_valid(package)
         context = dict(project.context or {})
         context["architecture"] = package.model_dump(mode="json", exclude_none=True)
         project.context = context
@@ -91,3 +101,8 @@ class ArchitectureService:
     async def render_massing(self, user: User, project_id: UUID) -> str:
         package = await self.get(user, project_id)
         return self.massing_renderer.render(package)
+
+    async def render_glb(self, user: User, project_id: UUID) -> GlbBuildResult:
+        package = await self.get(user, project_id)
+        self._require_valid(package)
+        return self.glb_builder.build(package)
