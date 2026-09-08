@@ -251,9 +251,9 @@ def build_level_facade_mesh(level: LevelGeometry) -> LevelFacadeMesh:
 
         horizontal = sorted(horizontal_cuts)
         vertical = sorted(vertical_cuts)
-        for start_m, end_m in zip(horizontal, horizontal[1:], strict=True):
+        for start_m, end_m in zip(horizontal, horizontal[1:]):
             horizontal_midpoint = (start_m + end_m) / 2
-            for bottom_m, top_m in zip(vertical, vertical[1:], strict=True):
+            for bottom_m, top_m in zip(vertical, vertical[1:]):
                 vertical_midpoint = (bottom_m + top_m) / 2
                 if _cell_is_opening(horizontal_midpoint, vertical_midpoint, openings):
                     continue
