@@ -35,6 +35,7 @@ BATCH_CAMERA_PROFILES = (
     ArchitectureCameraProfile.REVERSE_CORNER,
     ArchitectureCameraProfile.ELEVATED,
 )
+_BATCH_CAMERA_ORDER = {camera.value: index for index, camera in enumerate(BATCH_CAMERA_PROFILES)}
 
 
 def digest_architecture_payload(payload: dict) -> str:
@@ -102,18 +103,30 @@ class ArchitectureRenderService:
             return ArchitectureRenderBatchStatus.COMPLETED
         return ArchitectureRenderBatchStatus.FAILED
 
+    @staticmethod
+    def _ordered_batch(renders: list[ArchitectureRender]) -> list[ArchitectureRender]:
+        return sorted(
+            renders,
+            key=lambda render: (
+                _BATCH_CAMERA_ORDER.get(render.camera_profile, len(_BATCH_CAMERA_ORDER)),
+                render.created_at,
+                str(render.id),
+            ),
+        )
+
     def _to_batch_response(self, renders: list[ArchitectureRender]) -> ArchitectureRenderBatchResponse:
         if not renders or renders[0].batch_id is None:
             raise ValueError("Render batch response requires at least one batched render")
-        selected = next((render for render in renders if render.selected_for_batch), None)
+        ordered = self._ordered_batch(renders)
+        selected = next((render for render in ordered if render.selected_for_batch), None)
         return ArchitectureRenderBatchResponse(
-            batch_id=renders[0].batch_id,
-            project_id=renders[0].project_id,
-            target_idea_id=renders[0].target_idea_id,
-            status=self._batch_status(renders),
-            source_digest=renders[0].source_digest,
+            batch_id=ordered[0].batch_id,
+            project_id=ordered[0].project_id,
+            target_idea_id=ordered[0].target_idea_id,
+            status=self._batch_status(ordered),
+            source_digest=ordered[0].source_digest,
             selected_render_id=selected.id if selected else None,
-            renders=[self._to_response(render) for render in renders],
+            renders=[self._to_response(render) for render in ordered],
         )
 
     async def _validated_package(self, user: User, project_id: UUID) -> ArchitecturePackage:
