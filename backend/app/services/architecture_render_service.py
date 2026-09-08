@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.architecture.schemas import ArchitecturePackage
 from app.core.config import Settings
@@ -11,10 +11,17 @@ from app.core.errors import AppError
 from app.core.redis import redis_client
 from app.db.models.architecture_renders import ArchitectureRender
 from app.db.models.users import User
-from app.domain.architecture.enums import ArchitectureCameraProfile
+from app.domain.architecture.enums import (
+    ArchitectureCameraProfile,
+    ArchitectureRenderBatchStatus,
+    ArchitectureRenderStatus,
+)
 from app.repositories.architecture_renders import ArchitectureRenderRepository
 from app.repositories.projects import ProjectRepository
-from app.schemas.architecture_renders import ArchitectureRenderResponse
+from app.schemas.architecture_renders import (
+    ArchitectureRenderBatchResponse,
+    ArchitectureRenderResponse,
+)
 from app.services.architecture_service import ArchitectureService
 from app.services.asset_service import LocalMediaStorage
 
@@ -23,6 +30,11 @@ ARCHITECTURE_RENDER_QUEUE_KEY = "auroom:architecture_render_queue"
 RENDERER_PROFILE_V1 = "blender_eevee_v1"
 RENDERER_PROFILE_V2 = "blender_eevee_v2"
 RENDERER_PROFILE = RENDERER_PROFILE_V2
+BATCH_CAMERA_PROFILES = (
+    ArchitectureCameraProfile.HERO_CORNER,
+    ArchitectureCameraProfile.REVERSE_CORNER,
+    ArchitectureCameraProfile.ELEVATED,
+)
 
 
 def digest_architecture_payload(payload: dict) -> str:
@@ -57,26 +69,54 @@ class ArchitectureRenderService:
         return ArchitectureRenderResponse(
             id=render.id,
             project_id=render.project_id,
+            batch_id=render.batch_id,
+            target_idea_id=render.target_idea_id,
             status=render.status,
             source_digest=render.source_digest,
             renderer_profile=render.renderer_profile,
             camera_profile=render.camera_profile,
             renderer_version=render.renderer_version,
+            output_asset_id=render.output_asset_id,
             image_url=image_url,
             width=render.width,
             height=render.height,
+            quality_score=render.quality_score,
+            quality_report=render.quality_report,
+            selected_for_batch=render.selected_for_batch,
             error=render.error,
             created_at=render.created_at,
             started_at=render.started_at,
             completed_at=render.completed_at,
         )
 
-    async def create(
-        self,
-        user: User,
-        project_id: UUID,
-        camera_profile: ArchitectureCameraProfile = ArchitectureCameraProfile.HERO_CORNER,
-    ) -> ArchitectureRenderResponse:
+    @staticmethod
+    def _batch_status(renders: list[ArchitectureRender]) -> ArchitectureRenderBatchStatus:
+        statuses = {render.status for render in renders}
+        if ArchitectureRenderStatus.PROCESSING in statuses:
+            return ArchitectureRenderBatchStatus.PROCESSING
+        if ArchitectureRenderStatus.QUEUED in statuses:
+            return ArchitectureRenderBatchStatus.QUEUED
+        if any(render.selected_for_batch for render in renders):
+            return ArchitectureRenderBatchStatus.COMPLETED
+        if ArchitectureRenderStatus.COMPLETED in statuses:
+            return ArchitectureRenderBatchStatus.COMPLETED
+        return ArchitectureRenderBatchStatus.FAILED
+
+    def _to_batch_response(self, renders: list[ArchitectureRender]) -> ArchitectureRenderBatchResponse:
+        if not renders or renders[0].batch_id is None:
+            raise ValueError("Render batch response requires at least one batched render")
+        selected = next((render for render in renders if render.selected_for_batch), None)
+        return ArchitectureRenderBatchResponse(
+            batch_id=renders[0].batch_id,
+            project_id=renders[0].project_id,
+            target_idea_id=renders[0].target_idea_id,
+            status=self._batch_status(renders),
+            source_digest=renders[0].source_digest,
+            selected_render_id=selected.id if selected else None,
+            renders=[self._to_response(render) for render in renders],
+        )
+
+    async def _validated_package(self, user: User, project_id: UUID) -> ArchitecturePackage:
         architecture_service = ArchitectureService(self.project_repository)
         package = await architecture_service.get(user, project_id)
         validation = architecture_service.validate(package)
@@ -87,6 +127,27 @@ class ArchitectureRenderService:
                 status=422,
                 detail="The saved architecture must pass canonical validation before rendering.",
             )
+        return package
+
+    async def _enqueue(self, render_ids: list[UUID]) -> None:
+        for render_id in render_ids:
+            try:
+                await redis_client.rpush(ARCHITECTURE_RENDER_QUEUE_KEY, str(render_id))
+            except Exception:
+                # PostgreSQL is authoritative. The renderer worker reconciles queued rows after
+                # Redis/AOF loss or transient enqueue failure.
+                logger.exception(
+                    "Failed to enqueue architecture render %s; reconciliation will recover it",
+                    render_id,
+                )
+
+    async def create(
+        self,
+        user: User,
+        project_id: UUID,
+        camera_profile: ArchitectureCameraProfile = ArchitectureCameraProfile.HERO_CORNER,
+    ) -> ArchitectureRenderResponse:
+        package = await self._validated_package(user, project_id)
         snapshot, source_digest = snapshot_architecture(package)
         render = ArchitectureRender(
             user_id=user.id,
@@ -99,16 +160,38 @@ class ArchitectureRenderService:
         self.repository.add(render)
         await self.repository.session.commit()
         await self.repository.session.refresh(render)
-        try:
-            await redis_client.rpush(ARCHITECTURE_RENDER_QUEUE_KEY, str(render.id))
-        except Exception:
-            # PostgreSQL is authoritative. The renderer worker reconciles queued rows after
-            # Redis/AOF loss or transient enqueue failure.
-            logger.exception(
-                "Failed to enqueue architecture render %s; reconciliation will recover it",
-                render.id,
-            )
+        await self._enqueue([render.id])
         return self._to_response(render)
+
+    async def create_batch(
+        self,
+        user: User,
+        project_id: UUID,
+        *,
+        target_idea_id: UUID | None = None,
+    ) -> ArchitectureRenderBatchResponse:
+        package = await self._validated_package(user, project_id)
+        snapshot, source_digest = snapshot_architecture(package)
+        batch_id = uuid4()
+        renders = [
+            ArchitectureRender(
+                user_id=user.id,
+                project_id=project_id,
+                batch_id=batch_id,
+                target_idea_id=target_idea_id,
+                architecture=snapshot,
+                source_digest=source_digest,
+                renderer_profile=RENDERER_PROFILE,
+                camera_profile=camera.value,
+            )
+            for camera in BATCH_CAMERA_PROFILES
+        ]
+        self.repository.add_all(renders)
+        await self.repository.session.commit()
+        for render in renders:
+            await self.repository.session.refresh(render)
+        await self._enqueue([render.id for render in renders])
+        return self._to_batch_response(renders)
 
     async def get(
         self,
@@ -125,3 +208,19 @@ class ArchitectureRenderService:
                 detail="The render does not exist or is not available to this user.",
             )
         return self._to_response(render)
+
+    async def get_batch(
+        self,
+        user: User,
+        project_id: UUID,
+        batch_id: UUID,
+    ) -> ArchitectureRenderBatchResponse:
+        renders = await self.repository.list_batch_owned(batch_id, user.id)
+        if not renders or any(render.project_id != project_id for render in renders):
+            raise AppError(
+                type="architecture_render_batch_not_found",
+                title="Architecture render batch not found",
+                status=404,
+                detail="The render batch does not exist or is not available to this user.",
+            )
+        return self._to_batch_response(renders)
