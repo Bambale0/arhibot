@@ -21,6 +21,7 @@ import type {
   GenerationList,
   GenerationMode,
   Idea,
+  IdeaMediaKind,
   Project,
   ProjectContext,
   ProjectList,
@@ -151,10 +152,10 @@ export function adminGetBillingSettings() { return request<AdminBillingSettings>
 export function adminUpdateBillingSettings(payload: Omit<AdminBillingSettings, 'updated_at'>) { return request<AdminBillingSettings>('/admin/billing-settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
 
 export function adminListIdeas() { return request<AdminIdea[]>('/admin/ideas') }
-export function adminCreateIdea(payload: { title: string; category: string; text: string; generation_type: GenerationMode; prompt: string; image_asset_id?: string | null; is_active: boolean; sort_order: number }) {
+export function adminCreateIdea(payload: { title: string; category: string; text: string; generation_type: GenerationMode; prompt: string; image_asset_id?: string | null; architecture_project_id?: string | null; media: Array<{ asset_id: string; kind: IdeaMediaKind; label: string }>; is_active: boolean; sort_order: number }) {
   return request<AdminIdea>('/admin/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 }
-export function adminUpdateIdea(id: string, payload: Partial<{ title: string; category: string; text: string; generation_type: GenerationMode; prompt: string; image_asset_id: string | null; is_active: boolean; sort_order: number }>) {
+export function adminUpdateIdea(id: string, payload: Partial<{ title: string; category: string; text: string; generation_type: GenerationMode; prompt: string; image_asset_id: string | null; architecture_project_id: string | null; media: Array<{ asset_id: string; kind: IdeaMediaKind; label: string }>; is_active: boolean; sort_order: number }>) {
   return request<AdminIdea>(`/admin/ideas/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 }
 export function adminArchiveIdea(id: string) { return request<AdminIdea>(`/admin/ideas/${id}`, { method: 'DELETE' }) }

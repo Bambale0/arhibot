@@ -27,6 +27,7 @@ export type ProjectContext = {
   bedrooms?: number | null
   bathrooms?: number | null
   architecture_style?: string | null
+  architecture?: ArchitecturePackage | null
 }
 
 export type Project = {
@@ -117,6 +118,35 @@ export type BillingSummary = {
   payments: BillingPayment[]
 }
 
+export type Point2D = { x: number; y: number }
+export type Polygon2D = { points: Point2D[] }
+export type ArchitectureLevel = {
+  id: string
+  label: string
+  z: number
+  height: number
+  footprint: Polygon2D
+  rooms: { id: string; name: string; kind: string; polygon: Polygon2D; target_area_sqm?: number | null }[]
+}
+export type ArchitecturePackage = {
+  schema_version: '1.0'
+  program: { living_area_sqm?: number | null; bedrooms?: number | null; bathrooms?: number | null; storeys?: number | null; garage_cars?: number | null }
+  geometry: {
+    levels: ArchitectureLevel[]
+    external_objects: { id: string; label: string; type: string; polygon: Polygon2D; z: number; height: number; level_id?: string | null }[]
+    roof?: { type: 'gable' | 'hip' | 'flat'; eave_z: number; ridge_z: number; ridge_start?: Point2D | null; ridge_end?: Point2D | null; overhang_m: number } | null
+  }
+  appearance: { architecture_style?: string | null; primary_material?: string | null; accent_materials: string[]; roof_material?: string | null; glazing?: string | null; lighting?: string | null }
+}
+
+export type IdeaMediaKind = 'photo' | 'reference' | 'scheme'
+export type IdeaMedia = {
+  asset_id: string
+  kind: IdeaMediaKind
+  label: string
+  url: string
+}
+
 export type Idea = {
   id: string
   title: string
@@ -125,6 +155,8 @@ export type Idea = {
   generation_type: GenerationMode
   prompt: string
   image_url: string | null
+  media: IdeaMedia[]
+  architecture: ArchitecturePackage | null
 }
 
 export type AdminOverview = {
@@ -157,6 +189,7 @@ export type AdminBillingSettings = {
 
 export type AdminIdea = Idea & {
   image_asset_id: string | null
+  architecture_project_id: string | null
   is_active: boolean
   sort_order: number
   created_at: string

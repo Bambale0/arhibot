@@ -17,6 +17,9 @@ import type {
   AdminUser,
   BroadcastSegment,
   GenerationMode,
+  IdeaMedia,
+  IdeaMediaKind,
+  Project,
   UserRole,
 } from '../types'
 
@@ -52,6 +55,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   const [tariffs, setTariffs] = useState<AdminTariff[]>([])
   const [billingSettings, setBillingSettings] = useState<AdminBillingSettings | null>(null)
   const [ideas, setIdeas] = useState<AdminIdea[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
   const [generation, setGeneration] = useState<AdminGenerationSettings | null>(null)
   const [prices, setPrices] = useState<AdminGenerationPrice[]>([])
   const [prompts, setPrompts] = useState<AdminPrompt[]>([])
@@ -68,11 +72,12 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   async function reload() {
     setError(null)
     try {
-      const [o, t, bs, i, g, gp, p, u, tx, pay, b, tg, ops, a] = await Promise.all([
+      const [o, t, bs, i, projectPage, g, gp, p, u, tx, pay, b, tg, ops, a] = await Promise.all([
         api.adminOverview(),
         api.adminListTariffs(),
         api.adminGetBillingSettings(),
         api.adminListIdeas(),
+        api.listProjects(null, 100),
         api.adminGetGenerationSettings(),
         api.adminListGenerationPrices(),
         api.adminListPrompts(),
@@ -88,6 +93,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       setTariffs(t)
       setBillingSettings(bs)
       setIdeas(i)
+      setProjects(projectPage.items)
       setGeneration(g)
       setPrices(gp)
       setPrompts(p)
@@ -124,7 +130,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       {loading ? <div className="admin-loading">Загружаем настройки…</div> : (
         <div className="admin-content">
           {tab === 'tariffs' && billingSettings && <TariffsPanel items={tariffs} onItems={setTariffs} billingSettings={billingSettings} onBillingSettings={setBillingSettings} onError={setError} />}
-          {tab === 'ideas' && <IdeasPanel items={ideas} onItems={setIdeas} onError={setError} />}
+          {tab === 'ideas' && <IdeasPanel items={ideas} projects={projects} onItems={setIdeas} onError={setError} />}
           {tab === 'generation' && generation && <GenerationPanel settings={generation} prices={prices} prompts={prompts} onSettings={setGeneration} onPrices={setPrices} onPrompts={setPrompts} onError={setError} />}
           {tab === 'users' && <UsersPanel items={users} transactions={transactions} onItems={setUsers} onTransactions={setTransactions} onError={setError} />}
           {tab === 'payments' && <PaymentsPanel items={payments} onItems={setPayments} onError={setError} />}
@@ -207,7 +213,7 @@ function BillingSettingsEditor({ settings, onSaved, onError }: { settings: Admin
   return <div className="admin-subpanel"><div className="admin-panel-title"><div><h3>Фискальные чеки YooKassa</h3><p>При включении клиент указывает email, а чек передаётся в платёж.</p></div></div><div className="admin-form-grid compact"><label className="admin-checkbox"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)}/> Передавать receipt</label><label>Код НДС<input type="number" min="1" max="12" disabled={!enabled} value={vat} onChange={(e) => setVat(e.target.value)}/></label><label>Предмет расчёта<input disabled={!enabled} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="service"/></label><label>Способ расчёта<input disabled={!enabled} value={mode} onChange={(e) => setMode(e.target.value)} placeholder="full_payment"/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={() => void save()}>Сохранить кассу</button></div></div></div>
 }
 
-function IdeasPanel({ items, onItems, onError }: { items: AdminIdea[]; onItems: (v: AdminIdea[]) => void; onError: (v: string | null) => void }) {
+function IdeasPanel({ items, projects, onItems, onError }: { items: AdminIdea[]; projects: Project[]; onItems: (v: AdminIdea[]) => void; onError: (v: string | null) => void }) {
   const [editing, setEditing] = useState<AdminIdea | null>(null)
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState('')
@@ -218,11 +224,13 @@ function IdeasPanel({ items, onItems, onError }: { items: AdminIdea[]; onItems: 
   const [active, setActive] = useState(true)
   const [imageAssetId, setImageAssetId] = useState<string | null>(null)
   const [imageUrl, setImageUrl] = useState<string | null>(null)
+  const [architectureProjectId, setArchitectureProjectId] = useState<string>('')
+  const [media, setMedia] = useState<IdeaMedia[]>([])
   const [uploading, setUploading] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  function reset(){setEditing(null);setTitle('');setCategory('');setText('');setPrompt('');setMode('facade');setSortOrder('0');setActive(true);setImageAssetId(null);setImageUrl(null)}
-  function edit(item:AdminIdea){setEditing(item);setTitle(item.title);setCategory(item.category);setText(item.text);setPrompt(item.prompt);setMode(item.generation_type);setSortOrder(String(item.sort_order));setActive(item.is_active);setImageAssetId(item.image_asset_id);setImageUrl(item.image_url)}
+  function reset(){setEditing(null);setTitle('');setCategory('');setText('');setPrompt('');setMode('facade');setSortOrder('0');setActive(true);setImageAssetId(null);setImageUrl(null);setArchitectureProjectId('');setMedia([])}
+  function edit(item:AdminIdea){setEditing(item);setTitle(item.title);setCategory(item.category);setText(item.text);setPrompt(item.prompt);setMode(item.generation_type);setSortOrder(String(item.sort_order));setActive(item.is_active);setImageAssetId(item.image_asset_id);setImageUrl(item.image_url);setArchitectureProjectId(item.architecture_project_id || '');setMedia(item.media)}
   async function uploadImage(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -231,11 +239,38 @@ function IdeasPanel({ items, onItems, onError }: { items: AdminIdea[]; onItems: 
     catch (err) { onError(errorText(err)) }
     finally { setUploading(false); e.target.value = '' }
   }
-  async function submit(e:FormEvent){e.preventDefault();setBusy(true);onError(null);try{const payload={title:title.trim(),category:category.trim(),text:text.trim(),prompt:prompt.trim(),generation_type:mode,image_asset_id:imageAssetId,is_active:active,sort_order:Number(sortOrder)};const saved=editing?await api.adminUpdateIdea(editing.id,payload):await api.adminCreateIdea(payload);onItems(editing?items.map(x=>x.id===saved.id?saved:x):[...items,saved]);reset()}catch(err){onError(errorText(err))}finally{setBusy(false)}}
+  async function uploadMedia(e: ChangeEvent<HTMLInputElement>, kind: IdeaMediaKind) {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    if (media.length + files.length > 24) { onError('У идеи может быть не больше 24 дополнительных материалов.'); e.target.value = ''; return }
+    setUploading(true); onError(null)
+    try {
+      const uploaded: IdeaMedia[] = []
+      for (const file of files) {
+        const asset = await api.uploadAsset(null, file, 'project_reference')
+        uploaded.push({ asset_id: asset.id, kind, label: file.name.replace(/\.[^.]+$/, '').slice(0, 120) || 'Материал', url: asset.url })
+      }
+      setMedia((current) => [...current, ...uploaded])
+    } catch (err) { onError(errorText(err)) }
+    finally { setUploading(false); e.target.value = '' }
+  }
+  async function submit(e:FormEvent){e.preventDefault();setBusy(true);onError(null);try{const payload={title:title.trim(),category:category.trim(),text:text.trim(),prompt:prompt.trim(),generation_type:mode,image_asset_id:imageAssetId,architecture_project_id:architectureProjectId || null,media:media.map(({asset_id,kind,label})=>({asset_id,kind,label})),is_active:active,sort_order:Number(sortOrder)};const saved=editing?await api.adminUpdateIdea(editing.id,payload):await api.adminCreateIdea(payload);onItems(editing?items.map(x=>x.id===saved.id?saved:x):[...items,saved]);reset()}catch(err){onError(errorText(err))}finally{setBusy(false)}}
   async function toggle(item:AdminIdea){try{const saved=await api.adminUpdateIdea(item.id,{is_active:!item.is_active});onItems(items.map(x=>x.id===saved.id?saved:x))}catch(err){onError(errorText(err))}}
-  return <section className="admin-panel"><div className="admin-panel-title"><div><h2>Идеи</h2><p>Публикуйте настоящие визуальные референсы с готовым prompt.</p></div></div>
-    <form className="admin-form-grid" onSubmit={(e)=>void submit(e)}><label>Название<input required value={title} onChange={e=>setTitle(e.target.value)}/></label><label>Категория<input required value={category} onChange={e=>setCategory(e.target.value)}/></label><label>Сценарий<select value={mode} onChange={e=>setMode(e.target.value as GenerationMode)}>{modes.map(m=><option value={m.id} key={m.id}>{m.label}</option>)}</select></label><label>Порядок<input type="number" value={sortOrder} onChange={e=>setSortOrder(e.target.value)}/></label><label className="admin-span-2">Текст<textarea required value={text} onChange={e=>setText(e.target.value)}/></label><label className="admin-span-2">Промпт при выборе<textarea value={prompt} onChange={e=>setPrompt(e.target.value)}/></label><label className="admin-span-2">Изображение<input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} onChange={(e) => void uploadImage(e)}/>{imageUrl && <img className="admin-idea-preview" src={imageUrl} alt="Превью идеи"/>}</label><label className="admin-checkbox"><input type="checkbox" checked={active} onChange={e=>setActive(e.target.checked)}/> Опубликована</label><div className="admin-form-actions">{imageAssetId && <button type="button" className="secondary-button" onClick={() => {setImageAssetId(null);setImageUrl(null)}}>Убрать изображение</button>}<button className="primary-button" disabled={busy||uploading}>{editing?'Сохранить':'Добавить идею'}</button>{editing&&<button type="button" className="secondary-button" onClick={reset}>Отмена</button>}</div></form>
-    <div className="admin-card-list">{items.map(item=><article className="admin-list-card admin-idea-card" key={item.id}>{item.image_url && <img src={item.image_url} alt={item.title}/>}<div><strong>{item.title}</strong><span>{item.category} · {modes.find(m=>m.id===item.generation_type)?.label}</span><p>{item.text}</p></div><div><span className={`status-pill ${item.is_active?'':'muted'}`}>{item.is_active?'Опубликована':'Скрыта'}</span><button onClick={()=>edit(item)}>Изменить</button><button onClick={()=>void toggle(item)}>{item.is_active?'Скрыть':'Опубликовать'}</button></div></article>)}</div>
+  return <section className="admin-panel"><div className="admin-panel-title"><div><h2>Идеи</h2><p>Каждая публикация — 3D-карточка ленты с визуализацией, референсами и схемами.</p></div></div>
+    <form className="admin-form-grid" onSubmit={(e)=>void submit(e)}><label>Название<input required value={title} onChange={e=>setTitle(e.target.value)}/></label><label>Категория<input required value={category} onChange={e=>setCategory(e.target.value)}/></label><label>Сценарий<select value={mode} onChange={e=>setMode(e.target.value as GenerationMode)}>{modes.map(m=><option value={m.id} key={m.id}>{m.label}</option>)}</select></label><label>Порядок<input type="number" value={sortOrder} onChange={e=>setSortOrder(e.target.value)}/></label><label className="admin-span-2">Текст<textarea required value={text} onChange={e=>setText(e.target.value)}/></label><label className="admin-span-2">Промпт при выборе<textarea value={prompt} onChange={e=>setPrompt(e.target.value)}/></label>
+      <label className="admin-span-2">Главная визуализация<input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} onChange={(e) => void uploadImage(e)}/>{imageUrl && <img className="admin-idea-preview" src={imageUrl} alt="Превью идеи"/>}</label>
+      <label className="admin-span-2">Источник 3D-геометрии<select value={architectureProjectId} onChange={(e)=>setArchitectureProjectId(e.target.value)}><option value="">Фото-объём без канонической геометрии</option>{projects.map((project)=><option key={project.id} value={project.id} disabled={!project.context.architecture}>{project.name}{project.context.architecture?' · geometry ready':' · без geometry'}</option>)}</select><small>Если выбран проект с канонической геометрией, лента строит 3D и схемы этажей из неё.</small></label>
+      <div className="admin-span-2 admin-idea-media-editor">
+        <div><strong>Материалы для 3D и карусели</strong><span>До 24 файлов. Фото и референсы становятся текстурами 3D-объёма; схемы открываются отдельно.</span></div>
+        <div className="admin-media-upload-row">
+          <label>+ Фото<input hidden multiple type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} onChange={(e)=>void uploadMedia(e,'photo')}/></label>
+          <label>+ Референсы<input hidden multiple type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} onChange={(e)=>void uploadMedia(e,'reference')}/></label>
+          <label>+ Схемы<input hidden multiple type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} onChange={(e)=>void uploadMedia(e,'scheme')}/></label>
+        </div>
+        {media.length > 0 && <div className="admin-idea-media-grid">{media.map((item,index)=><div key={`${item.asset_id}-${index}`}><img src={item.url} alt={item.label}/><span><b>{item.kind==='photo'?'Фото':item.kind==='reference'?'Референс':'Схема'}</b>{item.label}</span><button type="button" aria-label={`Убрать ${item.label}`} onClick={()=>setMedia(media.filter((_,mediaIndex)=>mediaIndex!==index))}>×</button></div>)}</div>}
+      </div>
+      <label className="admin-checkbox"><input type="checkbox" checked={active} onChange={e=>setActive(e.target.checked)}/> Опубликована</label><div className="admin-form-actions">{imageAssetId && <button type="button" className="secondary-button" onClick={() => {setImageAssetId(null);setImageUrl(null)}}>Убрать визуализацию</button>}<button className="primary-button" disabled={busy||uploading}>{editing?'Сохранить':'Добавить идею'}</button>{editing&&<button type="button" className="secondary-button" onClick={reset}>Отмена</button>}</div></form>
+    <div className="admin-card-list">{items.map(item=><article className="admin-list-card admin-idea-card" key={item.id}>{item.image_url && <img src={item.image_url} alt={item.title}/>}<div><strong>{item.title}</strong><span>{item.category} · {modes.find(m=>m.id===item.generation_type)?.label}</span><p>{item.text}</p><small>{item.media.length} материалов · 3D: {item.architecture?'каноническая геометрия':'фото-объём'}</small></div><div><span className={`status-pill ${item.is_active?'':'muted'}`}>{item.is_active?'Опубликована':'Скрыта'}</span><button onClick={()=>edit(item)}>Изменить</button><button onClick={()=>void toggle(item)}>{item.is_active?'Скрыть':'Опубликовать'}</button></div></article>)}</div>
   </section>
 }
 

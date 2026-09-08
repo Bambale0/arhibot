@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.architecture.schemas import ArchitecturePackage
 from app.domain.generations.enums import GenerationType
 from app.domain.users.enums import UserRole, UserStatus
 
@@ -76,7 +77,7 @@ class BillingSettingsUpdate(BaseModel):
     payment_mode: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
-    def validate_receipt_fields(self) -> "BillingSettingsUpdate":
+    def validate_receipt_fields(self) -> BillingSettingsUpdate:
         if self.receipts_enabled and (
             self.vat_code is None
             or not (self.payment_subject or "").strip()
@@ -94,6 +95,27 @@ class BillingSettingsResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+IdeaMediaKind = Literal["photo", "reference", "scheme"]
+
+
+class IdeaMediaInput(BaseModel):
+    asset_id: UUID
+    kind: IdeaMediaKind
+    label: str = Field(min_length=1, max_length=120)
+
+    @field_validator("label")
+    @classmethod
+    def strip_label(cls, value: str) -> str:
+        return value.strip()
+
+
+class IdeaMediaResponse(BaseModel):
+    asset_id: UUID
+    kind: IdeaMediaKind
+    label: str
+    url: str
+
+
 class IdeaCreate(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     category: str = Field(min_length=1, max_length=64)
@@ -101,6 +123,8 @@ class IdeaCreate(BaseModel):
     generation_type: GenerationType
     prompt: str = Field(default="", max_length=5000)
     image_asset_id: UUID | None = None
+    architecture_project_id: UUID | None = None
+    media: list[IdeaMediaInput] = Field(default_factory=list, max_length=24)
     is_active: bool = True
     sort_order: int = Field(default=0, ge=-100_000, le=100_000)
 
@@ -112,6 +136,8 @@ class IdeaUpdate(BaseModel):
     generation_type: GenerationType | None = None
     prompt: str | None = Field(default=None, max_length=5000)
     image_asset_id: UUID | None = None
+    architecture_project_id: UUID | None = None
+    media: list[IdeaMediaInput] | None = Field(default=None, max_length=24)
     is_active: bool | None = None
     sort_order: int | None = Field(default=None, ge=-100_000, le=100_000)
 
@@ -125,6 +151,9 @@ class IdeaResponse(BaseModel):
     prompt: str
     image_asset_id: UUID | None
     image_url: str | None
+    architecture_project_id: UUID | None
+    media: list[IdeaMediaResponse]
+    architecture: ArchitecturePackage | None
     is_active: bool
     sort_order: int
     created_at: datetime
@@ -139,6 +168,8 @@ class PublicIdeaResponse(BaseModel):
     generation_type: GenerationType
     prompt: str
     image_url: str | None
+    media: list[IdeaMediaResponse]
+    architecture: ArchitecturePackage | None
 
 
 class GenerationRuntimeUpdate(BaseModel):
@@ -165,7 +196,7 @@ class GenerationRuntimeUpdate(BaseModel):
         return value or None
 
     @model_validator(mode="after")
-    def validate_modes(self) -> "GenerationRuntimeUpdate":
+    def validate_modes(self) -> GenerationRuntimeUpdate:
         allowed = {item.value for item in GenerationType}
         unknown = set(self.mode_params) - allowed
         if unknown:
