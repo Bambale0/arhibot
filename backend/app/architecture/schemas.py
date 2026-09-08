@@ -55,6 +55,40 @@ class RoofType(StrEnum):
     FLAT = "flat"
 
 
+class FacadeMaterialPreset(StrEnum):
+    WHITE_PLASTER = "white_plaster"
+    WARM_STONE = "warm_stone"
+    RED_BRICK = "red_brick"
+    GRAPHITE_PANEL = "graphite_panel"
+    WOOD_CLADDING = "wood_cladding"
+
+
+class RoofMaterialPreset(StrEnum):
+    DARK_METAL = "dark_metal"
+    GRAY_MEMBRANE = "gray_membrane"
+    BROWN_TILE = "brown_tile"
+
+
+class AccentMaterialPreset(StrEnum):
+    NATURAL_OAK = "natural_oak"
+    CHARCOAL = "charcoal"
+    WARM_STONE = "warm_stone"
+    BLACK_METAL = "black_metal"
+
+
+class GlazingMaterialPreset(StrEnum):
+    CLEAR_GLASS = "clear_glass"
+    LOW_E_GLASS = "low_e_glass"
+    SMOKED_GLASS = "smoked_glass"
+
+
+class PbrMaterialPalette(StrictModel):
+    facade: FacadeMaterialPreset = FacadeMaterialPreset.WHITE_PLASTER
+    roof: RoofMaterialPreset = RoofMaterialPreset.DARK_METAL
+    accent: AccentMaterialPreset = AccentMaterialPreset.NATURAL_OAK
+    glazing: GlazingMaterialPreset = GlazingMaterialPreset.LOW_E_GLASS
+
+
 class CoordinateSystem(StrictModel):
     unit: Literal["meter"] = "meter"
     origin: Point2D = Field(default_factory=lambda: Point2D(x=0.0, y=0.0))
@@ -140,6 +174,7 @@ class HouseAppearance(StrictModel):
     roof_material: str | None = Field(default=None, max_length=80)
     glazing: str | None = Field(default=None, max_length=80)
     lighting: str | None = Field(default=None, max_length=80)
+    pbr_materials: PbrMaterialPalette = Field(default_factory=PbrMaterialPalette)
 
 
 class ArchitecturePackage(StrictModel):

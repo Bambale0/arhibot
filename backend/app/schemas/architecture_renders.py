@@ -3,7 +3,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from app.domain.architecture.enums import ArchitectureRenderStatus
+from app.domain.architecture.enums import ArchitectureCameraProfile, ArchitectureRenderStatus
+
+
+class ArchitectureRenderCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    camera_profile: ArchitectureCameraProfile = ArchitectureCameraProfile.HERO_CORNER
 
 
 class ArchitectureRenderResponse(BaseModel):
@@ -14,6 +20,7 @@ class ArchitectureRenderResponse(BaseModel):
     status: ArchitectureRenderStatus
     source_digest: str
     renderer_profile: str
+    camera_profile: ArchitectureCameraProfile
     renderer_version: str | None
     image_url: str | None
     width: int | None

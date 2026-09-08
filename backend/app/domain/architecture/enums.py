@@ -6,3 +6,9 @@ class ArchitectureRenderStatus(StrEnum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class ArchitectureCameraProfile(StrEnum):
+    HERO_CORNER = "hero_corner"
+    REVERSE_CORNER = "reverse_corner"
+    ELEVATED = "elevated"

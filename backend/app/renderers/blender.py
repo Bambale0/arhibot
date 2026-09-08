@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -24,7 +25,7 @@ class BlenderRenderResult:
 
 
 class BlenderRenderer:
-    """Run the versioned canonical preview profile in a separate Blender process."""
+    """Run a versioned canonical preview profile in a separate Blender process."""
 
     def __init__(self, executable: str = "blender") -> None:
         self.executable = executable
@@ -52,13 +53,25 @@ class BlenderRenderer:
             raise BlenderRendererError("Unexpected Blender version output.")
         return first_line[:120]
 
-    async def render(self, glb_data: bytes) -> BlenderRenderResult:
+    async def render(self, glb_data: bytes, *, config: dict | None = None) -> BlenderRenderResult:
         renderer_version = await self.version()
         with TemporaryDirectory(prefix="auroom-blender-") as temp_dir:
             temp = Path(temp_dir)
             input_path = temp / "canonical.glb"
             output_path = temp / "hero.png"
             await asyncio.to_thread(input_path.write_bytes, glb_data)
+
+            script_args = [str(input_path), str(output_path)]
+            if config is not None:
+                config_path = temp / "render-config.json"
+                serialized = json.dumps(
+                    config,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                await asyncio.to_thread(config_path.write_text, serialized, encoding="utf-8")
+                script_args.append(str(config_path))
 
             process = await asyncio.create_subprocess_exec(
                 self.executable,
@@ -67,8 +80,7 @@ class BlenderRenderer:
                 "--python",
                 str(self.script_path),
                 "--",
-                str(input_path),
-                str(output_path),
+                *script_args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
