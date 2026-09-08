@@ -18,7 +18,11 @@ def _architecture_payload() -> dict:
     return {
         "schema_version": "1.0",
         "program": {"living_area_sqm": 120, "storeys": 1, "bedrooms": 2, "bathrooms": 1},
-        "appearance": {"architecture_style": "fachwerk", "primary_material": "brick"},
+        "appearance": {
+            "architecture_style": "fachwerk",
+            "primary_material": "brick",
+            "glazing": "low-e glass",
+        },
         "geometry": {
             "levels": [
                 {
@@ -48,6 +52,26 @@ def _architecture_payload() -> dict:
                                 ]
                             },
                         }
+                    ],
+                    "openings": [
+                        {
+                            "id": "living_window",
+                            "kind": "window",
+                            "edge_index": 0,
+                            "offset_m": 2.0,
+                            "width_m": 2.4,
+                            "sill_height_m": 0.9,
+                            "height_m": 1.5,
+                        },
+                        {
+                            "id": "entry",
+                            "kind": "door",
+                            "edge_index": 0,
+                            "offset_m": 8.5,
+                            "width_m": 1.1,
+                            "sill_height_m": 0.0,
+                            "height_m": 2.2,
+                        },
                     ],
                 }
             ],
@@ -109,6 +133,9 @@ async def test_architecture_package_survives_project_context_updates() -> None:
         )
         assert saved.status_code == 200, saved.text
         assert saved.json()["validation"]["valid"] is True
+        assert saved.json()["architecture"]["geometry"]["levels"][0]["openings"][0]["id"] == (
+            "living_window"
+        )
 
         plan = await client.get(
             f"/api/v1/projects/{project_id}/architecture/plan.svg", headers=headers
@@ -130,6 +157,8 @@ async def test_architecture_package_survives_project_context_updates() -> None:
         assert model.headers["content-type"] == "model/gltf-binary"
         assert model.headers["x-auroom-model-source"] == "canonical-geometry"
         assert model.content.startswith(b"glTF")
+        assert b"opening:ground:living_window" in model.content
+        assert b"opening:ground:entry" in model.content
         assert len(model.content) > 1000
 
         updated = await client.patch(
@@ -140,9 +169,13 @@ async def test_architecture_package_survives_project_context_updates() -> None:
         assert updated.status_code == 200, updated.text
         assert updated.json()["context"]["house_area_m2"] == 125
         assert updated.json()["context"]["architecture"]["schema_version"] == "1.0"
+        assert updated.json()["context"]["architecture"]["geometry"]["levels"][0]["openings"][0][
+            "id"
+        ] == "living_window"
 
         architecture = await client.get(
             f"/api/v1/projects/{project_id}/architecture", headers=headers
         )
         assert architecture.status_code == 200, architecture.text
         assert architecture.json()["geometry"]["levels"][0]["id"] == "ground"
+        assert architecture.json()["geometry"]["levels"][0]["openings"][1]["id"] == "entry"
