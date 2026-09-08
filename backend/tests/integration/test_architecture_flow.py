@@ -123,6 +123,15 @@ async def test_architecture_package_survives_project_context_updates() -> None:
         assert massing.status_code == 200, massing.text
         assert 'data-source="canonical-geometry"' in massing.text
 
+        model = await client.get(
+            f"/api/v1/projects/{project_id}/architecture/model.glb", headers=headers
+        )
+        assert model.status_code == 200, model.text
+        assert model.headers["content-type"] == "model/gltf-binary"
+        assert model.headers["x-auroom-model-source"] == "canonical-geometry"
+        assert model.content.startswith(b"glTF")
+        assert len(model.content) > 1000
+
         updated = await client.patch(
             f"/api/v1/projects/{project_id}",
             headers=headers,
