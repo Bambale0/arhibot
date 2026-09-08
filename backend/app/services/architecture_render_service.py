@@ -11,6 +11,7 @@ from app.core.errors import AppError
 from app.core.redis import redis_client
 from app.db.models.architecture_renders import ArchitectureRender
 from app.db.models.users import User
+from app.domain.architecture.enums import ArchitectureCameraProfile
 from app.repositories.architecture_renders import ArchitectureRenderRepository
 from app.repositories.projects import ProjectRepository
 from app.schemas.architecture_renders import ArchitectureRenderResponse
@@ -19,18 +20,24 @@ from app.services.asset_service import LocalMediaStorage
 
 logger = logging.getLogger(__name__)
 ARCHITECTURE_RENDER_QUEUE_KEY = "auroom:architecture_render_queue"
-RENDERER_PROFILE = "blender_eevee_v1"
+RENDERER_PROFILE_V1 = "blender_eevee_v1"
+RENDERER_PROFILE_V2 = "blender_eevee_v2"
+RENDERER_PROFILE = RENDERER_PROFILE_V2
 
 
-def snapshot_architecture(package: ArchitecturePackage) -> tuple[dict, str]:
-    payload = package.model_dump(mode="json", exclude_none=True)
+def digest_architecture_payload(payload: dict) -> str:
     canonical = json.dumps(
         payload,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    return payload, hashlib.sha256(canonical).hexdigest()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def snapshot_architecture(package: ArchitecturePackage) -> tuple[dict, str]:
+    payload = package.model_dump(mode="json", exclude_none=True)
+    return payload, digest_architecture_payload(payload)
 
 
 class ArchitectureRenderService:
@@ -53,6 +60,7 @@ class ArchitectureRenderService:
             status=render.status,
             source_digest=render.source_digest,
             renderer_profile=render.renderer_profile,
+            camera_profile=render.camera_profile,
             renderer_version=render.renderer_version,
             image_url=image_url,
             width=render.width,
@@ -63,7 +71,12 @@ class ArchitectureRenderService:
             completed_at=render.completed_at,
         )
 
-    async def create(self, user: User, project_id: UUID) -> ArchitectureRenderResponse:
+    async def create(
+        self,
+        user: User,
+        project_id: UUID,
+        camera_profile: ArchitectureCameraProfile = ArchitectureCameraProfile.HERO_CORNER,
+    ) -> ArchitectureRenderResponse:
         architecture_service = ArchitectureService(self.project_repository)
         package = await architecture_service.get(user, project_id)
         validation = architecture_service.validate(package)
@@ -81,6 +94,7 @@ class ArchitectureRenderService:
             architecture=snapshot,
             source_digest=source_digest,
             renderer_profile=RENDERER_PROFILE,
+            camera_profile=camera_profile.value,
         )
         self.repository.add(render)
         await self.repository.session.commit()
