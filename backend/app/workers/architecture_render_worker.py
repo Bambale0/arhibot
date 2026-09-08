@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy import select
@@ -16,7 +15,10 @@ from app.db.models.architecture_renders import ArchitectureRender
 from app.db.session import dispose_engine, get_session_factory
 from app.domain.architecture.enums import ArchitectureRenderStatus
 from app.renderers.blender import BlenderRenderer
-from app.services.architecture_render_service import ARCHITECTURE_RENDER_QUEUE_KEY
+from app.services.architecture_render_service import (
+    ARCHITECTURE_RENDER_QUEUE_KEY,
+    snapshot_architecture,
+)
 from app.services.asset_service import LocalMediaStorage
 
 logger = logging.getLogger(__name__)
@@ -45,7 +47,20 @@ async def process_render(render_id: UUID, settings: Settings, renderer: BlenderR
         render = result.scalar_one_or_none()
         if render is None or render.status != ArchitectureRenderStatus.QUEUED:
             return
-        package = ArchitecturePackage.model_validate(render.architecture)
+
+        try:
+            package = ArchitecturePackage.model_validate(render.architecture)
+            _, actual_digest = snapshot_architecture(package)
+            if actual_digest != render.source_digest:
+                raise RuntimeError("Architecture render snapshot digest mismatch")
+        except Exception as exc:
+            render.status = ArchitectureRenderStatus.FAILED
+            render.error = str(exc)[:2000] or "Architecture render snapshot is invalid"
+            render.completed_at = datetime.now(UTC)
+            await session.commit()
+            logger.error("Architecture render %s rejected before Blender: %s", render_id, exc)
+            return
+
         render.status = ArchitectureRenderStatus.PROCESSING
         render.started_at = datetime.now(UTC)
         render.completed_at = None
@@ -94,27 +109,47 @@ async def process_render(render_id: UUID, settings: Settings, renderer: BlenderR
 
 async def _recover_reserved_jobs() -> None:
     reserved = await redis_client.lrange(ARCHITECTURE_RENDER_PROCESSING_KEY, 0, -1)
+    stale_before = datetime.now(UTC) - _STALE_PROCESSING_AFTER
+
     for raw_id in reserved:
         try:
             render_id = UUID(raw_id)
         except (TypeError, ValueError):
-            await redis_client.lrem(ARCHITECTURE_RENDER_PROCESSING_KEY, 0, raw_id)
+            await redis_client.lrem(ARCHITECTURE_RENDER_PROCESSING_KEY, 1, raw_id)
             continue
+
+        remove_reservation = False
         should_requeue = False
         async with get_session_factory()() as session:
-            render = await session.get(ArchitectureRender, render_id)
-            if render is not None and render.status in {
-                ArchitectureRenderStatus.QUEUED,
-                ArchitectureRenderStatus.PROCESSING,
+            result = await session.execute(
+                select(ArchitectureRender)
+                .where(ArchitectureRender.id == render_id)
+                .with_for_update()
+            )
+            render = result.scalar_one_or_none()
+            if render is None or render.status in {
+                ArchitectureRenderStatus.COMPLETED,
+                ArchitectureRenderStatus.FAILED,
             }:
+                remove_reservation = True
+            elif render.status == ArchitectureRenderStatus.QUEUED:
+                remove_reservation = True
+                should_requeue = True
+            elif render.status == ArchitectureRenderStatus.PROCESSING and (
+                render.started_at is None or render.started_at <= stale_before
+            ):
                 render.status = ArchitectureRenderStatus.QUEUED
                 render.started_at = None
                 render.error = None
                 render.completed_at = None
                 await session.commit()
+                remove_reservation = True
                 should_requeue = True
-        await redis_client.lrem(ARCHITECTURE_RENDER_PROCESSING_KEY, 0, raw_id)
-        if should_requeue:
+
+        if not remove_reservation:
+            continue
+        removed = await redis_client.lrem(ARCHITECTURE_RENDER_PROCESSING_KEY, 1, raw_id)
+        if should_requeue and removed:
             await redis_client.rpush(ARCHITECTURE_RENDER_QUEUE_KEY, raw_id)
 
 
@@ -187,6 +222,7 @@ async def run_worker() -> None:
         try:
             reconcile_tick += 1
             if reconcile_tick >= 60:
+                await _recover_reserved_jobs()
                 await _reconcile_database_jobs()
                 reconcile_tick = 0
             raw_id = await _reserve_job()
