@@ -69,3 +69,19 @@ class ArchitectureIdeaRenderService:
         )
         await self.session.commit()
         return response
+
+    async def get(
+        self,
+        actor: User,
+        idea_id: UUID,
+        batch_id: UUID,
+    ) -> ArchitectureRenderBatchResponse:
+        idea = await self.admin_repository.get_idea(idea_id)
+        if idea is None:
+            raise AppError(
+                type="idea_not_found",
+                title="Idea not found",
+                status=404,
+                detail="Idea does not exist.",
+            )
+        return await self.render_service.get_target_batch(actor, idea_id, batch_id)
