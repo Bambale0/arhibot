@@ -5,6 +5,7 @@ from itertools import combinations
 from shapely.geometry import Point, Polygon
 from shapely.validation import explain_validity
 
+from app.architecture.facade import validate_level_openings
 from app.architecture.schemas import (
     ArchitecturePackage,
     ExternalObjectType,
@@ -152,6 +153,8 @@ class GeometryValidator:
                             path=f"{path}.rooms",
                         )
                     )
+
+            issues.extend(validate_level_openings(level))
 
         all_level_shapes = [shape for shape in level_polygons.values() if shape.is_valid]
         for item in geometry.external_objects:
