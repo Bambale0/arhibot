@@ -28,7 +28,21 @@ ArchitecturePackage
               PBR + camera profile
                     |
                     v
-              geometry-locked PNG hero
+              PNG render + deterministic technical QA
+                    |
+                    +--> single render result
+                    |
+                    +--> three-angle batch
+                           hero_corner
+                           reverse_corner
+                           elevated
+                                |
+                                v
+                         deterministic winner
+                                |
+                                v
+                         optional Idea publication
+                         hero Asset + canonical GLB
 ```
 
 ## Coordinate contract
@@ -91,11 +105,23 @@ assembly fidelity that the canonical package does not yet contain.
 - `GET /api/v1/projects/{project_id}/architecture/model.glb`
 - `POST /api/v1/projects/{project_id}/architecture/renders`
 - `GET /api/v1/projects/{project_id}/architecture/renders/{render_id}`
+- `POST /api/v1/projects/{project_id}/architecture/render-batches`
+- `GET /api/v1/projects/{project_id}/architecture/render-batches/{batch_id}`
 
 The PUT operation rejects invalid geometry before persistence. Deterministic render endpoints read the
 saved package directly. An async Blender render instead snapshots the package at enqueue time, stores
 a canonical SHA-256 digest, and renders that stored snapshot so later edits cannot silently change an
 already queued job.
+
+## Admin Idea render endpoints
+
+- `POST /api/v1/admin/ideas/{idea_id}/architecture-render-batches`
+- `GET /api/v1/admin/ideas/{idea_id}/architecture-render-batches/{batch_id}`
+
+The admin start endpoint requires an Idea with an `architecture_project_id` owned by the acting
+administrator. It creates the same immutable three-angle batch but records the Idea as the publication
+target. Backend authorization remains authoritative; public Idea endpoints cannot enqueue or publish
+architecture render batches.
 
 ## Canonical GLB contract
 
@@ -130,6 +156,11 @@ separate headless process. It uses a fitted camera, ground plane, world/sun/key/
 ambient occlusion where supported, deterministic exposure and 1280x960 PNG output. Blender version,
 renderer profile, camera profile, dimensions, status and result URL are persisted with the job.
 
+Every successful Blender PNG becomes a first-class `Asset` with purpose
+`architecture_render_output`. The render row stores the Asset id and a deterministic technical-QA
+report. Current QA measures luminance, contrast, entropy, edge sharpness and black/white clipping; it
+does not reinterpret or alter the architecture.
+
 Existing queued `blender_eevee_v1` rows continue through the legacy rendering path. Snapshot digest
 verification hashes the raw immutable JSON stored in PostgreSQL before schema validation, so adding
 new default fields to `ArchitecturePackage` cannot invalidate old queued jobs merely because the
@@ -139,12 +170,54 @@ The dedicated `renderer-worker` container contains the Blender runtime and is in
 from the ordinary image-generation worker. Development server smoke tests require this container to
 be running, so a deployment with a missing or broken Blender executable cannot silently pass.
 
+## Three-angle batch and winner contract
+
+A render batch creates exactly three jobs from one immutable architecture snapshot:
+
+1. `hero_corner`;
+2. `reverse_corner`;
+3. `elevated`.
+
+Winner selection is deterministic. Technically usable images outrank unusable images; within the same
+usability class the higher QA score wins; an exact score tie uses the camera order above. This logic
+is a pure architecture function and does not depend on Redis, Blender, SQL ordering or an AI vision
+model.
+
+The worker finalizes a batch only after every member reaches a terminal state. PostgreSQL row locks
+make finalization idempotent under concurrent worker completion. Periodic reconciliation also finds
+terminal batches that have a completed render but no selected winner, so a process crash between
+render completion and publication can recover without rerendering the house.
+
+## Automatic Idea publication safety
+
+A batch created for an Idea may publish the selected render automatically. Publication is allowed
+only when all of the following remain true at finalization time:
+
+- the Idea still exists;
+- the Idea still points to the same architecture project;
+- the project's current normalized canonical architecture digest still equals the batch source digest;
+- the selected render passed technical QA;
+- its output Asset is present, not deleted, owned by the enqueueing user and attached to the same project;
+- the immutable architecture snapshot still validates;
+- the canonical GLB stays inside the configured model-size limit.
+
+If any guard fails, the winner remains recorded for diagnostics but the Idea is not overwritten. The
+skip reason is written to the admin audit log. This prevents a slow render from replacing a newer
+project edit or a deliberately changed Idea source.
+
+On successful publication, the winner Asset becomes the Idea hero, the immutable batch architecture
+becomes the Idea architecture snapshot, and a fresh deterministic canonical GLB becomes the Idea 360°
+model. Previous model files are removed only after the database commit succeeds. Existing photos,
+references and schemes are left untouched.
+
 ## Current MVP boundary
 
 The canonical source now carries footprint/room/external geometry, roof geometry, explicit facade
-openings and deterministic PBR material presets. AuRoom can derive plan SVG, massing SVG, real GLB and
-asynchronous Blender renders with several reproducible camera profiles from the same source package.
+openings and deterministic PBR material presets. AuRoom can derive plan SVG, massing SVG, real GLB,
+asynchronous Blender renders, three-angle render batches, deterministic technical QA and guarded
+automatic Idea publication from the same source package.
+
 Automated LLM compilation from a natural-language brief, richer texture/asset libraries, semantic
-front-facade orientation, multi-shot render batches, visual QA and automatic publication of completed
-renders into Ideas remain separate follow-up slices. They must consume the same `ArchitecturePackage`
-rather than parse or reconstruct raster images.
+front-facade orientation and optional AI beauty enhancement remain separate follow-up slices. Those
+steps must consume the same `ArchitecturePackage` and must not reconstruct or mutate house geometry
+from raster images.
