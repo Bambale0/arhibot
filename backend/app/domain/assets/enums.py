@@ -14,3 +14,4 @@ class AssetPurpose(StrEnum):
     GENERATION_INPUT = "generation_input"
     PROJECT_REFERENCE = "project_reference"
     GENERATION_OUTPUT = "generation_output"
+    ARCHITECTURE_RENDER_OUTPUT = "architecture_render_output"
