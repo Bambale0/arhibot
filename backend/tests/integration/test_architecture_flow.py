@@ -22,6 +22,12 @@ def _architecture_payload() -> dict:
             "architecture_style": "fachwerk",
             "primary_material": "brick",
             "glazing": "low-e glass",
+            "pbr_materials": {
+                "facade": "warm_stone",
+                "roof": "dark_metal",
+                "accent": "black_metal",
+                "glazing": "low_e_glass",
+            },
         },
         "geometry": {
             "levels": [
@@ -136,6 +142,9 @@ async def test_architecture_package_survives_project_context_updates() -> None:
         assert saved.json()["architecture"]["geometry"]["levels"][0]["openings"][0]["id"] == (
             "living_window"
         )
+        assert saved.json()["architecture"]["appearance"]["pbr_materials"]["facade"] == (
+            "warm_stone"
+        )
 
         plan = await client.get(
             f"/api/v1/projects/{project_id}/architecture/plan.svg", headers=headers
@@ -162,7 +171,9 @@ async def test_architecture_package_survives_project_context_updates() -> None:
         assert len(model.content) > 1000
 
         queued_render = await client.post(
-            f"/api/v1/projects/{project_id}/architecture/renders", headers=headers
+            f"/api/v1/projects/{project_id}/architecture/renders",
+            headers=headers,
+            json={"camera_profile": "elevated"},
         )
         assert queued_render.status_code == 202, queued_render.text
         render_payload = queued_render.json()
@@ -170,7 +181,8 @@ async def test_architecture_package_survives_project_context_updates() -> None:
         source_digest = render_payload["source_digest"]
         assert render_payload["project_id"] == project_id
         assert render_payload["status"] == "queued"
-        assert render_payload["renderer_profile"] == "blender_eevee_v1"
+        assert render_payload["renderer_profile"] == "blender_eevee_v2"
+        assert render_payload["camera_profile"] == "elevated"
         assert render_payload["renderer_version"] is None
         assert render_payload["image_url"] is None
         assert len(source_digest) == 64
@@ -181,6 +193,14 @@ async def test_architecture_package_survives_project_context_updates() -> None:
         assert render_status.status_code == 200, render_status.text
         assert render_status.json()["status"] == "queued"
         assert render_status.json()["source_digest"] == source_digest
+        assert render_status.json()["camera_profile"] == "elevated"
+
+        default_render = await client.post(
+            f"/api/v1/projects/{project_id}/architecture/renders", headers=headers
+        )
+        assert default_render.status_code == 202, default_render.text
+        assert default_render.json()["camera_profile"] == "hero_corner"
+        assert default_render.json()["renderer_profile"] == "blender_eevee_v2"
 
         updated = await client.patch(
             f"/api/v1/projects/{project_id}",
@@ -200,9 +220,11 @@ async def test_architecture_package_survives_project_context_updates() -> None:
         assert architecture.status_code == 200, architecture.text
         assert architecture.json()["geometry"]["levels"][0]["id"] == "ground"
         assert architecture.json()["geometry"]["levels"][0]["openings"][1]["id"] == "entry"
+        assert architecture.json()["appearance"]["pbr_materials"]["accent"] == "black_metal"
 
         render_after_project_update = await client.get(
             f"/api/v1/projects/{project_id}/architecture/renders/{render_id}", headers=headers
         )
         assert render_after_project_update.status_code == 200, render_after_project_update.text
         assert render_after_project_update.json()["source_digest"] == source_digest
+        assert render_after_project_update.json()["camera_profile"] == "elevated"
