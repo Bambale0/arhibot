@@ -11,7 +11,7 @@ from app.architecture.schemas import (
 from app.core.config import Settings, get_settings
 from app.repositories.architecture_renders import ArchitectureRenderRepository
 from app.repositories.projects import ProjectRepository
-from app.schemas.architecture_renders import ArchitectureRenderResponse
+from app.schemas.architecture_renders import ArchitectureRenderCreateRequest, ArchitectureRenderResponse
 from app.schemas.errors import ProblemDetails
 from app.services.architecture_render_service import ArchitectureRenderService
 from app.services.architecture_service import ArchitectureService
@@ -83,20 +83,22 @@ async def get_architecture(
     summary="Queue a geometry-locked Blender hero render",
     description=(
         "Snapshots the saved ArchitecturePackage and queues a separate renderer worker. "
-        "The render consumes that immutable snapshot rather than re-reading mutable project state."
+        "New renders use the versioned Blender PBR profile and an explicit deterministic camera "
+        "profile. Omitting the request body preserves the default hero-corner behavior."
     ),
     response_model=ArchitectureRenderResponse,
     status_code=status.HTTP_202_ACCEPTED,
     responses={
         401: {"model": ProblemDetails, "description": "Authentication required."},
         404: {"model": ProblemDetails, "description": "Project or architecture not found."},
-        422: {"model": ProblemDetails, "description": "Saved geometry is invalid."},
+        422: {"model": ProblemDetails, "description": "Saved geometry or request is invalid."},
     },
 )
 async def create_architecture_render(
     project_id: UUID,
     user: CurrentUser,
     session: DbSession,
+    payload: ArchitectureRenderCreateRequest | None = None,
     settings: Settings = Depends(get_settings),
 ) -> ArchitectureRenderResponse:
     service = ArchitectureRenderService(
@@ -104,7 +106,8 @@ async def create_architecture_render(
         ProjectRepository(session),
         settings,
     )
-    return await service.create(user, project_id)
+    request = payload or ArchitectureRenderCreateRequest()
+    return await service.create(user, project_id, request.camera_profile)
 
 
 @router.get(
