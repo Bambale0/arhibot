@@ -105,6 +105,26 @@ class ArchitectureRenderPublicationService:
             skip_reason=reason,
         )
 
+    async def _has_newer_target_batch(
+        self,
+        winner: ArchitectureRender,
+        renders: list[ArchitectureRender],
+    ) -> bool:
+        if winner.target_idea_id is None or winner.batch_id is None:
+            return False
+        newest_current_created_at = max(render.created_at for render in renders)
+        result = await self.session.execute(
+            select(ArchitectureRender.id)
+            .where(
+                ArchitectureRender.target_idea_id == winner.target_idea_id,
+                ArchitectureRender.batch_id.is_not(None),
+                ArchitectureRender.batch_id != winner.batch_id,
+                ArchitectureRender.created_at > newest_current_created_at,
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
     async def finalize(self, batch_id: UUID) -> BatchPublicationResult:
         result = await self.session.execute(
             select(ArchitectureRender)
@@ -137,6 +157,8 @@ class ArchitectureRenderPublicationService:
                 resolved=True,
                 winner_render_id=winner.id,
             )
+        if await self._has_newer_target_batch(winner, renders):
+            return await self._skip(winner, "newer_batch_exists")
 
         idea_result = await self.session.execute(
             select(IdeaTemplate)
