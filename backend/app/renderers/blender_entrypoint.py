@@ -88,7 +88,8 @@ def _build_material(name: str, spec: dict) -> bpy.types.Material:
                 pass
         if hasattr(material, "use_screen_refraction"):
             material.use_screen_refraction = True
-        material.show_transparent_back = True
+        if hasattr(material, "show_transparent_back"):
+            material.show_transparent_back = True
     return material
 
 
@@ -200,7 +201,9 @@ def _add_camera_v2(center: Vector, minimum: Vector, maximum: Vector, config: dic
     size = maximum - minimum
     extent = max(size.x, size.y, size.z, 1.0)
     camera_config = config["camera"]
-    target = center + Vector((0.0, 0.0, size.z * float(camera_config["target_height_factor"])))
+    target = center + Vector(
+        (0.0, 0.0, size.z * float(camera_config["target_height_factor"]))
+    )
     offset = camera_config["offset"]
     camera_data = bpy.data.cameras.new("AuRoom camera")
     camera_data.lens = float(camera_config["lens_mm"])
