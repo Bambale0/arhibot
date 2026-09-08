@@ -1,0 +1,1 @@
+"""Architecture render job domain."""
