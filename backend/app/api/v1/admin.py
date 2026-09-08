@@ -33,11 +33,13 @@ from app.schemas.admin import (
     PromptTemplateUpdate,
     UserStateUpdate,
 )
+from app.schemas.architecture_renders import ArchitectureRenderBatchResponse
 from app.schemas.telegram import TelegramContentResponse, TelegramContentUpdate
 from app.services.admin_billing_service import AdminBillingService
 from app.services.admin_credit_service import AdminCreditService
 from app.services.admin_operations_service import AdminOperationsService
 from app.services.admin_service import AdminService
+from app.services.architecture_idea_render_service import ArchitectureIdeaRenderService
 from app.services.broadcast_service import BroadcastService
 from app.services.idea_service import AdminIdeaService
 from app.services.telegram_content_service import TelegramContentService
@@ -102,6 +104,34 @@ async def update_idea(idea_id: UUID, payload: IdeaUpdate, admin: AdminUser, sess
 @router.delete("/ideas/{idea_id}", response_model=IdeaResponse)
 async def archive_idea(idea_id: UUID, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> IdeaResponse:
     return await AdminIdeaService(session, settings).archive(admin, idea_id)
+
+
+@router.post(
+    "/ideas/{idea_id}/architecture-render-batches",
+    response_model=ArchitectureRenderBatchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def queue_idea_architecture_render_batch(
+    idea_id: UUID,
+    admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> ArchitectureRenderBatchResponse:
+    return await ArchitectureIdeaRenderService(session, settings).queue(admin, idea_id)
+
+
+@router.get(
+    "/ideas/{idea_id}/architecture-render-batches/{batch_id}",
+    response_model=ArchitectureRenderBatchResponse,
+)
+async def get_idea_architecture_render_batch(
+    idea_id: UUID,
+    batch_id: UUID,
+    admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> ArchitectureRenderBatchResponse:
+    return await ArchitectureIdeaRenderService(session, settings).get(admin, idea_id, batch_id)
 
 
 @router.put("/ideas/{idea_id}/model", response_model=IdeaResponse)
