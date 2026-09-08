@@ -15,8 +15,19 @@ ArchitecturePackage
           +--> deterministic floor-plan SVG
           +--> deterministic axonometric massing SVG
           +--> deterministic glTF 2.0 / GLB geometry with explicit facade openings
-          +--> later: sections / production Blender scene
-          +--> later: photoreal image adapter receives geometry-locked render
+          +--> immutable ArchitectureRender snapshot + SHA-256 digest
+                    |
+                    v
+              Redis render queue
+                    |
+                    v
+              renderer-worker
+                    |
+                    v
+              Blender headless
+                    |
+                    v
+              geometry-locked PNG hero
 ```
 
 ## Coordinate contract
@@ -61,9 +72,13 @@ reported as warnings so unusual thresholds remain explicit instead of being sile
 - `GET /api/v1/projects/{project_id}/architecture/plan.svg`
 - `GET /api/v1/projects/{project_id}/architecture/massing.svg`
 - `GET /api/v1/projects/{project_id}/architecture/model.glb`
+- `POST /api/v1/projects/{project_id}/architecture/renders`
+- `GET /api/v1/projects/{project_id}/architecture/renders/{render_id}`
 
-The PUT operation rejects invalid geometry before persistence. Every render endpoint reads the saved
-package, so plan, massing and GLB cannot silently come from different house descriptions.
+The PUT operation rejects invalid geometry before persistence. Deterministic render endpoints read the
+saved package directly. An async Blender render instead snapshots the package at enqueue time, stores
+a canonical SHA-256 digest, and renders that stored snapshot so later edits cannot silently change an
+already queued job.
 
 ## Canonical GLB contract
 
@@ -80,11 +95,28 @@ surfaces, not a claim that production frames, reveals, hardware or glass assembl
 modeled. Pitched-roof overhangs and roof shapes that cannot be represented faithfully by the current
 roof schema are reported as fidelity warnings instead of being silently guessed.
 
+## Blender render job contract
+
+`POST .../architecture/renders` returns `202 Accepted` and creates an `ArchitectureRender` row. The
+row is separate from AI `Generation`: it does not select an AI model and does not charge generation
+credits. PostgreSQL is authoritative for job state; Redis is the delivery queue. If enqueue delivery
+is lost, the renderer worker reconciles queued database rows back into Redis.
+
+The renderer worker builds a canonical GLB from the stored snapshot and runs Blender in a separate
+headless process. The current `blender_eevee_v1` profile uses a fixed camera-fitting algorithm,
+ground plane, world illumination, sun/key/fill lighting and PNG output. Blender version, dimensions,
+status and result URL are persisted with the job. The worker has a render timeout and validates the
+PNG before publishing it into the existing media volume.
+
+The dedicated `renderer-worker` container contains the Blender runtime and is intentionally isolated
+from the ordinary image-generation worker. Development server smoke tests require this container to
+be running, so a deployment with a missing or broken Blender executable cannot silently pass.
+
 ## Current MVP boundary
 
 The canonical source now carries footprint/room/external geometry, roof geometry and explicit facade
-openings, with deterministic plan SVG, massing SVG and real GLB outputs. This is the stable geometry
-boundary for the next slices. Automated LLM compilation from a natural-language brief, sections,
-production Blender/PBR materialization, geometry-locked photoreal hero rendering and automatic
-publication into Ideas remain separate follow-up slices. They must consume the same
-`ArchitecturePackage` rather than parse or reconstruct raster images.
+openings, with deterministic plan SVG, massing SVG, real GLB outputs and an asynchronous Blender hero
+render seam. Automated LLM compilation from a natural-language brief, sections, richer production
+materials/asset libraries, multiple camera profiles and automatic publication of completed renders
+into Ideas remain separate follow-up slices. They must consume the same `ArchitecturePackage` rather
+than parse or reconstruct raster images.
