@@ -22,6 +22,17 @@ ARCHITECTURE_RENDER_QUEUE_KEY = "auroom:architecture_render_queue"
 RENDERER_PROFILE = "blender_eevee_v1"
 
 
+def snapshot_architecture(package: ArchitecturePackage) -> tuple[dict, str]:
+    payload = package.model_dump(mode="json", exclude_none=True)
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return payload, hashlib.sha256(canonical).hexdigest()
+
+
 class ArchitectureRenderService:
     def __init__(
         self,
@@ -33,17 +44,6 @@ class ArchitectureRenderService:
         self.project_repository = project_repository
         self.settings = settings
         self.storage = LocalMediaStorage(settings)
-
-    @staticmethod
-    def _snapshot(package: ArchitecturePackage) -> tuple[dict, str]:
-        payload = package.model_dump(mode="json", exclude_none=True)
-        canonical = json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        return payload, hashlib.sha256(canonical).hexdigest()
 
     def _to_response(self, render: ArchitectureRender) -> ArchitectureRenderResponse:
         image_url = self.storage.public_url(render.storage_path) if render.storage_path else None
@@ -74,7 +74,7 @@ class ArchitectureRenderService:
                 status=422,
                 detail="The saved architecture must pass canonical validation before rendering.",
             )
-        snapshot, source_digest = self._snapshot(package)
+        snapshot, source_digest = snapshot_architecture(package)
         render = ArchitectureRender(
             user_id=user.id,
             project_id=project_id,
@@ -90,7 +90,10 @@ class ArchitectureRenderService:
         except Exception:
             # PostgreSQL is authoritative. The renderer worker reconciles queued rows after
             # Redis/AOF loss or transient enqueue failure.
-            logger.exception("Failed to enqueue architecture render %s; reconciliation will recover it", render.id)
+            logger.exception(
+                "Failed to enqueue architecture render %s; reconciliation will recover it",
+                render.id,
+            )
         return self._to_response(render)
 
     async def get(
