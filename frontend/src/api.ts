@@ -13,6 +13,7 @@ import type {
   AdminTariff,
   AdminTelegramContent,
   AdminUser,
+  ArchitectureRenderBatch,
   Asset,
   BillingPayment,
   BillingSummary,
@@ -165,6 +166,12 @@ export function adminUploadIdeaModel(id: string, file: File) {
   return request<AdminIdea>(`/admin/ideas/${id}/model`, { method: 'PUT', body: form })
 }
 export function adminDeleteIdeaModel(id: string) { return request<AdminIdea>(`/admin/ideas/${id}/model`, { method: 'DELETE' }) }
+export function adminQueueIdeaArchitectureRenderBatch(id: string) {
+  return request<ArchitectureRenderBatch>(`/admin/ideas/${id}/architecture-render-batches`, { method: 'POST' })
+}
+export function adminGetIdeaArchitectureRenderBatch(id: string, batchId: string) {
+  return request<ArchitectureRenderBatch>(`/admin/ideas/${id}/architecture-render-batches/${batchId}`)
+}
 
 export function adminGetGenerationSettings() { return request<AdminGenerationSettings>('/admin/generation') }
 export function adminUpdateGenerationSettings(payload: { primary_model: string; fallback_model: string | null; primary_params: Record<string, unknown>; fallback_params: Record<string, unknown>; mode_params: Record<string, Record<string, unknown>> }) {
