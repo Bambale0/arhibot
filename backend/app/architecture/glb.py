@@ -8,7 +8,14 @@ from dataclasses import dataclass
 from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import split, triangulate
 
-from app.architecture.schemas import ArchitecturePackage, ExternalObjectType, Polygon2D, RoofType
+from app.architecture.facade import build_level_facade_mesh
+from app.architecture.schemas import (
+    ArchitecturePackage,
+    ExternalObjectType,
+    OpeningKind,
+    Polygon2D,
+    RoofType,
+)
 
 Vec3 = tuple[float, float, float]
 Triangle = tuple[Vec3, Vec3, Vec3]
@@ -195,6 +202,7 @@ def _materials(package: ArchitecturePackage) -> list[dict]:
         if package.appearance.accent_materials
         else "canonical exterior"
     )
+    glazing_name = package.appearance.glazing or "canonical glazing"
     return [
         {
             "name": facade_name,
@@ -233,6 +241,25 @@ def _materials(package: ArchitecturePackage) -> list[dict]:
                 "roughnessFactor": 0.18,
             },
         },
+        {
+            "name": glazing_name,
+            "doubleSided": True,
+            "alphaMode": "BLEND",
+            "pbrMetallicRoughness": {
+                "baseColorFactor": [0.42, 0.65, 0.78, 0.36],
+                "metallicFactor": 0.05,
+                "roughnessFactor": 0.08,
+            },
+        },
+        {
+            "name": f"{accent_name} door",
+            "doubleSided": True,
+            "pbrMetallicRoughness": {
+                "baseColorFactor": [0.30, 0.24, 0.18, 1.0],
+                "metallicFactor": 0.0,
+                "roughnessFactor": 0.68,
+            },
+        },
     ]
 
 
@@ -246,12 +273,12 @@ def _pad(data: bytes, fill: bytes) -> bytes:
 
 
 class CanonicalGlbBuilder:
-    """Build deterministic glTF 2.0 massing directly from canonical world geometry.
+    """Build deterministic glTF 2.0 geometry directly from canonical world geometry.
 
-    The builder intentionally does not infer facade openings or photoreal textures that are absent
-    from ArchitecturePackage. It produces real mesh geometry in meters and records any roof fidelity
-    limits in GLB asset extras so a richer Blender renderer can replace this adapter later without
-    changing the canonical input contract.
+    The builder meshes only facade openings explicitly present in ArchitecturePackage and never
+    invents windows, doors, decorative details, or photoreal textures that are absent from the
+    canonical model. Fidelity limits remain explicit in GLB asset extras so a richer Blender
+    renderer can replace this adapter later without changing the canonical input contract.
     """
 
     def build(self, package: ArchitecturePackage) -> GlbBuildResult:
@@ -261,13 +288,26 @@ class CanonicalGlbBuilder:
 
         for level in levels:
             shape = _source_polygon(level.footprint)
+            facade = build_level_facade_mesh(level)
+            level_triangles = _surface_triangles(shape, level.z + level.height)
+            level_triangles.extend(_surface_triangles(shape, level.z, reverse=True))
+            level_triangles.extend(facade.wall_triangles)
             primitives.append(
                 _Primitive(
                     name=f"level:{level.id}",
                     material_index=0,
-                    triangles=tuple(_extrude_shape(shape, level.z, level.z + level.height)),
+                    triangles=tuple(level_triangles),
                 )
             )
+            for surface in facade.opening_surfaces:
+                material_index = 4 if surface.kind == OpeningKind.WINDOW else 5
+                primitives.append(
+                    _Primitive(
+                        name=f"opening:{level.id}:{surface.opening_id}",
+                        material_index=material_index,
+                        triangles=surface.triangles,
+                    )
+                )
 
         for item in package.geometry.external_objects:
             shape = _source_polygon(item.polygon)
@@ -388,6 +428,7 @@ class CanonicalGlbBuilder:
             )
             nodes.append({"name": primitive.name, "mesh": mesh_index})
 
+        opening_count = sum(len(level.openings) for level in package.geometry.levels)
         document = {
             "asset": {
                 "version": "2.0",
@@ -396,6 +437,7 @@ class CanonicalGlbBuilder:
                     "source": "canonical-geometry",
                     "schema_version": package.schema_version,
                     "coordinate_mapping": "architecture(x,y,z)->gltf(x,z,-y)",
+                    "opening_count": opening_count,
                     "warnings": list(warnings),
                 },
             },

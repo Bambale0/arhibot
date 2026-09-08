@@ -1,6 +1,9 @@
 import json
 import struct
 
+from shapely.geometry import Point, Polygon
+
+from app.architecture.facade import build_level_facade_mesh
 from app.architecture.glb import CanonicalGlbBuilder
 from app.architecture.rendering import MassingRenderer, PlanSheetRenderer
 from app.architecture.schemas import ArchitecturePackage
@@ -21,6 +24,7 @@ def _package() -> ArchitecturePackage:
                 "architecture_style": "fachwerk",
                 "primary_material": "brick",
                 "accent_materials": ["stone", "planken"],
+                "glazing": "low-e glass",
                 "lighting": "warmSunset",
             },
             "geometry": {
@@ -66,6 +70,35 @@ def _package() -> ArchitecturePackage:
                                         {"x": 7, "y": 16},
                                     ]
                                 },
+                            },
+                        ],
+                        "openings": [
+                            {
+                                "id": "living_window",
+                                "kind": "window",
+                                "edge_index": 0,
+                                "offset_m": 2.0,
+                                "width_m": 2.4,
+                                "sill_height_m": 0.9,
+                                "height_m": 1.5,
+                            },
+                            {
+                                "id": "clerestory",
+                                "kind": "window",
+                                "edge_index": 0,
+                                "offset_m": 2.4,
+                                "width_m": 1.2,
+                                "sill_height_m": 2.55,
+                                "height_m": 0.45,
+                            },
+                            {
+                                "id": "front_door",
+                                "kind": "door",
+                                "edge_index": 0,
+                                "offset_m": 10.5,
+                                "width_m": 1.1,
+                                "sill_height_m": 0.0,
+                                "height_m": 2.2,
                             },
                         ],
                     },
@@ -171,15 +204,51 @@ def test_canonical_geometry_exports_real_binary_gltf_mesh() -> None:
     assert document["asset"]["extras"]["coordinate_mapping"] == (
         "architecture(x,y,z)->gltf(x,z,-y)"
     )
+    assert document["asset"]["extras"]["opening_count"] == 3
     assert document["buffers"][0]["byteLength"] > 0
     assert result.mesh_count == len(document["meshes"])
     mesh_names = {mesh["name"] for mesh in document["meshes"]}
-    assert {"level:ground", "level:second", "external:pool", "external:veranda", "roof"} <= mesh_names
+    assert {
+        "level:ground",
+        "level:second",
+        "opening:ground:living_window",
+        "opening:ground:clerestory",
+        "opening:ground:front_door",
+        "external:pool",
+        "external:veranda",
+        "roof",
+    } <= mesh_names
     assert "pitched_roof_overhang_not_meshed_in_canonical_v1" in result.warnings
 
     ground_position_accessor = document["accessors"][0]
     assert ground_position_accessor["min"] == [0.0, 0.0, -16.0]
     assert ground_position_accessor["max"] == [20.0, 3.2, 0.0]
+
+    window_mesh = next(
+        mesh for mesh in document["meshes"] if mesh["name"] == "opening:ground:living_window"
+    )
+    window_material = document["materials"][window_mesh["primitives"][0]["material"]]
+    assert window_material["name"] == "low-e glass"
+    assert window_material["alphaMode"] == "BLEND"
+
+
+def test_facade_mesh_removes_wall_surface_behind_explicit_openings() -> None:
+    level = _package().geometry.levels[0]
+    facade = build_level_facade_mesh(level)
+    window_center = Point(3.2, 1.65)
+
+    front_wall_triangles = [
+        triangle
+        for triangle in facade.wall_triangles
+        if all(abs(vertex[1]) < 1e-9 for vertex in triangle)
+    ]
+    assert front_wall_triangles
+    for triangle in front_wall_triangles:
+        wall_triangle = Polygon([(vertex[0], vertex[2]) for vertex in triangle])
+        assert not wall_triangle.buffer(1e-9).contains(window_center)
+
+    opening_ids = {surface.opening_id for surface in facade.opening_surfaces}
+    assert opening_ids == {"living_window", "clerestory", "front_door"}
 
 
 def test_room_outside_footprint_is_rejected() -> None:
@@ -206,3 +275,25 @@ def test_pool_cannot_intersect_building() -> None:
 
     assert report.valid is False
     assert any(issue.code == "pool_intersects_building" for issue in report.issues)
+
+
+def test_opening_cannot_extend_beyond_its_wall_edge() -> None:
+    package = _package()
+    package.geometry.levels[0].openings[0].offset_m = 13.0
+
+    report = GeometryValidator().validate(package.geometry, package=package)
+
+    assert report.valid is False
+    assert any(issue.code == "opening_outside_wall" for issue in report.issues)
+
+
+def test_openings_may_stack_but_cannot_overlap_on_same_wall() -> None:
+    package = _package()
+    valid_report = GeometryValidator().validate(package.geometry, package=package)
+    assert valid_report.valid is True
+
+    package.geometry.levels[0].openings[1].sill_height_m = 1.4
+    report = GeometryValidator().validate(package.geometry, package=package)
+
+    assert report.valid is False
+    assert any(issue.code == "opening_overlap" for issue in report.issues)
