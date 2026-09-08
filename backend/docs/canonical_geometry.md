@@ -9,7 +9,7 @@ brief/program
     |
     v
 ArchitecturePackage
-  program + geometry + appearance
+  program + geometry + appearance/PBR presets
           |
           +--> geometry validation
           +--> deterministic floor-plan SVG
@@ -25,6 +25,7 @@ ArchitecturePackage
                     |
                     v
               Blender headless
+              PBR + camera profile
                     |
                     v
               geometry-locked PNG hero
@@ -64,6 +65,22 @@ height, or physically overlap another opening on the same wall. Stacked openings
 their wall-plane rectangles do not overlap. Doors with a sill above the floor are retained but
 reported as warnings so unusual thresholds remain explicit instead of being silently rewritten.
 
+## PBR appearance contract
+
+`HouseAppearance.pbr_materials` is a strict preset palette. It exists so an LLM or UI can choose a
+stable material ID instead of inventing arbitrary shader values. The current preset families are:
+
+- facade: `white_plaster`, `warm_stone`, `red_brick`, `graphite_panel`, `wood_cladding`;
+- roof: `dark_metal`, `gray_membrane`, `brown_tile`;
+- accent: `natural_oak`, `charcoal`, `warm_stone`, `black_metal`;
+- glazing: `clear_glass`, `low_e_glass`, `smoked_glass`.
+
+Legacy descriptive fields such as `primary_material`, `roof_material` and `glazing` remain accepted
+for compatibility and human-readable intent. The versioned Blender PBR renderer uses the explicit
+preset palette for deterministic shader parameters. Presets currently control base color, metallic,
+roughness and, where relevant, alpha/transmission/IOR. They do not claim texture-map, UV or physical
+assembly fidelity that the canonical package does not yet contain.
+
 ## Project endpoints
 
 - `POST /api/v1/projects/{project_id}/architecture/validate`
@@ -102,11 +119,21 @@ row is separate from AI `Generation`: it does not select an AI model and does no
 credits. PostgreSQL is authoritative for job state; Redis is the delivery queue. If enqueue delivery
 is lost, the renderer worker reconciles queued database rows back into Redis.
 
-The renderer worker builds a canonical GLB from the stored snapshot and runs Blender in a separate
-headless process. The current `blender_eevee_v1` profile uses a fixed camera-fitting algorithm,
-ground plane, world illumination, sun/key/fill lighting and PNG output. Blender version, dimensions,
-status and result URL are persisted with the job. The worker has a render timeout and validates the
-PNG before publishing it into the existing media volume.
+New jobs use renderer profile `blender_eevee_v2`. The optional request body chooses one of three
+versioned camera profiles: `hero_corner` (default), `reverse_corner`, or `elevated`. Camera profile is
+persisted with the job so the result is reproducible. A bodyless POST remains valid and selects
+`hero_corner` for backward-compatible clients.
+
+`blender_eevee_v2` builds the canonical GLB from the stored snapshot, resolves PBR presets into a
+sidecar render config, maps stable canonical mesh names to material roles, and runs Blender in a
+separate headless process. It uses a fitted camera, ground plane, world/sun/key/fill lighting,
+ambient occlusion where supported, deterministic exposure and 1280x960 PNG output. Blender version,
+renderer profile, camera profile, dimensions, status and result URL are persisted with the job.
+
+Existing queued `blender_eevee_v1` rows continue through the legacy rendering path. Snapshot digest
+verification hashes the raw immutable JSON stored in PostgreSQL before schema validation, so adding
+new default fields to `ArchitecturePackage` cannot invalidate old queued jobs merely because the
+application schema evolved.
 
 The dedicated `renderer-worker` container contains the Blender runtime and is intentionally isolated
 from the ordinary image-generation worker. Development server smoke tests require this container to
@@ -114,9 +141,10 @@ be running, so a deployment with a missing or broken Blender executable cannot s
 
 ## Current MVP boundary
 
-The canonical source now carries footprint/room/external geometry, roof geometry and explicit facade
-openings, with deterministic plan SVG, massing SVG, real GLB outputs and an asynchronous Blender hero
-render seam. Automated LLM compilation from a natural-language brief, sections, richer production
-materials/asset libraries, multiple camera profiles and automatic publication of completed renders
-into Ideas remain separate follow-up slices. They must consume the same `ArchitecturePackage` rather
-than parse or reconstruct raster images.
+The canonical source now carries footprint/room/external geometry, roof geometry, explicit facade
+openings and deterministic PBR material presets. AuRoom can derive plan SVG, massing SVG, real GLB and
+asynchronous Blender renders with several reproducible camera profiles from the same source package.
+Automated LLM compilation from a natural-language brief, richer texture/asset libraries, semantic
+front-facade orientation, multi-shot render batches, visual QA and automatic publication of completed
+renders into Ideas remain separate follow-up slices. They must consume the same `ArchitecturePackage`
+rather than parse or reconstruct raster images.
