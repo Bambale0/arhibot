@@ -161,6 +161,27 @@ async def test_architecture_package_survives_project_context_updates() -> None:
         assert b"opening:ground:entry" in model.content
         assert len(model.content) > 1000
 
+        queued_render = await client.post(
+            f"/api/v1/projects/{project_id}/architecture/renders", headers=headers
+        )
+        assert queued_render.status_code == 202, queued_render.text
+        render_payload = queued_render.json()
+        render_id = render_payload["id"]
+        source_digest = render_payload["source_digest"]
+        assert render_payload["project_id"] == project_id
+        assert render_payload["status"] == "queued"
+        assert render_payload["renderer_profile"] == "blender_eevee_v1"
+        assert render_payload["renderer_version"] is None
+        assert render_payload["image_url"] is None
+        assert len(source_digest) == 64
+
+        render_status = await client.get(
+            f"/api/v1/projects/{project_id}/architecture/renders/{render_id}", headers=headers
+        )
+        assert render_status.status_code == 200, render_status.text
+        assert render_status.json()["status"] == "queued"
+        assert render_status.json()["source_digest"] == source_digest
+
         updated = await client.patch(
             f"/api/v1/projects/{project_id}",
             headers=headers,
@@ -179,3 +200,9 @@ async def test_architecture_package_survives_project_context_updates() -> None:
         assert architecture.status_code == 200, architecture.text
         assert architecture.json()["geometry"]["levels"][0]["id"] == "ground"
         assert architecture.json()["geometry"]["levels"][0]["openings"][1]["id"] == "entry"
+
+        render_after_project_update = await client.get(
+            f"/api/v1/projects/{project_id}/architecture/renders/{render_id}", headers=headers
+        )
+        assert render_after_project_update.status_code == 200, render_after_project_update.text
+        assert render_after_project_update.json()["source_digest"] == source_digest
