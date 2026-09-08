@@ -50,7 +50,7 @@ export type Asset = {
   id: string
   project_id: string | null
   type: 'image'
-  purpose: 'generation_input' | 'project_reference' | 'generation_output'
+  purpose: 'generation_input' | 'project_reference' | 'generation_output' | 'architecture_render_output'
   original_filename: string | null
   mime_type: string
   size_bytes: number
@@ -85,6 +85,43 @@ export type GenerationList = {
   items: Generation[]
   next_cursor: string | null
   has_more: boolean
+}
+
+export type ArchitectureCameraProfile = 'hero_corner' | 'reverse_corner' | 'elevated'
+export type ArchitectureRenderStatus = 'queued' | 'processing' | 'completed' | 'failed'
+export type ArchitectureRenderBatchStatus = 'queued' | 'processing' | 'completed' | 'failed'
+
+export type ArchitectureRender = {
+  id: string
+  project_id: string
+  batch_id: string | null
+  target_idea_id: string | null
+  status: ArchitectureRenderStatus
+  source_digest: string
+  renderer_profile: string
+  camera_profile: ArchitectureCameraProfile
+  renderer_version: string | null
+  output_asset_id: string | null
+  image_url: string | null
+  width: number | null
+  height: number | null
+  quality_score: number | null
+  quality_report: Record<string, number | boolean> | null
+  selected_for_batch: boolean
+  error: string | null
+  created_at: string
+  started_at: string | null
+  completed_at: string | null
+}
+
+export type ArchitectureRenderBatch = {
+  batch_id: string
+  project_id: string
+  target_idea_id: string | null
+  status: ArchitectureRenderBatchStatus
+  source_digest: string
+  selected_render_id: string | null
+  renders: ArchitectureRender[]
 }
 
 export type BillingPackage = {
@@ -279,7 +316,6 @@ export type AdminBroadcast = {
   updated_at: string
   sent_at: string | null
 }
-
 
 export type AdminTelegramContent = {
   configured: boolean
