@@ -35,6 +35,12 @@ class RoomKind(StrEnum):
     CIRCULATION = "circulation"
 
 
+class OpeningKind(StrEnum):
+    WINDOW = "window"
+    DOOR = "door"
+    GARAGE_DOOR = "garage_door"
+
+
 class ExternalObjectType(StrEnum):
     POOL = "pool"
     VERANDA = "veranda"
@@ -65,6 +71,16 @@ class RoomGeometry(StrictModel):
     target_area_sqm: float | None = Field(default=None, gt=0)
 
 
+class FacadeOpening(StrictModel):
+    id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
+    kind: OpeningKind
+    edge_index: int = Field(ge=0, le=255)
+    offset_m: float = Field(ge=0, le=500)
+    width_m: float = Field(gt=0, le=30)
+    sill_height_m: float = Field(default=0.0, ge=0, le=8)
+    height_m: float = Field(gt=0, le=8)
+
+
 class LevelGeometry(StrictModel):
     id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
     label: str = Field(min_length=1, max_length=120)
@@ -72,6 +88,7 @@ class LevelGeometry(StrictModel):
     height: float = Field(gt=1.5, le=8.0)
     footprint: Polygon2D
     rooms: list[RoomGeometry] = Field(default_factory=list, max_length=100)
+    openings: list[FacadeOpening] = Field(default_factory=list, max_length=200)
 
 
 class ExternalObjectGeometry(StrictModel):
