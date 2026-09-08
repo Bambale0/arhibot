@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 
 from app.api.dependencies.auth import AdminUser, DbSession
 from app.core.config import Settings, get_settings
@@ -102,6 +102,33 @@ async def update_idea(idea_id: UUID, payload: IdeaUpdate, admin: AdminUser, sess
 @router.delete("/ideas/{idea_id}", response_model=IdeaResponse)
 async def archive_idea(idea_id: UUID, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> IdeaResponse:
     return await AdminIdeaService(session, settings).archive(admin, idea_id)
+
+
+@router.put("/ideas/{idea_id}/model", response_model=IdeaResponse)
+async def upload_idea_model(
+    idea_id: UUID,
+    admin: AdminUser,
+    session: DbSession,
+    file: Annotated[UploadFile, File(description="Self-contained binary glTF 2.0 (.glb)")],
+    settings: Settings = Depends(get_settings),
+) -> IdeaResponse:
+    data = await file.read(settings.max_model_size_bytes + 1)
+    return await AdminIdeaService(session, settings).upload_model(
+        admin,
+        idea_id,
+        data=data,
+        original_filename=file.filename,
+    )
+
+
+@router.delete("/ideas/{idea_id}/model", response_model=IdeaResponse)
+async def delete_idea_model(
+    idea_id: UUID,
+    admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> IdeaResponse:
+    return await AdminIdeaService(session, settings).delete_model(admin, idea_id)
 
 
 @router.get("/generation", response_model=GenerationRuntimeResponse)

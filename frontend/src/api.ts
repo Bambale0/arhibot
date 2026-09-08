@@ -160,6 +160,12 @@ export function adminUpdateIdea(id: string, payload: Partial<{ title: string; ca
 }
 export function adminArchiveIdea(id: string) { return request<AdminIdea>(`/admin/ideas/${id}`, { method: 'DELETE' }) }
 
+export function adminUploadIdeaModel(id: string, file: File) {
+  const form = new FormData(); form.append('file', file)
+  return request<AdminIdea>(`/admin/ideas/${id}/model`, { method: 'PUT', body: form })
+}
+export function adminDeleteIdeaModel(id: string) { return request<AdminIdea>(`/admin/ideas/${id}/model`, { method: 'DELETE' }) }
+
 export function adminGetGenerationSettings() { return request<AdminGenerationSettings>('/admin/generation') }
 export function adminUpdateGenerationSettings(payload: { primary_model: string; fallback_model: string | null; primary_params: Record<string, unknown>; fallback_params: Record<string, unknown>; mode_params: Record<string, Record<string, unknown>> }) {
   return request<AdminGenerationSettings>('/admin/generation', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })

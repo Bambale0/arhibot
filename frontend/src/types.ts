@@ -157,6 +157,7 @@ export type Idea = {
   image_url: string | null
   media: IdeaMedia[]
   architecture: ArchitecturePackage | null
+  model_url: string | null
 }
 
 export type AdminOverview = {
@@ -190,6 +191,8 @@ export type AdminBillingSettings = {
 export type AdminIdea = Idea & {
   image_asset_id: string | null
   architecture_project_id: string | null
+  model_original_filename: string | null
+  model_size_bytes: number | null
   is_active: boolean
   sort_order: number
   created_at: string

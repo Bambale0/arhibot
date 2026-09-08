@@ -5,6 +5,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -74,6 +75,9 @@ class IdeaTemplate(Base):
         PGUUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
     )
     architecture_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    model_storage_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    model_original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    model_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )

@@ -1,5 +1,7 @@
 import io
+import json
 import os
+import struct
 from uuid import UUID, uuid4
 
 import pytest
@@ -94,6 +96,18 @@ def _png_bytes(color: tuple[int, int, int]) -> bytes:
     return buffer.getvalue()
 
 
+def _glb_bytes() -> bytes:
+    document = {"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": []}], "nodes": []}
+    json_bytes = json.dumps(document, separators=(",", ":")).encode("utf-8")
+    json_bytes += b" " * ((4 - len(json_bytes) % 4) % 4)
+    total_length = 12 + 8 + len(json_bytes)
+    return (
+        struct.pack("<4sII", b"glTF", 2, total_length)
+        + struct.pack("<II", len(json_bytes), 0x4E4F534A)
+        + json_bytes
+    )
+
+
 async def _register_admin(client: AsyncClient) -> dict[str, str]:
     register = await client.post(
         "/api/v1/auth/register",
@@ -172,11 +186,26 @@ async def test_published_idea_contains_media_and_architecture_snapshot() -> None
         assert body["architecture"]["geometry"]["levels"][1]["id"] == "upper"
         assert body["media"][0]["kind"] == "reference"
         assert body["media"][0]["url"].endswith(".png")
+        assert body["model_url"] is None
+
+        model_upload = await client.put(
+            f"/api/v1/admin/ideas/{body['id']}/model",
+            headers=headers,
+            files={"file": ("house.glb", _glb_bytes(), "model/gltf-binary")},
+        )
+        assert model_upload.status_code == 200, model_upload.text
+        body = model_upload.json()
+        assert body["model_url"].endswith(".glb")
+        assert body["model_original_filename"] == "house.glb"
+        assert body["model_size_bytes"] == len(_glb_bytes())
 
         public = await client.get("/api/v1/ideas", headers=headers)
         assert public.status_code == 200, public.text
         published = next(item for item in public.json() if item["id"] == body["id"])
         assert published["image_url"].endswith(".png")
+        assert published["model_url"].endswith(".glb")
+        assert "model_original_filename" not in published
+        assert "model_size_bytes" not in published
         assert "architecture_project_id" not in published
         assert published["architecture"]["geometry"]["roof"]["type"] == "gable"
         assert published["media"] == body["media"]
@@ -205,3 +234,4 @@ async def test_published_idea_contains_media_and_architecture_snapshot() -> None
         assert edited.json()["title"].endswith("обновлено")
         assert edited.json()["architecture_project_id"] == project_id
         assert edited.json()["media"] == body["media"]
+        assert edited.json()["model_url"] == body["model_url"]

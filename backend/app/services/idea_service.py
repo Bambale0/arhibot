@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from uuid import UUID
+import asyncio
+import json
+import struct
+from pathlib import Path
+from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,9 +31,101 @@ from app.schemas.admin import (
 from app.services.asset_service import LocalMediaStorage
 
 
+def validate_glb(data: bytes, *, max_size_bytes: int) -> dict:
+    if not data:
+        raise AppError(
+            type="invalid_idea_model",
+            title="Invalid 3D model",
+            status=422,
+            detail="The uploaded GLB file is empty.",
+        )
+    if len(data) > max_size_bytes:
+        raise AppError(
+            type="idea_model_too_large",
+            title="3D model is too large",
+            status=413,
+            detail=f"GLB model must not exceed {max_size_bytes} bytes.",
+        )
+    if len(data) < 20:
+        raise AppError(
+            type="invalid_idea_model",
+            title="Invalid 3D model",
+            status=422,
+            detail="The file is not a valid binary glTF 2.0 model.",
+        )
+    try:
+        magic, version, declared_length = struct.unpack_from("<4sII", data, 0)
+        json_length, json_type = struct.unpack_from("<II", data, 12)
+    except struct.error as exc:
+        raise AppError(
+            type="invalid_idea_model",
+            title="Invalid 3D model",
+            status=422,
+            detail="The file is not a valid binary glTF 2.0 model.",
+        ) from exc
+    if magic != b"glTF" or version != 2 or declared_length != len(data) or json_type != 0x4E4F534A:
+        raise AppError(
+            type="invalid_idea_model",
+            title="Invalid 3D model",
+            status=422,
+            detail="Only self-contained GLB models using glTF 2.0 are accepted.",
+        )
+    json_end = 20 + json_length
+    if json_length <= 0 or json_end > len(data):
+        raise AppError(
+            type="invalid_idea_model",
+            title="Invalid 3D model",
+            status=422,
+            detail="The GLB JSON chunk is invalid.",
+        )
+    try:
+        document = json.loads(data[20:json_end].rstrip(b"\x00 \t\r\n").decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AppError(
+            type="invalid_idea_model",
+            title="Invalid 3D model",
+            status=422,
+            detail="The GLB JSON chunk is invalid.",
+        ) from exc
+    asset_version = (
+        str((document.get("asset") or {}).get("version", ""))
+        if isinstance(document, dict)
+        else ""
+    )
+    if not isinstance(document, dict) or not asset_version.startswith("2"):
+        raise AppError(
+            type="invalid_idea_model",
+            title="Invalid 3D model",
+            status=422,
+            detail="The GLB model must declare glTF 2.x.",
+        )
+    for section in ("buffers", "images"):
+        values = document.get(section) or []
+        if not isinstance(values, list):
+            raise AppError(
+                type="invalid_idea_model",
+                title="Invalid 3D model",
+                status=422,
+                detail="The GLB model structure is invalid.",
+            )
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            uri = item.get("uri")
+            if isinstance(uri, str) and uri and not uri.startswith("data:"):
+                raise AppError(
+                    type="external_idea_model_resource",
+                    title="External 3D resource is not allowed",
+                    status=422,
+                    detail="Use a self-contained GLB with embedded geometry and textures.",
+                )
+    return document
+
+
 class IdeaService:
     def __init__(self, session: AsyncSession, settings: Settings) -> None:
         self.session = session
+        self.settings = settings
         self.repository = AdminRepository(session)
         self.storage = LocalMediaStorage(settings)
 
@@ -40,6 +136,9 @@ class IdeaService:
         if asset is None or asset.deleted_at is not None:
             return None
         return self.storage.public_url(asset.storage_path)
+
+    def _model_url(self, row: IdeaTemplate) -> str | None:
+        return self.storage.public_url(row.model_storage_path) if row.model_storage_path else None
 
     async def _media(self, raw_items: list[dict] | None) -> list[IdeaMediaResponse]:
         result: list[IdeaMediaResponse] = []
@@ -83,6 +182,7 @@ class IdeaService:
                 image_url=await self._image_url(row.image_asset_id),
                 media=await self._media(row.media_items),
                 architecture=self._architecture(row.architecture_snapshot),
+                model_url=self._model_url(row),
             )
             for row in rows
         ]
@@ -211,6 +311,9 @@ class AdminIdeaService(IdeaService):
             architecture_project_id=row.architecture_project_id,
             media=await self._media(row.media_items),
             architecture=self._architecture(row.architecture_snapshot),
+            model_url=self._model_url(row),
+            model_original_filename=row.model_original_filename,
+            model_size_bytes=row.model_size_bytes,
             is_active=row.is_active,
             sort_order=row.sort_order,
             created_at=row.created_at,
@@ -322,6 +425,87 @@ class AdminIdeaService(IdeaService):
         )
         await self.session.commit()
         await self.session.refresh(row)
+        return await self.response(row)
+
+    async def upload_model(
+        self,
+        actor: User,
+        idea_id: UUID,
+        *,
+        data: bytes,
+        original_filename: str | None,
+    ) -> IdeaResponse:
+        row = await self.repository.get_idea(idea_id)
+        if row is None:
+            raise AppError(
+                type="idea_not_found",
+                title="Idea not found",
+                status=404,
+                detail="Idea does not exist.",
+            )
+        filename = (original_filename or "model.glb").strip()[:255] or "model.glb"
+        if Path(filename).suffix.lower() != ".glb":
+            raise AppError(
+                type="unsupported_idea_model_format",
+                title="Unsupported 3D model format",
+                status=422,
+                detail="Upload a self-contained .glb file.",
+            )
+        validate_glb(data, max_size_bytes=self.settings.max_model_size_bytes)
+        relative_path = f"ideas/{row.id}/models/{uuid4()}.glb"
+        previous_path = row.model_storage_path
+        await self.storage.write(relative_path, data)
+        row.model_storage_path = relative_path
+        row.model_original_filename = filename
+        row.model_size_bytes = len(data)
+        self.repository.add_audit(
+            actor_user_id=actor.id,
+            action="idea.model.upload",
+            entity_type="idea",
+            entity_id=str(row.id),
+            details={"filename": filename, "size_bytes": len(data)},
+        )
+        try:
+            await self.session.commit()
+            await self.session.refresh(row)
+        except Exception:
+            await self.session.rollback()
+            target = self.storage.absolute_path(relative_path)
+            if target.exists():
+                await asyncio.to_thread(target.unlink)
+            raise
+        if previous_path and previous_path != relative_path:
+            previous = self.storage.absolute_path(previous_path)
+            if previous.exists():
+                await asyncio.to_thread(previous.unlink)
+        return await self.response(row)
+
+    async def delete_model(self, actor: User, idea_id: UUID) -> IdeaResponse:
+        row = await self.repository.get_idea(idea_id)
+        if row is None:
+            raise AppError(
+                type="idea_not_found",
+                title="Idea not found",
+                status=404,
+                detail="Idea does not exist.",
+            )
+        previous_path = row.model_storage_path
+        row.model_storage_path = None
+        row.model_original_filename = None
+        row.model_size_bytes = None
+        self.repository.add_audit(
+            actor_user_id=actor.id,
+            action="idea.model.delete",
+            entity_type="idea",
+            entity_id=str(row.id),
+            details={},
+        )
+        await self.session.commit()
+        await self.session.refresh(row)
+        if previous_path:
+            previous = self.storage.absolute_path(previous_path)
+            if previous.exists():
+                await asyncio.to_thread(previous.unlink)
         return await self.response(row)
 
     async def archive(self, actor: User, idea_id: UUID) -> IdeaResponse:

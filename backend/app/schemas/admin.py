@@ -154,6 +154,9 @@ class IdeaResponse(BaseModel):
     architecture_project_id: UUID | None
     media: list[IdeaMediaResponse]
     architecture: ArchitecturePackage | None
+    model_url: str | None
+    model_original_filename: str | None
+    model_size_bytes: int | None
     is_active: bool
     sort_order: int
     created_at: datetime
@@ -170,6 +173,7 @@ class PublicIdeaResponse(BaseModel):
     image_url: str | None
     media: list[IdeaMediaResponse]
     architecture: ArchitecturePackage | None
+    model_url: str | None
 
 
 class GenerationRuntimeUpdate(BaseModel):
