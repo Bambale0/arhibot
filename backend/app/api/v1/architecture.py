@@ -12,6 +12,7 @@ from app.core.config import Settings, get_settings
 from app.repositories.architecture_renders import ArchitectureRenderRepository
 from app.repositories.projects import ProjectRepository
 from app.schemas.architecture_renders import (
+    ArchitectureRenderBatchResponse,
     ArchitectureRenderCreateRequest,
     ArchitectureRenderResponse,
 )
@@ -20,6 +21,17 @@ from app.services.architecture_render_service import ArchitectureRenderService
 from app.services.architecture_service import ArchitectureService
 
 router = APIRouter(prefix="/projects/{project_id}/architecture", tags=["Architecture"])
+
+
+def _render_service(
+    session: DbSession,
+    settings: Settings,
+) -> ArchitectureRenderService:
+    return ArchitectureRenderService(
+        ArchitectureRenderRepository(session),
+        ProjectRepository(session),
+        settings,
+    )
 
 
 @router.post(
@@ -104,13 +116,12 @@ async def create_architecture_render(
     payload: ArchitectureRenderCreateRequest | None = None,
     settings: Settings = Depends(get_settings),
 ) -> ArchitectureRenderResponse:
-    service = ArchitectureRenderService(
-        ArchitectureRenderRepository(session),
-        ProjectRepository(session),
-        settings,
-    )
     request = payload or ArchitectureRenderCreateRequest()
-    return await service.create(user, project_id, request.camera_profile)
+    return await _render_service(session, settings).create(
+        user,
+        project_id,
+        request.camera_profile,
+    )
 
 
 @router.get(
@@ -130,12 +141,52 @@ async def get_architecture_render(
     session: DbSession,
     settings: Settings = Depends(get_settings),
 ) -> ArchitectureRenderResponse:
-    service = ArchitectureRenderService(
-        ArchitectureRenderRepository(session),
-        ProjectRepository(session),
-        settings,
-    )
-    return await service.get(user, project_id, render_id)
+    return await _render_service(session, settings).get(user, project_id, render_id)
+
+
+@router.post(
+    "/render-batches",
+    operation_id="createProjectArchitectureRenderBatch",
+    summary="Queue a three-angle Blender render batch",
+    description=(
+        "Creates hero-corner, reverse-corner and elevated renders from one immutable architecture "
+        "snapshot. The renderer scores technical image quality and selects a deterministic winner."
+    ),
+    response_model=ArchitectureRenderBatchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        401: {"model": ProblemDetails, "description": "Authentication required."},
+        404: {"model": ProblemDetails, "description": "Project or architecture not found."},
+        422: {"model": ProblemDetails, "description": "Saved geometry is invalid."},
+    },
+)
+async def create_architecture_render_batch(
+    project_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> ArchitectureRenderBatchResponse:
+    return await _render_service(session, settings).create_batch(user, project_id)
+
+
+@router.get(
+    "/render-batches/{batch_id}",
+    operation_id="getProjectArchitectureRenderBatch",
+    summary="Get render batch status and selected hero",
+    response_model=ArchitectureRenderBatchResponse,
+    responses={
+        401: {"model": ProblemDetails, "description": "Authentication required."},
+        404: {"model": ProblemDetails, "description": "Architecture render batch not found."},
+    },
+)
+async def get_architecture_render_batch(
+    project_id: UUID,
+    batch_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> ArchitectureRenderBatchResponse:
+    return await _render_service(session, settings).get_batch(user, project_id, batch_id)
 
 
 @router.get(
