@@ -75,8 +75,8 @@ class FacadeOpening(StrictModel):
     id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
     kind: OpeningKind
     edge_index: int = Field(ge=0, le=255)
-    offset_m: float = Field(ge=0, le=500)
-    width_m: float = Field(gt=0, le=30)
+    offset_m: float = Field(ge=0)
+    width_m: float = Field(gt=0)
     sill_height_m: float = Field(default=0.0, ge=0, le=8)
     height_m: float = Field(gt=0, le=8)
 
