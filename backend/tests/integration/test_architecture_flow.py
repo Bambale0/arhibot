@@ -202,6 +202,37 @@ async def test_architecture_package_survives_project_context_updates() -> None:
         assert default_render.json()["camera_profile"] == "hero_corner"
         assert default_render.json()["renderer_profile"] == "blender_eevee_v2"
 
+        queued_batch = await client.post(
+            f"/api/v1/projects/{project_id}/architecture/render-batches",
+            headers=headers,
+        )
+        assert queued_batch.status_code == 202, queued_batch.text
+        batch_payload = queued_batch.json()
+        batch_id = batch_payload["batch_id"]
+        assert batch_payload["project_id"] == project_id
+        assert batch_payload["target_idea_id"] is None
+        assert batch_payload["status"] == "queued"
+        assert batch_payload["selected_render_id"] is None
+        assert len(batch_payload["source_digest"]) == 64
+        assert [render["camera_profile"] for render in batch_payload["renders"]] == [
+            "hero_corner",
+            "reverse_corner",
+            "elevated",
+        ]
+        assert {render["batch_id"] for render in batch_payload["renders"]} == {batch_id}
+        assert {render["source_digest"] for render in batch_payload["renders"]} == {
+            batch_payload["source_digest"]
+        }
+
+        batch_status = await client.get(
+            f"/api/v1/projects/{project_id}/architecture/render-batches/{batch_id}",
+            headers=headers,
+        )
+        assert batch_status.status_code == 200, batch_status.text
+        assert batch_status.json()["batch_id"] == batch_id
+        assert batch_status.json()["status"] == "queued"
+        assert len(batch_status.json()["renders"]) == 3
+
         updated = await client.patch(
             f"/api/v1/projects/{project_id}",
             headers=headers,
