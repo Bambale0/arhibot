@@ -13,11 +13,14 @@ from app.core.config import Settings, get_settings
 from app.core.redis import redis_client
 from app.db.models.architecture_renders import ArchitectureRender
 from app.db.session import dispose_engine, get_session_factory
-from app.domain.architecture.enums import ArchitectureRenderStatus
+from app.domain.architecture.enums import ArchitectureCameraProfile, ArchitectureRenderStatus
 from app.renderers.blender import BlenderRenderer
+from app.renderers.blender_profiles import build_blender_v2_config
 from app.services.architecture_render_service import (
     ARCHITECTURE_RENDER_QUEUE_KEY,
-    snapshot_architecture,
+    RENDERER_PROFILE_V1,
+    RENDERER_PROFILE_V2,
+    digest_architecture_payload,
 )
 from app.services.asset_service import LocalMediaStorage
 
@@ -49,10 +52,11 @@ async def process_render(render_id: UUID, settings: Settings, renderer: BlenderR
             return
 
         try:
-            package = ArchitecturePackage.model_validate(render.architecture)
-            _, actual_digest = snapshot_architecture(package)
-            if actual_digest != render.source_digest:
+            if digest_architecture_payload(render.architecture) != render.source_digest:
                 raise RuntimeError("Architecture render snapshot digest mismatch")
+            package = ArchitecturePackage.model_validate(render.architecture)
+            camera_profile = ArchitectureCameraProfile(render.camera_profile)
+            renderer_profile = render.renderer_profile
         except Exception as exc:
             render.status = ArchitectureRenderStatus.FAILED
             render.error = str(exc)[:2000] or "Architecture render snapshot is invalid"
@@ -72,7 +76,15 @@ async def process_render(render_id: UUID, settings: Settings, renderer: BlenderR
         glb = CanonicalGlbBuilder().build(package)
         if glb.warnings:
             logger.warning("Architecture render %s GLB fidelity warnings: %s", render_id, glb.warnings)
-        rendered = await renderer.render(glb.data)
+
+        if renderer_profile == RENDERER_PROFILE_V1:
+            rendered = await renderer.render(glb.data)
+        elif renderer_profile == RENDERER_PROFILE_V2:
+            config = build_blender_v2_config(package, camera_profile)
+            rendered = await renderer.render(glb.data, config=config)
+        else:
+            raise RuntimeError(f"Unsupported architecture renderer profile: {renderer_profile}")
+
         if len(rendered.data) > settings.max_image_size_bytes:
             raise RuntimeError("Blender render exceeds the configured media size limit")
         if rendered.width * rendered.height > settings.max_image_pixels:
@@ -101,7 +113,13 @@ async def process_render(render_id: UUID, settings: Settings, renderer: BlenderR
         except Exception:
             await asyncio.to_thread(target.unlink, missing_ok=True)
             raise
-        logger.info("Architecture render %s completed with %s", render_id, rendered.renderer_version)
+        logger.info(
+            "Architecture render %s completed with %s (%s, %s)",
+            render_id,
+            rendered.renderer_version,
+            renderer_profile,
+            camera_profile.value,
+        )
     except Exception as exc:
         logger.exception("Architecture render %s failed", render_id)
         await _mark_failed(render_id, exc)
