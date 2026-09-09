@@ -1,4 +1,4 @@
-from app.questionnaires.catalog import CATALOG_VERSION, build_catalog
+from app.questionnaires.catalog import CATALOG_VERSION, _load_sources, build_catalog
 from app.schemas.questionnaires import DesignSession, QuestionnaireCatalogResponse
 
 
@@ -12,10 +12,16 @@ def _question(key: str, question_id: str) -> dict:
 
 def test_questionnaire_catalog_matches_source_bundle() -> None:
     catalog = QuestionnaireCatalogResponse.model_validate(build_catalog())
+    sources = _load_sources()
     assert catalog.version == "2026-09-08"
     assert CATALOG_VERSION == catalog.version
     assert len(catalog.sections) == 6
     assert len(catalog.questionnaires) == 27
+    assert len(sources) == 27
+    assert set(sources) == {item.key for item in catalog.questionnaires}
+    for definition in catalog.questionnaires:
+        assert sources[definition.key]["filename"] == definition.source_file
+        assert sources[definition.key]["text"].strip()
     assert catalog.sections[0].object_keys == ["eskez-doma"]
     assert catalog.sections[-1].object_keys == ["dorozhki", "gazon", "prud", "podsvetka", "podpornye"]
     assert catalog.application_key == "zayavka"
@@ -39,6 +45,7 @@ def test_house_questionnaire_keeps_exact_branches_defaults_and_limits() -> None:
     assert glazing["skip_default"] == "Стандартные окна"
     assert lighting["skip_default"] == "Дневной свет"
     assert review["phase"] == "review"
+    assert edit["field_hint"] == "Свой комментарий"
     assert edit["edit_targets"]["Размер и этажность"] == ["3", "4"]
     assert edit["edit_targets"]["Гараж, навес, пристрой"] == ["6", "6а", "6б", "6в"]
 
@@ -56,8 +63,21 @@ def test_each_object_ends_with_review_and_application_is_separate() -> None:
     assert _question("zayavka", "25")["kind"] == "consent"
 
 
+def test_skip_defaults_keep_source_semantics_after_schema_validation() -> None:
+    catalog = QuestionnaireCatalogResponse.model_validate(build_catalog())
+    for definition in catalog.questionnaires:
+        for question in definition.questions:
+            if question.skip_default is None:
+                continue
+            assert isinstance(question.skip_default, (str, list))
+            if isinstance(question.skip_default, list):
+                assert all(isinstance(item, str) for item in question.skip_default)
+
+
 def test_design_session_is_versioned_and_does_not_require_a_site_photo() -> None:
-    session = DesignSession(catalog_version=CATALOG_VERSION, selected_objects=["eskez-doma", "banya"], source_step_completed=True, source_asset_id=None)
-    assert session.source_step_completed is True
-    assert session.source_asset_id is None
-    assert session.selected_objects == ["eskez-doma", "banya"]
+    first = DesignSession(catalog_version=CATALOG_VERSION, selected_objects=["eskez-doma", "banya"], source_step_completed=True, source_asset_id=None)
+    second = DesignSession(catalog_version=CATALOG_VERSION, selected_objects=["eskez-doma"])
+    assert first.source_step_completed is True
+    assert first.source_asset_id is None
+    assert first.selected_objects == ["eskez-doma", "banya"]
+    assert first.session_id != second.session_id
