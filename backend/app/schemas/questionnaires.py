@@ -127,11 +127,6 @@ class DesignSession(BaseModel):
         return self
 
 
-class QuestionnaireProjectStartRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    selected_objects: list[str] = Field(min_length=1, max_length=26)
-
-
 class DesignSessionResponse(BaseModel):
     session: DesignSession | None = None
 
