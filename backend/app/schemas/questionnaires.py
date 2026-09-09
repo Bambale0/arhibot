@@ -107,7 +107,6 @@ class DesignSession(BaseModel):
     region_object: str | None = None
     application_submitted: bool = False
 
-
     @model_validator(mode="after")
     def validate_region_step(self) -> DesignSession:
         if (self.region_mode is None) != (self.region_object is None):
@@ -126,6 +125,11 @@ class DesignSession(BaseModel):
                     "Вариант «Как у дома» доступен только после принятия основного дома."
                 )
         return self
+
+
+class QuestionnaireProjectStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    selected_objects: list[str] = Field(min_length=1, max_length=26)
 
 
 class DesignSessionResponse(BaseModel):
