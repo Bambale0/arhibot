@@ -47,6 +47,30 @@ export type DesignSession = {
   region_object:string|null
   application_submitted:boolean
 }
+
+export function createDesignSession(catalogVersion:string, selectedObjects:string[]):DesignSession {
+  return {
+    session_id:crypto.randomUUID(),
+    catalog_version:catalogVersion,
+    selected_objects:[...selectedObjects],
+    current_object:selectedObjects.length === 1 ? selectedObjects[0] : null,
+    current_question_id:null,
+    source_step_completed:false,
+    source_asset_id:null,
+    scene_asset_id:null,
+    answers:{},
+    accepted_objects:[],
+    generation_ids:{},
+    edit_question_ids:[],
+    review_comments:{},
+    edit_regions:{},
+    lock_regions:{},
+    region_mode:null,
+    region_object:null,
+    application_submitted:false,
+  }
+}
+
 export type QuestionnaireProjectContext = { design_session?:DesignSession|null }
 export type QuestionnaireApplication = {
   id:string
