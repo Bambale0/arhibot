@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,6 +17,7 @@ class QuestionnaireQuestion(BaseModel):
     options: list[str] = Field(default_factory=list)
     required: bool = False
     skip_default: str | list[str] | None = None
+    skip_condition: dict[str, Any] | None = None
     help: str | None = None
     field_hint: str | None = None
     max_selections: int | None = None
@@ -53,8 +55,25 @@ class QuestionnaireCatalogResponse(BaseModel):
     source_rules: list[str]
 
 
+class QuestionnaireSourceText(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    filename: str
+    text: str
+
+
+class QuestionnaireCatalogAdminUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    catalog: QuestionnaireCatalogResponse
+    source_texts: dict[str, QuestionnaireSourceText]
+
+
+class QuestionnaireCatalogAdminResponse(QuestionnaireCatalogAdminUpdate):
+    updated_at: datetime
+
+
 class DesignSession(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    session_id: UUID = Field(default_factory=uuid4)
     catalog_version: str
     selected_objects: list[str] = Field(default_factory=list, max_length=26)
     current_object: str | None = None
@@ -72,3 +91,23 @@ class DesignSession(BaseModel):
 
 class DesignSessionResponse(BaseModel):
     session: DesignSession | None = None
+
+
+class QuestionnaireApplicationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    session_id: UUID
+    project_id: UUID
+    user_id: UUID
+    catalog_version: str
+    selected_objects: list[str]
+    accepted_objects: list[str]
+    answers: dict[str, dict[str, QuestionAnswer]]
+    scene_asset_id: UUID | None
+    status: str
+    created_at: datetime
+
+
+class QuestionnaireApplicationSubmitResponse(BaseModel):
+    session: DesignSession
+    application: QuestionnaireApplicationResponse
