@@ -8,6 +8,7 @@ from app.api.v1.billing import router as billing_router
 from app.api.v1.generations import router as generations_router
 from app.api.v1.ideas import router as ideas_router
 from app.api.v1.projects import router as projects_router
+from app.api.v1.questionnaires import router as questionnaires_router
 from app.api.v1.telegram import router as telegram_router
 from app.api.v1.users import router as users_router
 from app.core.config import get_settings
@@ -32,6 +33,7 @@ async def api_v1_info() -> ApiInfoResponse:
 router.include_router(auth_router)
 router.include_router(users_router)
 router.include_router(projects_router)
+router.include_router(questionnaires_router)
 router.include_router(architecture_router)
 router.include_router(assets_router)
 router.include_router(generations_router)
