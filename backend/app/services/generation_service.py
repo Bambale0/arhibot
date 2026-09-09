@@ -89,6 +89,13 @@ class GenerationService:
             status=GenerationStatus.QUEUED,
             prompt=payload.prompt.strip(),
             credits_charged=price.credits,
+            composition_mode=payload.composition_mode,
+            edit_region=(
+                payload.edit_region.model_dump(mode="json") if payload.edit_region else None
+            ),
+            protected_regions=[
+                item.model_dump(mode="json") for item in payload.protected_regions
+            ],
         )
         self.repository.add(generation)
         try:
@@ -147,6 +154,9 @@ class GenerationService:
                 input_asset_id=source.input_asset_id,
                 type=source.type,
                 prompt=source.prompt,
+                composition_mode=source.composition_mode,
+                edit_region=source.edit_region,
+                protected_regions=source.protected_regions or [],
             ),
         )
 
@@ -213,6 +223,9 @@ class GenerationService:
             credits_charged=generation.credits_charged,
             model_name=generation.model_name,
             fallback_used=generation.fallback_used,
+            composition_mode=generation.composition_mode,
+            edit_region=generation.edit_region,
+            protected_regions=generation.protected_regions or [],
             error=generation.error,
             created_at=generation.created_at,
             updated_at=generation.updated_at,

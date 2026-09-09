@@ -1,8 +1,12 @@
+from uuid import uuid4
+
 import pytest
 from pydantic import ValidationError
 
+from app.core.errors import AppError
 from app.questionnaires.catalog import CATALOG_VERSION, _load_sources, build_catalog
 from app.schemas.questionnaires import DesignSession, QuestionnaireCatalogResponse
+from app.services.questionnaire_service import QuestionnaireService
 
 
 def _definition(key: str) -> dict:
@@ -16,7 +20,7 @@ def _question(key: str, question_id: str) -> dict:
 def test_questionnaire_catalog_matches_source_bundle() -> None:
     catalog = QuestionnaireCatalogResponse.model_validate(build_catalog())
     sources = _load_sources()
-    assert catalog.version == "2026-09-08"
+    assert catalog.version == "2026-09-09.1"
     assert CATALOG_VERSION == catalog.version
     assert len(catalog.sections) == 6
     assert len(catalog.questionnaires) == 27
@@ -104,3 +108,136 @@ def test_like_house_option_is_available_only_after_house_is_accepted() -> None:
         answers={"banya": {"1": "Как у дома"}},
     )
     assert session.answers["banya"]["1"] == "Как у дома"
+
+
+def test_guest_facade_skip_exists_only_for_inherited_house_style() -> None:
+    facade = _question("gostevoy", "8")
+    assert facade["skip_default"] == "отделка дома"
+    assert facade["skip_condition"] == {
+        "question_id": "1",
+        "operator": "eq",
+        "value": "Как у дома",
+    }
+    assert _question("naves", "5")["skip_default"] is None
+    assert _question("zabor", "4")["skip_default"] is None
+
+
+def test_accepted_objects_and_site_source_are_immutable_within_session() -> None:
+    session_id = uuid4()
+    source_id = uuid4()
+    scene_id = uuid4()
+    generation_id = uuid4()
+    previous = DesignSession(
+        session_id=session_id,
+        catalog_version=CATALOG_VERSION,
+        selected_objects=["eskez-doma", "banya"],
+        source_step_completed=True,
+        source_asset_id=source_id,
+        scene_asset_id=scene_id,
+        answers={"eskez-doma": {"1": "Барнхаус"}},
+        accepted_objects=["eskez-doma"],
+        generation_ids={"eskez-doma": generation_id},
+    )
+    QuestionnaireService._validate_accepted_object_locks(previous, previous.model_copy(deep=True))
+
+    changed_answer = previous.model_copy(deep=True)
+    changed_answer.answers["eskez-doma"]["1"] = "Шале"
+    with pytest.raises(AppError) as exc:
+        QuestionnaireService._validate_accepted_object_locks(previous, changed_answer)
+    assert "cannot change answers" in exc.value.detail
+
+    changed_source = previous.model_copy(update={"source_asset_id": uuid4()})
+    with pytest.raises(AppError) as exc:
+        QuestionnaireService._validate_accepted_object_locks(previous, changed_source)
+    assert "site-photo choice is fixed" in exc.value.detail
+
+    removed = previous.model_copy(update={"accepted_objects": []})
+    with pytest.raises(AppError) as exc:
+        QuestionnaireService._validate_accepted_object_locks(previous, removed)
+    assert "Accepted objects are immutable" in exc.value.detail
+
+
+def test_server_accepts_only_explicit_skip_defaults() -> None:
+    service = QuestionnaireService(None)  # validation is pure; repositories are not used here
+
+    guest_facade = _question("gostevoy", "8")
+    service._validate_answer(
+        guest_facade,
+        "отделка дома",
+        {"1": "Как у дома"},
+        True,
+    )
+    with pytest.raises(AppError) as exc:
+        service._validate_answer(
+            guest_facade,
+            "отделка дома",
+            {"1": "Барнхаус"},
+            True,
+        )
+    assert "cannot be skipped" in exc.value.detail
+
+    non_skippable_multi = _question("zabor", "4")
+    with pytest.raises(AppError) as exc:
+        service._validate_answer(non_skippable_multi, [], {}, False)
+    assert "explicit skip" in exc.value.detail
+
+    house_refinement = _question("eskez-doma", "15б")
+    service._validate_answer(
+        house_refinement,
+        [],
+        {},
+        False,
+        allow_empty_multi=True,
+    )
+
+
+def test_newly_accepted_object_requires_visual_lock_and_preserves_existing_locks() -> None:
+    session_id = uuid4()
+    house_generation = uuid4()
+    bath_generation = uuid4()
+    house_scene = uuid4()
+    previous = DesignSession(
+        session_id=session_id,
+        catalog_version=CATALOG_VERSION,
+        selected_objects=["eskez-doma", "banya"],
+        source_step_completed=True,
+        scene_asset_id=house_scene,
+        accepted_objects=["eskez-doma"],
+        generation_ids={"eskez-doma": house_generation},
+        lock_regions={
+            "eskez-doma": {"x": 0.2, "y": 0.15, "width": 0.6, "height": 0.65},
+        },
+    )
+    accepted_without_lock = previous.model_copy(
+        update={
+            "accepted_objects": ["eskez-doma", "banya"],
+            "generation_ids": {
+                "eskez-doma": house_generation,
+                "banya": bath_generation,
+            },
+        },
+        deep=True,
+    )
+    with pytest.raises(AppError) as exc:
+        QuestionnaireService._validate_accepted_object_locks(previous, accepted_without_lock)
+    assert "visual lock region" in exc.value.detail
+
+    accepted = accepted_without_lock.model_copy(deep=True)
+    accepted.lock_regions["banya"] = {
+        "x": 0.65,
+        "y": 0.2,
+        "width": 0.3,
+        "height": 0.5,
+    }
+    QuestionnaireService._validate_accepted_object_locks(previous, accepted)
+
+    changed_house_lock = previous.model_copy(deep=True)
+    changed_house_lock.lock_regions["eskez-doma"] = {
+        "x": 0.1,
+        "y": 0.1,
+        "width": 0.7,
+        "height": 0.7,
+    }
+    with pytest.raises(AppError) as exc:
+        QuestionnaireService._validate_accepted_object_locks(previous, changed_house_lock)
+    assert "cannot change its lock region" in exc.value.detail

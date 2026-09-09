@@ -75,6 +75,9 @@ export type Generation = {
   credits_charged: number
   model_name: string | null
   fallback_used: boolean
+  composition_mode: 'replace' | 'masked_edit'
+  edit_region: import('./questionnaireTypes').NormalizedRect | null
+  protected_regions: import('./questionnaireTypes').NormalizedRect[]
   error: string | null
   created_at: string
   updated_at: string

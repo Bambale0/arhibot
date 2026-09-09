@@ -33,6 +33,11 @@ class QuestionnaireApplication(Base):
         Index("ix_questionnaire_applications_created_at", "created_at"),
         Index("ix_questionnaire_applications_project_id", "project_id"),
         Index("ix_questionnaire_applications_status_created", "status", "created_at"),
+        Index(
+            "ix_questionnaire_applications_telegram_delivery",
+            "telegram_delivery_status",
+            "created_at",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -51,6 +56,14 @@ class QuestionnaireApplication(Base):
         PGUUID(as_uuid=True), ForeignKey("assets.id", ondelete="SET NULL"), nullable=True
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="new", server_default="new")
+    telegram_delivery_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default="pending"
+    )
+    telegram_delivery_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    telegram_delivery_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    telegram_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

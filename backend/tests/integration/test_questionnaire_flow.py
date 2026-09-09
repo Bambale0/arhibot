@@ -11,12 +11,13 @@ if os.getenv("RUN_INTEGRATION_TESTS") != "1":
 
 from app.db.models.assets import Asset  # noqa: E402
 from app.db.models.generations import Generation  # noqa: E402
-from app.db.models.users import User  # noqa: E402
+from app.db.models.users import AuthIdentity, User  # noqa: E402
 from app.db.session import get_session_factory  # noqa: E402
 from app.domain.assets.enums import AssetPurpose, AssetType  # noqa: E402
 from app.domain.generations.enums import GenerationStatus, GenerationType  # noqa: E402
-from app.domain.users.enums import UserRole  # noqa: E402
+from app.domain.users.enums import AuthProvider, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
+from app.telegram_bot.questionnaire_notifications import deliver_pending_applications_once  # noqa: E402
 
 
 async def _register_admin(client: AsyncClient) -> tuple[dict, dict[str, str]]:
@@ -35,6 +36,13 @@ async def _register_admin(client: AsyncClient) -> tuple[dict, dict[str, str]]:
         user = await session.get(User, user_id)
         assert user is not None
         user.role = UserRole.SUPERADMIN
+        session.add(
+            AuthIdentity(
+                user_id=user_id,
+                provider=AuthProvider.TELEGRAM,
+                provider_user_id=str(900000000 + (user_id.int % 99999999)),
+            )
+        )
         await session.commit()
     return tokens, {"Authorization": f"Bearer {tokens['access_token']}"}
 
@@ -159,6 +167,7 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
         assert submitted.status_code == 200, submitted.text
         application_id = submitted.json()["application"]["id"]
         assert submitted.json()["application"]["status"] == "new"
+        assert submitted.json()["application"]["telegram_delivery_status"] == "pending"
 
         repeated = await client.post(
             f"/api/v1/projects/{project_id}/questionnaire-application",
@@ -168,9 +177,218 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
         assert repeated.status_code == 200, repeated.text
         assert repeated.json()["application"]["id"] == application_id
 
+        class FakeTelegramApi:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict]] = []
+
+            def call(self, method: str, payload: dict, *, timeout: int = 15):
+                self.calls.append((method, payload))
+                return {"message_id": len(self.calls)}
+
+        fake_telegram = FakeTelegramApi()
+        delivered, failed = await deliver_pending_applications_once(api=fake_telegram)
+        assert delivered >= 1
+        assert failed == 0
+        assert any(
+            method == "sendMessage"
+            and application_id in payload["text"]
+            and payload["chat_id"]
+            for method, payload in fake_telegram.calls
+        )
+
         applications = await client.get(
             "/api/v1/admin/questionnaire-applications",
             headers=headers,
         )
         assert applications.status_code == 200, applications.text
-        assert any(item["id"] == application_id for item in applications.json())
+        stored_application = next(
+            item for item in applications.json() if item["id"] == application_id
+        )
+        assert stored_application["telegram_delivery_status"] == "sent"
+        assert stored_application["telegram_notified_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_second_accepted_object_requires_masked_composition() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        tokens, headers = await _register_admin(client)
+        user_id = UUID(tokens["user"]["id"])
+        catalog = (await client.get("/api/v1/questionnaires", headers=headers)).json()
+
+        project_response = await client.post(
+            "/api/v1/projects",
+            headers=headers,
+            json={"name": "Masked questionnaire integration", "context": {}},
+        )
+        assert project_response.status_code == 201, project_response.text
+        project_id = UUID(project_response.json()["id"])
+
+        house_output = Asset(
+            user_id=user_id,
+            project_id=project_id,
+            type=AssetType.IMAGE,
+            purpose=AssetPurpose.GENERATION_OUTPUT,
+            original_filename="house.png",
+            mime_type="image/png",
+            size_bytes=128,
+            width=1024,
+            height=1024,
+            storage_path=f"integration/questionnaires/{uuid4()}.png",
+        )
+        house_generation = Generation(
+            user_id=user_id,
+            project_id=project_id,
+            input_asset_id=None,
+            type=GenerationType.MASTER_PLAN,
+            status=GenerationStatus.COMPLETED,
+            prompt="house",
+            credits_charged=0,
+        )
+        async with get_session_factory()() as session:
+            session.add(house_output)
+            await session.flush()
+            house_generation.output_asset_id = house_output.id
+            session.add(house_generation)
+            await session.commit()
+            await session.refresh(house_output)
+            await session.refresh(house_generation)
+
+        house_lock = {"x": 0.15, "y": 0.12, "width": 0.55, "height": 0.66}
+        bath_region = {"x": 0.68, "y": 0.30, "width": 0.29, "height": 0.48}
+        session_id = str(uuid4())
+        house_session = {
+            "session_id": session_id,
+            "catalog_version": catalog["version"],
+            "selected_objects": ["eskez-doma", "banya"],
+            "current_object": None,
+            "current_question_id": None,
+            "source_step_completed": True,
+            "source_asset_id": None,
+            "scene_asset_id": str(house_output.id),
+            "answers": {},
+            "accepted_objects": ["eskez-doma"],
+            "generation_ids": {"eskez-doma": str(house_generation.id)},
+            "edit_question_ids": [],
+            "review_comments": {},
+            "edit_regions": {},
+            "lock_regions": {"eskez-doma": house_lock},
+            "region_mode": None,
+            "region_object": None,
+            "application_submitted": False,
+        }
+        saved_house = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=house_session,
+        )
+        assert saved_house.status_code == 200, saved_house.text
+
+        replace_output = Asset(
+            user_id=user_id,
+            project_id=project_id,
+            type=AssetType.IMAGE,
+            purpose=AssetPurpose.GENERATION_OUTPUT,
+            original_filename="bath-replace.png",
+            mime_type="image/png",
+            size_bytes=128,
+            width=1024,
+            height=1024,
+            storage_path=f"integration/questionnaires/{uuid4()}.png",
+        )
+        replace_generation = Generation(
+            user_id=user_id,
+            project_id=project_id,
+            input_asset_id=house_output.id,
+            type=GenerationType.MASTER_PLAN,
+            status=GenerationStatus.COMPLETED,
+            prompt="bath without compositor",
+            credits_charged=0,
+            composition_mode="replace",
+        )
+        async with get_session_factory()() as session:
+            session.add(replace_output)
+            await session.flush()
+            replace_generation.output_asset_id = replace_output.id
+            session.add(replace_generation)
+            await session.commit()
+            await session.refresh(replace_output)
+            await session.refresh(replace_generation)
+
+        unsafe_payload = {
+            **house_session,
+            "scene_asset_id": str(replace_output.id),
+            "accepted_objects": ["eskez-doma", "banya"],
+            "generation_ids": {
+                "eskez-doma": str(house_generation.id),
+                "banya": str(replace_generation.id),
+            },
+            "edit_regions": {"banya": bath_region},
+            "lock_regions": {"eskez-doma": house_lock, "banya": bath_region},
+        }
+        unsafe = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=unsafe_payload,
+        )
+        assert unsafe.status_code == 422, unsafe.text
+        assert "masked composition" in unsafe.json()["detail"]
+        forged_payload = {**unsafe_payload, "session_id": str(uuid4())}
+        forged = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=forged_payload,
+        )
+        assert forged.status_code == 422, forged.text
+        assert "session id" in forged.json()["detail"].lower()
+
+
+        masked_output = Asset(
+            user_id=user_id,
+            project_id=project_id,
+            type=AssetType.IMAGE,
+            purpose=AssetPurpose.GENERATION_OUTPUT,
+            original_filename="bath-masked.png",
+            mime_type="image/png",
+            size_bytes=128,
+            width=1024,
+            height=1024,
+            storage_path=f"integration/questionnaires/{uuid4()}.png",
+        )
+        masked_generation = Generation(
+            user_id=user_id,
+            project_id=project_id,
+            input_asset_id=house_output.id,
+            type=GenerationType.MASTER_PLAN,
+            status=GenerationStatus.COMPLETED,
+            prompt="bath with compositor",
+            credits_charged=0,
+            composition_mode="masked_edit",
+            edit_region=bath_region,
+            protected_regions=[house_lock],
+        )
+        async with get_session_factory()() as session:
+            session.add(masked_output)
+            await session.flush()
+            masked_generation.output_asset_id = masked_output.id
+            session.add(masked_generation)
+            await session.commit()
+            await session.refresh(masked_output)
+            await session.refresh(masked_generation)
+
+        safe_payload = {
+            **unsafe_payload,
+            "scene_asset_id": str(masked_output.id),
+            "generation_ids": {
+                "eskez-doma": str(house_generation.id),
+                "banya": str(masked_generation.id),
+            },
+        }
+        safe = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=safe_payload,
+        )
+        assert safe.status_code == 200, safe.text
+        assert safe.json()["session"]["accepted_objects"] == ["eskez-doma", "banya"]
+        assert safe.json()["session"]["lock_regions"]["eskez-doma"] == house_lock

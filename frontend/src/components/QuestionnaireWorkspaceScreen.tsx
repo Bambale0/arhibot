@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import * as api from '../api'
 import {
   getQuestionnaireCatalog,
@@ -13,6 +13,7 @@ import type {
   QuestionnaireCondition,
   QuestionnaireDefinition,
   QuestionnaireQuestion,
+  NormalizedRect,
 } from '../questionnaireTypes'
 import type { Asset, Generation, GenerationMode, Project } from '../types'
 import { BackIcon, ImageIcon, SparkIcon, UploadIcon } from './Icons'
@@ -41,7 +42,7 @@ function newSession(version:string, selected:string[]):DesignSession {
     session_id:crypto.randomUUID(),
     catalog_version:version,
     selected_objects:selected,
-    current_object:selected[0] || null,
+    current_object:selected.length === 1 ? selected[0] : null,
     current_question_id:null,
     source_step_completed:false,
     source_asset_id:null,
@@ -51,6 +52,10 @@ function newSession(version:string, selected:string[]):DesignSession {
     generation_ids:{},
     edit_question_ids:[],
     review_comments:{},
+    edit_regions:{},
+    lock_regions:{},
+    region_mode:null,
+    region_object:null,
     application_submitted:false,
   }
 }
@@ -60,6 +65,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const [catalog, setCatalog] = useState<QuestionnaireCatalog|null>(null)
   const [session, setSession] = useState<DesignSession|null>(null)
   const [sourceAsset, setSourceAsset] = useState<Asset|null>(null)
+  const [sceneAsset, setSceneAsset] = useState<Asset|null>(null)
   const [renderOutput, setRenderOutput] = useState<Asset|null>(null)
   const [draft, setDraft] = useState<string>('')
   const [multi, setMulti] = useState<string[]>([])
@@ -78,16 +84,29 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         const selected = order.filter((key) => selectedObjects.includes(key))
         const stored = await getQuestionnaireSession(project.id)
         if (stop) return
-        const initial = stored
-          && stored.catalog_version === loaded.version
-          && stored.selected_objects.join('|') === selected.join('|')
-          ? stored
-          : newSession(loaded.version, selected)
+        const storedStarted = Boolean(stored && (
+          stored.source_step_completed
+          || stored.accepted_objects.length
+          || Object.keys(stored.answers).length
+          || Object.keys(stored.generation_ids).length
+          || stored.application_submitted
+        ))
+        const initial = storedStarted && stored
+          ? { ...stored, catalog_version:loaded.version }
+          : stored
+            && stored.catalog_version === loaded.version
+            && JSON.stringify(stored.selected_objects) === JSON.stringify(selected)
+            ? stored
+            : newSession(loaded.version, selected)
         setSession(initial)
         if (initial.source_asset_id) {
           try { setSourceAsset(await api.getAsset(initial.source_asset_id)) } catch { /* deleted source */ }
         }
-        const generationId = initial.current_object ? initial.generation_ids[initial.current_object] : null
+        if (initial.scene_asset_id) {
+          try { setSceneAsset(await api.getAsset(initial.scene_asset_id)) } catch { /* deleted scene */ }
+        }
+        const previewKey = initial.current_object || initial.accepted_objects.at(-1) || null
+        const generationId = previewKey ? initial.generation_ids[previewKey] : null
         if (generationId) {
           try {
             const generation = await api.getGeneration(generationId)
@@ -109,7 +128,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const active = current && session ? visible.find((q) => q.id === session.current_question_id) || null : null
 
   useEffect(() => {
-    if (!session || !current || session.current_question_id) return
+    if (!session || !current || session.current_question_id || session.region_mode) return
     const first = visible.find((q) => q.phase === (current.key === 'zayavka' ? 'application' : 'pre_render'))
     if (first && session.source_step_completed) void persist({ ...session, current_question_id:first.id })
   }, [session?.source_step_completed, current?.key])
@@ -160,10 +179,26 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     return question.options.filter((option) => conditionOk(question.option_rules[option] || null, objectAnswers, houseAccepted))
   }
 
+  async function chooseObject(key:string) {
+    if (!session || session.accepted_objects.includes(key) || !session.selected_objects.includes(key)) return
+    const definition = definitions.get(key)
+    if (!definition) return
+    const next = { ...session, current_object:key, current_question_id:null, edit_question_ids:[] }
+    const first = preQuestions(definition, next)[0]
+    await persist({ ...next, current_question_id:first?.id || null })
+  }
+
+  async function chooseApplication() {
+    if (!session || !session.accepted_objects.length) return
+    const definition = definitions.get('zayavka')
+    const first = definition?.questions.find((q) => q.phase === 'application')
+    await persist({ ...session, current_object:'zayavka', current_question_id:first?.id || null, edit_question_ids:[] })
+  }
+
   async function setSource(asset:Asset|null) {
     if (!session) return
     const saved = await persist({ ...session, source_step_completed:true, source_asset_id:asset?.id || null, scene_asset_id:asset?.id || null })
-    if (saved) setSourceAsset(asset)
+    if (saved) { setSourceAsset(asset); setSceneAsset(asset) }
   }
 
   async function upload(event:ChangeEvent<HTMLInputElement>) {
@@ -195,15 +230,36 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       : definition.key === 'eskez-doma'
         ? 'Создай внешний вид дома на участке. Камера: дрон 40–50 м, сверху угловой вид.'
         : 'Создай объект на участке. Камера: дрон сверху, угловой вид.'
+    const region = next.edit_regions[definition.key]
+    const regionInstruction = region
+      ? `Новый объект и все новые пиксели должны находиться внутри разрешённой области кадра: слева ${Math.round(region.x*100)}%, сверху ${Math.round(region.y*100)}%, ширина ${Math.round(region.width*100)}%, высота ${Math.round(region.height*100)}%. За пределами этой области ничего не менять.`
+      : ''
     return [
       `AuRoom. Точный опросник: ${definition.title}.`,
       scene,
+      regionInstruction,
       definition.key === 'eskez-doma'
         ? 'Планировок, комнат и внутренних помещений не придумывать.'
         : 'Если выбран «Как у дома», наследуй стиль, материалы и кровлю принятого дома.',
       ...lines,
       next.review_comments[definition.key] ? `Комментарий к уточнению: ${next.review_comments[definition.key]}` : '',
     ].filter(Boolean).join('\n')
+  }
+
+  function suggestedRegion(next:DesignSession, definition:QuestionnaireDefinition):NormalizedRect {
+    const values = Object.values(next.answers[definition.key] || {}).flatMap((value) => Array.isArray(value) ? value : [value]).map(String).join(' ').toLowerCase()
+    if (values.includes('слева')) return { x:0.03, y:0.18, width:0.42, height:0.66 }
+    if (values.includes('справа')) return { x:0.55, y:0.18, width:0.42, height:0.66 }
+    if (values.includes('сзади') || values.includes('во дворе')) return { x:0.18, y:0.03, width:0.64, height:0.43 }
+    if (values.includes('улиц') || values.includes('въезд')) return { x:0.18, y:0.57, width:0.64, height:0.40 }
+    return { x:0.55, y:0.40, width:0.42, height:0.55 }
+  }
+
+  async function startGenerationOrRegion(next:DesignSession, definition:QuestionnaireDefinition) {
+    if (next.accepted_objects.length > 0 && next.scene_asset_id && !next.edit_regions[definition.key]) {
+      return persist({ ...next, current_question_id:null, region_mode:'edit', region_object:definition.key })
+    }
+    return generate({ ...next, current_question_id:null, region_mode:null, region_object:null }, definition)
   }
 
   async function poll(generation:Generation) {
@@ -225,11 +281,19 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     try {
       const input = next.scene_asset_id || next.source_asset_id
       const mode:GenerationMode = definition.key === 'eskez-doma' && input ? 'facade' : 'master_plan'
+      const editRegion = next.edit_regions[definition.key] || null
+      const masked = Boolean(input && next.accepted_objects.length > 0 && editRegion)
+      const protectedRegions = next.accepted_objects
+        .map((key) => next.lock_regions[key])
+        .filter((region):region is NormalizedRect => Boolean(region))
       const generation = await poll(await api.createGeneration({
         project_id:project.id,
         input_asset_id:input,
         type:mode,
         prompt:prompt(definition, next),
+        composition_mode:masked ? 'masked_edit' : 'replace',
+        edit_region:masked ? editRegion : null,
+        protected_regions:masked ? protectedRegions : [],
       }))
       setRenderOutput(generation.output_asset)
       const review = definition.questions.find((q) => q.phase === 'review')
@@ -277,14 +341,14 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         })
       next = { ...next, edit_question_ids:rest }
       if (rest.length) return persist({ ...next, current_question_id:rest[0] })
-      return generate({ ...next, current_question_id:null }, current)
+      return startGenerationOrRegion({ ...next, current_question_id:null }, current)
     }
 
     if (question.phase === 'pre_render') {
       const questions = preQuestions(current, next)
       const index = questions.findIndex((q) => q.id === question.id)
       if (index < questions.length - 1) return persist({ ...next, current_question_id:questions[index + 1].id })
-      return generate({ ...next, current_question_id:null }, current)
+      return startGenerationOrRegion({ ...next, current_question_id:null }, current)
     }
 
     if (current.key === 'eskez-doma' && question.id === '15') {
@@ -302,7 +366,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     }
     if (current.key === 'eskez-doma' && question.id === '15б' && Array.isArray(value)) {
       const ids = [...new Set(value.flatMap((item) => question.edit_targets[item] || []))]
-      if (!ids.length) return generate({ ...next, current_question_id:null }, current)
+      if (!ids.length) return startGenerationOrRegion({ ...next, current_question_id:null }, current)
       return persist({ ...next, edit_question_ids:ids, current_question_id:ids[0] })
     }
 
@@ -313,7 +377,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     }
   }
 
-  async function accept(next:DesignSession, definition:QuestionnaireDefinition) {
+  async function finalizeAccept(next:DesignSession, definition:QuestionnaireDefinition, lockRegion:NormalizedRect) {
     if (!renderOutput) {
       setError('Нет готового эскиза для принятия.')
       return
@@ -321,18 +385,60 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     const accepted = next.accepted_objects.includes(definition.key)
       ? next.accepted_objects
       : [...next.accepted_objects, definition.key]
-    const nextKey = next.selected_objects.find((key) => !accepted.includes(key)) || 'zayavka'
-    const nextDef = definitions.get(nextKey)
-    const first = nextDef?.questions.find((q) => q.phase === (nextKey === 'zayavka' ? 'application' : 'pre_render'))
     const saved = await persist({
       ...next,
       accepted_objects:accepted,
+      lock_regions:{ ...next.lock_regions, [definition.key]:lockRegion },
       scene_asset_id:renderOutput.id,
-      current_object:nextKey,
-      current_question_id:first?.id || null,
+      current_object:null,
+      current_question_id:null,
       edit_question_ids:[],
+      region_mode:null,
+      region_object:null,
     })
-    if (saved) setRenderOutput(null)
+    if (saved) setSceneAsset(renderOutput)
+  }
+
+  async function accept(next:DesignSession, definition:QuestionnaireDefinition) {
+    if (!renderOutput) {
+      setError('Нет готового эскиза для принятия.')
+      return
+    }
+    const lockRegion = next.lock_regions[definition.key] || next.edit_regions[definition.key]
+    if (!lockRegion) {
+      return persist({ ...next, current_question_id:null, region_mode:'lock', region_object:definition.key })
+    }
+    return finalizeAccept(next, definition, lockRegion)
+  }
+
+  async function confirmRegion(region:NormalizedRect) {
+    if (!session || !session.region_mode || !session.region_object) return
+    const objectKey = session.region_object
+    const definition = definitions.get(objectKey)
+    if (!definition) return
+    if (session.region_mode === 'edit') {
+      const staged:DesignSession = {
+        ...session,
+        edit_regions:{ ...session.edit_regions, [objectKey]:region },
+        region_mode:'edit',
+        region_object:objectKey,
+      }
+      const saved = await persist(staged)
+      if (saved) await generate({ ...saved, region_mode:null, region_object:null }, definition)
+      return
+    }
+    const next:DesignSession = {
+      ...session,
+      lock_regions:{ ...session.lock_regions, [objectKey]:region },
+      region_mode:null,
+      region_object:null,
+    }
+    await finalizeAccept(next, definition, region)
+  }
+
+  async function confirmLegacyLock(objectKey:string, region:NormalizedRect) {
+    if (!session) return
+    await persist({ ...session, lock_regions:{ ...session.lock_regions, [objectKey]:region } })
   }
 
   if (error && (!catalog || !session)) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>Опросник не открылся</h1><div className="banner-error">{error}</div><button className="secondary-button" onClick={onBack}>Назад</button></section></main>
@@ -340,8 +446,53 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   if (!session.source_step_completed) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon /> Назад</button><strong>{project.name}</strong><span>Исходный кадр</span></header><section className="questionnaire-card"><span className="eyebrow">ОДИН РАЗ ДО ОПРОСА</span><h1>Загрузите фото участка</h1><p>Или продолжите без фотографии. Для следующих объектов будет использоваться последний принятый кадр.</p><input ref={fileRef} hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={upload}/><button className="questionnaire-upload" disabled={busy} onClick={() => fileRef.current?.click()}><UploadIcon/><strong>Выбрать фото</strong><span>JPG, PNG или WebP</span></button><button className="secondary-button questionnaire-wide" disabled={busy} onClick={() => void setSource(null)}>Продолжить без фото</button>{error && <div className="banner-error">{error}</div>}</section></main>
 
-  if (session.application_submitted) return <main className="questionnaire-shell"><section className="questionnaire-card finish-card"><SparkIcon/><span className="eyebrow">ГОТОВО</span><h1>Заявка отправлена</h1><p>Эскизы, ответы и заявка сохранены.</p><button className="primary-button" onClick={onBack}>Вернуться к проектам</button></section></main>
-  if (!current) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>Нет выбранного объекта</h1><button className="secondary-button" onClick={onBack}>Назад</button></section></main>
+  if (session.application_submitted) return <main className="questionnaire-shell"><section className="questionnaire-card finish-card"><SparkIcon/><span className="eyebrow">ГОТОВО</span><h1>Заявка отправлена</h1><p>Эскизы и ответы сохранены. Заявка отправляется администратору в Telegram.</p><button className="primary-button" onClick={onBack}>Вернуться к проектам</button></section></main>
+
+  if (session.region_mode && session.region_object) {
+    const regionDefinition = definitions.get(session.region_object)
+    const regionImage = session.region_mode === 'edit' ? sceneAsset : renderOutput
+    if (regionDefinition && regionImage) {
+      const initial = session.region_mode === 'edit'
+        ? session.edit_regions[regionDefinition.key] || suggestedRegion(session, regionDefinition)
+        : session.lock_regions[regionDefinition.key] || { x:0.12, y:0.10, width:0.76, height:0.78 }
+      const protectedRegions = session.region_mode === 'edit'
+        ? session.accepted_objects.map((key) => session.lock_regions[key]).filter((region):region is NormalizedRect => Boolean(region))
+        : []
+      return <RegionPicker
+        projectName={project.name}
+        image={regionImage}
+        title={regionDefinition.title}
+        mode={session.region_mode}
+        initial={initial}
+        protectedRegions={protectedRegions}
+        busy={busy}
+        error={error}
+        onBack={onBack}
+        onConfirm={(region) => void confirmRegion(region)}
+      />
+    }
+  }
+
+  if (!current) {
+    const remaining = session.selected_objects.filter((key) => !session.accepted_objects.includes(key))
+    const hasAccepted = session.accepted_objects.length > 0
+    const missingLock = session.accepted_objects.find((key) => !session.lock_regions[key]) || null
+    if (missingLock && sceneAsset) {
+      return <RegionPicker
+        projectName={project.name}
+        image={sceneAsset}
+        title={definitions.get(missingLock)?.title || missingLock}
+        mode="lock"
+        initial={{ x:0.12, y:0.10, width:0.76, height:0.78 }}
+        protectedRegions={[]}
+        busy={busy}
+        error={error}
+        onBack={onBack}
+        onConfirm={(region) => void confirmLegacyLock(missingLock, region)}
+      />
+    }
+    return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{hasAccepted ? 'Что дальше?' : 'Выбор объекта'}</span></header><section className="questionnaire-card"><span className="eyebrow">{hasAccepted ? 'ЭСКИЗ ПРИНЯТ' : 'НАЧАЛО ОПРОСА'}</span><h1>{hasAccepted ? 'Что проектируем дальше?' : 'С чего начнём?'}</h1><p>{hasAccepted ? 'Принятый кадр зафиксирован. Выберите следующий объект или переходите к заявке.' : 'Вы выбрали несколько элементов. Выберите, какой опросник пройти первым.'}</p>{hasAccepted && sceneAsset && <div className="questionnaire-result"><img src={sceneAsset.url} alt="Последний принятый эскиз"/></div>}{remaining.length > 0 && <div className="questionnaire-options">{remaining.map((key) => <button key={key} className="questionnaire-option" disabled={busy} onClick={() => void chooseObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void chooseApplication()}>Перейти к заявке</button></div>}{error && <div className="banner-error">{error}</div>}</section></main>
+  }
 
   if (busy && !active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card generating-card"><SparkIcon/><h1>Создаём: {current.title}</h1><p>Сохраняем текущую сцену, ракурс и уже принятые объекты.</p>{error && <div className="banner-error">{error}</div>}</section></main>
 
@@ -349,21 +500,92 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   const options = availableOptions(active)
   const currentValue = objectAnswers[active.id]
-  const canSkip = active.skip_default !== null
-    ? conditionOk(active.skip_condition, objectAnswers, houseAccepted)
-    : !active.required
+  const canSkip = active.skip_default !== null && conditionOk(active.skip_condition, objectAnswers, houseAccepted)
   const review = active.phase === 'review'
   const refinement = current.key === 'eskez-doma' && active.id === '15б'
-  const multiCanContinue = !active.required || multi.length > 0 || (refinement && Boolean(reviewComment.trim()))
+  const primaryReview = review && active.kind === 'single' && options[0]?.startsWith('Да') && options[1]?.startsWith('Нет')
+  const multiCanContinue = multi.length > 0 || (refinement && Boolean(reviewComment.trim()))
 
-  return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><div className="questionnaire-layout"><aside className="questionnaire-progress"><span className="eyebrow">ВЫБРАНО</span>{session.selected_objects.map((key, index) => <div key={key} className={`questionnaire-progress-item ${session.accepted_objects.includes(key) ? 'done' : key === current.key ? 'current' : ''}`}><b>{session.accepted_objects.includes(key) ? '✓' : index + 1}</b><span>{definitions.get(key)?.title || key}</span></div>)}<div className={`questionnaire-progress-item ${current.key === 'zayavka' ? 'current' : ''}`}><b>✓</b><span>Заявка</span></div>{sourceAsset && <div className="questionnaire-source-mini"><ImageIcon/><span>Фото участка загружено</span></div>}</aside><section className="questionnaire-card question-card"><div className="questionnaire-question-head"><div><span className="eyebrow">{active.phase === 'application' ? 'ЗАЯВКА' : review ? 'ОЦЕНКА ЭСКИЗА' : current.title.toUpperCase()}</span><h1>{active.id}. {active.text}</h1></div>{!active.required && <span className="optional-badge">можно пропустить</span>}</div>{active.help && <p className="questionnaire-help">{active.help}</p>}{review && renderOutput && <div className="questionnaire-result"><img src={renderOutput.url} alt={`Эскиз ${current.title}`}/></div>}
+  return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><div className="questionnaire-layout"><aside className="questionnaire-progress"><span className="eyebrow">ВЫБРАНО</span>{session.selected_objects.map((key, index) => <div key={key} className={`questionnaire-progress-item ${session.accepted_objects.includes(key) ? 'done' : key === current.key ? 'current' : ''}`}><b>{session.accepted_objects.includes(key) ? '✓' : index + 1}</b><span>{definitions.get(key)?.title || key}</span></div>)}<div className={`questionnaire-progress-item ${current.key === 'zayavka' ? 'current' : ''}`}><b>✓</b><span>Заявка</span></div>{sourceAsset && <div className="questionnaire-source-mini"><ImageIcon/><span>Фото участка загружено</span></div>}</aside><section className="questionnaire-card question-card"><div className="questionnaire-question-head"><div><span className="eyebrow">{active.phase === 'application' ? 'ЗАЯВКА' : review ? 'ОЦЕНКА ЭСКИЗА' : current.title.toUpperCase()}</span><h1>{active.id}. {active.text}</h1></div>{canSkip && <span className="optional-badge">можно пропустить</span>}</div>{active.help && <p className="questionnaire-help">{active.help}</p>}{review && renderOutput && <div className="questionnaire-result"><img src={renderOutput.url} alt={`Эскиз ${current.title}`}/></div>}
 
-  {(active.kind === 'single' || (active.kind === 'number' && options.length > 0)) && <div className="questionnaire-options">{options.map((option) => <button key={option} className={`questionnaire-option ${String(currentValue) === option || draft === option ? 'selected' : ''}`} onClick={() => active.kind === 'number' ? setDraft(option) : void answer(active, option)}><span>{option}</span><i/></button>)}</div>}
+  {!primaryReview && (active.kind === 'single' || (active.kind === 'number' && options.length > 0)) && <div className="questionnaire-options">{options.map((option) => <button key={option} className={`questionnaire-option ${String(currentValue) === option || draft === option ? 'selected' : ''}`} onClick={() => active.kind === 'number' ? setDraft(option) : void answer(active, option)}><span>{option}</span><i/></button>)}</div>}
+  {primaryReview && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void answer(active, options[0])}>Подходит</button><button className="secondary-button" disabled={busy} onClick={() => void answer(active, options[1])}>Уточнить</button></div>}
   {active.kind === 'multi' && <div className="questionnaire-options">{options.map((option) => <button key={option} className={`questionnaire-option ${multi.includes(option) ? 'selected' : ''}`} onClick={() => setMulti((items) => items.includes(option) ? items.filter((item) => item !== option) : active.max_selections && items.length >= active.max_selections ? items : [...items, option])}><span>{option}</span><i/></button>)}</div>}
   {refinement && <div className="questionnaire-field"><label>{active.field_hint || 'Свой комментарий'}<input value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="Опишите, что ещё нужно изменить"/></label></div>}
   {active.kind === 'number' && <div className="questionnaire-field"><label>{active.field_hint || 'Введите значение'}<input type="number" inputMode="decimal" min={active.min_value ?? undefined} max={active.max_value ?? undefined} value={draft} onChange={(event) => setDraft(event.target.value)}/></label></div>}
   {active.kind === 'text' && <div className="questionnaire-field"><label>{active.field_hint || active.text}<input value={draft} onChange={(event) => setDraft(event.target.value)}/></label></div>}
   {active.kind === 'consent' && <label className="consent-row"><input type="checkbox" checked={currentValue === true} onChange={(event) => event.target.checked && void answer(active, true)}/><span>Согласен на обработку персональных данных</span></label>}
   {error && <div className="banner-error">{error}</div>}
-  <div className="questionnaire-actions">{active.kind === 'multi' && <button className="primary-button" disabled={!multiCanContinue || busy} onClick={() => void answer(active, multi)}>Продолжить</button>}{active.kind === 'number' && <button className="primary-button" disabled={!draft || Number.isNaN(Number(draft)) || busy} onClick={() => void answer(active, Number(draft))}>Продолжить</button>}{active.kind === 'text' && <button className="primary-button" disabled={(active.required && !draft.trim()) || busy} onClick={() => void answer(active, draft.trim())}>Продолжить</button>}{canSkip && active.kind !== 'consent' && <button className="secondary-button" disabled={busy} onClick={() => void answer(active, active.skip_default ?? (active.kind === 'multi' ? [] : ''))}>Пропустить</button>}</div></section></div></main>
+  <div className="questionnaire-actions">{active.kind === 'multi' && <button className="primary-button" disabled={!multiCanContinue || busy} onClick={() => void answer(active, multi)}>Продолжить</button>}{active.kind === 'number' && <button className="primary-button" disabled={!draft || Number.isNaN(Number(draft)) || busy} onClick={() => void answer(active, Number(draft))}>Продолжить</button>}{active.kind === 'text' && <button className="primary-button" disabled={!draft.trim() || busy} onClick={() => void answer(active, draft.trim())}>Продолжить</button>}{canSkip && active.kind !== 'consent' && <button className="secondary-button" disabled={busy} onClick={() => void answer(active, active.skip_default ?? (active.kind === 'multi' ? [] : ''))}>Пропустить</button>}</div></section></div></main>
+}
+
+
+function RegionPicker({ projectName, image, title, mode, initial, protectedRegions, busy, error, onBack, onConfirm }:{
+  projectName:string
+  image:Asset
+  title:string
+  mode:'edit'|'lock'
+  initial:NormalizedRect
+  protectedRegions:NormalizedRect[]
+  busy:boolean
+  error:string|null
+  onBack:()=>void
+  onConfirm:(region:NormalizedRect)=>void
+}) {
+  const [region, setRegion] = useState<NormalizedRect>(initial)
+  const dragStart = useRef<{x:number;y:number}|null>(null)
+
+  function point(event:ReactPointerEvent<HTMLDivElement>) {
+    const rect = event.currentTarget.getBoundingClientRect()
+    return {
+      x:Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+      y:Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+    }
+  }
+
+  function updateRegion(start:{x:number;y:number}, end:{x:number;y:number}) {
+    const x = Math.min(start.x, end.x)
+    const y = Math.min(start.y, end.y)
+    const width = Math.max(0.01, Math.abs(end.x - start.x))
+    const height = Math.max(0.01, Math.abs(end.y - start.y))
+    setRegion({ x, y, width:Math.min(width, 1-x), height:Math.min(height, 1-y) })
+  }
+
+  function pointerDown(event:ReactPointerEvent<HTMLDivElement>) {
+    const start = point(event)
+    dragStart.current = start
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setRegion({ x:start.x, y:start.y, width:0.01, height:0.01 })
+  }
+
+  function pointerMove(event:ReactPointerEvent<HTMLDivElement>) {
+    if (!dragStart.current) return
+    updateRegion(dragStart.current, point(event))
+  }
+
+  function pointerUp(event:ReactPointerEvent<HTMLDivElement>) {
+    if (dragStart.current) updateRegion(dragStart.current, point(event))
+    dragStart.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
+  const valid = region.width >= 0.04 && region.height >= 0.04
+  return <main className="questionnaire-shell">
+    <header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{projectName}</strong><span>Защита кадра</span></header>
+    <section className="questionnaire-card region-picker-card">
+      <span className="eyebrow">ПИКСЕЛЬНАЯ ФИКСАЦИЯ</span>
+      <h1>{mode === 'edit' ? `Где добавить: ${title}?` : `Зафиксируйте: ${title}`}</h1>
+      <p>{mode === 'edit'
+        ? 'Проведите пальцем по кадру и выделите прямоугольник, внутри которого ИИ имеет право менять изображение. Всё снаружи останется пиксель-в-пиксель как в принятом кадре.'
+        : 'Обведите принятый объект целиком, включая важные тени и примыкания. Эта область станет защищённой и не сможет быть перерисована следующими генерациями.'}</p>
+      <div className="region-canvas" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp}>
+        <img src={image.url} alt={title}/>
+        {protectedRegions.map((item, index) => <div key={index} className="region-protected" style={{ left:`${item.x*100}%`, top:`${item.y*100}%`, width:`${item.width*100}%`, height:`${item.height*100}%` }}/>) }
+        <div className={`region-selection ${mode}`} style={{ left:`${region.x*100}%`, top:`${region.y*100}%`, width:`${region.width*100}%`, height:`${region.height*100}%` }}><span>{mode === 'edit' ? 'МОЖНО МЕНЯТЬ' : 'ЗАЩИТИТЬ'}</span></div>
+      </div>
+      <p className="region-hint">Можно провести по изображению ещё раз, чтобы изменить область. Защищённые зоны отмечены штриховкой и всегда имеют приоритет.</p>
+      {error && <div className="banner-error">{error}</div>}
+      <div className="questionnaire-actions"><button className="primary-button" disabled={!valid || busy} onClick={() => onConfirm(region)}>{mode === 'edit' ? 'Использовать эту область' : 'Зафиксировать область'}</button></div>
+    </section>
+  </main>
 }

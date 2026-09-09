@@ -1,3 +1,4 @@
+import type { NormalizedRect } from './questionnaireTypes'
 import type {
   AdminAudit,
   AdminBillingSettings,
@@ -122,7 +123,7 @@ export async function uploadAsset(projectId: string | null, file: File, purpose:
 export function getAsset(assetId: string) { return request<Asset>(`/assets/${assetId}`) }
 export function deleteAsset(assetId: string) { return request<void>(`/assets/${assetId}`, { method: 'DELETE' }) }
 
-export function createGeneration(payload: { project_id: string; input_asset_id?: string | null; type: GenerationMode; prompt: string }) {
+export function createGeneration(payload: { project_id: string; input_asset_id?: string | null; type: GenerationMode; prompt: string; composition_mode?: 'replace'|'masked_edit'; edit_region?: NormalizedRect|null; protected_regions?: NormalizedRect[] }) {
   return request<Generation>('/generations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 }
 export function repeatGeneration(generationId: string) { return request<Generation>(`/generations/${generationId}/repeat`, { method: 'POST' }) }

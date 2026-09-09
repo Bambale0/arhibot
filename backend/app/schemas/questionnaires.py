@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.generations import NormalizedRect
+
 QuestionAnswer = str | int | float | bool | list[str]
 
 HOUSE_STYLE_INHERITANCE_OBJECTS = frozenset(
@@ -99,7 +101,20 @@ class DesignSession(BaseModel):
     generation_ids: dict[str, UUID] = Field(default_factory=dict)
     edit_question_ids: list[str] = Field(default_factory=list)
     review_comments: dict[str, str] = Field(default_factory=dict)
+    edit_regions: dict[str, NormalizedRect] = Field(default_factory=dict)
+    lock_regions: dict[str, NormalizedRect] = Field(default_factory=dict)
+    region_mode: Literal["edit", "lock"] | None = None
+    region_object: str | None = None
     application_submitted: bool = False
+
+
+    @model_validator(mode="after")
+    def validate_region_step(self) -> DesignSession:
+        if (self.region_mode is None) != (self.region_object is None):
+            raise ValueError("Region mode and region object must be set together.")
+        if self.region_object is not None and self.region_object not in self.selected_objects:
+            raise ValueError("Region object must belong to the selected questionnaire objects.")
+        return self
 
     @model_validator(mode="after")
     def require_accepted_house_for_inherited_style(self) -> DesignSession:
@@ -129,6 +144,8 @@ class QuestionnaireApplicationResponse(BaseModel):
     answers: dict[str, dict[str, QuestionAnswer]]
     scene_asset_id: UUID | None
     status: str
+    telegram_delivery_status: str
+    telegram_notified_at: datetime | None
     created_at: datetime
 
 
