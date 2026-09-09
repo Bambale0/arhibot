@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from app.core.config import get_settings
@@ -61,13 +62,40 @@ def load_bot_content(url: str) -> TelegramBotContent | None:
     return parse_bot_content(payload)
 
 
+def canonicalize_webapp_url(raw: str) -> str:
+    """Return a Telegram-safe HTTPS URL with an ASCII/IDNA hostname.
+
+    Telegram clients do not all handle Unicode IDN hosts consistently. Keep the
+    human-readable URL in configuration if desired, but never send a Unicode
+    hostname to Telegram: encode it to IDNA/punycode first.
+    """
+
+    parsed = urlsplit(raw.strip())
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        raise ValueError("Mini App URL must be an absolute HTTPS URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Mini App URL must not contain credentials")
+
+    try:
+        ascii_host = parsed.hostname.encode("idna").decode("ascii").lower()
+        port = parsed.port
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError("Mini App URL contains an invalid hostname") from exc
+
+    host_for_netloc = f"[{ascii_host}]" if ":" in ascii_host else ascii_host
+    netloc = host_for_netloc if port in (None, 443) else f"{host_for_netloc}:{port}"
+    path = parsed.path or "/"
+    return urlunsplit(("https", netloc, path, parsed.query, parsed.fragment))
+
+
 def mini_app_keyboard(webapp_url: str, content: TelegramBotContent) -> dict[str, Any]:
+    safe_url = canonicalize_webapp_url(webapp_url)
     return {
         "inline_keyboard": [
             [
                 {
                     "text": content.open_button_text,
-                    "web_app": {"url": webapp_url},
+                    "web_app": {"url": safe_url},
                 }
             ]
         ]
@@ -75,10 +103,11 @@ def mini_app_keyboard(webapp_url: str, content: TelegramBotContent) -> dict[str,
 
 
 def menu_button(webapp_url: str, content: TelegramBotContent) -> dict[str, Any]:
+    safe_url = canonicalize_webapp_url(webapp_url)
     return {
         "type": "web_app",
         "text": content.open_button_text,
-        "web_app": {"url": webapp_url},
+        "web_app": {"url": safe_url},
     }
 
 
@@ -204,14 +233,16 @@ def configure_bot(
 def run_polling() -> None:
     settings = get_settings()
     token = (settings.telegram_bot_token or "").strip()
-    webapp_url = (settings.telegram_webapp_url or "").strip()
+    raw_webapp_url = (settings.telegram_webapp_url or "").strip()
 
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is required for the bot process")
-    if not webapp_url:
+    if not raw_webapp_url:
         raise RuntimeError("TELEGRAM_WEBAPP_URL is required for the bot process")
-    if not webapp_url.startswith("https://"):
-        raise RuntimeError("TELEGRAM_WEBAPP_URL must be an HTTPS URL for Telegram Mini Apps")
+    try:
+        webapp_url = canonicalize_webapp_url(raw_webapp_url)
+    except ValueError as exc:
+        raise RuntimeError("TELEGRAM_WEBAPP_URL must be a valid HTTPS URL for Telegram Mini Apps") from exc
 
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
