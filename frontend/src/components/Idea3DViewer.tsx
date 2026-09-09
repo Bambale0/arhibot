@@ -32,14 +32,15 @@ export function Idea3DViewer({ active, imageUrl, modelUrl, title }: ViewerProps)
       const { GLTFLoader } = loaderModule
       const { RoomEnvironment } = environmentModule
 
+      const mobileProfile = window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 768
       const scene = new THREE.Scene()
       const renderer = new THREE.WebGLRenderer({
         alpha: true,
-        antialias: true,
-        powerPreference: 'high-performance',
+        antialias: !mobileProfile,
+        powerPreference: 'default',
       })
       renderer.setClearColor(0x000000, 0)
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobileProfile ? 1.25 : 2))
       renderer.outputColorSpace = THREE.SRGBColorSpace
       renderer.toneMapping = THREE.ACESFilmicToneMapping
       renderer.toneMappingExposure = 1.08
@@ -71,7 +72,7 @@ export function Idea3DViewer({ active, imageUrl, modelUrl, title }: ViewerProps)
       const key = new THREE.DirectionalLight(0xfff0d8, 4.2)
       key.position.set(6.5, 9, 7)
       key.castShadow = true
-      key.shadow.mapSize.set(2048, 2048)
+      key.shadow.mapSize.set(mobileProfile ? 1024 : 2048, mobileProfile ? 1024 : 2048)
       key.shadow.bias = -0.0002
       key.shadow.normalBias = 0.025
       scene.add(key)
@@ -95,8 +96,14 @@ export function Idea3DViewer({ active, imageUrl, modelUrl, title }: ViewerProps)
         controls.autoRotate = false
         host.dataset.interacted = 'true'
       }
+      const onContextLost = (event: Event) => {
+        event.preventDefault()
+        setFailed(true)
+        cleanup()
+      }
       renderer.domElement.addEventListener('pointerdown', onInteract, { passive: true })
       renderer.domElement.addEventListener('wheel', onInteract, { passive: true })
+      renderer.domElement.addEventListener('webglcontextlost', onContextLost)
 
       const disposeModel = () => {
         if (!modelRoot) return
@@ -120,6 +127,7 @@ export function Idea3DViewer({ active, imageUrl, modelUrl, title }: ViewerProps)
         controls.dispose()
         renderer.domElement.removeEventListener('pointerdown', onInteract)
         renderer.domElement.removeEventListener('wheel', onInteract)
+        renderer.domElement.removeEventListener('webglcontextlost', onContextLost)
         disposeModel()
         floor?.geometry.dispose()
         if (floor) (floor.material as InstanceType<typeof THREE.Material>).dispose()

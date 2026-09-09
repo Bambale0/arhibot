@@ -66,6 +66,12 @@ function IdeaFeedCard({ idea, index, total, active, saved, onUseIdea, onSave, on
   onOpenMedia: (idea: Idea, filter?: IdeaMediaKind | null, itemId?: string | null) => void
 }) {
   const hasModel = Boolean(idea.model_url)
+  const [viewerEnabled, setViewerEnabled] = useState(false)
+
+  useEffect(() => {
+    if (!active) setViewerEnabled(false)
+  }, [active])
+
   return <article className="idea-feed-card" data-active={active ? 'true' : 'false'}>
     <div className="idea-feed-copy">
       <div className="idea-feed-kicker"><span>ИДЕЯ ДНЯ</span><b>{index + 1} / {total}</b></div>
@@ -74,8 +80,14 @@ function IdeaFeedCard({ idea, index, total, active, saved, onUseIdea, onSave, on
     </div>
 
     <div className="idea-stage-shell">
-      <button type="button" className={`idea-3d-pill ${hasModel ? '' : 'poster-mode'}`} aria-label={hasModel ? 'Интерактивный 3D-обзор' : 'Главная визуализация'}><CubeIcon /><span>{hasModel ? '3D-обзор' : 'Визуализация'}</span>{hasModel && <ChevronIcon />}</button>
-      <Idea3DViewer active={active} imageUrl={idea.image_url} modelUrl={idea.model_url} title={idea.title} />
+      <button
+        type="button"
+        className={`idea-3d-pill ${hasModel ? '' : 'poster-mode'}`}
+        aria-label={hasModel ? (viewerEnabled ? 'Закрыть интерактивный 3D-обзор' : 'Открыть интерактивный 3D-обзор') : 'Главная визуализация'}
+        aria-pressed={hasModel ? viewerEnabled : undefined}
+        onClick={() => { if (hasModel) setViewerEnabled((value) => !value) }}
+      ><CubeIcon /><span>{hasModel ? (viewerEnabled ? 'Закрыть 3D' : '3D-обзор') : 'Визуализация'}</span>{hasModel && <ChevronIcon />}</button>
+      <Idea3DViewer active={active && viewerEnabled} imageUrl={idea.image_url} modelUrl={idea.model_url} title={idea.title} />
       <IdeaRail
         idea={idea}
         saved={saved}
@@ -83,7 +95,7 @@ function IdeaFeedCard({ idea, index, total, active, saved, onUseIdea, onSave, on
         onSave={onSave}
         onShare={onShare}
       />
-      {hasModel && <><div className="idea-orbit-hint" aria-hidden>
+      {hasModel && viewerEnabled && <><div className="idea-orbit-hint" aria-hidden>
         <span>←</span><HandIcon/><span>→</span>
         <b>360°</b>
       </div>
