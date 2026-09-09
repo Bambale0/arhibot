@@ -6,6 +6,7 @@ import './auroom.css'
 import './billing.css'
 import './admin.css'
 import './ideas.css'
+import './brand.css'
 
 createRoot(document.getElementById('root')!).render(
   <AuthProvider><App /></AuthProvider>,
