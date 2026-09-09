@@ -107,6 +107,7 @@ class DesignSession(BaseModel):
     region_object: str | None = None
     application_submitted: bool = False
 
+
     @model_validator(mode="after")
     def validate_region_step(self) -> DesignSession:
         if (self.region_mode is None) != (self.region_object is None):
