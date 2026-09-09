@@ -8,8 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
 from app.db.models.questionnaires import QuestionnaireApplication, QuestionnaireCatalogConfig
 from app.db.models.users import User
+from app.domain.generations.enums import GenerationStatus
 from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
+from app.repositories.generations import GenerationRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.questionnaires import QuestionnaireRepository
 from app.schemas.questionnaires import (
@@ -27,6 +29,7 @@ class QuestionnaireService:
         self.session = session
         self.projects = ProjectRepository(session)
         self.assets = AssetRepository(session)
+        self.generations = GenerationRepository(session)
         self.repository = QuestionnaireRepository(session)
         self.admin_repository = AdminRepository(session)
 
@@ -55,6 +58,7 @@ class QuestionnaireService:
         catalog = await self.catalog()
         self._validate(payload, catalog, allow_submitted=False)
         await self._validate_assets(user, project.id, payload)
+        await self._validate_generations(user, project.id, payload)
         project.context = {
             **(project.context or {}),
             "design_session": payload.model_dump(mode="json"),
@@ -72,6 +76,7 @@ class QuestionnaireService:
         if not payload.application_submitted:
             raise self._invalid("The application must be marked submitted.")
         await self._validate_assets(user, project.id, payload)
+        await self._validate_generations(user, project.id, payload)
 
         existing = await self.repository.get_application_by_session(payload.session_id)
         if existing is not None:
@@ -178,6 +183,40 @@ class QuestionnaireService:
                     title="Questionnaire asset not found",
                     status=422,
                     detail="A questionnaire scene asset must belong to the current project.",
+                )
+
+    async def _validate_generations(
+        self, user: User, project_id: UUID, payload: DesignSession
+    ) -> None:
+        resolved = {}
+        for object_key, generation_id in payload.generation_ids.items():
+            generation = await self.generations.get_owned(generation_id, user.id)
+            if generation is None or generation.project_id != project_id:
+                raise self._invalid(
+                    f"Generation for {object_key} must belong to the current project."
+                )
+            resolved[object_key] = generation
+
+        for object_key in payload.accepted_objects:
+            generation = resolved.get(object_key)
+            if generation is None:
+                raise self._invalid(
+                    f"Accepted object {object_key} must reference a completed generation."
+                )
+            if (
+                generation.status != GenerationStatus.COMPLETED
+                or generation.output_asset_id is None
+            ):
+                raise self._invalid(
+                    f"Accepted object {object_key} must reference a completed generation with output."
+                )
+
+        if payload.accepted_objects:
+            latest_key = payload.accepted_objects[-1]
+            latest_generation = resolved[latest_key]
+            if payload.scene_asset_id != latest_generation.output_asset_id:
+                raise self._invalid(
+                    "The current scene must be the output of the latest accepted object."
                 )
 
     def _validate(self, payload: DesignSession, catalog: dict, *, allow_submitted: bool) -> None:
