@@ -9,6 +9,13 @@ from app.schemas.questionnaires import DesignSession
 
 
 class ProjectContext(BaseModel):
+    """Strict writable project context.
+
+    Known legacy product fields remain part of the contract so historical projects
+    can be edited without silently losing meaningful project requirements. Unknown
+    keys are still rejected on writes.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     house_area_m2: float | None = Field(default=None, gt=0)
@@ -17,8 +24,23 @@ class ProjectContext(BaseModel):
     bedrooms: int | None = Field(default=None, ge=0, le=30)
     bathrooms: int | None = Field(default=None, ge=0, le=30)
     architecture_style: str | None = Field(default=None, max_length=80)
+    garage_cars: int | None = Field(default=None, ge=0, le=10)
+    pool: bool | None = None
+    attic: bool | None = None
+    glazed_veranda: bool | None = None
     architecture: ArchitecturePackage | None = None
     design_session: DesignSession | None = None
+
+
+class ProjectContextResponse(ProjectContext):
+    """Backward-compatible read model for persisted JSON contexts.
+
+    Database rows can outlive old application versions. Unknown historical/internal
+    keys must never turn an otherwise readable project list into a 500. They are
+    ignored on output while the write model above remains strict.
+    """
+
+    model_config = ConfigDict(extra="ignore")
 
 
 class ProjectCreateRequest(BaseModel):
@@ -52,7 +74,7 @@ class ProjectResponse(BaseModel):
     name: str
     description: str | None
     status: ProjectStatus
-    context: ProjectContext
+    context: ProjectContextResponse
     created_at: datetime
     updated_at: datetime
 
