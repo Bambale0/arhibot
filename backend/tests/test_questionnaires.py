@@ -189,3 +189,55 @@ def test_server_accepts_only_explicit_skip_defaults() -> None:
         False,
         allow_empty_multi=True,
     )
+
+
+def test_newly_accepted_object_requires_visual_lock_and_preserves_existing_locks() -> None:
+    session_id = uuid4()
+    house_generation = uuid4()
+    bath_generation = uuid4()
+    house_scene = uuid4()
+    previous = DesignSession(
+        session_id=session_id,
+        catalog_version=CATALOG_VERSION,
+        selected_objects=["eskez-doma", "banya"],
+        source_step_completed=True,
+        scene_asset_id=house_scene,
+        accepted_objects=["eskez-doma"],
+        generation_ids={"eskez-doma": house_generation},
+        lock_regions={
+            "eskez-doma": {"x": 0.2, "y": 0.15, "width": 0.6, "height": 0.65},
+        },
+    )
+    accepted_without_lock = previous.model_copy(
+        update={
+            "accepted_objects": ["eskez-doma", "banya"],
+            "generation_ids": {
+                "eskez-doma": house_generation,
+                "banya": bath_generation,
+            },
+        },
+        deep=True,
+    )
+    with pytest.raises(AppError) as exc:
+        QuestionnaireService._validate_accepted_object_locks(previous, accepted_without_lock)
+    assert "visual lock region" in exc.value.detail
+
+    accepted = accepted_without_lock.model_copy(deep=True)
+    accepted.lock_regions["banya"] = {
+        "x": 0.65,
+        "y": 0.2,
+        "width": 0.3,
+        "height": 0.5,
+    }
+    QuestionnaireService._validate_accepted_object_locks(previous, accepted)
+
+    changed_house_lock = previous.model_copy(deep=True)
+    changed_house_lock.lock_regions["eskez-doma"] = {
+        "x": 0.1,
+        "y": 0.1,
+        "width": 0.7,
+        "height": 0.7,
+    }
+    with pytest.raises(AppError) as exc:
+        QuestionnaireService._validate_accepted_object_locks(previous, changed_house_lock)
+    assert "cannot change its lock region" in exc.value.detail

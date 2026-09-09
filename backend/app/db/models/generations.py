@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -54,6 +55,13 @@ class Generation(Base):
     credits_charged: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     model_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
     fallback_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    composition_mode: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="replace", server_default="replace"
+    )
+    edit_region: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    protected_regions: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
     provider_task_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

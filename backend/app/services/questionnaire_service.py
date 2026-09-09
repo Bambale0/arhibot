@@ -60,7 +60,7 @@ class QuestionnaireService:
         self._validate(payload, catalog, allow_submitted=False)
         self._validate_accepted_object_locks(previous, payload)
         await self._validate_assets(user, project.id, payload)
-        await self._validate_generations(user, project.id, payload)
+        await self._validate_generations(user, project.id, payload, previous=previous)
         project.context = {
             **(project.context or {}),
             "design_session": payload.model_dump(mode="json"),
@@ -80,7 +80,7 @@ class QuestionnaireService:
         if not payload.application_submitted:
             raise self._invalid("The application must be marked submitted.")
         await self._validate_assets(user, project.id, payload)
-        await self._validate_generations(user, project.id, payload)
+        await self._validate_generations(user, project.id, payload, previous=previous)
 
         existing = await self.repository.get_application_by_session(payload.session_id)
         if existing is not None:
@@ -209,6 +209,24 @@ class QuestionnaireService:
                 object_key, ""
             ):
                 raise cls._invalid(f"Accepted object {object_key} cannot change review comments.")
+            previous_lock = previous.lock_regions.get(object_key)
+            payload_lock = payload.lock_regions.get(object_key)
+            if previous_lock is not None and payload_lock != previous_lock:
+                raise cls._invalid(f"Accepted object {object_key} cannot change its lock region.")
+            previous_edit = previous.edit_regions.get(object_key)
+            payload_edit = payload.edit_regions.get(object_key)
+            if previous_edit is not None and payload_edit != previous_edit:
+                raise cls._invalid(f"Accepted object {object_key} cannot change its edit region.")
+
+        if len(payload.accepted_objects) == len(locked) + 1:
+            new_key = payload.accepted_objects[-1]
+            if payload.lock_regions.get(new_key) is None:
+                raise cls._invalid("A newly accepted object must have a visual lock region.")
+            if any(payload.lock_regions.get(object_key) is None for object_key in locked):
+                raise cls._invalid(
+                    "Every previously accepted object must have a visual lock "
+                    "before adding another object."
+                )
 
         if locked == payload.accepted_objects and locked:
             if payload.scene_asset_id != previous.scene_asset_id:
@@ -230,7 +248,12 @@ class QuestionnaireService:
                 )
 
     async def _validate_generations(
-        self, user: User, project_id: UUID, payload: DesignSession
+        self,
+        user: User,
+        project_id: UUID,
+        payload: DesignSession,
+        *,
+        previous: DesignSession | None = None,
     ) -> None:
         resolved = {}
         for object_key, generation_id in payload.generation_ids.items():
@@ -263,6 +286,38 @@ class QuestionnaireService:
                     "The current scene must be the output of the latest accepted object."
                 )
 
+        if (
+            previous is not None
+            and previous.session_id == payload.session_id
+            and len(payload.accepted_objects) == len(previous.accepted_objects) + 1
+            and previous.accepted_objects
+        ):
+            new_key = payload.accepted_objects[-1]
+            generation = resolved[new_key]
+            if generation.input_asset_id != previous.scene_asset_id:
+                raise self._invalid(
+                    "A new object must be generated from the last accepted scene."
+                )
+            if generation.composition_mode != "masked_edit":
+                raise self._invalid(
+                    "A new object after an accepted scene must use deterministic "
+                    "masked composition."
+                )
+            edit_region = payload.edit_regions.get(new_key)
+            if edit_region is None or generation.edit_region != edit_region.model_dump(mode="json"):
+                raise self._invalid(
+                    "The generation edit region must match the questionnaire edit region."
+                )
+            expected_protected = [
+                payload.lock_regions[key].model_dump(mode="json")
+                for key in previous.accepted_objects
+                if payload.lock_regions.get(key) is not None
+            ]
+            if list(generation.protected_regions or []) != expected_protected:
+                raise self._invalid(
+                    "The generation must protect every previously accepted object region."
+                )
+
     def _validate(self, payload: DesignSession, catalog: dict, *, allow_submitted: bool) -> None:
         if payload.catalog_version != catalog["version"]:
             raise AppError(
@@ -288,6 +343,22 @@ class QuestionnaireService:
             raise self._invalid("Only selected objects can be accepted.")
         if any(key not in payload.selected_objects for key in payload.generation_ids):
             raise self._invalid("Generation ids may only reference selected objects.")
+        if any(key not in payload.selected_objects for key in payload.edit_regions):
+            raise self._invalid("Edit regions may only reference selected objects.")
+        if any(key not in payload.selected_objects for key in payload.lock_regions):
+            raise self._invalid("Lock regions may only reference selected objects.")
+        if payload.region_mode == "edit":
+            if payload.region_object != payload.current_object:
+                raise self._invalid("Edit-region selection must target the current object.")
+            if payload.region_object in payload.accepted_objects:
+                raise self._invalid("An accepted object cannot request a new edit region.")
+        if payload.region_mode == "lock":
+            targets_current = payload.region_object == payload.current_object
+            targets_accepted = payload.region_object in payload.accepted_objects
+            if not targets_current and not targets_accepted:
+                raise self._invalid(
+                    "Lock-region selection must target the current or accepted object."
+                )
 
         house_accepted = "eskez-doma" in payload.accepted_objects
         allowed_answer_keys = set(payload.selected_objects) | {"zayavka"}

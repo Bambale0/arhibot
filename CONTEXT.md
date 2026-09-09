@@ -76,7 +76,8 @@ The public non-secret bot copy managed through the Control Plane: bot name, desc
 
 The approved questionnaire flow is a cumulative visual project rather than a set of unrelated generations.
 
-- Once a generated object is accepted by the user, it is fixed. Adding or regenerating another object must not silently change previously accepted objects.
+- Once a generated object is accepted by the user, it is fixed. Adding or regenerating another object must not silently change previously accepted objects. The questionnaire runtime enforces this visually with deterministic masked composition: the user marks the allowed edit rectangle on the accepted scene, accepted lock rectangles have priority, and the worker copies every pixel outside the allowed region (and every protected pixel) from the previous accepted scene into a lossless PNG result.
+- The first accepted object (or a legacy accepted object without a lock) must receive a visual lock rectangle before another object can be accepted. Later accepted objects inherit their edit rectangle as a lock, so future generations cannot overwrite those pixels.
 - After an object is accepted, the user chooses which object to work on next; the system must not force an automatic next-object order.
 - The questionnaire option `Как у дома` is inheritance from the accepted main house. It is hidden and invalid until the main house (`eskez-doma`) has been accepted. Once available, it means the new object should inherit the accepted house's architectural language, including compatible style, materials and roof where the questionnaire supports roof inheritance.
 - The existing garage/canopy questionnaire branching remains as approved; do not rewrite it into a new garage-vs-canopy entry question without a separate product decision.

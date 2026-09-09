@@ -16,13 +16,14 @@ from app.db.models.projects import Project
 from app.db.session import dispose_engine, get_session_factory
 from app.domain.assets.enums import AssetPurpose, AssetType
 from app.domain.generations.enums import GenerationStatus
+from app.image_compositor import compose_masked_edit
 from app.prompt_builders.generation import build_generation_prompt
 from app.providers.nexus import NexusImageProvider, NexusProviderError
 from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
 from app.repositories.generations import GenerationRepository
 from app.repositories.projects import ProjectRepository
-from app.services.asset_service import AssetService
+from app.services.asset_service import AssetService, LocalMediaStorage
 from app.services.credit_service import CreditService
 from app.services.generation_service import GENERATION_QUEUE_KEY
 
@@ -123,6 +124,10 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         fallback_params = {**dict(runtime.fallback_params or {}), **mode_params}
         primary_model = runtime.primary_model
         fallback_model = runtime.fallback_model
+        composition_mode = generation.composition_mode
+        edit_region = dict(generation.edit_region) if generation.edit_region else None
+        protected_regions = list(generation.protected_regions or [])
+        input_storage_path = input_asset.storage_path if input_asset is not None else None
 
     provider = NexusImageProvider(settings)
     model_name = primary_model
@@ -155,6 +160,21 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             )
 
         data = await _download_image(result.image_url, settings)
+        if composition_mode == "masked_edit":
+            if input_storage_path is None or edit_region is None:
+                raise RuntimeError(
+                    "Masked questionnaire edit is missing its base scene or edit region"
+                )
+            base_path = LocalMediaStorage(settings).absolute_path(input_storage_path)
+            base_data = await asyncio.to_thread(base_path.read_bytes)
+            composite = await asyncio.to_thread(
+                compose_masked_edit,
+                base_data=base_data,
+                candidate_data=data,
+                edit_region=edit_region,
+                protected_regions=protected_regions,
+            )
+            data = composite.data
 
         async with get_session_factory()() as session:
             generation = await session.get(Generation, generation_id)
@@ -194,10 +214,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             generation.completed_at = datetime.now(UTC)
             await session.commit()
             logger.info(
-                "Generation %s completed with %s%s",
+                "Generation %s completed with %s%s%s",
                 generation_id,
                 model_name,
                 " (fallback)" if fallback_used else "",
+                " (masked composite)" if composition_mode == "masked_edit" else "",
             )
     except Exception as exc:
         logger.exception("Generation %s failed", generation_id)

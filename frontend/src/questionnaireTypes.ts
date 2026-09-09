@@ -1,3 +1,4 @@
+export type NormalizedRect = { x:number; y:number; width:number; height:number }
 export type QuestionnaireAnswer = string | number | boolean | string[]
 export type QuestionnaireCondition = {
   question_id?: string
@@ -40,6 +41,10 @@ export type DesignSession = {
   generation_ids:Record<string,string>
   edit_question_ids:string[]
   review_comments:Record<string,string>
+  edit_regions:Record<string,NormalizedRect>
+  lock_regions:Record<string,NormalizedRect>
+  region_mode:'edit'|'lock'|null
+  region_object:string|null
   application_submitted:boolean
 }
 export type QuestionnaireProjectContext = { design_session?:DesignSession|null }
