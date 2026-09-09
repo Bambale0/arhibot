@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-CATALOG_VERSION = "2026-09-09.1"
+CATALOG_VERSION = "2026-09-09.2"
 
 SECTION_SPECS = [
     ("house", "Дом", ["eskez-doma"]),
@@ -210,7 +210,17 @@ def _parse_questions(key: str, text: str) -> list[dict[str, Any]]:
         by_id["7"]["option_rules"]["Плоская"] = {"question_id": "1", "operator": "in", "value": sorted(FLAT_ROOF_STYLES)}
         if "13" in by_id:
             by_id["13"]["option_rules"]["Терраса на плоской кровле"] = {"question_id": "7", "operator": "eq", "value": "Плоская"}
-            by_id["13"]["option_rules"]["Балкон"] = {"question_id": "4", "operator": "neq", "value": "1 этаж"}
+            by_id["13"]["option_rules"]["Балкон"] = {
+                "operator": "all",
+                "conditions": [
+                    {"question_id": "4", "operator": "neq", "value": "1 этаж"},
+                    {
+                        "question_id": "12б",
+                        "operator": "not_contains_any",
+                        "value": ["Второй этаж", "Третий этаж", "Мансарда"],
+                    },
+                ],
+            }
         by_id["15"]["phase"] = "review"
         by_id["15"]["required"] = True
         by_id["15а"]["phase"] = "review"
@@ -259,10 +269,18 @@ def _apply_common_overrides(key: str, questions: list[dict[str, Any]]) -> None:
     if key in STYLE_QUESTIONNAIRES and "1" in by_id:
         by_id["1"]["option_rules"]["Как у дома"] = {"operator": "house_accepted"}
 
-    # The guest-house source allows skipping facade material only when style is inherited.
-    if key == "gostevoy" and "8" in by_id:
-        by_id["8"]["skip_default"] = "отделка дома"
-        by_id["8"]["skip_condition"] = {
+    # These source files allow skipping facade material only when style is inherited.
+    conditional_facade_skip = {
+        "gostevoy": "8",
+        "banya": "9",
+        "garazh": "6",
+        "letnyaya-kuhnya": "7",
+        "hozblok": "5",
+    }
+    facade_skip_id = conditional_facade_skip.get(key)
+    if facade_skip_id and facade_skip_id in by_id:
+        by_id[facade_skip_id]["skip_default"] = "отделка дома"
+        by_id[facade_skip_id]["skip_condition"] = {
             "question_id": "1",
             "operator": "eq",
             "value": "Как у дома",

@@ -82,3 +82,12 @@ The approved questionnaire flow is a cumulative visual project rather than a set
 - The questionnaire option `Как у дома` is inheritance from the accepted main house. It is hidden and invalid until the main house (`eskez-doma`) has been accepted. Once available, it means the new object should inherit the accepted house's architectural language, including compatible style, materials and roof where the questionnaire supports roof inheritance.
 - The existing garage/canopy questionnaire branching remains as approved; do not rewrite it into a new garage-vs-canopy entry question without a separate product decision.
 - A completed questionnaire application must be delivered to the administrator in Telegram in addition to being persisted for operator access.
+
+### Questionnaire source-contract invariants
+
+- The site source step is exactly once per questionnaire session: upload a plot photo or explicitly continue without one before any questionnaire answer is accepted. The selected object set and this source choice become immutable once the session starts.
+- `Пропустить` is a source-authored action, never a generic optional-question shortcut. It is exposed only when the source defines a default and any source condition for that skip is satisfied.
+- `Свой вариант` is an input path, not a literal answer. The client must collect the user's actual value; numeric source bounds are enforced in both client UX and server validation.
+- A design object can become accepted only after every active pre-render question has an answer or explicit source-defined skip and the sketch review is positive.
+- Accepted object answers are immutable snapshots of the catalog version in which the object was approved. Catalog upgrades must not rewrite or invalidate an already accepted object; unfinished answers are re-evaluated against the new catalog before the next generation/acceptance.
+- The application questionnaire is inaccessible until at least one sketch is accepted. A submitted application is persisted and queued for Telegram delivery; deployed runtime readiness requires at least one active admin/superadmin Telegram recipient.

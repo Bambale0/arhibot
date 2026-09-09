@@ -20,7 +20,7 @@ def _question(key: str, question_id: str) -> dict:
 def test_questionnaire_catalog_matches_source_bundle() -> None:
     catalog = QuestionnaireCatalogResponse.model_validate(build_catalog())
     sources = _load_sources()
-    assert catalog.version == "2026-09-09.1"
+    assert catalog.version == "2026-09-09.2"
     assert CATALOG_VERSION == catalog.version
     assert len(catalog.sections) == 6
     assert len(catalog.questionnaires) == 27
@@ -110,14 +110,21 @@ def test_like_house_option_is_available_only_after_house_is_accepted() -> None:
     assert session.answers["banya"]["1"] == "Как у дома"
 
 
-def test_guest_facade_skip_exists_only_for_inherited_house_style() -> None:
-    facade = _question("gostevoy", "8")
-    assert facade["skip_default"] == "отделка дома"
-    assert facade["skip_condition"] == {
-        "question_id": "1",
-        "operator": "eq",
-        "value": "Как у дома",
-    }
+def test_facade_skip_exists_only_for_inherited_house_style() -> None:
+    for object_key, question_id in {
+        "gostevoy": "8",
+        "banya": "9",
+        "garazh": "6",
+        "letnyaya-kuhnya": "7",
+        "hozblok": "5",
+    }.items():
+        facade = _question(object_key, question_id)
+        assert facade["skip_default"] == "отделка дома"
+        assert facade["skip_condition"] == {
+            "question_id": "1",
+            "operator": "eq",
+            "value": "Как у дома",
+        }
     assert _question("naves", "5")["skip_default"] is None
     assert _question("zabor", "4")["skip_default"] is None
 
@@ -150,6 +157,11 @@ def test_accepted_objects_and_site_source_are_immutable_within_session() -> None
     with pytest.raises(AppError) as exc:
         QuestionnaireService._validate_accepted_object_locks(previous, changed_source)
     assert "site-photo choice is fixed" in exc.value.detail
+
+    changed_selection = previous.model_copy(update={"selected_objects": ["eskez-doma"]})
+    with pytest.raises(AppError) as exc:
+        QuestionnaireService._validate_accepted_object_locks(previous, changed_selection)
+    assert "Selected questionnaire objects are fixed" in exc.value.detail
 
     removed = previous.model_copy(update={"accepted_objects": []})
     with pytest.raises(AppError) as exc:
@@ -191,6 +203,113 @@ def test_server_accepts_only_explicit_skip_defaults() -> None:
     )
 
 
+def test_server_rejects_options_hidden_by_questionnaire_rules() -> None:
+    service = QuestionnaireService(None)
+
+    roof = _question("eskez-doma", "7")
+    with pytest.raises(AppError) as exc:
+        service._validate_answer(roof, "Плоская", {"1": "Барнхаус"}, False)
+    assert "inactive" in exc.value.detail
+    service._validate_answer(
+        roof,
+        "Плоская",
+        {"1": "Современный минимализм"},
+        False,
+    )
+
+    extras = _question("eskez-doma", "13")
+    with pytest.raises(AppError) as exc:
+        service._validate_answer(
+            extras,
+            ["Балкон"],
+            {"4": "2 этажа", "12б": ["Второй этаж"]},
+            False,
+        )
+    assert "inactive" in exc.value.detail
+    service._validate_answer(
+        extras,
+        ["Балкон"],
+        {"4": "2 этажа", "12б": ["Первый этаж"]},
+        False,
+    )
+
+
+def test_questionnaire_cannot_start_before_source_or_open_application_early() -> None:
+    service = QuestionnaireService(None)
+    catalog = build_catalog()
+
+    before_source = DesignSession(
+        catalog_version=CATALOG_VERSION,
+        selected_objects=["eskez-doma"],
+        current_object="eskez-doma",
+        current_question_id="1",
+    )
+    with pytest.raises(AppError) as exc:
+        service._validate(before_source, catalog, allow_submitted=False)
+    assert "site photo" in exc.value.detail
+
+    early_application = DesignSession(
+        catalog_version=CATALOG_VERSION,
+        selected_objects=["eskez-doma"],
+        source_step_completed=True,
+        current_object="zayavka",
+        current_question_id="20",
+    )
+    with pytest.raises(AppError) as exc:
+        service._validate(early_application, catalog, allow_submitted=False)
+    assert "accepted sketch" in exc.value.detail
+
+    wrong_initial_scene = DesignSession(
+        catalog_version=CATALOG_VERSION,
+        selected_objects=["eskez-doma"],
+        source_step_completed=True,
+        source_asset_id=None,
+        scene_asset_id=uuid4(),
+    )
+    with pytest.raises(AppError) as exc:
+        service._validate(wrong_initial_scene, catalog, allow_submitted=False)
+    assert "one-time site source" in exc.value.detail
+
+
+def test_acceptance_requires_all_visible_questions_and_positive_review() -> None:
+    service = QuestionnaireService(None)
+    catalog = build_catalog()
+    session_id = uuid4()
+    previous = DesignSession(
+        session_id=session_id,
+        catalog_version=CATALOG_VERSION,
+        selected_objects=["lavochka"],
+        current_object="lavochka",
+        source_step_completed=True,
+    )
+    incomplete = previous.model_copy(
+        update={
+            "accepted_objects": ["lavochka"],
+            "answers": {"lavochka": {"1": "Современная"}},
+        },
+        deep=True,
+    )
+    with pytest.raises(AppError) as exc:
+        service._validate_acceptance_completion(previous, incomplete, catalog)
+    assert "must be answered" in exc.value.detail
+
+    definition = _definition("lavochka")
+    answers = {}
+    for question in definition["questions"]:
+        if question["phase"] == "pre_render":
+            answers[question["id"]] = question["options"][0]
+    review = next(question for question in definition["questions"] if question["phase"] == "review")
+    answers[review["id"]] = review["options"][1]
+    negative = incomplete.model_copy(update={"answers": {"lavochka": answers}}, deep=True)
+    with pytest.raises(AppError) as exc:
+        service._validate_acceptance_completion(previous, negative, catalog)
+    assert "positive sketch review" in exc.value.detail
+
+    answers[review["id"]] = review["options"][0]
+    accepted = negative.model_copy(update={"answers": {"lavochka": answers}}, deep=True)
+    service._validate_acceptance_completion(previous, accepted, catalog)
+
+
 def test_newly_accepted_object_requires_visual_lock_and_preserves_existing_locks() -> None:
     session_id = uuid4()
     house_generation = uuid4()
@@ -229,6 +348,7 @@ def test_newly_accepted_object_requires_visual_lock_and_preserves_existing_locks
         "width": 0.3,
         "height": 0.5,
     }
+    accepted.edit_regions["banya"] = accepted.lock_regions["banya"]
     QuestionnaireService._validate_accepted_object_locks(previous, accepted)
 
     changed_house_lock = previous.model_copy(deep=True)
@@ -241,3 +361,58 @@ def test_newly_accepted_object_requires_visual_lock_and_preserves_existing_locks
     with pytest.raises(AppError) as exc:
         QuestionnaireService._validate_accepted_object_locks(previous, changed_house_lock)
     assert "cannot change its lock region" in exc.value.detail
+
+
+def test_custom_option_requires_a_real_value_and_validates_numeric_bounds() -> None:
+    service = QuestionnaireService(None)
+
+    bath_area = _question("banya", "2")
+    with pytest.raises(AppError) as exc:
+        service._validate_answer(bath_area, "Свой вариант", {}, False)
+    assert "custom questionnaire value" in exc.value.detail
+
+    with pytest.raises(AppError) as exc:
+        service._validate_answer(bath_area, "Свой вариант: 8", {}, False)
+    assert "below" in exc.value.detail
+
+    service._validate_answer(bath_area, "Свой вариант: 65", {}, False)
+
+    gazebo_size = _question("besedka", "4")
+    service._validate_answer(gazebo_size, "Свой вариант: 4×6 м", {}, False)
+    with pytest.raises(AppError) as exc:
+        service._validate_answer(gazebo_size, "Свой вариант:", {}, False)
+    assert "must not be blank" in exc.value.detail
+
+
+def test_catalog_bump_keeps_accepted_answers_but_revalidates_unfinished_answers() -> None:
+    service = QuestionnaireService(None)
+    catalog = build_catalog()
+    session_id = uuid4()
+    legacy_answers = {
+        "banya": {
+            "1": "Барнхаус",
+            "9": "отделка дома",
+        }
+    }
+    previous = DesignSession(
+        session_id=session_id,
+        catalog_version="2026-09-09.1",
+        selected_objects=["banya"],
+        source_step_completed=True,
+        answers=legacy_answers,
+        accepted_objects=["banya"],
+    )
+    upgraded = previous.model_copy(update={"catalog_version": CATALOG_VERSION}, deep=True)
+    service._validate(upgraded, catalog, allow_submitted=False, previous=previous)
+
+    unfinished_previous = previous.model_copy(
+        update={"accepted_objects": []},
+        deep=True,
+    )
+    unfinished = unfinished_previous.model_copy(
+        update={"catalog_version": CATALOG_VERSION},
+        deep=True,
+    )
+    with pytest.raises(AppError) as exc:
+        service._validate(unfinished, catalog, allow_submitted=False, previous=unfinished_previous)
+    assert "cannot be skipped" in exc.value.detail

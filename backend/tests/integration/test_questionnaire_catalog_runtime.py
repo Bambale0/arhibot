@@ -19,6 +19,6 @@ async def test_questionnaire_catalog_is_served_after_fresh_migrations() -> None:
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["version"] == "2026-09-09.1"
+    assert payload["version"] == "2026-09-09.2"
     assert len(payload["questionnaires"]) == 27
     assert payload["questionnaires"][0]["key"] == "eskez-doma"
