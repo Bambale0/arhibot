@@ -86,6 +86,81 @@ jobs:
           curl -fsS http://127.0.0.1:18080/health/ready >/dev/null
           curl -fsS http://127.0.0.1:18080/ | grep -q '<div id="root"></div>'
 
+          public_webapp_url=$("${compose[@]}" exec -T bot python - <<'PY'
+          from app.core.config import get_settings
+
+          url = (get_settings().telegram_webapp_url or "").strip()
+          if not url:
+              raise SystemExit("TELEGRAM_WEBAPP_URL is empty in the deployed bot container")
+          print(url)
+          PY
+          )
+
+          case "${public_webapp_url}" in
+            https://*) ;;
+            *)
+              echo "Configured Telegram Mini App URL is not HTTPS" >&2
+              exit 1
+              ;;
+          esac
+
+          if ! curl -fsSL --connect-timeout 8 --max-time 20 "${public_webapp_url}" | grep -q '<div id="root"></div>'; then
+            echo "Public Telegram Mini App URL is unreachable or does not serve the frontend" >&2
+            "${compose[@]}" logs --tail 100 nginx frontend 2>&1 >&2 || true
+            exit 1
+          fi
+
+          if ! "${compose[@]}" exec -T bot python - <<'PY'
+          import sys
+          from urllib.parse import urlsplit, urlunsplit
+
+          from app.core.config import get_settings
+          from app.telegram_bot.main import TelegramBotApi
+
+
+          def canonicalize(raw: str) -> str:
+              parsed = urlsplit(raw.strip())
+              if parsed.scheme.lower() != "https" or not parsed.hostname:
+                  raise ValueError("Mini App URL must be an absolute HTTPS URL")
+              host = parsed.hostname.encode("idna").decode("ascii").lower()
+              port = parsed.port
+              netloc = host if port in (None, 443) else f"{host}:{port}"
+              path = parsed.path or "/"
+              if path != "/":
+                  path = path.rstrip("/")
+              return urlunsplit(("https", netloc, path, parsed.query, ""))
+
+
+          settings = get_settings()
+          expected = (settings.telegram_webapp_url or "").strip()
+          token = (settings.telegram_bot_token or "").strip()
+          if not expected or not token:
+              raise SystemExit("Telegram Mini App runtime configuration is incomplete")
+
+          menu = TelegramBotApi(token).call("getChatMenuButton") or {}
+          actual = ((menu.get("web_app") or {}).get("url") or "").strip()
+          if menu.get("type") != "web_app" or not actual:
+              raise SystemExit("Telegram default chat menu is not configured as a Web App")
+
+          expected_canonical = canonicalize(expected)
+          actual_canonical = canonicalize(actual)
+          if expected_canonical != actual_canonical:
+              expected_host = urlsplit(expected_canonical).hostname
+              actual_host = urlsplit(actual_canonical).hostname
+              print(
+                  f"Telegram Mini App URL mismatch: expected_host={expected_host} actual_host={actual_host}",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+
+          print(f"telegram_menu_button_url_match=true host={urlsplit(expected_canonical).hostname}")
+          PY
+          then
+            echo "Telegram chat menu Mini App URL does not match deployed TELEGRAM_WEBAPP_URL" >&2
+            "${compose[@]}" logs --tail 100 bot 2>&1 >&2 || true
+            exit 1
+          fi
+
           questionnaire_body=$(mktemp)
           if ! curl -fsS http://127.0.0.1:18080/api/v1/questionnaires -o "${questionnaire_body}"; then
             echo "Questionnaire catalog endpoint failed" >&2
@@ -116,5 +191,5 @@ jobs:
             [[ "${running}" == "true" ]] || { echo "Container is not running: ${service}" >&2; exit 1; }
           done
 
-          echo "Development API, questionnaire catalog, project contexts, frontend, Telegram bot, questionnaire delivery worker, generation worker and renderer worker are running"
+          echo "Development API, public Mini App URL, Telegram menu button, questionnaire catalog, project contexts, frontend, Telegram bot, questionnaire delivery worker, generation worker and renderer worker are running"
           REMOTE
