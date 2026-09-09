@@ -11,12 +11,13 @@ if os.getenv("RUN_INTEGRATION_TESTS") != "1":
 
 from app.db.models.assets import Asset  # noqa: E402
 from app.db.models.generations import Generation  # noqa: E402
-from app.db.models.users import User  # noqa: E402
+from app.db.models.users import AuthIdentity, User  # noqa: E402
 from app.db.session import get_session_factory  # noqa: E402
 from app.domain.assets.enums import AssetPurpose, AssetType  # noqa: E402
 from app.domain.generations.enums import GenerationStatus, GenerationType  # noqa: E402
-from app.domain.users.enums import UserRole  # noqa: E402
+from app.domain.users.enums import AuthProvider, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
+from app.telegram_bot.questionnaire_notifications import deliver_pending_applications_once  # noqa: E402
 
 
 async def _register_admin(client: AsyncClient) -> tuple[dict, dict[str, str]]:
@@ -35,6 +36,13 @@ async def _register_admin(client: AsyncClient) -> tuple[dict, dict[str, str]]:
         user = await session.get(User, user_id)
         assert user is not None
         user.role = UserRole.SUPERADMIN
+        session.add(
+            AuthIdentity(
+                user_id=user_id,
+                provider=AuthProvider.TELEGRAM,
+                provider_user_id=str(900000000 + (user_id.int % 99999999)),
+            )
+        )
         await session.commit()
     return tokens, {"Authorization": f"Bearer {tokens['access_token']}"}
 
@@ -159,6 +167,7 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
         assert submitted.status_code == 200, submitted.text
         application_id = submitted.json()["application"]["id"]
         assert submitted.json()["application"]["status"] == "new"
+        assert submitted.json()["application"]["telegram_delivery_status"] == "pending"
 
         repeated = await client.post(
             f"/api/v1/projects/{project_id}/questionnaire-application",
@@ -168,9 +177,32 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
         assert repeated.status_code == 200, repeated.text
         assert repeated.json()["application"]["id"] == application_id
 
+        class FakeTelegramApi:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict]] = []
+
+            def call(self, method: str, payload: dict, *, timeout: int = 15):
+                self.calls.append((method, payload))
+                return {"message_id": len(self.calls)}
+
+        fake_telegram = FakeTelegramApi()
+        delivered, failed = await deliver_pending_applications_once(api=fake_telegram)
+        assert delivered >= 1
+        assert failed == 0
+        assert any(
+            method == "sendMessage"
+            and application_id in payload["text"]
+            and payload["chat_id"]
+            for method, payload in fake_telegram.calls
+        )
+
         applications = await client.get(
             "/api/v1/admin/questionnaire-applications",
             headers=headers,
         )
         assert applications.status_code == 200, applications.text
-        assert any(item["id"] == application_id for item in applications.json())
+        stored_application = next(
+            item for item in applications.json() if item["id"] == application_id
+        )
+        assert stored_application["telegram_delivery_status"] == "sent"
+        assert stored_application["telegram_notified_at"] is not None

@@ -41,7 +41,7 @@ function newSession(version:string, selected:string[]):DesignSession {
     session_id:crypto.randomUUID(),
     catalog_version:version,
     selected_objects:selected,
-    current_object:selected[0] || null,
+    current_object:selected.length === 1 ? selected[0] : null,
     current_question_id:null,
     source_step_completed:false,
     source_asset_id:null,
@@ -87,7 +87,8 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         if (initial.source_asset_id) {
           try { setSourceAsset(await api.getAsset(initial.source_asset_id)) } catch { /* deleted source */ }
         }
-        const generationId = initial.current_object ? initial.generation_ids[initial.current_object] : null
+        const previewKey = initial.current_object || initial.accepted_objects.at(-1) || null
+        const generationId = previewKey ? initial.generation_ids[previewKey] : null
         if (generationId) {
           try {
             const generation = await api.getGeneration(generationId)
@@ -158,6 +159,22 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   function availableOptions(question:QuestionnaireQuestion) {
     return question.options.filter((option) => conditionOk(question.option_rules[option] || null, objectAnswers, houseAccepted))
+  }
+
+  async function chooseObject(key:string) {
+    if (!session || session.accepted_objects.includes(key) || !session.selected_objects.includes(key)) return
+    const definition = definitions.get(key)
+    if (!definition) return
+    const next = { ...session, current_object:key, current_question_id:null, edit_question_ids:[] }
+    const first = preQuestions(definition, next)[0]
+    await persist({ ...next, current_question_id:first?.id || null })
+  }
+
+  async function chooseApplication() {
+    if (!session || !session.accepted_objects.length) return
+    const definition = definitions.get('zayavka')
+    const first = definition?.questions.find((q) => q.phase === 'application')
+    await persist({ ...session, current_object:'zayavka', current_question_id:first?.id || null, edit_question_ids:[] })
   }
 
   async function setSource(asset:Asset|null) {
@@ -321,18 +338,14 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     const accepted = next.accepted_objects.includes(definition.key)
       ? next.accepted_objects
       : [...next.accepted_objects, definition.key]
-    const nextKey = next.selected_objects.find((key) => !accepted.includes(key)) || 'zayavka'
-    const nextDef = definitions.get(nextKey)
-    const first = nextDef?.questions.find((q) => q.phase === (nextKey === 'zayavka' ? 'application' : 'pre_render'))
-    const saved = await persist({
+    await persist({
       ...next,
       accepted_objects:accepted,
       scene_asset_id:renderOutput.id,
-      current_object:nextKey,
-      current_question_id:first?.id || null,
+      current_object:null,
+      current_question_id:null,
       edit_question_ids:[],
     })
-    if (saved) setRenderOutput(null)
   }
 
   if (error && (!catalog || !session)) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>Опросник не открылся</h1><div className="banner-error">{error}</div><button className="secondary-button" onClick={onBack}>Назад</button></section></main>
@@ -340,8 +353,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   if (!session.source_step_completed) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon /> Назад</button><strong>{project.name}</strong><span>Исходный кадр</span></header><section className="questionnaire-card"><span className="eyebrow">ОДИН РАЗ ДО ОПРОСА</span><h1>Загрузите фото участка</h1><p>Или продолжите без фотографии. Для следующих объектов будет использоваться последний принятый кадр.</p><input ref={fileRef} hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={upload}/><button className="questionnaire-upload" disabled={busy} onClick={() => fileRef.current?.click()}><UploadIcon/><strong>Выбрать фото</strong><span>JPG, PNG или WebP</span></button><button className="secondary-button questionnaire-wide" disabled={busy} onClick={() => void setSource(null)}>Продолжить без фото</button>{error && <div className="banner-error">{error}</div>}</section></main>
 
-  if (session.application_submitted) return <main className="questionnaire-shell"><section className="questionnaire-card finish-card"><SparkIcon/><span className="eyebrow">ГОТОВО</span><h1>Заявка отправлена</h1><p>Эскизы, ответы и заявка сохранены.</p><button className="primary-button" onClick={onBack}>Вернуться к проектам</button></section></main>
-  if (!current) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>Нет выбранного объекта</h1><button className="secondary-button" onClick={onBack}>Назад</button></section></main>
+  if (session.application_submitted) return <main className="questionnaire-shell"><section className="questionnaire-card finish-card"><SparkIcon/><span className="eyebrow">ГОТОВО</span><h1>Заявка отправлена</h1><p>Эскизы и ответы сохранены. Заявка отправляется администратору в Telegram.</p><button className="primary-button" onClick={onBack}>Вернуться к проектам</button></section></main>
+  if (!current) {
+    const remaining = session.selected_objects.filter((key) => !session.accepted_objects.includes(key))
+    const hasAccepted = session.accepted_objects.length > 0
+    return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{hasAccepted ? 'Что дальше?' : 'Выбор объекта'}</span></header><section className="questionnaire-card"><span className="eyebrow">{hasAccepted ? 'ЭСКИЗ ПРИНЯТ' : 'НАЧАЛО ОПРОСА'}</span><h1>{hasAccepted ? 'Что проектируем дальше?' : 'С чего начнём?'}</h1><p>{hasAccepted ? 'Принятый кадр зафиксирован. Выберите следующий объект или переходите к заявке.' : 'Вы выбрали несколько элементов. Выберите, какой опросник пройти первым.'}</p>{hasAccepted && renderOutput && <div className="questionnaire-result"><img src={renderOutput.url} alt="Последний принятый эскиз"/></div>}{remaining.length > 0 && <><div className="questionnaire-options">{remaining.map((key) => <button key={key} className="questionnaire-option" disabled={busy} onClick={() => void chooseObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div></>}{hasAccepted && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void chooseApplication()}>Перейти к заявке</button></div>}{error && <div className="banner-error">{error}</div>}</section></main>
+  }
 
   if (busy && !active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card generating-card"><SparkIcon/><h1>Создаём: {current.title}</h1><p>Сохраняем текущую сцену, ракурс и уже принятые объекты.</p>{error && <div className="banner-error">{error}</div>}</section></main>
 
@@ -349,21 +366,21 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   const options = availableOptions(active)
   const currentValue = objectAnswers[active.id]
-  const canSkip = active.skip_default !== null
-    ? conditionOk(active.skip_condition, objectAnswers, houseAccepted)
-    : !active.required
+  const canSkip = active.skip_default !== null && conditionOk(active.skip_condition, objectAnswers, houseAccepted)
   const review = active.phase === 'review'
   const refinement = current.key === 'eskez-doma' && active.id === '15б'
-  const multiCanContinue = !active.required || multi.length > 0 || (refinement && Boolean(reviewComment.trim()))
+  const primaryReview = review && active.kind === 'single' && options[0]?.startsWith('Да') && options[1]?.startsWith('Нет')
+  const multiCanContinue = multi.length > 0 || (refinement && Boolean(reviewComment.trim()))
 
-  return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><div className="questionnaire-layout"><aside className="questionnaire-progress"><span className="eyebrow">ВЫБРАНО</span>{session.selected_objects.map((key, index) => <div key={key} className={`questionnaire-progress-item ${session.accepted_objects.includes(key) ? 'done' : key === current.key ? 'current' : ''}`}><b>{session.accepted_objects.includes(key) ? '✓' : index + 1}</b><span>{definitions.get(key)?.title || key}</span></div>)}<div className={`questionnaire-progress-item ${current.key === 'zayavka' ? 'current' : ''}`}><b>✓</b><span>Заявка</span></div>{sourceAsset && <div className="questionnaire-source-mini"><ImageIcon/><span>Фото участка загружено</span></div>}</aside><section className="questionnaire-card question-card"><div className="questionnaire-question-head"><div><span className="eyebrow">{active.phase === 'application' ? 'ЗАЯВКА' : review ? 'ОЦЕНКА ЭСКИЗА' : current.title.toUpperCase()}</span><h1>{active.id}. {active.text}</h1></div>{!active.required && <span className="optional-badge">можно пропустить</span>}</div>{active.help && <p className="questionnaire-help">{active.help}</p>}{review && renderOutput && <div className="questionnaire-result"><img src={renderOutput.url} alt={`Эскиз ${current.title}`}/></div>}
+  return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><div className="questionnaire-layout"><aside className="questionnaire-progress"><span className="eyebrow">ВЫБРАНО</span>{session.selected_objects.map((key, index) => <div key={key} className={`questionnaire-progress-item ${session.accepted_objects.includes(key) ? 'done' : key === current.key ? 'current' : ''}`}><b>{session.accepted_objects.includes(key) ? '✓' : index + 1}</b><span>{definitions.get(key)?.title || key}</span></div>)}<div className={`questionnaire-progress-item ${current.key === 'zayavka' ? 'current' : ''}`}><b>✓</b><span>Заявка</span></div>{sourceAsset && <div className="questionnaire-source-mini"><ImageIcon/><span>Фото участка загружено</span></div>}</aside><section className="questionnaire-card question-card"><div className="questionnaire-question-head"><div><span className="eyebrow">{active.phase === 'application' ? 'ЗАЯВКА' : review ? 'ОЦЕНКА ЭСКИЗА' : current.title.toUpperCase()}</span><h1>{active.id}. {active.text}</h1></div>{canSkip && <span className="optional-badge">можно пропустить</span>}</div>{active.help && <p className="questionnaire-help">{active.help}</p>}{review && renderOutput && <div className="questionnaire-result"><img src={renderOutput.url} alt={`Эскиз ${current.title}`}/></div>}
 
-  {(active.kind === 'single' || (active.kind === 'number' && options.length > 0)) && <div className="questionnaire-options">{options.map((option) => <button key={option} className={`questionnaire-option ${String(currentValue) === option || draft === option ? 'selected' : ''}`} onClick={() => active.kind === 'number' ? setDraft(option) : void answer(active, option)}><span>{option}</span><i/></button>)}</div>}
+  {!primaryReview && (active.kind === 'single' || (active.kind === 'number' && options.length > 0)) && <div className="questionnaire-options">{options.map((option) => <button key={option} className={`questionnaire-option ${String(currentValue) === option || draft === option ? 'selected' : ''}`} onClick={() => active.kind === 'number' ? setDraft(option) : void answer(active, option)}><span>{option}</span><i/></button>)}</div>}
+  {primaryReview && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void answer(active, options[0])}>Подходит</button><button className="secondary-button" disabled={busy} onClick={() => void answer(active, options[1])}>Уточнить</button></div>}
   {active.kind === 'multi' && <div className="questionnaire-options">{options.map((option) => <button key={option} className={`questionnaire-option ${multi.includes(option) ? 'selected' : ''}`} onClick={() => setMulti((items) => items.includes(option) ? items.filter((item) => item !== option) : active.max_selections && items.length >= active.max_selections ? items : [...items, option])}><span>{option}</span><i/></button>)}</div>}
   {refinement && <div className="questionnaire-field"><label>{active.field_hint || 'Свой комментарий'}<input value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="Опишите, что ещё нужно изменить"/></label></div>}
   {active.kind === 'number' && <div className="questionnaire-field"><label>{active.field_hint || 'Введите значение'}<input type="number" inputMode="decimal" min={active.min_value ?? undefined} max={active.max_value ?? undefined} value={draft} onChange={(event) => setDraft(event.target.value)}/></label></div>}
   {active.kind === 'text' && <div className="questionnaire-field"><label>{active.field_hint || active.text}<input value={draft} onChange={(event) => setDraft(event.target.value)}/></label></div>}
   {active.kind === 'consent' && <label className="consent-row"><input type="checkbox" checked={currentValue === true} onChange={(event) => event.target.checked && void answer(active, true)}/><span>Согласен на обработку персональных данных</span></label>}
   {error && <div className="banner-error">{error}</div>}
-  <div className="questionnaire-actions">{active.kind === 'multi' && <button className="primary-button" disabled={!multiCanContinue || busy} onClick={() => void answer(active, multi)}>Продолжить</button>}{active.kind === 'number' && <button className="primary-button" disabled={!draft || Number.isNaN(Number(draft)) || busy} onClick={() => void answer(active, Number(draft))}>Продолжить</button>}{active.kind === 'text' && <button className="primary-button" disabled={(active.required && !draft.trim()) || busy} onClick={() => void answer(active, draft.trim())}>Продолжить</button>}{canSkip && active.kind !== 'consent' && <button className="secondary-button" disabled={busy} onClick={() => void answer(active, active.skip_default ?? (active.kind === 'multi' ? [] : ''))}>Пропустить</button>}</div></section></div></main>
+  <div className="questionnaire-actions">{active.kind === 'multi' && <button className="primary-button" disabled={!multiCanContinue || busy} onClick={() => void answer(active, multi)}>Продолжить</button>}{active.kind === 'number' && <button className="primary-button" disabled={!draft || Number.isNaN(Number(draft)) || busy} onClick={() => void answer(active, Number(draft))}>Продолжить</button>}{active.kind === 'text' && <button className="primary-button" disabled={!draft.trim() || busy} onClick={() => void answer(active, draft.trim())}>Продолжить</button>}{canSkip && active.kind !== 'consent' && <button className="secondary-button" disabled={busy} onClick={() => void answer(active, active.skip_default ?? (active.kind === 'multi' ? [] : ''))}>Пропустить</button>}</div></section></div></main>
 }

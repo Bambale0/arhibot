@@ -55,8 +55,10 @@ class QuestionnaireService:
         if payload.application_submitted:
             raise self._invalid("Submit the application through the application endpoint.")
         project = await ProjectService(self.projects).get_owned_model(user, project_id)
+        previous = self._stored_session(project.context)
         catalog = await self.catalog()
         self._validate(payload, catalog, allow_submitted=False)
+        self._validate_accepted_object_locks(previous, payload)
         await self._validate_assets(user, project.id, payload)
         await self._validate_generations(user, project.id, payload)
         project.context = {
@@ -71,8 +73,10 @@ class QuestionnaireService:
         self, user: User, project_id: UUID, payload: DesignSession
     ) -> tuple[DesignSession, QuestionnaireApplicationResponse]:
         project = await ProjectService(self.projects).get_owned_model(user, project_id)
+        previous = self._stored_session(project.context)
         catalog = await self.catalog()
         self._validate(payload, catalog, allow_submitted=True)
+        self._validate_accepted_object_locks(previous, payload)
         if not payload.application_submitted:
             raise self._invalid("The application must be marked submitted.")
         await self._validate_assets(user, project.id, payload)
@@ -172,6 +176,46 @@ class QuestionnaireService:
             for item in await self.repository.list_applications(limit=limit)
         ]
 
+    @staticmethod
+    def _stored_session(context: dict | None) -> DesignSession | None:
+        raw = (context or {}).get("design_session")
+        return DesignSession.model_validate(raw) if raw else None
+
+    @classmethod
+    def _validate_accepted_object_locks(
+        cls, previous: DesignSession | None, payload: DesignSession
+    ) -> None:
+        if previous is None or previous.session_id != payload.session_id:
+            return
+
+        if previous.source_step_completed:
+            if not payload.source_step_completed or payload.source_asset_id != previous.source_asset_id:
+                raise cls._invalid(
+                    "The site-photo choice is fixed after the questionnaire starts."
+                )
+
+        locked = previous.accepted_objects
+        if payload.accepted_objects[: len(locked)] != locked:
+            raise cls._invalid("Accepted objects are immutable and must keep their order.")
+        if len(payload.accepted_objects) > len(locked) + 1:
+            raise cls._invalid("Accept objects one at a time.")
+
+        for object_key in locked:
+            if payload.generation_ids.get(object_key) != previous.generation_ids.get(object_key):
+                raise cls._invalid(f"Accepted object {object_key} cannot change generation.")
+            if payload.answers.get(object_key, {}) != previous.answers.get(object_key, {}):
+                raise cls._invalid(f"Accepted object {object_key} cannot change answers.")
+            if payload.review_comments.get(object_key, "") != previous.review_comments.get(
+                object_key, ""
+            ):
+                raise cls._invalid(f"Accepted object {object_key} cannot change review comments.")
+
+        if locked == payload.accepted_objects and locked:
+            if payload.scene_asset_id != previous.scene_asset_id:
+                raise cls._invalid(
+                    "The accepted scene can change only when a new object is accepted."
+                )
+
     async def _validate_assets(self, user: User, project_id: UUID, payload: DesignSession) -> None:
         for asset_id in (payload.source_asset_id, payload.scene_asset_id):
             if asset_id is None:
@@ -238,6 +282,8 @@ class QuestionnaireService:
             set(payload.selected_objects) | {"zayavka"}
         ):
             raise self._invalid("The current questionnaire is not part of this session.")
+        if payload.current_object in set(payload.accepted_objects):
+            raise self._invalid("An accepted object cannot be reopened for editing.")
         if any(key not in payload.selected_objects for key in payload.accepted_objects):
             raise self._invalid("Only selected objects can be accepted.")
         if any(key not in payload.selected_objects for key in payload.generation_ids):
@@ -256,7 +302,18 @@ class QuestionnaireService:
                     raise self._invalid(
                         f"Unknown question {object_key}.{question_id} in the saved session."
                     )
-                self._validate_answer(question, answer, answers, house_accepted)
+                allow_empty_multi = (
+                    object_key == "eskez-doma"
+                    and question_id == "15б"
+                    and bool(payload.review_comments.get(object_key, "").strip())
+                )
+                self._validate_answer(
+                    question,
+                    answer,
+                    answers,
+                    house_accepted,
+                    allow_empty_multi=allow_empty_multi,
+                )
 
         if payload.current_object and payload.current_question_id:
             definition = definitions[payload.current_object]
@@ -295,20 +352,21 @@ class QuestionnaireService:
         answer: object,
         answers: dict[str, object],
         house_accepted: bool,
+        *,
+        allow_empty_multi: bool = False,
     ) -> None:
         skip_default = question.get("skip_default")
         if skip_default is not None and answer == skip_default:
             if not self._condition_ok(question.get("skip_condition"), answers, house_accepted):
                 raise self._invalid("This question cannot be skipped for the current answers.")
             return
-        if not question.get("required") and answer in ("", []):
-            return
-
         kind = question["kind"]
         options = set(question["options"])
         if kind == "multi":
             if not isinstance(answer, list) or not all(isinstance(item, str) for item in answer):
                 raise self._invalid("A multi-select answer must be a list of strings.")
+            if not answer and not allow_empty_multi:
+                raise self._invalid("Select at least one option or use the explicit skip action.")
             if question.get("max_selections") and len(answer) > question["max_selections"]:
                 raise self._invalid("Too many options were selected.")
             if options and any(item not in options for item in answer):
@@ -330,6 +388,8 @@ class QuestionnaireService:
             return
         if not isinstance(answer, str):
             raise self._invalid("A questionnaire answer must be text.")
+        if not answer.strip():
+            raise self._invalid("A questionnaire answer must not be blank; use skip when available.")
         if kind == "single" and options and answer not in options:
             raise self._invalid("The answer is not one of the questionnaire options.")
 

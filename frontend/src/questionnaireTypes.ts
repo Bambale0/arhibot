@@ -54,6 +54,8 @@ export type QuestionnaireApplication = {
   answers:Record<string,Record<string,QuestionnaireAnswer>>
   scene_asset_id:string|null
   status:string
+  telegram_delivery_status:string
+  telegram_notified_at:string|null
   created_at:string
 }
 export type QuestionnaireApplicationSubmitResponse = { session:DesignSession; application:QuestionnaireApplication }

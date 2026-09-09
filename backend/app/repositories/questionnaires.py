@@ -36,3 +36,14 @@ class QuestionnaireRepository:
             .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def list_pending_telegram_applications(
+        self, *, limit: int = 20
+    ) -> list[QuestionnaireApplication]:
+        result = await self.session.execute(
+            select(QuestionnaireApplication)
+            .where(QuestionnaireApplication.telegram_delivery_status == "pending")
+            .order_by(QuestionnaireApplication.created_at.asc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())

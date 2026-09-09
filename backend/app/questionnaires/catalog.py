@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-CATALOG_VERSION = "2026-09-08"
+CATALOG_VERSION = "2026-09-09.1"
 
 SECTION_SPECS = [
     ("house", "Дом", ["eskez-doma"]),
@@ -259,6 +259,15 @@ def _apply_common_overrides(key: str, questions: list[dict[str, Any]]) -> None:
     if key in STYLE_QUESTIONNAIRES and "1" in by_id:
         by_id["1"]["option_rules"]["Как у дома"] = {"operator": "house_accepted"}
 
+    # The guest-house source allows skipping facade material only when style is inherited.
+    if key == "gostevoy" and "8" in by_id:
+        by_id["8"]["skip_default"] = "отделка дома"
+        by_id["8"]["skip_condition"] = {
+            "question_id": "1",
+            "operator": "eq",
+            "value": "Как у дома",
+        }
+
     # Explicit selection limits stated by the source.
     limits = {
         ("gostevoy", "8"): 3, ("banya", "9"): 3, ("garazh", "6"): 3,
@@ -392,7 +401,9 @@ def build_catalog() -> dict[str, Any]:
             "Фото участка или «Продолжить без фото» — один раз, до опросника.",
             "Если есть принятый эскиз дома — следующие объекты сажаем на этот кадр.",
             "У основного дома и гостевого планировок нет. Комнаты не спрашиваем.",
-            "Если вопрос можно пропустить, применяется указанное в исходном файле значение по умолчанию.",
-            "Заявка открывается только после принятого эскиза.",
+            "Кнопка «Пропустить» доступна только там, где исходный файл явно разрешает пропуск; применяется указанное значение по умолчанию.",
+            "После принятия объекта пользователь сам выбирает следующий объект или переходит к заявке.",
+            "Принятые объекты и их ответы фиксируются и не редактируются в текущей сессии.",
+            "Заявка открывается только после принятого эскиза и после отправки доставляется администратору в Telegram.",
         ],
     }

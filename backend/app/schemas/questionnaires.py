@@ -129,6 +129,8 @@ class QuestionnaireApplicationResponse(BaseModel):
     answers: dict[str, dict[str, QuestionAnswer]]
     scene_asset_id: UUID | None
     status: str
+    telegram_delivery_status: str
+    telegram_notified_at: datetime | None
     created_at: datetime
 
 

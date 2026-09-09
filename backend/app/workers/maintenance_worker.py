@@ -4,6 +4,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from time import monotonic
 
 from sqlalchemy import or_, select
 
@@ -14,9 +15,11 @@ from app.db.models.generations import Generation
 from app.db.session import dispose_engine, get_session_factory
 from app.repositories.operations import OperationalSettingsRepository
 from app.services.asset_service import LocalMediaStorage
+from app.telegram_bot.questionnaire_notifications import deliver_pending_applications_once
 
 logger = logging.getLogger(__name__)
-MAINTENANCE_INTERVAL_SECONDS = 3600
+WORKER_INTERVAL_SECONDS = 30
+MEDIA_CLEANUP_INTERVAL_SECONDS = 3600
 CLEANUP_BATCH_SIZE = 100
 
 
@@ -78,17 +81,29 @@ async def run_worker() -> None:
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    logger.info("AuRoom maintenance worker started; retention is DB-configured")
+    logger.info("AuRoom maintenance worker started; retention and application delivery enabled")
+    next_cleanup_at = 0.0
     while True:
         try:
-            removed = await cleanup_media_once()
-            if removed:
-                logger.info("Removed %s expired soft-deleted media asset(s)", removed)
+            delivered, failed = await deliver_pending_applications_once()
+            if delivered or failed:
+                logger.info(
+                    "Questionnaire Telegram delivery: sent=%s pending_failed=%s",
+                    delivered,
+                    failed,
+                )
+
+            now = monotonic()
+            if now >= next_cleanup_at:
+                removed = await cleanup_media_once()
+                if removed:
+                    logger.info("Removed %s expired soft-deleted media asset(s)", removed)
+                next_cleanup_at = now + MEDIA_CLEANUP_INTERVAL_SECONDS
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("Maintenance iteration failed")
-        await asyncio.sleep(MAINTENANCE_INTERVAL_SECONDS)
+        await asyncio.sleep(WORKER_INTERVAL_SECONDS)
 
 
 async def _main() -> None:
