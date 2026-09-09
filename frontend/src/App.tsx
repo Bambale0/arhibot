@@ -1,17 +1,18 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import * as api from './api'
 import { useAuth } from './auth'
 import type { Asset, Generation, GenerationMode, Project } from './types'
-import { AdminScreen } from './components/AdminScreen'
 import { AppFrame, type AppSection } from './components/AppFrame'
 import { AuthScreen } from './components/AuthScreen'
-import { CreateScreen } from './components/CreateScreen'
-import { HistoryScreen } from './components/HistoryScreen'
-import { IdeasScreen } from './components/IdeasScreen'
-import { ProfileScreen } from './components/ProfileScreen'
 import { ProjectsScreen } from './components/ProjectsScreen'
-import { QuestionnaireWorkspaceScreen } from './components/QuestionnaireWorkspaceScreen'
-import { WorkspaceScreen } from './components/WorkspaceScreen'
+
+const AdminScreen = lazy(() => import('./components/AdminScreen').then((module) => ({ default: module.AdminScreen })))
+const CreateScreen = lazy(() => import('./components/CreateScreen').then((module) => ({ default: module.CreateScreen })))
+const HistoryScreen = lazy(() => import('./components/HistoryScreen').then((module) => ({ default: module.HistoryScreen })))
+const IdeasScreen = lazy(() => import('./components/IdeasScreen').then((module) => ({ default: module.IdeasScreen })))
+const ProfileScreen = lazy(() => import('./components/ProfileScreen').then((module) => ({ default: module.ProfileScreen })))
+const QuestionnaireWorkspaceScreen = lazy(() => import('./components/QuestionnaireWorkspaceScreen').then((module) => ({ default: module.QuestionnaireWorkspaceScreen })))
+const WorkspaceScreen = lazy(() => import('./components/WorkspaceScreen').then((module) => ({ default: module.WorkspaceScreen })))
 
 function Loader() {
   return <div className="boot-loader"><div className="wordmark"><span className="wordmark-dot" />AuRoom</div><div className="loader-line"><span /></div></div>
@@ -39,9 +40,9 @@ export default function App() {
   if (loading) return <Loader />
   if (!user) { if (window.Telegram?.WebApp?.initData) return <TelegramAuthError message={error} />; return <AuthScreen /> }
   const isAdmin = user.role === 'admin' || user.role === 'superadmin'
-  if (adminOpen && isAdmin) return <AdminScreen onClose={() => setAdminOpen(false)} />
-  if (questionnaireProject) return <QuestionnaireWorkspaceScreen project={questionnaireProject} selectedObjects={questionnaireObjects} onBack={() => { setQuestionnaireProject(null); setQuestionnaireObjects([]) }} onProjectChange={setQuestionnaireProject} />
-  if (activeProject) return <WorkspaceScreen project={activeProject} initialMode={workspaceMode} initialPrompt={workspacePrompt} initialAsset={workspaceAsset} onBack={() => { setActiveProject(null); setWorkspaceAsset(null) }} onProjectChange={setActiveProject} />
+  if (adminOpen && isAdmin) return <Suspense fallback={<Loader />}><AdminScreen onClose={() => setAdminOpen(false)} /></Suspense>
+  if (questionnaireProject) return <Suspense fallback={<Loader />}><QuestionnaireWorkspaceScreen project={questionnaireProject} selectedObjects={questionnaireObjects} onBack={() => { setQuestionnaireProject(null); setQuestionnaireObjects([]) }} onProjectChange={setQuestionnaireProject} /></Suspense>
+  if (activeProject) return <Suspense fallback={<Loader />}><WorkspaceScreen project={activeProject} initialMode={workspaceMode} initialPrompt={workspacePrompt} initialAsset={workspaceAsset} onBack={() => { setActiveProject(null); setWorkspaceAsset(null) }} onProjectChange={setActiveProject} /></Suspense>
 
   function openWorkspace(project: Project, mode: GenerationMode = 'floor_plan', prompt = '', asset: Asset | null = null) { setWorkspaceMode(mode); setWorkspacePrompt(prompt); setWorkspaceAsset(asset); setActiveProject(project) }
   function openQuestionnaire(project: Project, selectedObjects: string[]) { setQuestionnaireObjects(selectedObjects); setQuestionnaireProject(project) }
@@ -54,9 +55,11 @@ export default function App() {
 
   return <AppFrame active={section} onNavigate={navigate}>
     {section === 'home' && <ProjectsScreen onOpenProject={(project) => openWorkspace(project, 'floor_plan')} />}
-    {section === 'ideas' && <IdeasScreen onUseIdea={(mode, prompt) => { setCreateMode(mode); setCreatePrompt(prompt); setSection('create') }} />}
-    {section === 'create' && <CreateScreen initialMode={createMode} initialPrompt={createPrompt} onOpenProject={(project, mode, prompt) => openWorkspace(project, mode, prompt)} onOpenQuestionnaire={openQuestionnaire} />}
-    {section === 'history' && <HistoryScreen onOpenGeneration={(generation) => { void openHistoryGeneration(generation, false) }} onUseAsSource={(generation) => { void openHistoryGeneration(generation, true) }} />}
-    {section === 'profile' && <ProfileScreen onOpenAdmin={isAdmin ? () => setAdminOpen(true) : undefined} />}
+    {section !== 'home' && <Suspense fallback={<Loader />}>
+      {section === 'ideas' && <IdeasScreen onUseIdea={(mode, prompt) => { setCreateMode(mode); setCreatePrompt(prompt); setSection('create') }} />}
+      {section === 'create' && <CreateScreen initialMode={createMode} initialPrompt={createPrompt} onOpenProject={(project, mode, prompt) => openWorkspace(project, mode, prompt)} onOpenQuestionnaire={openQuestionnaire} />}
+      {section === 'history' && <HistoryScreen onOpenGeneration={(generation) => { void openHistoryGeneration(generation, false) }} onUseAsSource={(generation) => { void openHistoryGeneration(generation, true) }} />}
+      {section === 'profile' && <ProfileScreen onOpenAdmin={isAdmin ? () => setAdminOpen(true) : undefined} />}
+    </Suspense>}
   </AppFrame>
 }
