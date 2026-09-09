@@ -28,6 +28,7 @@ export type ProjectContext = {
   bathrooms?: number | null
   architecture_style?: string | null
   architecture?: ArchitecturePackage | null
+  design_session?: import('./questionnaireTypes').DesignSession | null
 }
 
 export type Project = {
@@ -279,7 +280,6 @@ export type AdminBroadcast = {
   updated_at: string
   sent_at: string | null
 }
-
 
 export type AdminTelegramContent = {
   configured: boolean
