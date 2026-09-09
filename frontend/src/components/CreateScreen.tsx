@@ -5,6 +5,7 @@ import type { QuestionnaireCatalog } from '../questionnaireTypes'
 import type { GenerationMode, Project } from '../types'
 import { ArrowIcon, HomeIcon, PlanIcon, RoomIcon, SiteIcon } from './Icons'
 import '../questionnaire.css'
+import '../create-questionnaire.css'
 
 const legacyModes: { id: GenerationMode; title: string; text: string; icon: typeof HomeIcon }[] = [
   { id: 'floor_plan', title: 'Планировка дома', text: 'Сформировать функциональную схему дома по площади, этажности и составу помещений.', icon: PlanIcon },
@@ -66,14 +67,62 @@ export function CreateScreen({ initialMode, initialPrompt, onOpenProject, onOpen
   if (legacy) return <section className="page-content create-page"><div className="page-heading-row"><div><span className="eyebrow">ИДЕЯ AUROOM</span><h1>Использовать идею</h1><p>Этот вход сохранён для существующей ленты идей. Новый проектный сценарий работает через точные опросники.</p></div></div><div className="create-mode-grid">{legacyModes.map((item) => { const Icon = item.icon; return <button key={item.id} className={`create-mode-card ${legacyMode === item.id ? 'selected' : ''}`} onClick={() => setLegacyMode(item.id)}><Icon /><div><strong>{item.title}</strong><p>{item.text}</p></div><span className="radio-dot" /></button> })}</div><ProjectPicker projects={projects} loading={projectsLoading} error={projectsError} onPick={(project) => onOpenProject(project, legacyMode, initialPrompt)} /></section>
 
   const section = catalog?.sections.find((item) => item.key === activeSection) || null
+  const selectedTitles = selectedObjects.map((key) => definitions.get(key)?.title).filter(Boolean)
+
   return <section className="page-content create-page questionnaire-create">
-    <div className="page-heading-row"><div><span className="eyebrow">СОЗДАТЬ В AUROOM</span><h1>Что проектируем?</h1><p>Сначала раздел, затем один или несколько элементов. Порядок и вопросы берутся из утверждённой сборки опросников.</p></div></div>
+    <div className="page-heading-row">
+      <div>
+        <h1>Что проектируем?</h1>
+        <p>Выберите раздел и один или несколько объектов. Дальше AuRoom задаст только нужные вопросы.</p>
+      </div>
+    </div>
+
     {catalogError && <div className="banner-error">{catalogError}</div>}
     {catalogLoading ? <div>Загружаем опросники…</div> : !catalog ? <div>Опросники сейчас недоступны.</div> : <>
-      <div className="questionnaire-section-tabs">{catalog.sections.map((item) => <button key={item.key} className={item.key === activeSection ? 'selected' : ''} onClick={() => setActiveSection(item.key)}><strong>{item.title}</strong><span>{item.object_keys.filter((key) => selectedObjects.includes(key)).length || ''}</span></button>)}</div>
-      {section && <div className="questionnaire-object-grid">{section.object_keys.map((key) => { const definition = definitions.get(key); const selected = selectedObjects.includes(key); return <button key={key} className={`questionnaire-object-card ${selected ? 'selected' : ''}`} onClick={() => toggleObject(key)}><div><strong>{definition?.title || key}</strong><small>{definition?.source_file}</small></div><span className="questionnaire-check">{selected ? '✓' : '+'}</span></button> })}</div>}
-      <div className="questionnaire-selection-summary"><strong>Выбрано: {selectedObjects.length}</strong><span>{selectedObjects.map((key) => definitions.get(key)?.title).filter(Boolean).join(' · ') || 'Выберите хотя бы один объект'}</span></div>
-      <ProjectPicker projects={projects} loading={projectsLoading} error={projectsError} disabled={!selectedObjects.length} onPick={(project) => onOpenQuestionnaire(project, selectedObjects)} title="Выберите проект и начните опрос" />
+      <div className="questionnaire-section-tabs" role="tablist" aria-label="Разделы проектирования">
+        {catalog.sections.map((item) => {
+          const count = item.object_keys.filter((key) => selectedObjects.includes(key)).length
+          return <button
+            key={item.key}
+            role="tab"
+            aria-selected={item.key === activeSection}
+            className={item.key === activeSection ? 'selected' : ''}
+            onClick={() => setActiveSection(item.key)}
+          >
+            <strong>{item.title}</strong>
+            <span aria-label={count ? `Выбрано: ${count}` : 'Ничего не выбрано'}>{count || ''}</span>
+          </button>
+        })}
+      </div>
+
+      {section && <div className="questionnaire-object-grid" role="group" aria-label={section.title}>
+        {section.object_keys.map((key) => {
+          const definition = definitions.get(key)
+          const selected = selectedObjects.includes(key)
+          return <button
+            key={key}
+            className={`questionnaire-object-card ${selected ? 'selected' : ''}`}
+            aria-pressed={selected}
+            onClick={() => toggleObject(key)}
+          >
+            <div><strong>{definition?.title || key}</strong></div>
+            <span className="questionnaire-check" aria-hidden="true">{selected ? '✓' : '+'}</span>
+          </button>
+        })}
+      </div>}
+
+      <div className="questionnaire-selection-summary" aria-live="polite">
+        <strong>{selectedObjects.length ? `Выбрано: ${selectedObjects.length}` : 'Выберите объект'}</strong>
+        <span>{selectedTitles.length ? selectedTitles.join(' · ') : 'Можно выбрать несколько объектов из разных разделов.'}</span>
+      </div>
+
+      {selectedObjects.length > 0 && <ProjectPicker
+        projects={projects}
+        loading={projectsLoading}
+        error={projectsError}
+        onPick={(project) => onOpenQuestionnaire(project, selectedObjects)}
+        title="Выберите проект"
+      />}
     </>}
   </section>
 }
