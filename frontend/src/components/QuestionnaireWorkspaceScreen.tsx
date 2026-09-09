@@ -84,11 +84,20 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         const selected = order.filter((key) => selectedObjects.includes(key))
         const stored = await getQuestionnaireSession(project.id)
         if (stop) return
-        const initial = stored
-          && stored.catalog_version === loaded.version
-          && stored.selected_objects.join('|') === selected.join('|')
-          ? stored
-          : newSession(loaded.version, selected)
+        const storedStarted = Boolean(stored && (
+          stored.source_step_completed
+          || stored.accepted_objects.length
+          || Object.keys(stored.answers).length
+          || Object.keys(stored.generation_ids).length
+          || stored.application_submitted
+        ))
+        const initial = storedStarted && stored
+          ? { ...stored, catalog_version:loaded.version }
+          : stored
+            && stored.catalog_version === loaded.version
+            && JSON.stringify(stored.selected_objects) === JSON.stringify(selected)
+            ? stored
+            : newSession(loaded.version, selected)
         setSession(initial)
         if (initial.source_asset_id) {
           try { setSourceAsset(await api.getAsset(initial.source_asset_id)) } catch { /* deleted source */ }

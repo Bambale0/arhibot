@@ -333,6 +333,15 @@ async def test_second_accepted_object_requires_masked_composition() -> None:
         )
         assert unsafe.status_code == 422, unsafe.text
         assert "masked composition" in unsafe.json()["detail"]
+        forged_payload = {**unsafe_payload, "session_id": str(uuid4())}
+        forged = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=forged_payload,
+        )
+        assert forged.status_code == 422, forged.text
+        assert "session id" in forged.json()["detail"].lower()
+
 
         masked_output = Asset(
             user_id=user_id,

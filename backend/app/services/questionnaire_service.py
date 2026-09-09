@@ -185,7 +185,17 @@ class QuestionnaireService:
     def _validate_accepted_object_locks(
         cls, previous: DesignSession | None, payload: DesignSession
     ) -> None:
-        if previous is None or previous.session_id != payload.session_id:
+        if previous is None:
+            return
+        if previous.session_id != payload.session_id:
+            if (
+                previous.source_step_completed
+                or previous.answers
+                or previous.accepted_objects
+                or previous.generation_ids
+                or previous.application_submitted
+            ):
+                raise cls._invalid("A started questionnaire session cannot change its session id.")
             return
 
         if previous.source_step_completed:
