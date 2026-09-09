@@ -75,11 +75,33 @@ jobs:
             exit 1
           fi
 
+          dump_api_failure() {
+            echo "Recent API logs:" >&2
+            "${compose[@]}" logs --tail 150 api 2>&1 >&2 || true
+          }
+
           "${compose[@]}" ps
 
           curl -fsS http://127.0.0.1:18080/health/live >/dev/null
           curl -fsS http://127.0.0.1:18080/health/ready >/dev/null
           curl -fsS http://127.0.0.1:18080/ | grep -q '<div id="root"></div>'
+
+          questionnaire_body=$(mktemp)
+          if ! curl -fsS http://127.0.0.1:18080/api/v1/questionnaires -o "${questionnaire_body}"; then
+            echo "Questionnaire catalog endpoint failed" >&2
+            cat "${questionnaire_body}" >&2 || true
+            dump_api_failure
+            rm -f "${questionnaire_body}"
+            exit 1
+          fi
+          if ! grep -q '"questionnaires"' "${questionnaire_body}"; then
+            echo "Questionnaire catalog response is malformed" >&2
+            cat "${questionnaire_body}" >&2 || true
+            dump_api_failure
+            rm -f "${questionnaire_body}"
+            exit 1
+          fi
+          rm -f "${questionnaire_body}"
 
           for service in api bot worker renderer-worker frontend nginx postgres redis; do
             container_id=$("${compose[@]}" ps -q "${service}")
@@ -88,5 +110,5 @@ jobs:
             [[ "${running}" == "true" ]] || { echo "Container is not running: ${service}" >&2; exit 1; }
           done
 
-          echo "Development API, frontend, Telegram bot, generation worker and renderer worker are running"
+          echo "Development API, questionnaire catalog, frontend, Telegram bot, generation worker and renderer worker are running"
           REMOTE
