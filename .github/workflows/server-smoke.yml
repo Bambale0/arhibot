@@ -88,11 +88,12 @@ jobs:
 
           public_webapp_url=$("${compose[@]}" exec -T bot python - <<'PY'
           from app.core.config import get_settings
+          from app.telegram_bot.main import canonicalize_webapp_url
 
           url = (get_settings().telegram_webapp_url or "").strip()
           if not url:
               raise SystemExit("TELEGRAM_WEBAPP_URL is empty in the deployed bot container")
-          print(url)
+          print(canonicalize_webapp_url(url))
           PY
           )
 
@@ -112,24 +113,10 @@ jobs:
 
           if ! "${compose[@]}" exec -T bot python - <<'PY'
           import sys
-          from urllib.parse import urlsplit, urlunsplit
+          from urllib.parse import urlsplit
 
           from app.core.config import get_settings
-          from app.telegram_bot.main import TelegramBotApi
-
-
-          def canonicalize(raw: str) -> str:
-              parsed = urlsplit(raw.strip())
-              if parsed.scheme.lower() != "https" or not parsed.hostname:
-                  raise ValueError("Mini App URL must be an absolute HTTPS URL")
-              host = parsed.hostname.encode("idna").decode("ascii").lower()
-              port = parsed.port
-              netloc = host if port in (None, 443) else f"{host}:{port}"
-              path = parsed.path or "/"
-              if path != "/":
-                  path = path.rstrip("/")
-              return urlunsplit(("https", netloc, path, parsed.query, ""))
-
+          from app.telegram_bot.main import TelegramBotApi, canonicalize_webapp_url
 
           settings = get_settings()
           expected = (settings.telegram_webapp_url or "").strip()
@@ -142,8 +129,17 @@ jobs:
           if menu.get("type") != "web_app" or not actual:
               raise SystemExit("Telegram default chat menu is not configured as a Web App")
 
-          expected_canonical = canonicalize(expected)
-          actual_canonical = canonicalize(actual)
+          expected_canonical = canonicalize_webapp_url(expected)
+          actual_canonical = canonicalize_webapp_url(actual)
+          actual_host = urlsplit(actual).hostname or ""
+          if not actual_host.isascii() or actual != actual_canonical:
+              print(
+                  "Telegram Mini App URL must be stored in Telegram with an ASCII/IDNA hostname: "
+                  f"actual_host={actual_host!r}",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+
           if expected_canonical != actual_canonical:
               expected_host = urlsplit(expected_canonical).hostname
               actual_host = urlsplit(actual_canonical).hostname
@@ -153,7 +149,7 @@ jobs:
               )
               raise SystemExit(1)
 
-          print(f"telegram_menu_button_url_match=true host={urlsplit(expected_canonical).hostname}")
+          print(f"telegram_menu_button_url_match=true host={urlsplit(actual_canonical).hostname}")
           PY
           then
             echo "Telegram chat menu Mini App URL does not match deployed TELEGRAM_WEBAPP_URL" >&2
