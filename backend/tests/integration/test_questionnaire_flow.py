@@ -51,6 +51,74 @@ def _question(definition: dict, question_id: str) -> dict:
     return next(item for item in definition["questions"] if item["id"] == question_id)
 
 
+def _condition_ok(condition: dict | None, answers: dict, house_accepted: bool) -> bool:
+    if not condition:
+        return True
+    operator = condition.get("operator")
+    if operator == "house_accepted":
+        return house_accepted
+    if operator == "all":
+        return all(_condition_ok(item, answers, house_accepted) for item in condition.get("conditions", []))
+    if operator == "any":
+        return any(_condition_ok(item, answers, house_accepted) for item in condition.get("conditions", []))
+    answer = answers.get(condition.get("question_id"))
+    value = condition.get("value")
+    if operator == "eq":
+        return answer == value
+    if operator == "neq":
+        return answer != value
+    if operator == "in":
+        return isinstance(answer, str) and isinstance(value, list) and answer in value
+    if operator == "contains":
+        return isinstance(answer, list) and isinstance(value, str) and value in answer
+    if operator == "starts_with":
+        return isinstance(answer, str) and isinstance(value, str) and answer.startswith(value)
+    if operator == "not_contains_any":
+        return not isinstance(answer, list) or not isinstance(value, list) or not any(
+            item in answer for item in value
+        )
+    return True
+
+
+def _valid_object_answers(definition: dict, *, house_accepted: bool) -> dict:
+    answers: dict = {}
+    for question in definition["questions"]:
+        if question["phase"] != "pre_render":
+            continue
+        if not _condition_ok(question.get("condition"), answers, house_accepted):
+            continue
+        skip_default = question.get("skip_default")
+        if skip_default is not None and _condition_ok(
+            question.get("skip_condition"), answers, house_accepted
+        ):
+            answers[question["id"]] = skip_default
+            continue
+        if question["kind"] == "number":
+            answers[question["id"]] = question.get("min_value") or 1
+            continue
+        available = [
+            option
+            for option in question.get("options", [])
+            if _condition_ok(
+                question.get("option_rules", {}).get(option), answers, house_accepted
+            )
+        ]
+        if question["kind"] == "multi":
+            answers[question["id"]] = available[:1]
+        else:
+            answers[question["id"]] = available[0]
+
+    review = next(
+        question
+        for question in definition["questions"]
+        if question["phase"] == "review"
+        and question.get("options")
+        and question["options"][0].startswith("Да")
+    )
+    answers[review["id"]] = review["options"][0]
+    return answers
+
+
 @pytest.mark.asyncio
 async def test_questionnaire_catalog_session_and_application_flow() -> None:
     transport = ASGITransport(app=app)
@@ -75,6 +143,11 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
         assert project_response.status_code == 201, project_response.text
         project_id = UUID(project_response.json()["id"])
 
+        house_definition = next(
+            item for item in catalog["questionnaires"] if item["key"] == "eskez-doma"
+        )
+        house_answers = _valid_object_answers(house_definition, house_accepted=False)
+        house_lock = {"x": 0.12, "y": 0.10, "width": 0.76, "height": 0.78}
         fake_session = {
             "session_id": str(uuid4()),
             "catalog_version": catalog["version"],
@@ -84,11 +157,15 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
             "source_step_completed": True,
             "source_asset_id": None,
             "scene_asset_id": None,
-            "answers": {},
+            "answers": {"eskez-doma": house_answers},
             "accepted_objects": ["eskez-doma"],
             "generation_ids": {"eskez-doma": str(uuid4())},
             "edit_question_ids": [],
             "review_comments": {},
+            "edit_regions": {},
+            "lock_regions": {"eskez-doma": house_lock},
+            "region_mode": None,
+            "region_object": None,
             "application_submitted": False,
         }
         rejected = await client.put(
@@ -156,7 +233,10 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
         submitted_payload = {
             **design_session,
             "current_question_id": None,
-            "answers": {"zayavka": application_answers},
+            "answers": {
+                "eskez-doma": house_answers,
+                "zayavka": application_answers,
+            },
             "application_submitted": True,
         }
         submitted = await client.post(
@@ -215,6 +295,14 @@ async def test_second_accepted_object_requires_masked_composition() -> None:
         tokens, headers = await _register_admin(client)
         user_id = UUID(tokens["user"]["id"])
         catalog = (await client.get("/api/v1/questionnaires", headers=headers)).json()
+        house_definition = next(
+            item for item in catalog["questionnaires"] if item["key"] == "eskez-doma"
+        )
+        bath_definition = next(
+            item for item in catalog["questionnaires"] if item["key"] == "banya"
+        )
+        house_answers = _valid_object_answers(house_definition, house_accepted=False)
+        bath_answers = _valid_object_answers(bath_definition, house_accepted=True)
 
         project_response = await client.post(
             "/api/v1/projects",
@@ -266,7 +354,7 @@ async def test_second_accepted_object_requires_masked_composition() -> None:
             "source_step_completed": True,
             "source_asset_id": None,
             "scene_asset_id": str(house_output.id),
-            "answers": {},
+            "answers": {"eskez-doma": house_answers},
             "accepted_objects": ["eskez-doma"],
             "generation_ids": {"eskez-doma": str(house_generation.id)},
             "edit_question_ids": [],
@@ -317,6 +405,10 @@ async def test_second_accepted_object_requires_masked_composition() -> None:
 
         unsafe_payload = {
             **house_session,
+            "answers": {
+                "eskez-doma": house_answers,
+                "banya": bath_answers,
+            },
             "scene_asset_id": str(replace_output.id),
             "accepted_objects": ["eskez-doma", "banya"],
             "generation_ids": {

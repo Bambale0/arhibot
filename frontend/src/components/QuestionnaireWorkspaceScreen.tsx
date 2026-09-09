@@ -60,6 +60,84 @@ function newSession(version:string, selected:string[]):DesignSession {
   }
 }
 
+function answerEquals(left:QuestionnaireAnswer|undefined, right:QuestionnaireAnswer|undefined):boolean {
+  if (Array.isArray(left) || Array.isArray(right)) return JSON.stringify(left) === JSON.stringify(right)
+  return left === right
+}
+
+function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCatalog):DesignSession {
+  if (stored.catalog_version === catalog.version) return stored
+
+  const definitions = new Map(catalog.questionnaires.map((item) => [item.key, item]))
+  const houseAccepted = stored.accepted_objects.includes('eskez-doma')
+  const nextAnswers:DesignSession['answers'] = Object.fromEntries(
+    Object.entries(stored.answers).map(([key, answers]) => [key, { ...answers }]),
+  )
+  let currentQuestionId = stored.current_question_id
+
+  for (const [objectKey, answers] of Object.entries(nextAnswers)) {
+    if (stored.accepted_objects.includes(objectKey) || objectKey === 'zayavka') continue
+    const definition = definitions.get(objectKey)
+    if (!definition) continue
+
+    // Re-evaluate old, unfinished answers against the current catalog. Accepted
+    // objects are intentionally untouched because they are immutable snapshots.
+    for (let pass=0; pass<definition.questions.length; pass++) {
+      let changed = false
+      for (const question of definition.questions) {
+        const value = answers[question.id]
+        if (value === undefined) continue
+        if (!conditionOk(question.condition, answers, houseAccepted)) {
+          delete answers[question.id]
+          changed = true
+          continue
+        }
+        if (question.skip_default !== null && answerEquals(value, question.skip_default) && !conditionOk(question.skip_condition, answers, houseAccepted)) {
+          delete answers[question.id]
+          changed = true
+          continue
+        }
+        if (question.kind === 'single' && typeof value === 'string') {
+          const custom = value.startsWith('Свой вариант:') && question.options.includes('Свой вариант')
+          const placeholder = value === 'Свой вариант' && question.options.includes('Свой вариант')
+          const listed = question.options.length === 0 || question.options.includes(value)
+          const allowed = custom || (listed && conditionOk(question.option_rules[value] || null, answers, houseAccepted))
+          if (placeholder || !allowed) {
+            delete answers[question.id]
+            changed = true
+          }
+        }
+        if (question.kind === 'multi' && Array.isArray(value)) {
+          const filtered = value.filter((item) => question.options.includes(item) && conditionOk(question.option_rules[item] || null, answers, houseAccepted))
+          if (filtered.length !== value.length) {
+            if (filtered.length) answers[question.id] = filtered
+            else delete answers[question.id]
+            changed = true
+          }
+        }
+      }
+      if (!changed) break
+    }
+
+    if (stored.current_object === objectKey) {
+      const firstMissing = definition.questions.find((question) =>
+        question.phase === 'pre_render'
+        && conditionOk(question.condition, answers, houseAccepted)
+        && answers[question.id] === undefined,
+      )
+      if (firstMissing) currentQuestionId = firstMissing.id
+      else if (currentQuestionId && !definition.questions.some((question) => question.id === currentQuestionId && conditionOk(question.condition, answers, houseAccepted))) currentQuestionId = null
+    }
+  }
+
+  return {
+    ...stored,
+    catalog_version:catalog.version,
+    answers:nextAnswers,
+    current_question_id:currentQuestionId,
+  }
+}
+
 export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack, onProjectChange }:{ project:Project; selectedObjects:string[]; onBack:()=>void; onProjectChange:(project:Project)=>void }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [catalog, setCatalog] = useState<QuestionnaireCatalog|null>(null)
@@ -70,6 +148,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const [draft, setDraft] = useState<string>('')
   const [multi, setMulti] = useState<string[]>([])
   const [reviewComment, setReviewComment] = useState<string>('')
+  const [customOption, setCustomOption] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string|null>(null)
 
@@ -92,7 +171,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
           || stored.application_submitted
         ))
         const initial = storedStarted && stored
-          ? { ...stored, catalog_version:loaded.version }
+          ? normalizeStartedSession(stored, loaded)
           : stored
             && stored.catalog_version === loaded.version
             && JSON.stringify(stored.selected_objects) === JSON.stringify(selected)
@@ -136,7 +215,11 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   useEffect(() => {
     if (!active || !current || !session) return
     const value = objectAnswers[active.id]
-    setDraft(typeof value === 'number' || typeof value === 'string' ? String(value) : '')
+    const customPrefix = 'Свой вариант:'
+    const storedText = typeof value === 'string' ? value : ''
+    const isCustom = storedText.startsWith(customPrefix)
+    setCustomOption(isCustom)
+    setDraft(isCustom ? storedText.slice(customPrefix.length).trim() : typeof value === 'number' || typeof value === 'string' ? String(value) : '')
     setMulti(Array.isArray(value) ? value : [])
     setReviewComment(current.key === 'eskez-doma' && active.id === '15б' ? session.review_comments[current.key] || '' : '')
   }, [active?.id, current?.key])
@@ -505,18 +588,36 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const refinement = current.key === 'eskez-doma' && active.id === '15б'
   const primaryReview = review && active.kind === 'single' && options[0]?.startsWith('Да') && options[1]?.startsWith('Нет')
   const multiCanContinue = multi.length > 0 || (refinement && Boolean(reviewComment.trim()))
+  const hasCustomOption = options.includes('Свой вариант')
+  const standardOptions = hasCustomOption ? options.filter((option) => option !== 'Свой вариант') : options
+  const customStored = typeof currentValue === 'string' && currentValue.startsWith('Свой вариант:')
+  const customInputIsNumber = active.min_value != null || active.max_value != null
+  const numericDraft = Number(draft.replace(',', '.'))
+  const numericDraftValid = Boolean(draft.trim())
+    && !Number.isNaN(numericDraft)
+    && (active.min_value == null || numericDraft >= active.min_value)
+    && (active.max_value == null || numericDraft <= active.max_value)
+  const customDraftValid = Boolean(draft.trim()) && (!customInputIsNumber || numericDraftValid)
 
   return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><div className="questionnaire-layout"><aside className="questionnaire-progress"><span className="eyebrow">ВЫБРАНО</span>{session.selected_objects.map((key, index) => <div key={key} className={`questionnaire-progress-item ${session.accepted_objects.includes(key) ? 'done' : key === current.key ? 'current' : ''}`}><b>{session.accepted_objects.includes(key) ? '✓' : index + 1}</b><span>{definitions.get(key)?.title || key}</span></div>)}<div className={`questionnaire-progress-item ${current.key === 'zayavka' ? 'current' : ''}`}><b>✓</b><span>Заявка</span></div>{sourceAsset && <div className="questionnaire-source-mini"><ImageIcon/><span>Фото участка загружено</span></div>}</aside><section className="questionnaire-card question-card"><div className="questionnaire-question-head"><div><span className="eyebrow">{active.phase === 'application' ? 'ЗАЯВКА' : review ? 'ОЦЕНКА ЭСКИЗА' : current.title.toUpperCase()}</span><h1>{active.id}. {active.text}</h1></div>{canSkip && <span className="optional-badge">можно пропустить</span>}</div>{active.help && <p className="questionnaire-help">{active.help}</p>}{review && renderOutput && <div className="questionnaire-result"><img src={renderOutput.url} alt={`Эскиз ${current.title}`}/></div>}
 
-  {!primaryReview && (active.kind === 'single' || (active.kind === 'number' && options.length > 0)) && <div className="questionnaire-options">{options.map((option) => <button key={option} className={`questionnaire-option ${String(currentValue) === option || draft === option ? 'selected' : ''}`} onClick={() => active.kind === 'number' ? setDraft(option) : void answer(active, option)}><span>{option}</span><i/></button>)}</div>}
+  {!primaryReview && (active.kind === 'single' || (active.kind === 'number' && options.length > 0)) && <div className="questionnaire-options">{standardOptions.map((option) => <button key={option} className={`questionnaire-option ${!customOption && (String(currentValue) === option || draft === option) ? 'selected' : ''}`} onClick={() => {
+    setCustomOption(false)
+    if (active.kind === 'number') setDraft(option)
+    else void answer(active, option)
+  }}><span>{option}</span><i/></button>)}{hasCustomOption && <button className={`questionnaire-option ${customOption || customStored ? 'selected' : ''}`} onClick={() => {
+    setCustomOption(true)
+    setDraft(customStored && typeof currentValue === 'string' ? currentValue.slice('Свой вариант:'.length).trim() : '')
+  }}><span>Свой вариант</span><i/></button>}</div>}
   {primaryReview && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void answer(active, options[0])}>Подходит</button><button className="secondary-button" disabled={busy} onClick={() => void answer(active, options[1])}>Уточнить</button></div>}
   {active.kind === 'multi' && <div className="questionnaire-options">{options.map((option) => <button key={option} className={`questionnaire-option ${multi.includes(option) ? 'selected' : ''}`} onClick={() => setMulti((items) => items.includes(option) ? items.filter((item) => item !== option) : active.max_selections && items.length >= active.max_selections ? items : [...items, option])}><span>{option}</span><i/></button>)}</div>}
   {refinement && <div className="questionnaire-field"><label>{active.field_hint || 'Свой комментарий'}<input value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="Опишите, что ещё нужно изменить"/></label></div>}
-  {active.kind === 'number' && <div className="questionnaire-field"><label>{active.field_hint || 'Введите значение'}<input type="number" inputMode="decimal" min={active.min_value ?? undefined} max={active.max_value ?? undefined} value={draft} onChange={(event) => setDraft(event.target.value)}/></label></div>}
+  {active.kind === 'single' && hasCustomOption && customOption && <div className="questionnaire-field"><label>{active.field_hint || 'Укажите свой вариант'}<input type={customInputIsNumber ? 'number' : 'text'} inputMode={customInputIsNumber ? 'decimal' : undefined} min={customInputIsNumber ? active.min_value ?? undefined : undefined} max={customInputIsNumber ? active.max_value ?? undefined : undefined} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={customInputIsNumber ? 'Введите значение' : 'Введите свой вариант'}/></label></div>}
+  {active.kind === 'number' && <div className="questionnaire-field"><label>{active.field_hint || 'Введите значение'}<input type="number" inputMode="decimal" min={active.min_value ?? undefined} max={active.max_value ?? undefined} value={draft} onChange={(event) => { setCustomOption(hasCustomOption); setDraft(event.target.value) }}/></label></div>}
   {active.kind === 'text' && <div className="questionnaire-field"><label>{active.field_hint || active.text}<input value={draft} onChange={(event) => setDraft(event.target.value)}/></label></div>}
   {active.kind === 'consent' && <label className="consent-row"><input type="checkbox" checked={currentValue === true} onChange={(event) => event.target.checked && void answer(active, true)}/><span>Согласен на обработку персональных данных</span></label>}
   {error && <div className="banner-error">{error}</div>}
-  <div className="questionnaire-actions">{active.kind === 'multi' && <button className="primary-button" disabled={!multiCanContinue || busy} onClick={() => void answer(active, multi)}>Продолжить</button>}{active.kind === 'number' && <button className="primary-button" disabled={!draft || Number.isNaN(Number(draft)) || busy} onClick={() => void answer(active, Number(draft))}>Продолжить</button>}{active.kind === 'text' && <button className="primary-button" disabled={!draft.trim() || busy} onClick={() => void answer(active, draft.trim())}>Продолжить</button>}{canSkip && active.kind !== 'consent' && <button className="secondary-button" disabled={busy} onClick={() => void answer(active, active.skip_default ?? (active.kind === 'multi' ? [] : ''))}>Пропустить</button>}</div></section></div></main>
+  <div className="questionnaire-actions">{active.kind === 'multi' && <button className="primary-button" disabled={!multiCanContinue || busy} onClick={() => void answer(active, multi)}>Продолжить</button>}{active.kind === 'single' && hasCustomOption && customOption && <button className="primary-button" disabled={!customDraftValid || busy} onClick={() => void answer(active, `Свой вариант: ${draft.trim()}`)}>Продолжить</button>}{active.kind === 'number' && <button className="primary-button" disabled={!numericDraftValid || busy} onClick={() => void answer(active, numericDraft)}>Продолжить</button>}{active.kind === 'text' && <button className="primary-button" disabled={!draft.trim() || busy} onClick={() => void answer(active, draft.trim())}>Продолжить</button>}{canSkip && active.kind !== 'consent' && <button className="secondary-button" disabled={busy} onClick={() => void answer(active, active.skip_default ?? (active.kind === 'multi' ? [] : ''))}>Пропустить</button>}</div></section></div></main>
 }
 
 
