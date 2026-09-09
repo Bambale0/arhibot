@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from app.db.models.projects import Project
 from app.db.session import dispose_engine, get_session_factory
-from app.schemas.projects import ProjectContext
+from app.schemas.projects import ProjectContextResponse
 
 
 async def validate_project_contexts() -> int:
@@ -26,7 +26,7 @@ async def validate_project_contexts() -> int:
         for project_id, raw_context in result.all():
             checked += 1
             try:
-                ProjectContext.model_validate(raw_context or {})
+                ProjectContextResponse.model_validate(raw_context or {})
             except ValidationError as exc:
                 invalid += 1
                 print(f"invalid_project_context project_id={project_id}")
