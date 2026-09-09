@@ -103,6 +103,12 @@ jobs:
           fi
           rm -f "${questionnaire_body}"
 
+          if ! "${compose[@]}" exec -T api python -m app.runtime_checks; then
+            echo "Persisted project contexts are incompatible with the current response contract" >&2
+            dump_api_failure
+            exit 1
+          fi
+
           for service in api bot worker renderer-worker frontend nginx postgres redis; do
             container_id=$("${compose[@]}" ps -q "${service}")
             [[ -n "${container_id}" ]] || { echo "Missing container: ${service}" >&2; exit 1; }
@@ -110,5 +116,5 @@ jobs:
             [[ "${running}" == "true" ]] || { echo "Container is not running: ${service}" >&2; exit 1; }
           done
 
-          echo "Development API, questionnaire catalog, frontend, Telegram bot, generation worker and renderer worker are running"
+          echo "Development API, questionnaire catalog, project contexts, frontend, Telegram bot, generation worker and renderer worker are running"
           REMOTE
