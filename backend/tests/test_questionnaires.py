@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from app.questionnaires.catalog import CATALOG_VERSION, _load_sources, build_catalog
 from app.schemas.questionnaires import DesignSession, QuestionnaireCatalogResponse
 
@@ -81,3 +84,23 @@ def test_design_session_is_versioned_and_does_not_require_a_site_photo() -> None
     assert first.source_asset_id is None
     assert first.selected_objects == ["eskez-doma", "banya"]
     assert first.session_id != second.session_id
+
+
+def test_like_house_option_is_available_only_after_house_is_accepted() -> None:
+    style = _question("banya", "1")
+    assert style["option_rules"]["Как у дома"] == {"operator": "house_accepted"}
+
+    with pytest.raises(ValidationError, match="Как у дома"):
+        DesignSession(
+            catalog_version=CATALOG_VERSION,
+            selected_objects=["banya"],
+            answers={"banya": {"1": "Как у дома"}},
+        )
+
+    session = DesignSession(
+        catalog_version=CATALOG_VERSION,
+        selected_objects=["eskez-doma", "banya"],
+        accepted_objects=["eskez-doma"],
+        answers={"banya": {"1": "Как у дома"}},
+    )
+    assert session.answers["banya"]["1"] == "Как у дома"

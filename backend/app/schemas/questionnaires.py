@@ -4,9 +4,22 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 QuestionAnswer = str | int | float | bool | list[str]
+
+HOUSE_STYLE_INHERITANCE_OBJECTS = frozenset(
+    {
+        "gostevoy",
+        "banya",
+        "garazh",
+        "naves",
+        "letnyaya-kuhnya",
+        "besedka",
+        "hozblok",
+        "detskiy-domik",
+    }
+)
 
 
 class QuestionnaireQuestion(BaseModel):
@@ -87,6 +100,17 @@ class DesignSession(BaseModel):
     edit_question_ids: list[str] = Field(default_factory=list)
     review_comments: dict[str, str] = Field(default_factory=dict)
     application_submitted: bool = False
+
+    @model_validator(mode="after")
+    def require_accepted_house_for_inherited_style(self) -> DesignSession:
+        if "eskez-doma" in self.accepted_objects:
+            return self
+        for object_key in HOUSE_STYLE_INHERITANCE_OBJECTS:
+            if self.answers.get(object_key, {}).get("1") == "Как у дома":
+                raise ValueError(
+                    "Вариант «Как у дома» доступен только после принятия основного дома."
+                )
+        return self
 
 
 class DesignSessionResponse(BaseModel):

@@ -71,3 +71,13 @@ Admin-managed runtime protections and lifecycle settings such as rate limits, me
 ## Telegram Content
 
 The public non-secret bot copy managed through the Control Plane: bot name, descriptions, `/start` welcome text, Mini App button text and command descriptions. The Telegram token remains Secret Configuration. The bot periodically refreshes Telegram Content from the AuRoom API so copy changes do not require a release.
+
+## Questionnaire Project Flow
+
+The approved questionnaire flow is a cumulative visual project rather than a set of unrelated generations.
+
+- Once a generated object is accepted by the user, it is fixed. Adding or regenerating another object must not silently change previously accepted objects.
+- After an object is accepted, the user chooses which object to work on next; the system must not force an automatic next-object order.
+- The questionnaire option `Как у дома` is inheritance from the accepted main house. It is hidden and invalid until the main house (`eskez-doma`) has been accepted. Once available, it means the new object should inherit the accepted house's architectural language, including compatible style, materials and roof where the questionnaire supports roof inheritance.
+- The existing garage/canopy questionnaire branching remains as approved; do not rewrite it into a new garage-vs-canopy entry question without a separate product decision.
+- A completed questionnaire application must be delivered to the administrator in Telegram in addition to being persisted for operator access.
