@@ -473,3 +473,43 @@ async def test_telegram_content_is_admin_managed_and_publicly_readable() -> None
         assert public.json()["configured"] is True
         for key, value in payload.items():
             assert public.json()[key] == value
+
+
+@pytest.mark.asyncio
+async def test_new_user_receives_configured_starter_credits_with_ledger() -> None:
+    from sqlalchemy import select
+
+    from app.db.models.credits import CreditTransaction
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _, admin_headers = await _register_admin(client)
+        configured = await client.put(
+            "/api/v1/admin/operations",
+            headers=admin_headers,
+            json={"starter_credits": 3},
+        )
+        assert configured.status_code == 200, configured.text
+        assert configured.json()["starter_credits"] == 3
+
+        tokens, _ = await _register_user(client, display_name="Starter Credit User")
+        assert tokens["user"]["credits_balance"] == 3
+        user_id = UUID(tokens["user"]["id"])
+        async with get_session_factory()() as session:
+            tx = (
+                await session.execute(
+                    select(CreditTransaction).where(
+                        CreditTransaction.user_id == user_id,
+                        CreditTransaction.kind == "starter_credit",
+                    )
+                )
+            ).scalar_one()
+            assert tx.amount == 3
+            assert tx.balance_after == 3
+
+        reset = await client.put(
+            "/api/v1/admin/operations",
+            headers=admin_headers,
+            json={"starter_credits": 0},
+        )
+        assert reset.status_code == 200, reset.text

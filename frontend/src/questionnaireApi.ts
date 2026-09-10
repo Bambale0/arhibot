@@ -43,3 +43,7 @@ export function submitQuestionnaireApplication(projectId:string, session:DesignS
 export function createQuestionnaireGeneration(projectId:string):Promise<Generation> {
   return apiRequest<Generation>(`/projects/${projectId}/questionnaire-generation`, { method:'POST' })
 }
+
+export function getQuestionnaireGeneration(projectId:string, generationId:string):Promise<Generation> {
+  return apiRequest<Generation>(`/projects/${projectId}/questionnaire-generation/${generationId}`)
+}

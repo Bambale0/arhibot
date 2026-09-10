@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Response, status
 
 from app.api.dependencies.auth import CurrentUser, DbSession
 from app.core.config import Settings, get_settings
+from app.core.errors import AppError
 from app.schemas.generations import QuestionnaireGenerationResponse
 from app.schemas.projects import ProjectResponse
 from app.schemas.questionnaires import (
@@ -114,6 +115,29 @@ async def create_questionnaire_generation(
         user, payload, before_commit=bind_generation
     )
     return QuestionnaireGenerationResponse.model_validate(created)
+
+
+@router.get(
+    "/projects/{project_id}/questionnaire-generation/{generation_id}",
+    operation_id="getProjectQuestionnaireGeneration",
+    response_model=QuestionnaireGenerationResponse,
+)
+async def get_questionnaire_generation(
+    project_id: UUID,
+    generation_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> QuestionnaireGenerationResponse:
+    generation = await build_generation_service(session, settings).get(user, generation_id)
+    if generation.project_id != project_id:
+        raise AppError(
+            type="generation_not_found",
+            title="Generation not found",
+            status=404,
+            detail="The questionnaire generation does not belong to this project.",
+        )
+    return QuestionnaireGenerationResponse.model_validate(generation)
 
 
 @router.post(

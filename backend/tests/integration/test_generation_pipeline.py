@@ -188,3 +188,74 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
         me = await client.get("/api/v1/me", headers=headers)
         assert me.status_code == 200
         assert me.json()["credits_balance"] == 3
+
+@pytest.mark.asyncio
+async def test_structured_questionnaire_prompt_bypasses_legacy_template_and_inherits_ratio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _, admin_headers = await _register_admin(client)
+        _, headers = await _register_admin(client)
+        await client.put(
+            "/api/v1/admin/generation",
+            headers=admin_headers,
+            json={
+                "primary_model": "integration-image-model",
+                "fallback_model": None,
+                "primary_params": {},
+                "fallback_params": {},
+                "mode_params": {"master_plan": {"aspect_ratio": "1:1"}},
+            },
+        )
+        await client.put(
+            "/api/v1/admin/prompts/master_plan",
+            headers=admin_headers,
+            json={"template": "LEGACY MASTER PLAN TEMPLATE {user_prompt}"},
+        )
+        await client.put(
+            "/api/v1/admin/generation-prices/master_plan",
+            headers=admin_headers,
+            json={"credits": 1, "is_active": True},
+        )
+        project = await client.post(
+            "/api/v1/projects", headers=headers, json={"name": "Structured render", "context": {}}
+        )
+        project_id = project.json()["id"]
+        source = _png((160, 90), (20, 30, 40))
+        uploaded = await client.post(
+            "/api/v1/assets",
+            headers=headers,
+            data={"purpose": "generation_input", "project_id": project_id},
+            files={"file": ("wide.png", source, "image/png")},
+        )
+        structured = 'AUROOM_RENDER_SPEC_V1\nSTRUCTURED_SPEC:{"task":"test"}'
+        created = await client.post(
+            "/api/v1/generations",
+            headers=headers,
+            json={
+                "project_id": project_id,
+                "input_asset_id": uploaded.json()["id"],
+                "type": "master_plan",
+                "prompt": structured,
+            },
+        )
+        assert created.status_code == 202, created.text
+        generation_id = UUID(created.json()["id"])
+        calls: list[dict] = []
+
+        async def fake_generate(self, **kwargs):  # noqa: ANN001, ARG001
+            calls.append(kwargs)
+            return NexusImageResult(task_id="structured-task", image_url="https://cdn.example.test/out.png")
+
+        async def fake_download(url, settings):  # noqa: ANN001, ARG001
+            return _png((160, 90), (90, 100, 110))
+
+        monkeypatch.setattr(NexusImageProvider, "generate", fake_generate)
+        monkeypatch.setattr(generation_worker, "_download_image", fake_download)
+        await generation_worker.process_generation(generation_id, get_settings())
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+        assert len(calls) == 1
+        assert calls[0]["prompt"] == structured
+        assert "LEGACY MASTER PLAN TEMPLATE" not in calls[0]["prompt"]
+        assert calls[0]["model_params"]["aspect_ratio"] == "16:9"

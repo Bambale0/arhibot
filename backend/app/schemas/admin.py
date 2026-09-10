@@ -384,6 +384,7 @@ class OperationalSettingsUpdate(BaseModel):
     auth_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
     generation_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
     payment_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
+    starter_credits: int = Field(default=0, ge=0, le=1_000_000)
     media_retention_days: int | None = Field(default=None, ge=1, le=3650)
     backup_interval_hours: int | None = Field(default=None, ge=1, le=8760)
     backup_retention_days: int | None = Field(default=None, ge=1, le=3650)

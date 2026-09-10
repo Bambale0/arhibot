@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from '../auth'
-import { HomeIcon, PlanIcon, RoomIcon, SiteIcon, SparkIcon } from './Icons'
+import { HomeIcon, SiteIcon, SparkIcon } from './Icons'
 
 export function AuthScreen() {
   const { loginWithEmail, error, clearError } = useAuth()
@@ -27,14 +27,13 @@ export function AuthScreen() {
         <div className="brand-mark"><HomeIcon /></div>
         <div className="auth-brand-copy">
           <span className="eyebrow">AUROOM · AI DESIGN</span>
-          <h1>Дом и интерьер<br />в одном пространстве.</h1>
-          <p>AuRoom помогает пройти путь от планировки и участка до фасада и дизайна помещений.</p>
+          <h1>Архитектурная идея<br />по вашим ответам.</h1>
+          <p>AuRoom собирает требования по объектам участка и создаёт визуализацию по подробному опроснику.</p>
         </div>
         <div className="auth-feature-row">
-          <div><PlanIcon /><span>Планировки</span></div>
-          <div><HomeIcon /><span>Фасады</span></div>
+          <div><HomeIcon /><span>Дом</span></div>
           <div><SiteIcon /><span>Участок</span></div>
-          <div><RoomIcon /><span>Интерьеры</span></div>
+          <div><SparkIcon /><span>Визуализация</span></div>
         </div>
       </section>
 

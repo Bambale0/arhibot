@@ -22,8 +22,8 @@ from app.domain.users.enums import AuthProvider, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
 from app.questionnaires.generation_prompt import build_questionnaire_generation_prompt  # noqa: E402
 from app.schemas.questionnaires import DesignSession  # noqa: E402
-from app.services.questionnaire_service import QuestionnaireService  # noqa: E402
 from app.services.generation_service import GENERATION_QUEUE_KEY  # noqa: E402
+from app.services.questionnaire_service import QuestionnaireService  # noqa: E402
 from app.telegram_bot.questionnaire_notifications import (  # noqa: E402
     deliver_pending_applications_once,
 )
@@ -235,6 +235,13 @@ async def test_questionnaire_generation_prompt_is_built_only_on_server_and_hidde
         fetched = await client.get(f"/api/v1/generations/{generation_id}", headers=headers)
         assert fetched.status_code == 200, fetched.text
         assert fetched.json()["prompt"] == generation.prompt
+
+        questionnaire_fetched = await client.get(
+            f"/api/v1/projects/{project_id}/questionnaire-generation/{generation_id}",
+            headers=headers,
+        )
+        assert questionnaire_fetched.status_code == 200, questionnaire_fetched.text
+        assert "prompt" not in questionnaire_fetched.json()
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
 
 

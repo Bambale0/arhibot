@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import * as api from '../api'
 import {
   createQuestionnaireGeneration,
   getQuestionnaireCatalog,
+  getQuestionnaireGeneration,
   getQuestionnaireSession,
   saveQuestionnaireSession,
   submitQuestionnaireApplication,
@@ -229,7 +230,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     setError(null)
     void (async () => {
       try {
-        const generation = await api.getGeneration(currentGenerationId)
+        const generation = await getQuestionnaireGeneration(project.id, currentGenerationId)
         const completed = await poll(generation)
         if (stopped) return
         setRenderOutput(completed.output_asset)
@@ -252,6 +253,34 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     })()
     return () => { stopped = true }
   }, [project.id, current?.key, currentGenerationId])
+
+  useEffect(() => {
+    if (!session || busy || generationInFlight) return
+    if (session.region_mode && session.region_object) {
+      const definition = definitions.get(session.region_object)
+      if (!definition) return
+      if (session.region_mode === 'edit') {
+        const region = session.edit_regions[definition.key] || suggestedRegion(session, definition)
+        const next = { ...session, edit_regions:{ ...session.edit_regions, [definition.key]:region }, region_mode:null, region_object:null }
+        void persist(next).then((saved) => { if (saved) void generate(saved, definition) })
+        return
+      }
+      if (renderOutput) {
+        const region = session.lock_regions[definition.key] || session.edit_regions[definition.key] || (definition.key === 'eskez-doma' ? { x:0.12, y:0.10, width:0.76, height:0.78 } : suggestedRegion(session, definition))
+        void finalizeAccept({ ...session, region_mode:null, region_object:null }, definition, region)
+      }
+      return
+    }
+    if (!session.current_object && sceneAsset) {
+      const missingLock = session.accepted_objects.find((key) => !session.lock_regions[key])
+      if (missingLock) {
+        const definition = definitions.get(missingLock)
+        if (!definition) return
+        const region = session.edit_regions[missingLock] || (missingLock === 'eskez-doma' ? { x:0.12, y:0.10, width:0.76, height:0.78 } : suggestedRegion(session, definition))
+        void persist({ ...session, lock_regions:{ ...session.lock_regions, [missingLock]:region } })
+      }
+    }
+  }, [session?.region_mode, session?.region_object, session?.current_object, renderOutput?.id, sceneAsset?.id])
 
   useEffect(() => {
     if (!active || !current || !session) return
@@ -354,11 +383,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }
 
   async function startGenerationOrRegion(next:DesignSession, definition:QuestionnaireDefinition) {
+    let prepared = next
     if (next.accepted_objects.length > 0 && next.scene_asset_id && !next.edit_regions[definition.key]) {
-      return persist({ ...next, current_question_id:null, region_mode:'edit', region_object:definition.key })
+      prepared = { ...next, edit_regions:{ ...next.edit_regions, [definition.key]:suggestedRegion(next, definition) } }
     }
     setGenerationInFlight(true)
-    const staged = await persist({ ...next, current_question_id:null, region_mode:null, region_object:null })
+    const staged = await persist({ ...prepared, current_question_id:null, region_mode:null, region_object:null })
     if (!staged) {
       setGenerationInFlight(false)
       return null
@@ -373,7 +403,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     while (['queued','processing'].includes(currentGeneration.status) && Date.now() < deadline) {
       await delay(2000)
       try {
-        currentGeneration = await api.getGeneration(currentGeneration.id)
+        currentGeneration = await getQuestionnaireGeneration(project.id, currentGeneration.id)
         transientErrors = 0
       } catch (err) {
         transientErrors += 1
@@ -413,7 +443,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         current_question_id:review?.id || null,
       })
     } catch (err) {
-      if (err instanceof api.ApiError && err.status === 409) setError('Недостаточно кредитов. Пополните баланс в Профиле.')
+      if (err instanceof api.ApiError && err.errorType === 'insufficient_credits') setError('Недостаточно кредитов. Пополните баланс в Профиле.')
       else setError(err instanceof Error ? err.message : 'Не удалось создать эскиз')
     } finally {
       setBusy(false)
@@ -429,7 +459,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     setBusy(true)
     setError(null)
     try {
-      const existing = await api.getGeneration(generationId)
+      const existing = await getQuestionnaireGeneration(project.id, generationId)
       if (existing.status !== 'failed') {
         const generation = await poll(existing)
         setRenderOutput(generation.output_asset)
@@ -447,6 +477,13 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       setBusy(false)
       setGenerationInFlight(false)
     }
+  }
+
+  function clearUnacceptedGeneration(next:DesignSession):DesignSession {
+    if (!current || next.accepted_objects.includes(current.key) || !next.generation_ids[current.key]) return next
+    const generationIds = { ...next.generation_ids }
+    delete generationIds[current.key]
+    return { ...next, generation_ids:generationIds }
   }
 
   async function answer(question:QuestionnaireQuestion, value:QuestionnaireAnswer) {
@@ -493,7 +530,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     if (current.key === 'eskez-doma' && question.id === '15') {
       if (typeof value === 'string' && value.startsWith('Да')) return accept(next, current)
       const q = current.questions.find((item) => item.id === '15а')
-      return persist({ ...next, current_question_id:q?.id || null })
+      return persist({ ...clearUnacceptedGeneration(next), current_question_id:q?.id || null })
     }
     if (current.key === 'eskez-doma' && question.id === '15а') {
       if (typeof value === 'string' && value.startsWith('Всё')) {
@@ -511,8 +548,9 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
     if (question.phase === 'review') {
       if (typeof value === 'string' && value.startsWith('Да')) return accept(next, current)
-      const first = preQuestions(current, next)[0]
-      return persist({ ...next, current_question_id:first?.id || null })
+      const cleared = clearUnacceptedGeneration(next)
+      const first = preQuestions(current, cleared)[0]
+      return persist({ ...cleared, current_question_id:first?.id || null })
     }
   }
 
@@ -543,49 +581,22 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       setError('Нет готового эскиза для принятия.')
       return
     }
-    const lockRegion = next.lock_regions[definition.key] || next.edit_regions[definition.key]
-    if (!lockRegion) {
-      return persist({ ...next, current_question_id:null, region_mode:'lock', region_object:definition.key })
-    }
+    const lockRegion = next.lock_regions[definition.key]
+      || next.edit_regions[definition.key]
+      || (definition.key === 'eskez-doma'
+        ? { x:0.12, y:0.10, width:0.76, height:0.78 }
+        : suggestedRegion(next, definition))
     return finalizeAccept(next, definition, lockRegion)
   }
 
-  async function confirmRegion(region:NormalizedRect) {
-    if (!session || !session.region_mode || !session.region_object) return
-    const objectKey = session.region_object
-    const definition = definitions.get(objectKey)
-    if (!definition) return
-    if (session.region_mode === 'edit') {
-      const staged:DesignSession = {
-        ...session,
-        edit_regions:{ ...session.edit_regions, [objectKey]:region },
-        region_mode:'edit',
-        region_object:objectKey,
-      }
-      const saved = await persist(staged)
-      if (saved) await startGenerationOrRegion({ ...saved, region_mode:null, region_object:null }, definition)
-      return
-    }
-    const next:DesignSession = {
-      ...session,
-      lock_regions:{ ...session.lock_regions, [objectKey]:region },
-      region_mode:null,
-      region_object:null,
-    }
-    await finalizeAccept(next, definition, region)
-  }
-
-  async function confirmLegacyLock(objectKey:string, region:NormalizedRect) {
-    if (!session) return
-    await persist({ ...session, lock_regions:{ ...session.lock_regions, [objectKey]:region } })
-  }
-
   async function publishLatestIdea() {
-    if (!latestAcceptedGenerationId || ideaPublishing || ideaPublication) return
+    if (!latestAcceptedGenerationId || ideaPublishing) return
     setIdeaPublishing(true)
     setError(null)
     try {
-      setIdeaPublication(await api.publishIdea(latestAcceptedGenerationId))
+      setIdeaPublication(ideaPublication?.is_active
+        ? await api.unpublishIdea(latestAcceptedGenerationId)
+        : await api.publishIdea(latestAcceptedGenerationId))
     } catch (err) {
       if (err instanceof api.ApiError && err.status === 409) {
         try {
@@ -604,10 +615,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     <button
       type="button"
       className="secondary-button questionnaire-wide"
-      disabled={ideaPublishing || ideaPublication === undefined || Boolean(ideaPublication)}
+      disabled={ideaPublishing || ideaPublication === undefined || Boolean(ideaPublication && !ideaPublication.is_active)}
       onClick={() => void publishLatestIdea()}
     >
-      {ideaPublishing ? 'Добавляем…' : ideaPublication?.is_active ? 'Добавлено в Идеи' : ideaPublication ? 'Работа скрыта из Идей' : ideaPublication === undefined ? 'Проверяем публикацию…' : 'Добавить в Идеи'}
+      {ideaPublishing ? 'Сохраняем…' : ideaPublication?.is_active ? 'Убрать из Идей' : ideaPublication ? 'Убрано из Идей' : ideaPublication === undefined ? 'Проверяем публикацию…' : 'Добавить в Идеи'}
     </button>
   </div> : null
 
@@ -618,49 +629,11 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   if (session.application_submitted) return <main className="questionnaire-shell"><section className="questionnaire-card finish-card"><SparkIcon/><span className="eyebrow">ГОТОВО</span><h1>Заявка отправлена</h1><p>Эскизы и ответы сохранены. Заявка отправляется администратору в Telegram.</p>{ideaPublishControl}<button className="primary-button" onClick={onBack}>Вернуться к проектам</button></section></main>
 
-  if (session.region_mode && session.region_object) {
-    const regionDefinition = definitions.get(session.region_object)
-    const regionImage = session.region_mode === 'edit' ? sceneAsset : renderOutput
-    if (regionDefinition && regionImage) {
-      const initial = session.region_mode === 'edit'
-        ? session.edit_regions[regionDefinition.key] || suggestedRegion(session, regionDefinition)
-        : session.lock_regions[regionDefinition.key] || { x:0.12, y:0.10, width:0.76, height:0.78 }
-      const protectedRegions = session.region_mode === 'edit'
-        ? session.accepted_objects.map((key) => session.lock_regions[key]).filter((region):region is NormalizedRect => Boolean(region))
-        : []
-      return <RegionPicker
-        projectName={project.name}
-        image={regionImage}
-        title={regionDefinition.title}
-        mode={session.region_mode}
-        initial={initial}
-        protectedRegions={protectedRegions}
-        busy={busy}
-        error={error}
-        onBack={onBack}
-        onConfirm={(region) => void confirmRegion(region)}
-      />
-    }
-  }
+
 
   if (!current) {
     const remaining = session.selected_objects.filter((key) => !session.accepted_objects.includes(key))
     const hasAccepted = session.accepted_objects.length > 0
-    const missingLock = session.accepted_objects.find((key) => !session.lock_regions[key]) || null
-    if (missingLock && sceneAsset) {
-      return <RegionPicker
-        projectName={project.name}
-        image={sceneAsset}
-        title={definitions.get(missingLock)?.title || missingLock}
-        mode="lock"
-        initial={{ x:0.12, y:0.10, width:0.76, height:0.78 }}
-        protectedRegions={[]}
-        busy={busy}
-        error={error}
-        onBack={onBack}
-        onConfirm={(region) => void confirmLegacyLock(missingLock, region)}
-      />
-    }
     return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{hasAccepted ? 'Что дальше?' : 'Выбор объекта'}</span></header><section className="questionnaire-card"><span className="eyebrow">{hasAccepted ? 'ЭСКИЗ ПРИНЯТ' : 'НАЧАЛО ОПРОСА'}</span><h1>{hasAccepted ? 'Что проектируем дальше?' : 'С чего начнём?'}</h1><p>{hasAccepted ? 'Принятый кадр зафиксирован. Выберите следующий объект или переходите к заявке.' : 'Вы выбрали несколько элементов. Выберите, какой опросник пройти первым.'}</p>{hasAccepted && sceneAsset && <div className="questionnaire-result"><img src={sceneAsset.url} alt="Последний принятый эскиз"/></div>}{remaining.length > 0 && <div className="questionnaire-options">{remaining.map((key) => <button key={key} className="questionnaire-option" disabled={busy} onClick={() => void chooseObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && ideaPublishControl}{hasAccepted && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void chooseApplication()}>Перейти к заявке</button></div>}{error && <div className="banner-error">{error}</div>}</section></main>
   }
 
@@ -705,75 +678,4 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   {active.kind === 'consent' && <label className="consent-row"><input type="checkbox" checked={currentValue === true} onChange={(event) => event.target.checked && void answer(active, true)}/><span>Согласен на обработку персональных данных</span></label>}
   {error && <div className="banner-error">{error}</div>}
   <div className="questionnaire-actions">{active.kind === 'multi' && <button className="primary-button" disabled={!multiCanContinue || busy} onClick={() => void answer(active, multi)}>Продолжить</button>}{active.kind === 'single' && hasCustomOption && customOption && <button className="primary-button" disabled={!customDraftValid || busy} onClick={() => void answer(active, `Свой вариант: ${draft.trim()}`)}>Продолжить</button>}{active.kind === 'number' && <button className="primary-button" disabled={!numericDraftValid || busy} onClick={() => void answer(active, numericDraft)}>Продолжить</button>}{active.kind === 'text' && <button className="primary-button" disabled={!draft.trim() || busy} onClick={() => void answer(active, draft.trim())}>Продолжить</button>}{canSkip && active.kind !== 'consent' && <button className="secondary-button" disabled={busy} onClick={() => void answer(active, active.skip_default ?? (active.kind === 'multi' ? [] : ''))}>Пропустить</button>}</div></section></div></main>
-}
-
-
-function RegionPicker({ projectName, image, title, mode, initial, protectedRegions, busy, error, onBack, onConfirm }:{
-  projectName:string
-  image:Asset
-  title:string
-  mode:'edit'|'lock'
-  initial:NormalizedRect
-  protectedRegions:NormalizedRect[]
-  busy:boolean
-  error:string|null
-  onBack:()=>void
-  onConfirm:(region:NormalizedRect)=>void
-}) {
-  const [region, setRegion] = useState<NormalizedRect>(initial)
-  const dragStart = useRef<{x:number;y:number}|null>(null)
-
-  function point(event:ReactPointerEvent<HTMLDivElement>) {
-    const rect = event.currentTarget.getBoundingClientRect()
-    return {
-      x:Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
-      y:Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
-    }
-  }
-
-  function updateRegion(start:{x:number;y:number}, end:{x:number;y:number}) {
-    const x = Math.min(start.x, end.x)
-    const y = Math.min(start.y, end.y)
-    const width = Math.max(0.01, Math.abs(end.x - start.x))
-    const height = Math.max(0.01, Math.abs(end.y - start.y))
-    setRegion({ x, y, width:Math.min(width, 1-x), height:Math.min(height, 1-y) })
-  }
-
-  function pointerDown(event:ReactPointerEvent<HTMLDivElement>) {
-    const start = point(event)
-    dragStart.current = start
-    event.currentTarget.setPointerCapture(event.pointerId)
-    setRegion({ x:start.x, y:start.y, width:0.01, height:0.01 })
-  }
-
-  function pointerMove(event:ReactPointerEvent<HTMLDivElement>) {
-    if (!dragStart.current) return
-    updateRegion(dragStart.current, point(event))
-  }
-
-  function pointerUp(event:ReactPointerEvent<HTMLDivElement>) {
-    if (dragStart.current) updateRegion(dragStart.current, point(event))
-    dragStart.current = null
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
-  }
-
-  const valid = region.width >= 0.04 && region.height >= 0.04
-  return <main className="questionnaire-shell">
-    <header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{projectName}</strong><span>Защита кадра</span></header>
-    <section className="questionnaire-card region-picker-card">
-      <span className="eyebrow">ПИКСЕЛЬНАЯ ФИКСАЦИЯ</span>
-      <h1>{mode === 'edit' ? `Где добавить: ${title}?` : `Зафиксируйте: ${title}`}</h1>
-      <p>{mode === 'edit'
-        ? 'Проведите пальцем по кадру и выделите прямоугольник, внутри которого ИИ имеет право менять изображение. Всё снаружи останется пиксель-в-пиксель как в принятом кадре.'
-        : 'Обведите принятый объект целиком, включая важные тени и примыкания. Эта область станет защищённой и не сможет быть перерисована следующими генерациями.'}</p>
-      <div className="region-canvas" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp}>
-        <img src={image.url} alt={title}/>
-        {protectedRegions.map((item, index) => <div key={index} className="region-protected" style={{ left:`${item.x*100}%`, top:`${item.y*100}%`, width:`${item.width*100}%`, height:`${item.height*100}%` }}/>) }
-        <div className={`region-selection ${mode}`} style={{ left:`${region.x*100}%`, top:`${region.y*100}%`, width:`${region.width*100}%`, height:`${region.height*100}%` }}><span>{mode === 'edit' ? 'МОЖНО МЕНЯТЬ' : 'ЗАЩИТИТЬ'}</span></div>
-      </div>
-      <p className="region-hint">Можно провести по изображению ещё раз, чтобы изменить область. Защищённые зоны отмечены штриховкой и всегда имеют приоритет.</p>
-      {error && <div className="banner-error">{error}</div>}
-      <div className="questionnaire-actions"><button className="primary-button" disabled={!valid || busy} onClick={() => onConfirm(region)}>{mode === 'edit' ? 'Использовать эту область' : 'Зафиксировать область'}</button></div>
-    </section>
-  </main>
 }

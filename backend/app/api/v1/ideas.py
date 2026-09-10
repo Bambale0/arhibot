@@ -55,6 +55,20 @@ async def get_own_idea_publication(
     return await IdeaService(session, settings).get_own_publication(user, generation_id)
 
 
+@router.delete(
+    "/mine/{generation_id}",
+    response_model=IdeaPublicationResponse,
+    operation_id="unpublishOwnIdea",
+)
+async def unpublish_idea(
+    generation_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> IdeaPublicationResponse:
+    return await IdeaService(session, settings).unpublish(user, generation_id)
+
+
 @router.post(
     "/{idea_id}/project",
     response_model=ProjectResponse,

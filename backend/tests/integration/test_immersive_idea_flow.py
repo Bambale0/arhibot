@@ -215,6 +215,20 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
         assert own_after_moderation.status_code == 200
         assert own_after_moderation.json()["is_active"] is False
 
+        restored = await client.patch(
+            f"/api/v1/admin/ideas/{idea['id']}",
+            headers=admin_headers,
+            json={"is_active": True},
+        )
+        assert restored.status_code == 200, restored.text
+        unpublished = await client.delete(
+            f"/api/v1/ideas/mine/{generation_id}", headers=user_headers
+        )
+        assert unpublished.status_code == 200, unpublished.text
+        assert unpublished.json()["is_active"] is False
+        public_after_owner_unpublish = await client.get("/api/v1/ideas", headers=user_headers)
+        assert all(item["id"] != idea["id"] for item in public_after_owner_unpublish.json())
+
 
 @pytest.mark.asyncio
 async def test_user_cannot_publish_another_users_generation() -> None:

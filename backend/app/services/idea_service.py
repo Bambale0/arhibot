@@ -248,7 +248,7 @@ class IdeaService:
                 type="idea_already_published",
                 title="Work already published",
                 status=409,
-                detail="This generated work is already in Ideas.",
+                detail="This generated work already has an Ideas publication record.",
             )
 
         project = await self.session.get(Project, generation.project_id)
@@ -296,6 +296,24 @@ class IdeaService:
                 status=500,
                 detail="The new publication could not be read back.",
             )
+        return response
+
+    async def unpublish(self, user: User, generation_id: UUID) -> IdeaPublicationResponse:
+        await self._owned_generation(user, generation_id)
+        publication = await self.repository.get_by_generation(generation_id)
+        if publication is None or publication.published_by_user_id != user.id:
+            raise AppError(
+                type="idea_not_found",
+                title="Idea not found",
+                status=404,
+                detail="This work is not published by the current user.",
+            )
+        publication.is_active = False
+        await self.session.commit()
+        await self.session.refresh(publication)
+        response = await self._publication_response(publication)
+        if response is None:
+            raise AppError(type="idea_publication_invalid", title="Publication is invalid", status=409, detail="The publication source is no longer available.")
         return response
 
     async def start_project(self, user: User, idea_id: UUID) -> ProjectResponse:

@@ -65,7 +65,7 @@ function WorkCard({
       <div className="idea-author-row">
         <span className="idea-author-avatar">A</span>
         <strong>AuRoom</strong>
-        <button type="button" className="idea-use-button" disabled={starting} onClick={onStart}>{starting ? 'Создаём проект…' : 'Создать похожее'}</button>
+        <button type="button" className="idea-use-button" disabled={starting} onClick={onStart}>{starting ? 'Создаём проект…' : 'Создать с такими объектами'}</button>
       </div>
       {summary.length > 0 && <details className="idea-work-summary">
         <summary>Параметры работы · {summary.length}</summary>
