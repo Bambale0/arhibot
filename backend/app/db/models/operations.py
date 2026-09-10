@@ -17,6 +17,7 @@ class OperationalSettings(Base):
     auth_rate_limit_per_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
     generation_rate_limit_per_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
     payment_rate_limit_per_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    starter_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     media_retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     backup_interval_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
     backup_retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)

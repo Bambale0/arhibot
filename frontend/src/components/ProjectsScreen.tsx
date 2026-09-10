@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import * as api from '../api'
 import type { Project } from '../types'
 import { ArrowIcon, HomeIcon, PlusIcon } from './Icons'
-import { ProjectModal, type NewProjectPayload } from './ProjectModal'
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short' }).format(new Date(value))
@@ -25,11 +24,10 @@ function ProjectCard({ project, onOpen }: { project: Project; onOpen: () => void
   )
 }
 
-export function ProjectsScreen({ onOpenProject }: { onOpenProject: (project: Project) => void }) {
+export function ProjectsScreen({ onOpenProject, onCreate }: { onOpenProject: (project: Project) => void; onCreate: () => void }) {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [showCreate, setShowCreate] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -48,29 +46,21 @@ export function ProjectsScreen({ onOpenProject }: { onOpenProject: (project: Pro
 
   const subtitle = useMemo(() => projects.length === 0 ? 'Создайте первый проект и начните проектирование в AuRoom.' : `${projects.length} ${projects.length === 1 ? 'проект' : projects.length < 5 ? 'проекта' : 'проектов'} в работе`, [projects.length])
 
-  async function handleCreate(payload: NewProjectPayload) {
-    const created = await api.createProject(payload)
-    setProjects((prev) => [created, ...prev])
-    setShowCreate(false)
-    onOpenProject(created)
-  }
-
   return (
     <section className="page-content projects-page">
       <div className="page-heading-row">
         <div><span className="eyebrow">ВАША СТУДИЯ</span><h1>Главная</h1><p>{subtitle}</p></div>
-        <button className="primary-button" onClick={() => setShowCreate(true)}><PlusIcon /> Новый проект</button>
+        <button className="primary-button" onClick={onCreate}><PlusIcon /> Новый проект</button>
       </div>
 
       {error && <div className="banner-error">{error}<button onClick={() => void load()}>Повторить</button></div>}
       {loading ? (
         <div className="project-grid"><div className="project-card skeleton-card"/><div className="project-card skeleton-card"/></div>
       ) : projects.length ? (
-        <div className="project-grid">{projects.map((p) => <ProjectCard key={p.id} project={p} onOpen={() => onOpenProject(p)} />)}<button className="new-project-tile" onClick={() => setShowCreate(true)}><PlusIcon /><strong>Новый проект</strong><span>Создать пространство в AuRoom</span></button></div>
+        <div className="project-grid">{projects.map((p) => <ProjectCard key={p.id} project={p} onOpen={() => onOpenProject(p)} />)}<button className="new-project-tile" onClick={onCreate}><PlusIcon /><strong>Новый проект</strong><span>Создать пространство в AuRoom</span></button></div>
       ) : (
-        <div className="empty-state"><div className="empty-icon"><HomeIcon /></div><h2>Первый проект — за минуту</h2><p>Название, пара параметров и можно переходить к планировке, фасаду, участку или интерьеру.</p><button className="primary-button" onClick={() => setShowCreate(true)}><PlusIcon /> Создать проект</button></div>
+        <div className="empty-state"><div className="empty-icon"><HomeIcon /></div><h2>Первый проект — за минуту</h2><p>Выберите объекты, ответьте на вопросы и получите визуализацию проекта.</p><button className="primary-button" onClick={onCreate}><PlusIcon /> Создать проект</button></div>
       )}
-      {showCreate && <ProjectModal onClose={() => setShowCreate(false)} onCreate={handleCreate} />}
     </section>
   )
 }

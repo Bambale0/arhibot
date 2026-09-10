@@ -558,9 +558,16 @@ class QuestionnaireService:
                 input_asset_present=generation.input_asset_id is not None,
             )
             if generation.prompt != expected_prompt:
-                raise self._invalid(
-                    "The accepted generation prompt must match the current questionnaire answers."
+                legacy_bound_unchanged = bool(
+                    previous is not None
+                    and previous.generation_ids.get(new_key) == generation.id
+                    and payload.answers.get(new_key, {}) == previous.answers.get(new_key, {})
+                    and not generation.prompt.startswith("AUROOM_RENDER_SPEC_V1")
                 )
+                if not legacy_bound_unchanged:
+                    raise self._invalid(
+                        "The accepted generation prompt must match the current questionnaire answers."
+                    )
 
         if payload.accepted_objects:
             latest_key = payload.accepted_objects[-1]

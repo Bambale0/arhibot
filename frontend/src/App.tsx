@@ -2,7 +2,7 @@ import { lazy, Suspense, useState } from 'react'
 import * as api from './api'
 import { useAuth } from './auth'
 import { discardQuestionnaireDraft } from './questionnaireApi'
-import type { Asset, Generation, GenerationMode, Project } from './types'
+import type { Generation, Project } from './types'
 import { AppFrame, type AppSection } from './components/AppFrame'
 import { AuthScreen } from './components/AuthScreen'
 import { ProjectsScreen } from './components/ProjectsScreen'
@@ -14,7 +14,6 @@ const HistoryGenerationScreen = lazy(() => import('./components/HistoryGeneratio
 const IdeasScreen = lazy(() => import('./components/IdeasScreen').then((module) => ({ default: module.IdeasScreen })))
 const ProfileScreen = lazy(() => import('./components/ProfileScreen').then((module) => ({ default: module.ProfileScreen })))
 const QuestionnaireWorkspaceScreen = lazy(() => import('./components/QuestionnaireWorkspaceScreen').then((module) => ({ default: module.QuestionnaireWorkspaceScreen })))
-const WorkspaceScreen = lazy(() => import('./components/WorkspaceScreen').then((module) => ({ default: module.WorkspaceScreen })))
 
 function Loader() {
   return <div className="boot-loader"><div className="wordmark"><span className="wordmark-dot" />AuRoom</div><div className="loader-line"><span /></div></div>
@@ -31,13 +30,9 @@ type HistoryResult = { project: Project; generation: Generation }
 export default function App() {
   const { user, loading, error } = useAuth()
   const [section, setSection] = useState<AppSection>(initialSection)
-  const [activeProject, setActiveProject] = useState<Project | null>(null)
   const [questionnaireProject, setQuestionnaireProject] = useState<Project | null>(null)
   const [questionnaireObjects, setQuestionnaireObjects] = useState<string[]>([])
   const [historyResult, setHistoryResult] = useState<HistoryResult | null>(null)
-  const [workspaceMode, setWorkspaceMode] = useState<GenerationMode>('floor_plan')
-  const [workspacePrompt, setWorkspacePrompt] = useState('')
-  const [workspaceAsset, setWorkspaceAsset] = useState<Asset | null>(null)
   const [adminOpen, setAdminOpen] = useState(initialAdmin)
 
   if (loading) return <Loader />
@@ -46,9 +41,7 @@ export default function App() {
   if (adminOpen && isAdmin) return <Suspense fallback={<Loader />}><AdminScreen onClose={() => setAdminOpen(false)} /></Suspense>
   if (questionnaireProject) return <Suspense fallback={<Loader />}><QuestionnaireWorkspaceScreen project={questionnaireProject} selectedObjects={questionnaireObjects} onBack={() => { void closeQuestionnaire() }} onProjectChange={setQuestionnaireProject} /></Suspense>
   if (historyResult) return <Suspense fallback={<Loader />}><HistoryGenerationScreen project={historyResult.project} generation={historyResult.generation} onBack={() => setHistoryResult(null)} /></Suspense>
-  if (activeProject) return <Suspense fallback={<Loader />}><WorkspaceScreen project={activeProject} initialMode={workspaceMode} initialPrompt={workspacePrompt} initialAsset={workspaceAsset} onBack={() => { setActiveProject(null); setWorkspaceAsset(null) }} onProjectChange={setActiveProject} /></Suspense>
 
-  function openWorkspace(project: Project, mode: GenerationMode = 'floor_plan', prompt = '', asset: Asset | null = null) { setWorkspaceMode(mode); setWorkspacePrompt(prompt); setWorkspaceAsset(asset); setActiveProject(project) }
   function openQuestionnaire(project: Project, selectedObjects: string[]) { setQuestionnaireObjects(selectedObjects); setQuestionnaireProject(project) }
   function openQuestionnaireProject(project: Project): boolean {
     const selectedObjects = project.context.design_session?.selected_objects || []
@@ -57,7 +50,7 @@ export default function App() {
     return true
   }
   function openProject(project: Project) {
-    if (!openQuestionnaireProject(project)) openWorkspace(project, 'floor_plan')
+    if (!openQuestionnaireProject(project)) setSection('history')
   }
   async function closeQuestionnaire() {
     const project = questionnaireProject
@@ -75,7 +68,7 @@ export default function App() {
   function navigate(next: AppSection) { setSection(next) }
 
   return <AppFrame active={section} onNavigate={navigate}>
-    {section === 'home' && <ProjectsScreen onOpenProject={openProject} />}
+    {section === 'home' && <ProjectsScreen onOpenProject={openProject} onCreate={() => setSection('create')} />}
     {section !== 'home' && <Suspense fallback={<Loader />}>
       {section === 'ideas' && <IdeasScreen onOpenQuestionnaire={openQuestionnaire} />}
       {section === 'create' && <CreateScreen onOpenQuestionnaire={openQuestionnaire} />}

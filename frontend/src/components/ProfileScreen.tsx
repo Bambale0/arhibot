@@ -110,7 +110,7 @@ export function ProfileScreen({ onOpenAdmin }: { onOpenAdmin?: () => void }) {
         {!billing ? (
           <div className="empty-inline">Загружаем тарифы…</div>
         ) : !billing.enabled ? (
-          <div className="empty-inline">Оплата ещё не активирована. Администратор публикует тарифы в веб-админке; YooKassa credentials хранятся только на сервере.</div>
+          <div className="empty-inline">Оплата временно недоступна. Доступные способы пополнения появятся здесь позже.</div>
         ) : (
           <>
             {billing.receipt_required && (

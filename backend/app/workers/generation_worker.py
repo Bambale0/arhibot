@@ -29,6 +29,15 @@ from app.services.generation_service import GENERATION_QUEUE_KEY
 
 logger = logging.getLogger(__name__)
 GENERATION_PROCESSING_KEY = "auroom:generation_processing"
+QUESTIONNAIRE_PROMPT_PREFIX = "AUROOM_RENDER_SPEC_V1"
+QUESTIONNAIRE_ASPECT_RATIOS = {"1:1": 1.0, "4:3": 4 / 3, "3:4": 3 / 4, "16:9": 16 / 9, "9:16": 9 / 16}
+
+
+def _questionnaire_aspect_ratio(asset: Asset | None) -> str:
+    if asset is None or not asset.width or not asset.height:
+        return "16:9"
+    ratio = asset.width / asset.height
+    return min(QUESTIONNAIRE_ASPECT_RATIOS, key=lambda item: abs(QUESTIONNAIRE_ASPECT_RATIOS[item] - ratio))
 
 
 async def _download_image(url: str, settings: Settings) -> bytes:
@@ -104,12 +113,19 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
 
         admin_repository = AdminRepository(session)
         runtime = await admin_repository.get_generation_settings()
-        prompt_template = await admin_repository.get_prompt_template(generation.type.value)
+        questionnaire_generation = generation.prompt.startswith(QUESTIONNAIRE_PROMPT_PREFIX)
+        prompt_template = (
+            None
+            if questionnaire_generation
+            else await admin_repository.get_prompt_template(generation.type.value)
+        )
         if (
             runtime is None
             or not runtime.primary_model.strip()
-            or prompt_template is None
-            or not prompt_template.template.strip()
+            or (
+                not questionnaire_generation
+                and (prompt_template is None or not prompt_template.template.strip())
+            )
         ):
             await session.rollback()
             await _mark_failed_and_refund(
@@ -136,8 +152,16 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             if input_asset is not None
             else None
         )
-        prompt = build_generation_prompt(prompt_template.template, generation.prompt, project)
+        prompt = (
+            generation.prompt
+            if questionnaire_generation
+            else build_generation_prompt(prompt_template.template, generation.prompt, project)
+        )
         mode_params = dict((runtime.mode_params or {}).get(generation.type.value) or {})
+        if questionnaire_generation:
+            # Questionnaire renders are all exterior scene images. Legacy generation types are
+            # an internal billing/provider detail and must not force a conflicting aspect ratio.
+            mode_params["aspect_ratio"] = _questionnaire_aspect_ratio(input_asset)
         primary_params = {**dict(runtime.primary_params or {}), **mode_params}
         fallback_params = {**dict(runtime.fallback_params or {}), **mode_params}
         primary_model = runtime.primary_model

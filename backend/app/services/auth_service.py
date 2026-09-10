@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError
 
@@ -19,8 +19,10 @@ from app.core.security import (
 )
 from app.db.models.users import AuthIdentity, RefreshToken, User
 from app.domain.users.enums import AuthProvider, UserStatus
+from app.repositories.operations import OperationalSettingsRepository
 from app.repositories.users import UserRepository
 from app.schemas.auth import TokenPairResponse
+from app.services.credit_service import CreditService
 from app.services.user_service import UserService
 
 
@@ -51,9 +53,6 @@ class AuthService:
         self.repository.add_identity(identity)
         try:
             await self.repository.session.flush()
-            response = await self._issue_token_pair(user)
-            await self.repository.session.commit()
-            return response
         except IntegrityError as exc:
             await self.repository.session.rollback()
             raise AppError(
@@ -62,6 +61,10 @@ class AuthService:
                 status=409,
                 detail="An account with this email already exists.",
             ) from exc
+        await self._grant_starter_credits(user)
+        response = await self._issue_token_pair(user)
+        await self.repository.session.commit()
+        return response
 
     async def login(self, email: str, password: str) -> TokenPairResponse:
         normalized_email = normalize_email(email)
@@ -109,6 +112,8 @@ class AuthService:
                     raise
                 user = identity.user
                 self._assert_user_active(user)
+            else:
+                await self._grant_starter_credits(user)
 
         response = await self._issue_token_pair(user)
         await self.repository.session.commit()
@@ -171,6 +176,24 @@ class AuthService:
         if stored:
             await self.repository.revoke_token_family(stored.family_id, now)
             await self.repository.session.commit()
+
+    async def _grant_starter_credits(self, user: User) -> None:
+        row = await OperationalSettingsRepository(self.repository.session).get()
+        credits = row.starter_credits if row is not None else 0
+        if credits <= 0:
+            return
+        await CreditService(self.repository.session).apply(
+            user_id=user.id,
+            amount=credits,
+            kind="starter_credit",
+            idempotency_key=f"starter:{user.id}",
+            reference_type="user",
+            reference_id=str(user.id),
+            reason="AuRoom starter credits",
+        )
+        # CreditService updates the same ORM user and its on-update timestamp. Refresh
+        # before serializing the token response so async SQLAlchemy never lazy-loads it.
+        await self.repository.session.refresh(user)
 
     async def _issue_token_pair(self, user: User) -> TokenPairResponse:
         now = datetime.now(UTC)

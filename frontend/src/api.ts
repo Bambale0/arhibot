@@ -47,8 +47,9 @@ migrateLegacyTokens()
 export class ApiError extends Error {
   status: number
   detail?: string
-  constructor(status: number, message: string, detail?: string) {
-    super(message); this.name = 'ApiError'; this.status = status; this.detail = detail
+  errorType?: string
+  constructor(status: number, message: string, detail?: string, errorType?: string) {
+    super(message); this.name = 'ApiError'; this.status = status; this.detail = detail; this.errorType = errorType
   }
 }
 
@@ -65,9 +66,9 @@ async function parseError(response: Response): Promise<ApiError> {
   const errorType = typeof body.type === 'string' ? body.type : undefined
   const tokenError = errorType === 'invalid_access_token' || errorType === 'invalid_refresh_token' || errorType === 'refresh_token_reused'
   if (response.status === 401 && tokenError) {
-    return new ApiError(response.status, 'Сессия истекла. Откройте приложение заново.', detail)
+    return new ApiError(response.status, 'Сессия истекла. Откройте приложение заново.', detail, errorType)
   }
-  return new ApiError(response.status, detail || title, detail)
+  return new ApiError(response.status, detail || title, detail, errorType)
 }
 
 let refreshPromise: Promise<TokenPair> | null = null
@@ -139,6 +140,7 @@ export function listGenerations(projectId?: string, limit = 50, cursor?: string 
 export function listIdeas(limit = 50) { return request<Idea[]>(`/ideas?limit=${limit}`) }
 export function publishIdea(generationId: string) { return request<AdminIdea>('/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generation_id: generationId }) }) }
 export function getOwnIdeaPublication(generationId: string) { return request<AdminIdea | null>(`/ideas/mine/${generationId}`) }
+export function unpublishIdea(generationId: string) { return request<AdminIdea>(`/ideas/mine/${generationId}`, { method: 'DELETE' }) }
 export function startProjectFromIdea(ideaId: string) { return request<Project>(`/ideas/${ideaId}/project`, { method: 'POST' }) }
 
 export function getBillingSummary() { return request<BillingSummary>('/billing') }
