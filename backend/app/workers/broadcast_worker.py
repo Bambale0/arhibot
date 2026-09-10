@@ -12,6 +12,7 @@ from app.db.session import dispose_engine, get_session_factory
 from app.repositories.broadcasts import BroadcastRepository
 from app.services.broadcast_service import BROADCAST_QUEUE_KEY
 from app.telegram_bot.main import TelegramApiError, TelegramBotApi
+from app.workers.heartbeat import worker_heartbeat
 
 logger = logging.getLogger(__name__)
 MAX_DELIVERY_ATTEMPTS = 3
@@ -244,7 +245,8 @@ async def run_worker() -> None:
 
 async def _main() -> None:
     try:
-        await run_worker()
+        async with worker_heartbeat("broadcast"):
+            await run_worker()
     finally:
         await redis_client.aclose()
         await dispose_engine()

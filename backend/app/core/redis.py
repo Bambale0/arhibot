@@ -51,6 +51,13 @@ class LazyRedisClient:
     async def expire(self, key: str, seconds: int) -> bool:
         return bool(await self._get().expire(key, seconds))
 
+    async def set(self, key: str, value: str, *, ex: int | None = None) -> bool:
+        return bool(await self._get().set(key, value, ex=ex))
+
+    async def get(self, key: str) -> str | None:
+        result = await self._get().get(key)
+        return None if result is None else str(result)
+
     async def delete(self, *keys: str) -> int:
         if not keys:
             return 0
