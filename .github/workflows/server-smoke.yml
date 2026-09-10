@@ -89,6 +89,9 @@ jobs:
           version_sha=$(curl -fsS http://127.0.0.1:18080/health/version | python3 -c 'import json,sys; print(json.load(sys.stdin).get("release_sha", ""))')
           [[ "${version_sha}" == "${expected_sha}" ]] || { echo "HTTP release mismatch: ${version_sha:-missing} != ${expected_sha}" >&2; exit 1; }
           [[ "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/metrics)" == "404" ]] || { echo "Container edge exposed /metrics" >&2; exit 1; }
+          for path in openapi.json docs redoc; do
+            [[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:18000/${path}")" == "404" ]] || { echo "Production API exposed /${path}" >&2; exit 1; }
+          done
           curl -fsS http://127.0.0.1:18000/metrics | grep '^auroom_build_info' >/dev/null || { echo "Internal metrics missing build info" >&2; exit 1; }
           curl -fsS http://127.0.0.1:18080/ | grep -q '<div id="root"></div>'
 
@@ -127,6 +130,20 @@ jobs:
               exit 1
               ;;
           esac
+
+          public_base=${public_webapp_url%/}
+          for path in metrics openapi.json docs redoc; do
+            [[ "$(curl -sS -o /dev/null -w '%{http_code}' "${public_base}/${path}")" == "404" ]] || { echo "Public /${path} must return 404" >&2; exit 1; }
+          done
+          public_headers=$(curl -fsSI "${public_base}/")
+          grep -qi '^strict-transport-security: max-age=31536000; includeSubDomains' <<<"${public_headers}" || { echo "HSTS header missing" >&2; exit 1; }
+          grep -qi '^x-content-type-options: nosniff' <<<"${public_headers}" || { echo "nosniff header missing" >&2; exit 1; }
+          grep -qi '^referrer-policy: strict-origin-when-cross-origin' <<<"${public_headers}" || { echo "Referrer-Policy header missing" >&2; exit 1; }
+          grep -qi '^content-security-policy:' <<<"${public_headers}" || { echo "Content-Security-Policy header missing" >&2; exit 1; }
+          if grep -qiE '^server: .*/[0-9]' <<<"${public_headers}"; then
+            echo "Public Server header exposes a version" >&2
+            exit 1
+          fi
 
           if ! curl -fsSL --connect-timeout 8 --max-time 20 "${public_webapp_url}" | grep -q '<div id="root"></div>'; then
             echo "Public Telegram Mini App URL is unreachable or does not serve the frontend" >&2

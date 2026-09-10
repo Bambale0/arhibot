@@ -19,6 +19,9 @@ rollout_succeeded=0
 migration_applied=0
 runtime_backup=""
 previous_release_sha="unknown"
+host_nginx_target=${AUROOM_HOST_NGINX_TARGET:-/etc/nginx/sites-available/archibot.xn--e1aikcel5c5a.online}
+host_nginx_backup=""
+host_nginx_applied=0
 export AUROOM_RELEASE_SHA="${release_sha}"
 
 if docker compose version >/dev/null 2>&1; then
@@ -33,6 +36,16 @@ else
   echo "Docker Compose is not installed" >&2
   exit 1
 fi
+
+rollback_host_nginx() {
+  if (( host_nginx_applied == 0 )) || [[ -z "${host_nginx_backup}" ]] || [[ ! -s "${host_nginx_backup}" ]]; then
+    return 0
+  fi
+  echo "Restoring previous host Nginx config" >&2
+  cp -a "${host_nginx_backup}" "${host_nginx_target}"
+  nginx -t
+  systemctl reload nginx
+}
 
 rollback_code() {
   if [[ ! -s "${code_backup}" ]]; then
@@ -60,6 +73,9 @@ rollback_code() {
 
 on_exit() {
   status=$?
+  if (( status != 0 )) && (( host_nginx_applied == 1 )) && (( rollout_succeeded == 0 )); then
+    rollback_host_nginx || true
+  fi
   if (( status != 0 )) && (( mutation_started == 1 )) && (( rollout_succeeded == 0 )); then
     if (( migration_applied == 1 )); then
       echo "Rollout failed after database migration; automatic code rollback is suppressed to avoid code/schema mismatch." >&2
@@ -93,7 +109,7 @@ rm -rf "${candidate}"
 mkdir -p "${candidate}"
 tar -xzf "${archive}" -C "${candidate}"
 python3 -m compileall -q "${candidate}/backend/app" "${candidate}/backend/scripts"
-bash -n "${candidate}/ops/backup_runtime.sh" "${candidate}/ops/restore_runtime.sh" "${candidate}/ops/runtime_housekeeping.sh" "${candidate}/ops/runtime_monitor.sh"
+bash -n "${candidate}/ops/backup_runtime.sh" "${candidate}/ops/restore_runtime.sh" "${candidate}/ops/runtime_housekeeping.sh" "${candidate}/ops/runtime_monitor.sh" "${candidate}/ops/install_host_nginx.sh"
 python3 -m py_compile "${candidate}/ops/runtime_preflight.py"
 
 # The public development host is internet-facing; fail closed before touching code, DB, or containers.
@@ -207,6 +223,42 @@ for service in worker broadcast-worker maintenance frontend; do
     exit 1
   fi
 done
+
+echo "Applying canonical host Nginx config"
+nginx_apply_output=$("${app_dir}/ops/install_host_nginx.sh" "${app_dir}" "${host_nginx_target}" APPLY)
+echo "${nginx_apply_output}"
+host_nginx_backup=$(printf '%s\n' "${nginx_apply_output}" | sed -n 's/^AuRoom host Nginx config applied; backup=//p' | tail -n1)
+if [[ -n "${host_nginx_backup}" ]]; then
+  host_nginx_applied=1
+fi
+
+public_webapp_url=$(compose exec -T bot python - <<'PYURL'
+from app.core.config import get_settings
+from app.telegram_bot.main import canonicalize_webapp_url
+
+url = (get_settings().telegram_webapp_url or "").strip()
+if not url:
+    raise SystemExit("TELEGRAM_WEBAPP_URL is empty")
+print(canonicalize_webapp_url(url))
+PYURL
+)
+case "${public_webapp_url}" in
+  https://*) ;;
+  *) echo "Public Mini App URL must use HTTPS" >&2; exit 1 ;;
+esac
+public_base=${public_webapp_url%/}
+curl -fsS --connect-timeout 5 --max-time 15 "${public_base}/healthz" | grep -qx 'ok' || { echo "Public health check failed after host Nginx apply" >&2; exit 1; }
+for path in metrics openapi.json docs redoc; do
+  status=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 15 "${public_base}/${path}")
+  [[ "${status}" == "404" ]] || { echo "Public /${path} must return 404, got ${status}" >&2; exit 1; }
+done
+public_headers=$(curl -fsSI --connect-timeout 5 --max-time 15 "${public_base}/")
+grep -qi '^strict-transport-security: max-age=31536000; includeSubDomains' <<<"${public_headers}" || { echo "HSTS header missing after host Nginx apply" >&2; exit 1; }
+grep -qi '^x-content-type-options: nosniff' <<<"${public_headers}" || { echo "X-Content-Type-Options header missing" >&2; exit 1; }
+if grep -qiE '^server: .*/[0-9]' <<<"${public_headers}"; then
+  echo "Public Server header exposes a version" >&2
+  exit 1
+fi
 
 if command -v crontab >/dev/null 2>&1; then
   backup_cron="17 * * * * ${app_dir}/ops/backup_runtime.sh ${app_dir} ${app_dir}/backups/runtime scheduled >> ${app_dir}/backups/runtime.log 2>&1 # AuRoom runtime backup"

@@ -23,10 +23,10 @@ jobs:
         working-directory: backend
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
           cache: pip
@@ -34,6 +34,9 @@ jobs:
 
       - name: Install backend
         run: python -m pip install -e '.[dev]'
+
+      - name: Audit Python runtime dependencies
+        run: pip-audit . --progress-spinner off --strict
 
       - name: Compile
         run: python -m compileall -q app tests
@@ -63,7 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
         env:
           POSTGRES_DB: app
           POSTGRES_USER: app
@@ -76,7 +79,7 @@ jobs:
           --health-timeout 3s
           --health-retries 10
       redis:
-        image: redis:8-alpine
+        image: redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
         ports:
           - 6379:6379
         options: >-
@@ -102,10 +105,10 @@ jobs:
         working-directory: backend
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
           cache: pip
@@ -127,7 +130,7 @@ jobs:
         working-directory: .
         run: |
           set -Eeuo pipefail
-          docker run -d --name auroom-chaos-redis -p 127.0.0.1::6379 redis:8-alpine >/dev/null
+          docker run -d --name auroom-chaos-redis -p 127.0.0.1::6379 redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576 >/dev/null
           trap 'docker rm -f auroom-chaos-redis >/dev/null 2>&1 || true' EXIT
           for attempt in $(seq 1 20); do
             docker exec auroom-chaos-redis redis-cli ping >/dev/null 2>&1 && break
@@ -159,15 +162,18 @@ jobs:
         working-directory: frontend
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
+
+      - name: Audit frontend production dependencies
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Typecheck
         run: npm run typecheck

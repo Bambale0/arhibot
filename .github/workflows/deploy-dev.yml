@@ -35,7 +35,7 @@ jobs:
       DEPLOY_APP_DIR: /root/arhibot
     steps:
       - name: Checkout selected dev revision
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.DEPLOY_SHA }}
 
@@ -137,7 +137,7 @@ jobs:
 
       - name: Upload deploy log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: arhibot-dev-deploy-${{ env.DEPLOY_SHA }}
           path: deploy.log
