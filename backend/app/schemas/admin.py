@@ -189,8 +189,6 @@ class IdeaObjectSummary(BaseModel):
 
 class IdeaPublicationCreate(BaseModel):
     generation_id: UUID
-    is_active: bool = True
-    sort_order: int = Field(default=0, ge=-100_000, le=100_000)
 
 
 class IdeaPublicationUpdate(BaseModel):
@@ -214,17 +212,6 @@ class IdeaPublicationResponse(PublicIdeaPublicationResponse):
     is_active: bool
     sort_order: int
     updated_at: datetime
-
-
-class IdeaCandidateResponse(BaseModel):
-    generation_id: UUID
-    title: str
-    category: str
-    generation_type: GenerationType
-    image_url: str
-    selected_objects: list[str]
-    completed_at: datetime
-    publication_id: UUID | None = None
 
 
 class GenerationRuntimeUpdate(BaseModel):

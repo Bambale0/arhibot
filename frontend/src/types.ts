@@ -209,16 +209,6 @@ export type AdminIdea = Idea & {
   updated_at: string
 }
 
-export type AdminIdeaCandidate = {
-  generation_id: string
-  title: string
-  category: string
-  generation_type: GenerationMode
-  image_url: string
-  selected_objects: string[]
-  completed_at: string
-  publication_id: string | null
-}
 
 export type AdminGenerationSettings = {
   primary_model: string | null

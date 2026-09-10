@@ -8,7 +8,6 @@ import type {
   AdminGenerationPrice,
   AdminGenerationSettings,
   AdminIdea,
-  AdminIdeaCandidate,
   AdminOverview,
   AdminOperationalSettings,
   AdminPayment,
@@ -53,7 +52,6 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   const [tariffs, setTariffs] = useState<AdminTariff[]>([])
   const [billingSettings, setBillingSettings] = useState<AdminBillingSettings | null>(null)
   const [ideas, setIdeas] = useState<AdminIdea[]>([])
-  const [ideaCandidates, setIdeaCandidates] = useState<AdminIdeaCandidate[]>([])
   const [generation, setGeneration] = useState<AdminGenerationSettings | null>(null)
   const [prices, setPrices] = useState<AdminGenerationPrice[]>([])
   const [prompts, setPrompts] = useState<AdminPrompt[]>([])
@@ -70,12 +68,11 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   async function reload() {
     setError(null)
     try {
-      const [o, t, bs, i, ic, g, gp, p, u, tx, pay, b, tg, ops, a] = await Promise.all([
+      const [o, t, bs, i, g, gp, p, u, tx, pay, b, tg, ops, a] = await Promise.all([
         api.adminOverview(),
         api.adminListTariffs(),
         api.adminGetBillingSettings(),
         api.adminListIdeas(),
-        api.adminListIdeaCandidates(),
         api.adminGetGenerationSettings(),
         api.adminListGenerationPrices(),
         api.adminListPrompts(),
@@ -91,7 +88,6 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       setTariffs(t)
       setBillingSettings(bs)
       setIdeas(i)
-      setIdeaCandidates(ic)
       setGeneration(g)
       setPrices(gp)
       setPrompts(p)
@@ -128,7 +124,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       {loading ? <div className="admin-loading">Загружаем настройки…</div> : (
         <div className="admin-content">
           {tab === 'tariffs' && billingSettings && <TariffsPanel items={tariffs} onItems={setTariffs} billingSettings={billingSettings} onBillingSettings={setBillingSettings} onError={setError} />}
-          {tab === 'ideas' && <IdeasPanel items={ideas} candidates={ideaCandidates} onItems={setIdeas} onCandidates={setIdeaCandidates} onError={setError} />}
+          {tab === 'ideas' && <IdeasPanel items={ideas} onItems={setIdeas} onError={setError} />}
           {tab === 'generation' && generation && <GenerationPanel settings={generation} prices={prices} prompts={prompts} onSettings={setGeneration} onPrices={setPrices} onPrompts={setPrompts} onError={setError} />}
           {tab === 'users' && <UsersPanel items={users} transactions={transactions} onItems={setUsers} onTransactions={setTransactions} onError={setError} />}
           {tab === 'payments' && <PaymentsPanel items={payments} onItems={setPayments} onError={setError} />}
@@ -211,30 +207,12 @@ function BillingSettingsEditor({ settings, onSaved, onError }: { settings: Admin
   return <div className="admin-subpanel"><div className="admin-panel-title"><div><h3>Фискальные чеки YooKassa</h3><p>При включении клиент указывает email, а чек передаётся в платёж.</p></div></div><div className="admin-form-grid compact"><label className="admin-checkbox"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)}/> Передавать receipt</label><label>Код НДС<input type="number" min="1" max="12" disabled={!enabled} value={vat} onChange={(e) => setVat(e.target.value)}/></label><label>Предмет расчёта<input disabled={!enabled} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="service"/></label><label>Способ расчёта<input disabled={!enabled} value={mode} onChange={(e) => setMode(e.target.value)} placeholder="full_payment"/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={() => void save()}>Сохранить кассу</button></div></div></div>
 }
 
-function IdeasPanel({ items, candidates, onItems, onCandidates, onError }: {
+function IdeasPanel({ items, onItems, onError }: {
   items: AdminIdea[]
-  candidates: AdminIdeaCandidate[]
   onItems: (v: AdminIdea[]) => void
-  onCandidates: (v: AdminIdeaCandidate[]) => void
   onError: (v: string | null) => void
 }) {
   const [busy, setBusy] = useState<string | null>(null)
-
-  async function refreshCandidates() {
-    try { onCandidates(await api.adminListIdeaCandidates()) }
-    catch (err) { onError(errorText(err)) }
-  }
-
-  async function publish(candidate: AdminIdeaCandidate) {
-    if (busy) return
-    setBusy(candidate.generation_id); onError(null)
-    try {
-      const saved = await api.adminPublishIdea(candidate.generation_id)
-      onItems([saved, ...items])
-      await refreshCandidates()
-    } catch (err) { onError(errorText(err)) }
-    finally { setBusy(null) }
-  }
 
   async function toggle(item: AdminIdea) {
     if (busy) return
@@ -259,22 +237,14 @@ function IdeasPanel({ items, candidates, onItems, onCandidates, onError }: {
   }
 
   return <section className="admin-panel">
-    <div className="admin-panel-title"><div><h2>Идеи</h2><p>Лента состоит только из принятых работ, созданных через «Создать». Отдельных промптов, картинок и 3D для идеи больше нет.</p></div></div>
+    <div className="admin-panel-title"><div><h2>Идеи</h2><p>Пользователи сами добавляют принятые работы из «Создать». Здесь остаются только модерация, видимость и порядок ленты.</p></div></div>
     <div className="admin-subpanel">
-      <div className="admin-panel-title"><div><h3>Готовые работы</h3><p>Публикуются только принятые результаты администраторов. Клиентские работы скрыты до появления явного согласия на публикацию.</p></div><button type="button" className="secondary-button" onClick={() => void refreshCandidates()}>Обновить</button></div>
-      <div className="admin-card-list">{candidates.length ? candidates.map((candidate) => <article className="admin-list-card admin-idea-card" key={candidate.generation_id}>
-        <img src={candidate.image_url} alt={candidate.title}/>
-        <div><strong>{candidate.title}</strong><span>{candidate.category} · {modes.find((mode) => mode.id === candidate.generation_type)?.label}</span><p>{candidate.selected_objects.length} объект(а) · готово {formatDate(candidate.completed_at)}</p></div>
-        <div>{candidate.publication_id ? <span className="status-pill">Уже в ленте</span> : <button className="primary-button" disabled={busy !== null} onClick={() => void publish(candidate)}>{busy === candidate.generation_id ? 'Публикуем…' : 'Опубликовать'}</button>}</div>
-      </article>) : <div className="empty-inline"><p>Нет принятых работ, доступных для публикации.</p></div>}</div>
-    </div>
-    <div className="admin-subpanel">
-      <div className="admin-panel-title"><div><h3>Лента</h3><p>Порядок и видимость публикаций. Содержание берётся из исходной работы и не редактируется отдельно.</p></div></div>
+      <div className="admin-panel-title"><div><h3>Лента</h3><p>Содержание берётся из принятой работы и ответов опросника. Отдельные промпты, картинки и 3D для идеи не используются.</p></div></div>
       <div className="admin-card-list">{items.length ? items.map((item) => <article className="admin-list-card admin-idea-card" key={item.id}>
         {item.image_url && <img src={item.image_url} alt={item.title}/>}
-        <div><strong>{item.title}</strong><span>{item.category} · {modes.find((mode) => mode.id === item.generation_type)?.label}</span><p>{item.objects.reduce((count, object) => count + object.answers.length, 0)} параметров · опубликовано {formatDate(item.published_at)}</p></div>
-        <div><span className={`status-pill ${item.is_active ? '' : 'muted'}`}>{item.is_active ? 'Опубликована' : 'Скрыта'}</span><label>Порядок<input type="number" min="-100000" max="100000" defaultValue={item.sort_order} disabled={busy !== null} onBlur={(event) => void changeOrder(item, event.target.value)}/></label><button disabled={busy !== null} onClick={() => void toggle(item)}>{item.is_active ? 'Скрыть' : 'Опубликовать'}</button></div>
-      </article>) : <div className="empty-inline"><p>В ленте пока нет опубликованных работ.</p></div>}</div>
+        <div><strong>{item.title}</strong><span>{item.category} · {modes.find((mode) => mode.id === item.generation_type)?.label}</span><p>{item.objects.reduce((count, object) => count + object.answers.length, 0)} параметров · добавлено {formatDate(item.published_at)}</p></div>
+        <div><span className={`status-pill ${item.is_active ? '' : 'muted'}`}>{item.is_active ? 'В ленте' : 'Скрыта'}</span><label>Порядок<input type="number" min="-100000" max="100000" defaultValue={item.sort_order} disabled={busy !== null} onBlur={(event) => void changeOrder(item, event.target.value)}/></label><button disabled={busy !== null} onClick={() => void toggle(item)}>{item.is_active ? 'Скрыть' : 'Вернуть в ленту'}</button></div>
+      </article>) : <div className="empty-inline"><p>Пользователи пока не добавили работы в ленту.</p></div>}</div>
     </div>
   </section>
 }

@@ -24,8 +24,6 @@ from app.schemas.admin import (
     GenerationPriceUpdate,
     GenerationRuntimeResponse,
     GenerationRuntimeUpdate,
-    IdeaCandidateResponse,
-    IdeaPublicationCreate,
     IdeaPublicationResponse,
     IdeaPublicationUpdate,
     OperationalSettingsResponse,
@@ -85,16 +83,6 @@ async def update_billing_settings(payload: BillingSettingsUpdate, admin: AdminUs
     return await AdminBillingService(session, settings).update_settings(admin, payload)
 
 
-@router.get("/idea-candidates", response_model=list[IdeaCandidateResponse])
-async def list_idea_candidates(
-    _admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-    limit: Annotated[int, Query(ge=1, le=500)] = 200,
-) -> list[IdeaCandidateResponse]:
-    return await AdminIdeaService(session, settings).list_candidates(limit=limit)
-
-
 @router.get("/ideas", response_model=list[IdeaPublicationResponse])
 async def list_ideas(
     _admin: AdminUser,
@@ -103,20 +91,6 @@ async def list_ideas(
     limit: Annotated[int, Query(ge=1, le=500)] = 200,
 ) -> list[IdeaPublicationResponse]:
     return await AdminIdeaService(session, settings).list_all(limit=limit)
-
-
-@router.post(
-    "/ideas",
-    response_model=IdeaPublicationResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def publish_idea(
-    payload: IdeaPublicationCreate,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> IdeaPublicationResponse:
-    return await AdminIdeaService(session, settings).create(admin, payload)
 
 
 @router.patch("/ideas/{idea_id}", response_model=IdeaPublicationResponse)

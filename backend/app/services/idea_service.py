@@ -13,13 +13,11 @@ from app.db.models.generations import Generation
 from app.db.models.projects import Project
 from app.db.models.users import User
 from app.domain.generations.enums import GenerationStatus
-from app.domain.users.enums import UserRole
 from app.questionnaires.generation_prompt import condition_ok
 from app.repositories.admin import AdminRepository
 from app.repositories.ideas import IdeaRepository
 from app.schemas.admin import (
     IdeaAnswerSummary,
-    IdeaCandidateResponse,
     IdeaObjectSummary,
     IdeaPublicationCreate,
     IdeaPublicationResponse,
@@ -32,7 +30,6 @@ from app.services.asset_service import LocalMediaStorage
 from app.services.questionnaire_project_service import QuestionnaireProjectService
 from app.services.questionnaire_service import QuestionnaireService
 
-PUBLISHABLE_ROLES = {UserRole.ADMIN, UserRole.SUPERADMIN}
 PRESENTATION_COMPATIBLE_CATALOG_UPGRADES = {("2026-09-09.2", "2026-09-10.1")}
 
 
@@ -51,7 +48,7 @@ def _answer_text(value: object) -> str:
 
 
 class IdeaService:
-    """Public feed backed only by accepted questionnaire generations."""
+    """Ideas feed backed only by user-published accepted questionnaire generations."""
 
     def __init__(self, session: AsyncSession, settings: Settings) -> None:
         self.session = session
@@ -105,37 +102,25 @@ class IdeaService:
             response = await self._publication_response(publication)
             if response is None:
                 continue
-            result.append(PublicIdeaPublicationResponse(**response.model_dump(exclude={"generation_id", "is_active", "sort_order", "updated_at"})))
+            result.append(
+                PublicIdeaPublicationResponse(
+                    **response.model_dump(
+                        exclude={"generation_id", "is_active", "sort_order", "updated_at"}
+                    )
+                )
+            )
         return result
 
-    async def start_project(self, user: User, idea_id: UUID) -> ProjectResponse:
-        publication = await self.repository.get(idea_id)
-        if publication is None or not publication.is_active:
+    async def _owned_generation(self, user: User, generation_id: UUID) -> Generation:
+        generation = await self.session.get(Generation, generation_id)
+        if generation is None or generation.user_id != user.id:
             raise AppError(
-                type="idea_not_found",
-                title="Idea not found",
+                type="idea_source_not_found",
+                title="Work not found",
                 status=404,
-                detail="The published work does not exist or is no longer available.",
+                detail="The generated work does not exist.",
             )
-        snapshot = publication.presentation_snapshot or {}
-        selected_objects = snapshot.get("selected_objects")
-        if not isinstance(selected_objects, list) or not selected_objects:
-            raise AppError(
-                type="idea_source_invalid",
-                title="Idea source is invalid",
-                status=409,
-                detail="The published work cannot be used to start a project.",
-            )
-        return await QuestionnaireProjectService(self.session).start(
-            user,
-            QuestionnaireProjectStartRequest(selected_objects=[str(item) for item in selected_objects]),
-        )
-
-
-class AdminIdeaService(IdeaService):
-    def __init__(self, session: AsyncSession, settings: Settings) -> None:
-        super().__init__(session, settings)
-        self.audit = AdminRepository(session)
+        return generation
 
     @staticmethod
     def _accepted_object_key(session: DesignSession, generation_id: UUID) -> str | None:
@@ -151,7 +136,7 @@ class AdminIdeaService(IdeaService):
                 type="idea_source_not_accepted",
                 title="Accepted work required",
                 status=422,
-                detail="Only an accepted result from the Create questionnaire can be published.",
+                detail="Only an accepted result from Create can be added to Ideas.",
             )
         try:
             design_session = DesignSession.model_validate(raw_session)
@@ -169,13 +154,16 @@ class AdminIdeaService(IdeaService):
                 type="idea_source_not_accepted",
                 title="Accepted work required",
                 status=422,
-                detail="Only an accepted result from the Create questionnaire can be published.",
+                detail="Only an accepted result from Create can be added to Ideas.",
             )
 
         catalog = await QuestionnaireService(self.session).catalog()
         source_version = design_session.catalog_version
         current_version = str(catalog["version"])
-        compatible_upgrade = (source_version, current_version) in PRESENTATION_COMPATIBLE_CATALOG_UPGRADES
+        compatible_upgrade = (
+            source_version,
+            current_version,
+        ) in PRESENTATION_COMPATIBLE_CATALOG_UPGRADES
         if source_version != current_version and not compatible_upgrade:
             raise AppError(
                 type="idea_source_catalog_unavailable",
@@ -186,6 +174,7 @@ class AdminIdeaService(IdeaService):
                     "rendered safely in the current Ideas feed."
                 ),
             )
+
         definitions = {item["key"]: item for item in catalog["questionnaires"]}
         accepted_index = design_session.accepted_objects.index(object_key)
         selected_objects = design_session.accepted_objects[: accepted_index + 1]
@@ -233,74 +222,39 @@ class AdminIdeaService(IdeaService):
             "objects": objects,
         }
 
-    async def list_candidates(self, *, limit: int = 200) -> list[IdeaCandidateResponse]:
-        result: list[IdeaCandidateResponse] = []
-        for generation, project, _owner in await self.repository.list_candidate_sources(limit=limit):
-            try:
-                snapshot = await self._build_snapshot(project, generation)
-            except AppError:
-                continue
-            image_url = await self._image_url(generation)
-            if image_url is None or generation.completed_at is None:
-                continue
-            publication = await self.repository.get_by_generation(generation.id)
-            result.append(
-                IdeaCandidateResponse(
-                    generation_id=generation.id,
-                    title=snapshot["title"],
-                    category=snapshot["category"],
-                    generation_type=generation.type,
-                    image_url=image_url,
-                    selected_objects=snapshot["selected_objects"],
-                    completed_at=generation.completed_at,
-                    publication_id=publication.id if publication else None,
-                )
-            )
-        return result
+    async def get_own_publication(
+        self, user: User, generation_id: UUID
+    ) -> IdeaPublicationResponse | None:
+        await self._owned_generation(user, generation_id)
+        publication = await self.repository.get_by_generation(generation_id)
+        if publication is None:
+            return None
+        return await self._publication_response(publication)
 
-    async def list_all(self, *, limit: int = 200) -> list[IdeaPublicationResponse]:
-        result: list[IdeaPublicationResponse] = []
-        for publication in await self.repository.list(limit=limit):
-            response = await self._publication_response(publication)
-            if response is not None:
-                result.append(response)
-        return result
-
-    async def create(
-        self, actor: User, payload: IdeaPublicationCreate
+    async def publish(
+        self, user: User, payload: IdeaPublicationCreate
     ) -> IdeaPublicationResponse:
-        if await self.repository.get_by_generation(payload.generation_id) is not None:
+        generation = await self._owned_generation(user, payload.generation_id)
+        if (
+            generation.status != GenerationStatus.COMPLETED
+            or generation.output_asset_id is None
+        ):
+            raise AppError(
+                type="idea_generation_not_ready",
+                title="Completed work required",
+                status=422,
+                detail="Only a completed generated work can be added to Ideas.",
+            )
+        if await self.repository.get_by_generation(generation.id) is not None:
             raise AppError(
                 type="idea_already_published",
                 title="Work already published",
                 status=409,
-                detail="This generated work already has an Ideas publication.",
+                detail="This generated work is already in Ideas.",
             )
-        generation = await self.session.get(Generation, payload.generation_id)
-        if (
-            generation is None
-            or generation.status != GenerationStatus.COMPLETED
-            or generation.output_asset_id is None
-        ):
-            raise AppError(
-                type="idea_generation_not_found",
-                title="Completed generation required",
-                status=404,
-                detail="The selected completed generation does not exist.",
-            )
-        owner = await self.session.get(User, generation.user_id)
-        if owner is None or owner.role not in PUBLISHABLE_ROLES:
-            raise AppError(
-                type="idea_publication_consent_required",
-                title="Publication consent required",
-                status=403,
-                detail=(
-                    "Customer generations cannot be published until an explicit consent "
-                    "workflow is implemented. Use an administrator-owned accepted work."
-                ),
-            )
+
         project = await self.session.get(Project, generation.project_id)
-        if project is None or project.deleted_at is not None:
+        if project is None or project.deleted_at is not None or project.user_id != user.id:
             raise AppError(
                 type="idea_project_not_found",
                 title="Source project not found",
@@ -318,10 +272,10 @@ class AdminIdeaService(IdeaService):
 
         publication = IdeaPublication(
             generation_id=generation.id,
-            published_by_user_id=actor.id,
+            published_by_user_id=user.id,
             presentation_snapshot=snapshot,
-            is_active=payload.is_active,
-            sort_order=payload.sort_order,
+            is_active=True,
+            sort_order=0,
         )
         self.repository.add(publication)
         try:
@@ -332,15 +286,8 @@ class AdminIdeaService(IdeaService):
                 type="idea_already_published",
                 title="Work already published",
                 status=409,
-                detail="This generated work already has an Ideas publication.",
+                detail="This generated work is already in Ideas.",
             ) from exc
-        self.audit.add_audit(
-            actor_user_id=actor.id,
-            action="idea.publish",
-            entity_type="idea_publication",
-            entity_id=str(publication.id),
-            details={"generation_id": str(generation.id)},
-        )
         await self.session.commit()
         await self.session.refresh(publication)
         response = await self._publication_response(publication)
@@ -352,6 +299,47 @@ class AdminIdeaService(IdeaService):
                 detail="The new publication could not be read back.",
             )
         return response
+
+    async def start_project(self, user: User, idea_id: UUID) -> ProjectResponse:
+        publication = await self.repository.get(idea_id)
+        if publication is None or not publication.is_active:
+            raise AppError(
+                type="idea_not_found",
+                title="Idea not found",
+                status=404,
+                detail="The published work does not exist or is no longer available.",
+            )
+        snapshot = publication.presentation_snapshot or {}
+        selected_objects = snapshot.get("selected_objects")
+        if not isinstance(selected_objects, list) or not selected_objects:
+            raise AppError(
+                type="idea_source_invalid",
+                title="Idea source is invalid",
+                status=409,
+                detail="The published work cannot be used to start a project.",
+            )
+        return await QuestionnaireProjectService(self.session).start(
+            user,
+            QuestionnaireProjectStartRequest(
+                selected_objects=[str(item) for item in selected_objects]
+            ),
+        )
+
+
+class AdminIdeaService(IdeaService):
+    """Moderation only. Users themselves decide which accepted works enter the feed."""
+
+    def __init__(self, session: AsyncSession, settings: Settings) -> None:
+        super().__init__(session, settings)
+        self.audit = AdminRepository(session)
+
+    async def list_all(self, *, limit: int = 200) -> list[IdeaPublicationResponse]:
+        result: list[IdeaPublicationResponse] = []
+        for publication in await self.repository.list(limit=limit):
+            response = await self._publication_response(publication)
+            if response is not None:
+                result.append(response)
+        return result
 
     async def update(
         self, actor: User, idea_id: UUID, payload: IdeaPublicationUpdate
@@ -370,7 +358,7 @@ class AdminIdeaService(IdeaService):
             publication.sort_order = payload.sort_order
         self.audit.add_audit(
             actor_user_id=actor.id,
-            action="idea.update",
+            action="idea.moderate",
             entity_type="idea_publication",
             entity_id=str(publication.id),
             details={"fields": sorted(payload.model_fields_set)},

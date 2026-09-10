@@ -26,7 +26,9 @@ from app.main import app  # noqa: E402
 from app.schemas.questionnaires import DesignSession  # noqa: E402
 
 
-async def _register(client: AsyncClient, *, role: UserRole = UserRole.USER) -> tuple[dict[str, str], UUID]:
+async def _register(
+    client: AsyncClient, *, role: UserRole = UserRole.USER
+) -> tuple[dict[str, str], UUID]:
     response = await client.post(
         "/api/v1/auth/register",
         json={
@@ -74,7 +76,10 @@ async def _accepted_generation(
                 user_id=owner_id,
                 name="Generated source",
                 description="Accepted Create work",
-                context={"questionnaire_draft": False, "design_session": session_state.model_dump(mode="json")},
+                context={
+                    "questionnaire_draft": False,
+                    "design_session": session_state.model_dump(mode="json"),
+                },
             )
         )
         await session.flush()
@@ -111,35 +116,51 @@ async def _accepted_generation(
 
 
 @pytest.mark.asyncio
-async def test_ideas_are_publications_of_accepted_create_results() -> None:
+async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        admin_headers, admin_id = await _register(client, role=UserRole.SUPERADMIN)
-        user_headers, _ = await _register(client)
+        admin_headers, _ = await _register(client, role=UserRole.SUPERADMIN)
+        user_headers, user_id = await _register(client)
         catalog_response = await client.get("/api/v1/questionnaires", headers=user_headers)
         assert catalog_response.status_code == 200, catalog_response.text
-        catalog_version = catalog_response.json()["version"]
-        generation_id = await _accepted_generation(owner_id=admin_id, catalog_version=catalog_version)
+        generation_id = await _accepted_generation(
+            owner_id=user_id,
+            catalog_version=catalog_response.json()["version"],
+        )
 
-        candidates = await client.get("/api/v1/admin/idea-candidates", headers=admin_headers)
-        assert candidates.status_code == 200, candidates.text
-        candidate = next(item for item in candidates.json() if item["generation_id"] == str(generation_id))
-        assert candidate["title"] == "Дом, фасад"
-        assert candidate["selected_objects"] == ["eskez-doma"]
-        assert candidate["publication_id"] is None
+        before = await client.get(
+            f"/api/v1/ideas/mine/{generation_id}", headers=user_headers
+        )
+        assert before.status_code == 200, before.text
+        assert before.json() is None
 
         published = await client.post(
-            "/api/v1/admin/ideas",
-            headers=admin_headers,
-            json={"generation_id": str(generation_id), "is_active": True, "sort_order": -10},
+            "/api/v1/ideas",
+            headers=user_headers,
+            json={"generation_id": str(generation_id)},
         )
         assert published.status_code == 201, published.text
         publication = published.json()
         assert publication["generation_id"] == str(generation_id)
+        assert publication["is_active"] is True
+        assert publication["sort_order"] == 0
         assert publication["image_url"].endswith(".png")
         assert publication["objects"][0]["answers"] == [
             {"question": "Какой стиль вам нравится?", "answer": "Современный минимализм"}
         ]
+
+        own = await client.get(
+            f"/api/v1/ideas/mine/{generation_id}", headers=user_headers
+        )
+        assert own.status_code == 200, own.text
+        assert own.json()["id"] == publication["id"]
+
+        duplicate = await client.post(
+            "/api/v1/ideas",
+            headers=user_headers,
+            json={"generation_id": str(generation_id)},
+        )
+        assert duplicate.status_code == 409, duplicate.text
 
         public = await client.get("/api/v1/ideas", headers=user_headers)
         assert public.status_code == 200, public.text
@@ -151,7 +172,9 @@ async def test_ideas_are_publications_of_accepted_create_results() -> None:
         assert "model_url" not in idea
         assert "media" not in idea
 
-        started = await client.post(f"/api/v1/ideas/{idea['id']}/project", headers=user_headers)
+        started = await client.post(
+            f"/api/v1/ideas/{idea['id']}/project", headers=user_headers
+        )
         assert started.status_code == 201, started.text
         started_session = started.json()["context"]["design_session"]
         assert started.json()["context"]["questionnaire_draft"] is True
@@ -159,38 +182,54 @@ async def test_ideas_are_publications_of_accepted_create_results() -> None:
         assert started_session["answers"] == {}
         assert started_session["accepted_objects"] == []
 
-        hidden = await client.delete(f"/api/v1/admin/ideas/{idea['id']}", headers=admin_headers)
+        hidden = await client.delete(
+            f"/api/v1/admin/ideas/{idea['id']}", headers=admin_headers
+        )
         assert hidden.status_code == 200, hidden.text
         assert hidden.json()["is_active"] is False
         public_after = await client.get("/api/v1/ideas", headers=user_headers)
         assert all(item["id"] != idea["id"] for item in public_after.json())
 
+        own_after_moderation = await client.get(
+            f"/api/v1/ideas/mine/{generation_id}", headers=user_headers
+        )
+        assert own_after_moderation.status_code == 200
+        assert own_after_moderation.json()["is_active"] is False
+
 
 @pytest.mark.asyncio
-async def test_customer_generation_cannot_be_published_without_consent_flow() -> None:
+async def test_user_cannot_publish_another_users_generation() -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        admin_headers, _ = await _register(client, role=UserRole.SUPERADMIN)
-        user_headers, user_id = await _register(client)
-        catalog = await client.get("/api/v1/questionnaires", headers=user_headers)
-        generation_id = await _accepted_generation(owner_id=user_id, catalog_version=catalog.json()["version"])
+        owner_headers, owner_id = await _register(client)
+        other_headers, _ = await _register(client)
+        catalog = await client.get("/api/v1/questionnaires", headers=owner_headers)
+        generation_id = await _accepted_generation(
+            owner_id=owner_id,
+            catalog_version=catalog.json()["version"],
+        )
 
         response = await client.post(
-            "/api/v1/admin/ideas",
-            headers=admin_headers,
+            "/api/v1/ideas",
+            headers=other_headers,
             json={"generation_id": str(generation_id)},
         )
-        assert response.status_code == 403, response.text
-        assert response.json()["type"].endswith("idea_publication_consent_required")
+        assert response.status_code == 404, response.text
+        assert response.json()["type"].endswith("idea_source_not_found")
+
+        status_response = await client.get(
+            f"/api/v1/ideas/mine/{generation_id}", headers=other_headers
+        )
+        assert status_response.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_previous_display_only_catalog_revision_can_still_be_published() -> None:
+async def test_previous_display_only_catalog_revision_can_still_be_user_published() -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        admin_headers, admin_id = await _register(client, role=UserRole.SUPERADMIN)
+        user_headers, user_id = await _register(client)
         generation_id = await _accepted_generation(
-            owner_id=admin_id,
+            owner_id=user_id,
             catalog_version="2026-09-09.2",
             answers={
                 "1": "Современный минимализм",
@@ -200,8 +239,8 @@ async def test_previous_display_only_catalog_revision_can_still_be_published() -
         )
 
         published = await client.post(
-            "/api/v1/admin/ideas",
-            headers=admin_headers,
+            "/api/v1/ideas",
+            headers=user_headers,
             json={"generation_id": str(generation_id)},
         )
         assert published.status_code == 201, published.text
@@ -209,3 +248,35 @@ async def test_previous_display_only_catalog_revision_can_still_be_published() -
         garage_place = next(row for row in answer_rows if row["answer"] == "Не в доме")
         assert garage_place["question"] == "Где гараж?"
         assert "если" not in garage_place["question"].lower()
+
+
+@pytest.mark.asyncio
+async def test_completed_but_unaccepted_generation_cannot_be_user_published() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        user_headers, user_id = await _register(client)
+        catalog = await client.get("/api/v1/questionnaires", headers=user_headers)
+        generation_id = await _accepted_generation(
+            owner_id=user_id,
+            catalog_version=catalog.json()["version"],
+        )
+
+        async with get_session_factory()() as session:
+            generation = await session.get(Generation, generation_id)
+            assert generation is not None
+            project = await session.get(Project, generation.project_id)
+            assert project is not None
+            context = dict(project.context or {})
+            design_session = dict(context["design_session"])
+            design_session["accepted_objects"] = []
+            context["design_session"] = design_session
+            project.context = context
+            await session.commit()
+
+        response = await client.post(
+            "/api/v1/ideas",
+            headers=user_headers,
+            json={"generation_id": str(generation_id)},
+        )
+        assert response.status_code == 422, response.text
+        assert response.json()["type"].endswith("idea_source_not_accepted")

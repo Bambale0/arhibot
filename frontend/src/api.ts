@@ -7,7 +7,6 @@ import type {
   AdminGenerationPrice,
   AdminGenerationSettings,
   AdminIdea,
-  AdminIdeaCandidate,
   AdminOperationalSettings,
   AdminOverview,
   AdminPayment,
@@ -138,6 +137,8 @@ export function listGenerations(projectId?: string, limit = 50, cursor?: string 
   return request<GenerationList>(`/generations?${params}`)
 }
 export function listIdeas(limit = 50) { return request<Idea[]>(`/ideas?limit=${limit}`) }
+export function publishIdea(generationId: string) { return request<AdminIdea>('/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generation_id: generationId }) }) }
+export function getOwnIdeaPublication(generationId: string) { return request<AdminIdea | null>(`/ideas/mine/${generationId}`) }
 export function startProjectFromIdea(ideaId: string) { return request<Project>(`/ideas/${ideaId}/project`, { method: 'POST' }) }
 
 export function getBillingSummary() { return request<BillingSummary>('/billing') }
@@ -159,10 +160,6 @@ export function adminGetBillingSettings() { return request<AdminBillingSettings>
 export function adminUpdateBillingSettings(payload: Omit<AdminBillingSettings, 'updated_at'>) { return request<AdminBillingSettings>('/admin/billing-settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
 
 export function adminListIdeas() { return request<AdminIdea[]>('/admin/ideas') }
-export function adminListIdeaCandidates() { return request<AdminIdeaCandidate[]>('/admin/idea-candidates') }
-export function adminPublishIdea(generationId: string, sortOrder = 0) {
-  return request<AdminIdea>('/admin/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generation_id: generationId, is_active: true, sort_order: sortOrder }) })
-}
 export function adminUpdateIdea(id: string, payload: Partial<{ is_active: boolean; sort_order: number }>) {
   return request<AdminIdea>(`/admin/ideas/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 }

@@ -30,14 +30,16 @@ An admin-managed prompt body for one generation mode. The stable placeholders ar
 
 ## Idea
 
-An Idea is an admin-published accepted work created through the normal `Создать` questionnaire flow. The Ideas feed is a showcase of real generated results, not a second generation editor.
+An Idea is a user-published accepted work created through the normal `Создать` questionnaire flow. The Ideas feed is a showcase of real generated results, not a second generation editor.
 
 - A publication references one completed Generation that was accepted into its Project questionnaire session.
 - The publication stores a presentation snapshot of the accepted questionnaire object names and user-facing question/answer pairs so later display-copy changes do not mutate the published card.
 - The generated output asset is the hero image. Ideas do not own a separate prompt, manually uploaded hero, media carousel, or presentation-only GLB.
 - `Создать похожее` starts a fresh questionnaire Project with the same selected object set, then follows the same source step, questions, validation, generation and acceptance rules as normal `Создать`. It does not copy the original user's answers into the new project.
-- Customer-owned generations are not publishable until the product has an explicit consent workflow. Administrator-owned accepted works may be published from the Control Plane.
-- Hiding a publication removes it from the public feed without deleting the source Project or Generation.
+- The owner explicitly adds an accepted generated work to Ideas from the Create flow. This action is the publication consent; another user cannot publish the generation by id.
+- Only pre-render design answers are included in the presentation snapshot; application/contact answers are never exposed in the feed.
+- Web admin does not create publications. It can moderate visibility and ordering. Hiding a publication removes it from the public feed without deleting the source Project or Generation.
+- Interactive 3D is intentionally disabled for the current Ideas release. The feed renders the generated output as a static image only; dormant legacy 3D code is not imported into the feed bundle.
 
 ## Broadcast Campaign
 

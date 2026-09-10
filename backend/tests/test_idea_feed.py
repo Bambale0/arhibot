@@ -12,7 +12,7 @@ from app.services.idea_service import _answer_text
 
 
 def test_idea_publication_contract_has_no_parallel_prompt_or_media_editor() -> None:
-    assert set(IdeaPublicationCreate.model_fields) == {"generation_id", "is_active", "sort_order"}
+    assert set(IdeaPublicationCreate.model_fields) == {"generation_id"}
     assert set(IdeaPublicationUpdate.model_fields) == {"is_active", "sort_order"}
     public_fields = set(PublicIdeaPublicationResponse.model_fields)
     assert "prompt" not in public_fields
@@ -21,9 +21,10 @@ def test_idea_publication_contract_has_no_parallel_prompt_or_media_editor() -> N
     assert "model_url" not in public_fields
 
 
-def test_idea_publication_order_is_bounded() -> None:
+def test_admin_idea_publication_order_is_bounded() -> None:
     with pytest.raises(ValidationError):
-        IdeaPublicationCreate(generation_id=uuid4(), sort_order=100_001)
+        IdeaPublicationUpdate(sort_order=100_001)
+    assert IdeaPublicationCreate(generation_id=uuid4()).generation_id
 
 
 def test_answer_text_is_user_facing() -> None:

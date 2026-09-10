@@ -6,11 +6,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.admin import IdeaPublication
-from app.db.models.generations import Generation
-from app.db.models.projects import Project
-from app.db.models.users import User
-from app.domain.generations.enums import GenerationStatus
-from app.domain.users.enums import UserRole
 
 
 class IdeaRepository:
@@ -40,21 +35,3 @@ class IdeaRepository:
             ).limit(limit)
         )
         return list(result.scalars().all())
-
-    async def list_candidate_sources(
-        self, *, limit: int = 200
-    ) -> list[tuple[Generation, Project, User]]:
-        result = await self.session.execute(
-            select(Generation, Project, User)
-            .join(Project, Project.id == Generation.project_id)
-            .join(User, User.id == Generation.user_id)
-            .where(
-                Generation.status == GenerationStatus.COMPLETED,
-                Generation.output_asset_id.is_not(None),
-                Project.deleted_at.is_(None),
-                User.role.in_([UserRole.ADMIN, UserRole.SUPERADMIN]),
-            )
-            .order_by(Generation.completed_at.desc(), Generation.created_at.desc())
-            .limit(limit)
-        )
-        return [(row[0], row[1], row[2]) for row in result.all()]
