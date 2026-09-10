@@ -9,6 +9,7 @@ from app.core.redis import redis_client
 from app.db.models.generations import Generation
 from app.db.models.users import User
 from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.domain.users.enums import UserRole
 from app.repositories.assets import AssetRepository
 from app.repositories.credits import CreditRepository
 from app.repositories.generations import GenerationRepository
@@ -21,6 +22,7 @@ from app.services.rate_limit_service import RateLimitService
 
 GENERATION_QUEUE_KEY = "auroom:generation_queue"
 REFERENCE_REQUIRED_TYPES = {GenerationType.FACADE, GenerationType.INTERIOR}
+FREE_GENERATION_ROLES = {UserRole.ADMIN, UserRole.SUPERADMIN}
 
 
 class GenerationService:
@@ -80,6 +82,8 @@ class GenerationService:
                 detail="The credit price for this generation scenario is not configured.",
             )
 
+        credits_charged = 0 if user.role in FREE_GENERATION_ROLES else price.credits
+
         generation = Generation(
             id=uuid4(),
             user_id=user.id,
@@ -88,7 +92,7 @@ class GenerationService:
             type=payload.type,
             status=GenerationStatus.QUEUED,
             prompt=payload.prompt.strip(),
-            credits_charged=price.credits,
+            credits_charged=credits_charged,
             composition_mode=payload.composition_mode,
             edit_region=(
                 payload.edit_region.model_dump(mode="json") if payload.edit_region else None
@@ -99,15 +103,16 @@ class GenerationService:
         )
         self.repository.add(generation)
         try:
-            await self.credit_service.apply(
-                user_id=user.id,
-                amount=-price.credits,
-                kind="generation_reserve",
-                idempotency_key=f"generation:{generation.id}:reserve",
-                reference_type="generation",
-                reference_id=str(generation.id),
-                reason=f"AuRoom generation: {payload.type.value}",
-            )
+            if generation.credits_charged > 0:
+                await self.credit_service.apply(
+                    user_id=user.id,
+                    amount=-generation.credits_charged,
+                    kind="generation_reserve",
+                    idempotency_key=f"generation:{generation.id}:reserve",
+                    reference_type="generation",
+                    reference_id=str(generation.id),
+                    reason=f"AuRoom generation: {payload.type.value}",
+                )
             await self.session.commit()
         except Exception:
             await self.session.rollback()
@@ -119,21 +124,22 @@ class GenerationService:
         except Exception as exc:
             generation.status = GenerationStatus.FAILED
             generation.error = "Generation queue is unavailable."
-            await self.credit_service.apply(
-                user_id=user.id,
-                amount=generation.credits_charged,
-                kind="generation_refund",
-                idempotency_key=f"generation:{generation.id}:refund",
-                reference_type="generation",
-                reference_id=str(generation.id),
-                reason="Generation queue unavailable",
-            )
+            if generation.credits_charged > 0:
+                await self.credit_service.apply(
+                    user_id=user.id,
+                    amount=generation.credits_charged,
+                    kind="generation_refund",
+                    idempotency_key=f"generation:{generation.id}:refund",
+                    reference_type="generation",
+                    reference_id=str(generation.id),
+                    reason="Generation queue unavailable",
+                )
             await self.session.commit()
             raise AppError(
                 type="generation_queue_unavailable",
                 title="Generation queue unavailable",
                 status=503,
-                detail="Generation could not be queued. Reserved credits were returned.",
+                detail="Generation could not be queued.",
             ) from exc
 
         return await self.to_response(generation)

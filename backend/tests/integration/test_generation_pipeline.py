@@ -35,24 +35,31 @@ def _png(size: tuple[int, int], color: tuple[int, int, int]) -> bytes:
     return buffer.getvalue()
 
 
-async def _register_admin(client: AsyncClient) -> tuple[dict, dict[str, str]]:
+async def _register_user(
+    client: AsyncClient, *, display_name: str = "Generation Pipeline User"
+) -> tuple[dict, dict[str, str]]:
     register = await client.post(
         "/api/v1/auth/register",
         json={
             "email": f"generation-pipeline-{uuid4()}@example.com",
             "password": "correct-horse-battery-staple",
-            "display_name": "Generation Pipeline Admin",
+            "display_name": display_name,
         },
     )
     assert register.status_code == 201, register.text
     tokens = register.json()
+    return tokens, {"Authorization": f"Bearer {tokens['access_token']}"}
+
+
+async def _register_admin(client: AsyncClient) -> tuple[dict, dict[str, str]]:
+    tokens, headers = await _register_user(client, display_name="Generation Pipeline Admin")
     user_id = UUID(tokens["user"]["id"])
     async with get_session_factory()() as session:
         user = await session.get(User, user_id)
         assert user is not None
         user.role = UserRole.SUPERADMIN
         await session.commit()
-    return tokens, {"Authorization": f"Bearer {tokens['access_token']}"}
+    return tokens, headers
 
 
 @pytest.mark.asyncio
@@ -61,12 +68,13 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
 ) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        tokens, headers = await _register_admin(client)
+        _, admin_headers = await _register_admin(client)
+        tokens, headers = await _register_user(client)
         user_id = tokens["user"]["id"]
 
         runtime = await client.put(
             "/api/v1/admin/generation",
-            headers=headers,
+            headers=admin_headers,
             json={
                 "primary_model": "integration-image-model",
                 "fallback_model": None,
@@ -78,19 +86,19 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
         assert runtime.status_code == 200, runtime.text
         prompt = await client.put(
             "/api/v1/admin/prompts/master_plan",
-            headers=headers,
+            headers=admin_headers,
             json={"template": "Architectural render. {user_prompt}"},
         )
         assert prompt.status_code == 200, prompt.text
         price = await client.put(
             "/api/v1/admin/generation-prices/master_plan",
-            headers=headers,
+            headers=admin_headers,
             json={"credits": 2, "is_active": True},
         )
         assert price.status_code == 200, price.text
         credit = await client.post(
             f"/api/v1/admin/users/{user_id}/credits",
-            headers=headers,
+            headers=admin_headers,
             json={"delta": 5, "reason": "masked pipeline integration budget"},
         )
         assert credit.status_code == 200, credit.text
