@@ -10,6 +10,7 @@ import { ProjectsScreen } from './components/ProjectsScreen'
 const AdminScreen = lazy(() => import('./components/AdminScreen').then((module) => ({ default: module.AdminScreen })))
 const CreateScreen = lazy(() => import('./components/CreateScreen').then((module) => ({ default: module.CreateScreen })))
 const HistoryScreen = lazy(() => import('./components/HistoryScreen').then((module) => ({ default: module.HistoryScreen })))
+const HistoryGenerationScreen = lazy(() => import('./components/HistoryGenerationScreen').then((module) => ({ default: module.HistoryGenerationScreen })))
 const IdeasScreen = lazy(() => import('./components/IdeasScreen').then((module) => ({ default: module.IdeasScreen })))
 const ProfileScreen = lazy(() => import('./components/ProfileScreen').then((module) => ({ default: module.ProfileScreen })))
 const QuestionnaireWorkspaceScreen = lazy(() => import('./components/QuestionnaireWorkspaceScreen').then((module) => ({ default: module.QuestionnaireWorkspaceScreen })))
@@ -25,12 +26,15 @@ function TelegramAuthError({ message }: { message?: string | null }) {
 function initialSection(): AppSection { return new URLSearchParams(window.location.search).get('billing') === 'return' ? 'profile' : 'home' }
 function initialAdmin() { return new URLSearchParams(window.location.search).get('admin') === '1' }
 
+type HistoryResult = { project: Project; generation: Generation }
+
 export default function App() {
   const { user, loading, error } = useAuth()
   const [section, setSection] = useState<AppSection>(initialSection)
   const [activeProject, setActiveProject] = useState<Project | null>(null)
   const [questionnaireProject, setQuestionnaireProject] = useState<Project | null>(null)
   const [questionnaireObjects, setQuestionnaireObjects] = useState<string[]>([])
+  const [historyResult, setHistoryResult] = useState<HistoryResult | null>(null)
   const [workspaceMode, setWorkspaceMode] = useState<GenerationMode>('floor_plan')
   const [workspacePrompt, setWorkspacePrompt] = useState('')
   const [workspaceAsset, setWorkspaceAsset] = useState<Asset | null>(null)
@@ -41,6 +45,7 @@ export default function App() {
   const isAdmin = user.role === 'admin' || user.role === 'superadmin'
   if (adminOpen && isAdmin) return <Suspense fallback={<Loader />}><AdminScreen onClose={() => setAdminOpen(false)} /></Suspense>
   if (questionnaireProject) return <Suspense fallback={<Loader />}><QuestionnaireWorkspaceScreen project={questionnaireProject} selectedObjects={questionnaireObjects} onBack={() => { void closeQuestionnaire() }} onProjectChange={setQuestionnaireProject} /></Suspense>
+  if (historyResult) return <Suspense fallback={<Loader />}><HistoryGenerationScreen project={historyResult.project} generation={historyResult.generation} onBack={() => setHistoryResult(null)} /></Suspense>
   if (activeProject) return <Suspense fallback={<Loader />}><WorkspaceScreen project={activeProject} initialMode={workspaceMode} initialPrompt={workspacePrompt} initialAsset={workspaceAsset} onBack={() => { setActiveProject(null); setWorkspaceAsset(null) }} onProjectChange={setActiveProject} /></Suspense>
 
   function openWorkspace(project: Project, mode: GenerationMode = 'floor_plan', prompt = '', asset: Asset | null = null) { setWorkspaceMode(mode); setWorkspacePrompt(prompt); setWorkspaceAsset(asset); setActiveProject(project) }
@@ -65,12 +70,7 @@ export default function App() {
   async function openHistoryGeneration(generation: Generation) {
     const project = await api.getProject(generation.project_id)
     if (openQuestionnaireProject(project)) return
-
-    let asset: Asset | null = generation.output_asset
-    if (!asset && generation.input_asset_id) {
-      try { asset = await api.getAsset(generation.input_asset_id) } catch { asset = null }
-    }
-    openWorkspace(project, generation.type, generation.prompt, asset)
+    setHistoryResult({ project, generation })
   }
   function navigate(next: AppSection) { setSection(next) }
 
