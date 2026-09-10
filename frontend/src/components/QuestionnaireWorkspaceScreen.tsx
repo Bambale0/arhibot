@@ -17,7 +17,6 @@ import type {
 } from '../questionnaireTypes'
 import type { Asset, Generation, GenerationMode, Project } from '../types'
 import { BackIcon, ImageIcon, SparkIcon, UploadIcon } from './Icons'
-import '../questionnaire.css'
 
 const delay = (ms:number) => new Promise((resolve) => setTimeout(resolve, ms))
 const text = (value:QuestionnaireAnswer|undefined) => Array.isArray(value) ? value.join(', ') : value === true ? 'Согласен' : value == null ? '' : String(value)

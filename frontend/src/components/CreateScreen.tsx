@@ -4,8 +4,6 @@ import { getQuestionnaireCatalog, startQuestionnaireProject as startQuestionnair
 import type { QuestionnaireCatalog } from '../questionnaireTypes'
 import type { GenerationMode, Project } from '../types'
 import { ArrowIcon, BackIcon, HomeIcon, PlanIcon, RoomIcon, SiteIcon } from './Icons'
-import '../questionnaire.css'
-import '../create-questionnaire.css'
 
 const legacyModes: { id: GenerationMode; title: string; text: string; icon: typeof HomeIcon }[] = [
   { id: 'floor_plan', title: 'Планировка дома', text: 'Сформировать функциональную схему дома по площади, этажности и составу помещений.', icon: PlanIcon },
