@@ -29,6 +29,8 @@ def test_openapi_has_stable_operation_ids() -> None:
         "uploadAsset",
         "getAsset",
         "deleteAsset",
+        "startQuestionnaireProject",
+        "discardQuestionnaireProjectDraft",
     }
     assert expected.issubset(set(operations))
 
@@ -49,6 +51,8 @@ def test_openapi_routes_are_published() -> None:
         "/api/v1/projects/{project_id}",
         "/api/v1/assets",
         "/api/v1/assets/{asset_id}",
+        "/api/v1/questionnaire-projects",
+        "/api/v1/questionnaire-projects/{project_id}/draft",
     }
     assert expected_paths.issubset(set(schema["paths"]))
 
