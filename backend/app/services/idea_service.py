@@ -13,6 +13,7 @@ from app.db.models.generations import Generation
 from app.db.models.projects import Project
 from app.db.models.users import User
 from app.domain.generations.enums import GenerationStatus
+from app.questionnaires.catalog import user_question_title
 from app.questionnaires.generation_prompt import condition_ok
 from app.repositories.admin import AdminRepository
 from app.repositories.ideas import IdeaRepository
@@ -29,8 +30,6 @@ from app.schemas.questionnaires import DesignSession, QuestionnaireProjectStartR
 from app.services.asset_service import LocalMediaStorage
 from app.services.questionnaire_project_service import QuestionnaireProjectService
 from app.services.questionnaire_service import QuestionnaireService
-
-PRESENTATION_COMPATIBLE_CATALOG_UPGRADES = {("2026-09-09.2", "2026-09-10.1")}
 
 
 def _answer_text(value: object) -> str:
@@ -65,13 +64,15 @@ class IdeaService:
         return self.storage.public_url(asset.storage_path)
 
     async def _publication_response(
-        self, publication: IdeaPublication
+        self, publication: IdeaPublication, *, require_public_ready: bool = False
     ) -> IdeaPublicationResponse | None:
         generation = await self.session.get(Generation, publication.generation_id)
-        if generation is None or generation.status != GenerationStatus.COMPLETED:
+        if generation is None:
             return None
         image_url = await self._image_url(generation)
-        if image_url is None:
+        if require_public_ready and (
+            generation.status != GenerationStatus.COMPLETED or image_url is None
+        ):
             return None
         snapshot = publication.presentation_snapshot or {}
         try:
@@ -99,7 +100,7 @@ class IdeaService:
     async def list_public(self, *, limit: int = 50) -> list[PublicIdeaPublicationResponse]:
         result: list[PublicIdeaPublicationResponse] = []
         for publication in await self.repository.list(active_only=True, limit=limit):
-            response = await self._publication_response(publication)
+            response = await self._publication_response(publication, require_public_ready=True)
             if response is None:
                 continue
             result.append(
@@ -157,21 +158,16 @@ class IdeaService:
                 detail="Only an accepted result from Create can be added to Ideas.",
             )
 
-        catalog = await QuestionnaireService(self.session).catalog()
-        source_version = design_session.catalog_version
-        current_version = str(catalog["version"])
-        compatible_upgrade = (
-            source_version,
-            current_version,
-        ) in PRESENTATION_COMPATIBLE_CATALOG_UPGRADES
-        if source_version != current_version and not compatible_upgrade:
+        catalog = await QuestionnaireService(self.session).catalog_for_version(
+            design_session.catalog_version
+        )
+        if catalog is None:
             raise AppError(
                 type="idea_source_catalog_unavailable",
                 title="Questionnaire version unavailable",
                 status=409,
                 detail=(
-                    "This accepted work uses a questionnaire version that cannot be "
-                    "rendered safely in the current Ideas feed."
+                    "The exact questionnaire revision for this accepted work is unavailable."
                 ),
             )
 
@@ -201,7 +197,9 @@ class IdeaService:
                 if not rendered:
                     continue
                 summary.append(
-                    IdeaAnswerSummary(question=question["text"], answer=rendered).model_dump()
+                    IdeaAnswerSummary(
+                        question=user_question_title(question["text"]), answer=rendered
+                    ).model_dump()
                 )
             objects.append(
                 IdeaObjectSummary(

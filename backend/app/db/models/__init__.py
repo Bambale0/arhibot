@@ -15,7 +15,11 @@ from app.db.models.credits import CreditTransaction, GenerationCreditPrice
 from app.db.models.generations import Generation
 from app.db.models.operations import OperationalSettings
 from app.db.models.projects import Project
-from app.db.models.questionnaires import QuestionnaireApplication, QuestionnaireCatalogConfig
+from app.db.models.questionnaires import (
+    QuestionnaireApplication,
+    QuestionnaireCatalogConfig,
+    QuestionnaireCatalogRevision,
+)
 from app.db.models.telegram import TelegramContentSettings
 from app.db.models.users import AuthIdentity, RefreshToken, User
 
@@ -40,6 +44,7 @@ __all__ = [
     "Project",
     "QuestionnaireApplication",
     "QuestionnaireCatalogConfig",
+    "QuestionnaireCatalogRevision",
     "RefreshToken",
     "TelegramContentSettings",
     "User",

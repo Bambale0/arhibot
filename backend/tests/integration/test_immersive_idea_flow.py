@@ -182,6 +182,24 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
         assert started_session["answers"] == {}
         assert started_session["accepted_objects"] == []
 
+        async with get_session_factory()() as session:
+            generation = await session.get(Generation, generation_id)
+            assert generation is not None and generation.output_asset_id is not None
+            asset = await session.get(Asset, generation.output_asset_id)
+            assert asset is not None
+            asset.deleted_at = datetime.now(UTC)
+            await session.commit()
+
+        degraded_admin = await client.get("/api/v1/admin/ideas", headers=admin_headers)
+        assert degraded_admin.status_code == 200, degraded_admin.text
+        degraded = next(
+            item for item in degraded_admin.json() if item["id"] == publication["id"]
+        )
+        assert degraded["is_active"] is True
+        assert degraded["image_url"] is None
+        public_without_asset = await client.get("/api/v1/ideas", headers=user_headers)
+        assert all(item["id"] != publication["id"] for item in public_without_asset.json())
+
         hidden = await client.delete(
             f"/api/v1/admin/ideas/{idea['id']}", headers=admin_headers
         )

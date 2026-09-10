@@ -7,7 +7,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
-from app.db.models.questionnaires import QuestionnaireApplication, QuestionnaireCatalogConfig
+from app.db.models.questionnaires import (
+    QuestionnaireApplication,
+    QuestionnaireCatalogConfig,
+    QuestionnaireCatalogRevision,
+)
 from app.db.models.users import User
 from app.domain.generations.enums import GenerationStatus, GenerationType
 from app.questionnaires.generation_prompt import (
@@ -50,6 +54,15 @@ class QuestionnaireService:
                 detail="The questionnaire catalog has not been configured.",
             )
         return QuestionnaireCatalogResponse.model_validate(row.catalog).model_dump(mode="json")
+
+    async def catalog_for_version(self, version: str) -> dict | None:
+        row = await self.repository.get_catalog()
+        if row is not None and row.version == version:
+            return QuestionnaireCatalogResponse.model_validate(row.catalog).model_dump(mode="json")
+        revision = await self.repository.get_catalog_revision(version)
+        if revision is None:
+            return None
+        return QuestionnaireCatalogResponse.model_validate(revision.catalog).model_dump(mode="json")
 
     async def get_session(self, user: User, project_id: UUID) -> DesignSession | None:
         project = await ProjectService(self.projects).get_owned_model(user, project_id)
@@ -149,6 +162,14 @@ class QuestionnaireService:
     ) -> QuestionnaireCatalogAdminResponse:
         self._validate_catalog_sources(payload)
         row = await self.repository.get_catalog(for_update=True)
+        historical = await self.repository.get_catalog_revision(payload.catalog.version)
+        if historical is not None:
+            raise AppError(
+                type="questionnaire_catalog_version_conflict",
+                title="Questionnaire catalog version already used",
+                status=409,
+                detail="Use a new catalog version; historical versions are immutable.",
+            )
         if row is None:
             row = QuestionnaireCatalogConfig(
                 id=1,
@@ -168,10 +189,28 @@ class QuestionnaireService:
                     status=409,
                     detail="Change the catalog version when questionnaire content changes.",
                 )
+            if await self.repository.get_catalog_revision(old_version) is None:
+                self.repository.add_catalog_revision(
+                    QuestionnaireCatalogRevision(
+                        version=old_version,
+                        catalog=row.catalog,
+                        source_texts=row.source_texts,
+                    )
+                )
             row.version = payload.catalog.version
             row.catalog = payload.catalog.model_dump(mode="json")
             row.source_texts = {key: value.model_dump(mode="json") for key, value in payload.source_texts.items()}
             row.updated_by_user_id = actor.id
+        self.repository.add_catalog_revision(
+            QuestionnaireCatalogRevision(
+                version=payload.catalog.version,
+                catalog=payload.catalog.model_dump(mode="json"),
+                source_texts={
+                    key: value.model_dump(mode="json")
+                    for key, value in payload.source_texts.items()
+                },
+            )
+        )
         self.admin_repository.add_audit(
             actor_user_id=actor.id,
             action="questionnaires.catalog.update",

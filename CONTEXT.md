@@ -34,6 +34,7 @@ An Idea is a user-published accepted work created through the normal `Созда
 
 - A publication references one completed Generation that was accepted into its Project questionnaire session.
 - The publication stores a presentation snapshot of the accepted questionnaire object names and user-facing question/answer pairs so later display-copy changes do not mutate the published card.
+- Questionnaire catalog revisions are preserved in the database. Publishing an older accepted work resolves its exact historical catalog revision, so normal admin-managed catalog evolution does not require code-level compatibility tuples.
 - The generated output asset is the hero image. Ideas do not own a separate prompt, manually uploaded hero, media carousel, or presentation-only GLB.
 - `Создать похожее` starts a fresh questionnaire Project with the same selected object set, then follows the same source step, questions, validation, generation and acceptance rules as normal `Создать`. It does not copy the original user's answers into the new project.
 - The owner explicitly adds an accepted generated work to Ideas from the Create flow. This action is the publication consent; another user cannot publish the generation by id.
