@@ -13,6 +13,7 @@ def test_openapi_has_stable_operation_ids() -> None:
     expected = {
         "getLiveness",
         "getReadiness",
+        "getVersionHealth",
         "getApiV1Info",
         "registerUser",
         "loginUser",
@@ -40,6 +41,7 @@ def test_openapi_routes_are_published() -> None:
     expected_paths = {
         "/health/live",
         "/health/ready",
+        "/health/version",
         "/api/v1",
         "/api/v1/auth/register",
         "/api/v1/auth/login",
@@ -62,3 +64,7 @@ def test_secured_me_endpoint_declares_bearer_auth() -> None:
     operation = schema["paths"]["/api/v1/me"]["get"]
     assert operation["security"]
     assert "HTTPBearer" in schema["components"]["securitySchemes"]
+
+
+def test_metrics_are_not_published_in_openapi() -> None:
+    assert "/metrics" not in app.openapi()["paths"]

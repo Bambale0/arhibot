@@ -31,3 +31,9 @@ class ReadyHealthResponse(BaseModel):
     )
     status: HealthStatus
     dependencies: dict[str, DependencyStatus]
+
+
+class VersionHealthResponse(BaseModel):
+    app_version: str
+    release_sha: str
+    environment: str

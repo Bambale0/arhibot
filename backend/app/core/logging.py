@@ -8,12 +8,17 @@ from app.core.request_context import get_request_id
 
 
 class JsonFormatter(logging.Formatter):
+    def __init__(self, release_sha: str) -> None:
+        super().__init__()
+        self.release_sha = release_sha[:64] or "unknown"
+
     def format(self, record: logging.LogRecord) -> str:
         payload = {
             "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname.lower(),
             "logger": record.name,
             "message": record.getMessage(),
+            "release_sha": self.release_sha,
         }
         request_id = get_request_id()
         if request_id:
@@ -34,7 +39,7 @@ class JsonFormatter(logging.Formatter):
 def configure_logging(settings: Settings) -> None:
     handler = logging.StreamHandler(sys.stdout)
     if settings.is_production:
-        handler.setFormatter(JsonFormatter())
+        handler.setFormatter(JsonFormatter(settings.release_sha))
     else:
         handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
 

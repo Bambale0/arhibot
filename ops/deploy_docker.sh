@@ -173,6 +173,12 @@ if (( health_passed == 0 )); then
   exit 1
 fi
 
+reported_release_sha=$(curl -fsS http://127.0.0.1:18000/health/version | python3 -c 'import json,sys; print(json.load(sys.stdin).get("release_sha", ""))')
+[[ "${reported_release_sha}" == "${release_sha}" ]] || {
+  echo "API release identity mismatch: ${reported_release_sha:-missing} != ${release_sha}" >&2
+  exit 1
+}
+
 for service in bot worker broadcast-worker maintenance; do
   service_id=$(compose ps -q "${service}")
   if [[ -z "${service_id}" ]] || [[ "$(docker inspect -f '{{.State.Running}}' "${service_id}" 2>/dev/null || true)" != "true" ]]; then

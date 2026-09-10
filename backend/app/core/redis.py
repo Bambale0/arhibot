@@ -42,6 +42,9 @@ class LazyRedisClient:
     async def lrange(self, key: str, start: int, end: int) -> list[str]:
         return [str(value) for value in await self._get().lrange(key, start, end)]
 
+    async def llen(self, key: str) -> int:
+        return int(await self._get().llen(key))
+
     async def lrem(self, key: str, count: int, value: str) -> int:
         return int(await self._get().lrem(key, count, value))
 
