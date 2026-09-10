@@ -90,6 +90,33 @@ class IdeaTemplate(Base):
     )
 
 
+class IdeaPublication(Base):
+    __tablename__ = "idea_publications"
+    __table_args__ = (
+        UniqueConstraint("generation_id", name="uq_idea_publications_generation_id"),
+        Index("ix_idea_publications_active_order", "is_active", "sort_order", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    generation_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("generations.id", ondelete="CASCADE"), nullable=False
+    )
+    published_by_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    presentation_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class GenerationRuntimeSettings(Base):
     __tablename__ = "generation_runtime_settings"
 

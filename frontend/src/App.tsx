@@ -34,8 +34,6 @@ export default function App() {
   const [workspaceMode, setWorkspaceMode] = useState<GenerationMode>('floor_plan')
   const [workspacePrompt, setWorkspacePrompt] = useState('')
   const [workspaceAsset, setWorkspaceAsset] = useState<Asset | null>(null)
-  const [createMode, setCreateMode] = useState<GenerationMode | null>(null)
-  const [createPrompt, setCreatePrompt] = useState('')
   const [adminOpen, setAdminOpen] = useState(initialAdmin)
 
   if (loading) return <Loader />
@@ -60,13 +58,13 @@ export default function App() {
     if (!useOutput && generation.input_asset_id) { try { asset = await api.getAsset(generation.input_asset_id) } catch { asset = null } }
     openWorkspace(project, generation.type, generation.prompt, asset)
   }
-  function navigate(next: AppSection) { setSection(next); if (next !== 'create') { setCreateMode(null); setCreatePrompt('') } }
+  function navigate(next: AppSection) { setSection(next) }
 
   return <AppFrame active={section} onNavigate={navigate}>
     {section === 'home' && <ProjectsScreen onOpenProject={(project) => openWorkspace(project, 'floor_plan')} />}
     {section !== 'home' && <Suspense fallback={<Loader />}>
-      {section === 'ideas' && <IdeasScreen onUseIdea={(mode, prompt) => { setCreateMode(mode); setCreatePrompt(prompt); setSection('create') }} />}
-      {section === 'create' && <CreateScreen initialMode={createMode} initialPrompt={createPrompt} onOpenProject={(project, mode, prompt) => openWorkspace(project, mode, prompt)} onOpenQuestionnaire={openQuestionnaire} />}
+      {section === 'ideas' && <IdeasScreen onOpenQuestionnaire={openQuestionnaire} />}
+      {section === 'create' && <CreateScreen onOpenQuestionnaire={openQuestionnaire} />}
       {section === 'history' && <HistoryScreen onOpenGeneration={(generation) => { void openHistoryGeneration(generation, false) }} onUseAsSource={(generation) => { void openHistoryGeneration(generation, true) }} />}
       {section === 'profile' && <ProfileScreen onOpenAdmin={isAdmin ? () => setAdminOpen(true) : undefined} />}
     </Suspense>}

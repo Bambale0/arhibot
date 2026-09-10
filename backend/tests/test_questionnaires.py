@@ -20,7 +20,7 @@ def _question(key: str, question_id: str) -> dict:
 def test_questionnaire_catalog_matches_source_bundle() -> None:
     catalog = QuestionnaireCatalogResponse.model_validate(build_catalog())
     sources = _load_sources()
-    assert catalog.version == "2026-09-09.2"
+    assert catalog.version == "2026-09-10.1"
     assert CATALOG_VERSION == catalog.version
     assert len(catalog.sections) == 6
     assert len(catalog.questionnaires) == 27
@@ -55,6 +55,12 @@ def test_house_questionnaire_keeps_exact_branches_defaults_and_limits() -> None:
     assert edit["field_hint"] == "Свой комментарий"
     assert edit["edit_targets"]["Размер и этажность"] == ["3", "4"]
     assert edit["edit_targets"]["Гараж, навес, пристрой"] == ["6", "6а", "6б", "6в"]
+    assert _question("eskez-doma", "6а")["text"] == "Где гараж?"
+    assert _question("eskez-doma", "6б")["text"] == "Какой именно?"
+    assert _question("eskez-doma", "13а")["text"] == "Какой балкон?"
+    assert _question("eskez-doma", "6а")["condition"] == {"question_id": "6", "operator": "eq", "value": "Да"}
+    assert _question("eskez-doma", "6б")["condition"] == {"question_id": "6а", "operator": "eq", "value": "Не в доме"}
+    assert _question("eskez-doma", "13а")["condition"] == {"question_id": "13", "operator": "contains", "value": "Балкон"}
 
 
 def test_each_object_ends_with_review_and_application_is_separate() -> None:

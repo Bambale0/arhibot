@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-CATALOG_VERSION = "2026-09-09.2"
+CATALOG_VERSION = "2026-09-10.1"
 
 SECTION_SPECS = [
     ("house", "Дом", ["eskez-doma"]),
@@ -122,6 +122,11 @@ def _question_block(lines: list[str], headers: list[tuple[int, str, str]], pos: 
             break
     return lines[start:end]
 
+def _user_question_title(title: str) -> str:
+    """Hide customer logic annotations from user-facing questionnaire copy."""
+    return re.sub(r"\s*\(\s*если\b[^)]*\)\s*$", "", title, flags=re.IGNORECASE).strip()
+
+
 def _parse_question(qid: str, title: str, block: list[str]) -> dict[str, Any]:
     options: list[str] = []
     for line in block:
@@ -151,7 +156,7 @@ def _parse_question(qid: str, title: str, block: list[str]) -> dict[str, Any]:
         kind = "multi"
     return {
         "id": qid,
-        "text": title,
+        "text": _user_question_title(title),
         "kind": kind,
         "options": options,
         "required": any("Обязательн" in line for line in block),

@@ -1,53 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
-import * as api from '../api'
 import { getQuestionnaireCatalog, startQuestionnaireProject as startQuestionnaireProjectApi } from '../questionnaireApi'
 import type { QuestionnaireCatalog } from '../questionnaireTypes'
-import type { GenerationMode, Project } from '../types'
-import { ArrowIcon, BackIcon, HomeIcon, PlanIcon, RoomIcon, SiteIcon } from './Icons'
+import type { Project } from '../types'
+import { BackIcon } from './Icons'
 
-const legacyModes: { id: GenerationMode; title: string; text: string; icon: typeof HomeIcon }[] = [
-  { id: 'floor_plan', title: 'Планировка дома', text: 'Сформировать функциональную схему дома по площади, этажности и составу помещений.', icon: PlanIcon },
-  { id: 'facade', title: 'Внешний облик дома', text: 'Создать концепцию фасада по исходному дому или референсу.', icon: HomeIcon },
-  { id: 'master_plan', title: 'Мастер-план участка', text: 'Разместить дом, парковку, террасу, баню и основные зоны участка.', icon: SiteIcon },
-  { id: 'interior', title: 'Дизайн помещений', text: 'Создать интерьерную концепцию комнаты по фотографии и пожеланиям.', icon: RoomIcon },
-]
-
-export function CreateScreen({ initialMode, initialPrompt, onOpenProject, onOpenQuestionnaire }: {
-  initialMode?: GenerationMode | null
-  initialPrompt?: string
-  onOpenProject: (project: Project, mode: GenerationMode, prompt?: string) => void
+export function CreateScreen({ onOpenQuestionnaire }: {
   onOpenQuestionnaire: (project: Project, selectedObjects: string[]) => void
 }) {
-  const legacy = Boolean(initialMode || initialPrompt)
   const [catalog, setCatalog] = useState<QuestionnaireCatalog | null>(null)
   const [activeSection, setActiveSection] = useState<string | null>(null)
   const [selectedObjects, setSelectedObjects] = useState<string[]>([])
-  const [catalogLoading, setCatalogLoading] = useState(!legacy)
+  const [catalogLoading, setCatalogLoading] = useState(true)
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
 
-  const [legacyMode, setLegacyMode] = useState<GenerationMode>(initialMode || 'facade')
-  const [projects, setProjects] = useState<Project[]>([])
-  const [projectsLoading, setProjectsLoading] = useState(legacy)
-  const [projectsError, setProjectsError] = useState<string | null>(null)
-
-  useEffect(() => { if (initialMode) setLegacyMode(initialMode) }, [initialMode])
-
   useEffect(() => {
-    if (!legacy) return
-    let cancelled = false
-    setProjectsLoading(true)
-    setProjectsError(null)
-    void api.listProjects(null, 50)
-      .then((page) => { if (!cancelled) setProjects(page.items.filter((project) => project.status === 'active')) })
-      .catch((err) => { if (!cancelled) setProjectsError(err instanceof Error ? err.message : 'Не удалось загрузить проекты') })
-      .finally(() => { if (!cancelled) setProjectsLoading(false) })
-    return () => { cancelled = true }
-  }, [legacy])
-
-  useEffect(() => {
-    if (legacy) return
     let cancelled = false
     setCatalogLoading(true)
     setCatalogError(null)
@@ -56,7 +24,7 @@ export function CreateScreen({ initialMode, initialPrompt, onOpenProject, onOpen
       .catch((err) => { if (!cancelled) setCatalogError(err instanceof Error ? err.message : 'Не удалось загрузить опросники') })
       .finally(() => { if (!cancelled) setCatalogLoading(false) })
     return () => { cancelled = true }
-  }, [legacy])
+  }, [])
 
   const definitions = useMemo(() => new Map((catalog?.questionnaires || []).map((item) => [item.key, item])), [catalog])
   const section = catalog?.sections.find((item) => item.key === activeSection) || null
@@ -81,8 +49,6 @@ export function CreateScreen({ initialMode, initialPrompt, onOpenProject, onOpen
       setStarting(false)
     }
   }
-
-  if (legacy) return <section className="page-content create-page"><div className="page-heading-row"><div><span className="eyebrow">ИДЕЯ AUROOM</span><h1>Использовать идею</h1><p>Этот вход сохранён для существующей ленты идей. Новый проектный сценарий работает через точные опросники.</p></div></div><div className="create-mode-grid">{legacyModes.map((item) => { const Icon = item.icon; return <button key={item.id} className={`create-mode-card ${legacyMode === item.id ? 'selected' : ''}`} onClick={() => setLegacyMode(item.id)}><Icon /><div><strong>{item.title}</strong><p>{item.text}</p></div><span className="radio-dot" /></button> })}</div><ProjectPicker projects={projects} loading={projectsLoading} error={projectsError} onPick={(project) => onOpenProject(project, legacyMode, initialPrompt)} /></section>
 
   return <section className="page-content create-page questionnaire-create">
     {catalogError && <div className="banner-error">{catalogError}</div>}
@@ -147,8 +113,4 @@ function CreateSelectionDock({ selectedTitles, starting, error, onAddSection, on
       <button type="button" className="primary-button" disabled={starting} onClick={onStart}>{starting ? 'Создаём проект…' : 'Начать проект'}</button>
     </div>
   </div>
-}
-
-function ProjectPicker({ projects, loading, error, onPick, title = 'Выберите проект' }: { projects:Project[]; loading:boolean; error:string|null; onPick:(project:Project)=>void; title?:string }) {
-  return <div className="create-project-section"><div className="section-title-row"><div><span className="eyebrow">ПРОЕКТ</span><h2>{title}</h2></div><span>{projects.length} активных</span></div>{error && <div className="banner-error">{error}</div>}{loading ? <div className="create-project-list"><div className="project-pick skeleton-card"/></div> : projects.length ? <div className="create-project-list">{projects.map((project) => <button className="project-pick" key={project.id} onClick={() => onPick(project)}><div><strong>{project.name}</strong><span>Открыть проект</span></div><ArrowIcon /></button>)}</div> : error ? <div className="empty-inline"><p>Не удалось загрузить проекты.</p></div> : <div className="empty-inline"><p>Пока нет активных проектов.</p></div>}</div>
 }

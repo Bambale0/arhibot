@@ -4,6 +4,7 @@ from app.db.models.admin import (
     BroadcastCampaign,
     GenerationPromptTemplate,
     GenerationRuntimeSettings,
+    IdeaPublication,
     IdeaTemplate,
 )
 from app.db.models.architecture_renders import ArchitectureRender
@@ -33,6 +34,7 @@ __all__ = [
     "GenerationCreditPrice",
     "GenerationPromptTemplate",
     "GenerationRuntimeSettings",
+    "IdeaPublication",
     "IdeaTemplate",
     "OperationalSettings",
     "Project",

@@ -176,6 +176,57 @@ class PublicIdeaResponse(BaseModel):
     model_url: str | None
 
 
+class IdeaAnswerSummary(BaseModel):
+    question: str
+    answer: str
+
+
+class IdeaObjectSummary(BaseModel):
+    key: str
+    title: str
+    answers: list[IdeaAnswerSummary]
+
+
+class IdeaPublicationCreate(BaseModel):
+    generation_id: UUID
+    is_active: bool = True
+    sort_order: int = Field(default=0, ge=-100_000, le=100_000)
+
+
+class IdeaPublicationUpdate(BaseModel):
+    is_active: bool | None = None
+    sort_order: int | None = Field(default=None, ge=-100_000, le=100_000)
+
+
+class PublicIdeaPublicationResponse(BaseModel):
+    id: UUID
+    title: str
+    category: str
+    generation_type: GenerationType
+    image_url: str | None
+    objects: list[IdeaObjectSummary]
+    selected_objects: list[str]
+    published_at: datetime
+
+
+class IdeaPublicationResponse(PublicIdeaPublicationResponse):
+    generation_id: UUID
+    is_active: bool
+    sort_order: int
+    updated_at: datetime
+
+
+class IdeaCandidateResponse(BaseModel):
+    generation_id: UUID
+    title: str
+    category: str
+    generation_type: GenerationType
+    image_url: str
+    selected_objects: list[str]
+    completed_at: datetime
+    publication_id: UUID | None = None
+
+
 class GenerationRuntimeUpdate(BaseModel):
     primary_model: str = Field(min_length=1, max_length=120)
     fallback_model: str | None = Field(default=None, max_length=120)

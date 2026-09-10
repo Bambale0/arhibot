@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { ArchitecturePackage, Idea, IdeaMediaKind } from '../types'
+import type { ArchitecturePackage, IdeaMediaKind } from '../types'
+
+type LegacyIdea = {
+  id: string
+  title: string
+  category: string
+  image_url: string | null
+  media: Array<{ asset_id: string; kind: IdeaMediaKind; label: string; url: string }>
+  architecture: ArchitecturePackage | null
+}
 
 export type FeedMediaItem = {
   id: string
@@ -10,7 +19,7 @@ export type FeedMediaItem = {
   levelIndex?: number
 }
 
-export function ideaFeedMedia(idea: Idea): FeedMediaItem[] {
+export function ideaFeedMedia(idea: LegacyIdea): FeedMediaItem[] {
   const items: FeedMediaItem[] = []
   if (idea.image_url) items.push({ id: `hero-${idea.id}`, kind: 'photo', label: 'Визуализация', url: idea.image_url })
   for (const item of idea.media) {
@@ -80,7 +89,7 @@ function MediaArtwork({ item, architecture, compact = false }: { item: FeedMedia
   return <div className="idea-plan-empty">Материал недоступен</div>
 }
 
-export function IdeaMediaStrip({ idea, onOpen }: { idea: Idea; onOpen: (itemId?: string) => void }) {
+export function IdeaMediaStrip({ idea, onOpen }: { idea: LegacyIdea; onOpen: (itemId?: string) => void }) {
   const items = useMemo(() => ideaFeedMedia(idea), [idea])
   if (!items.length) return null
   return (
@@ -101,7 +110,7 @@ export function IdeaMediaStrip({ idea, onOpen }: { idea: Idea; onOpen: (itemId?:
   )
 }
 
-export function IdeaMediaModal({ idea, open, initialItemId, filter, onClose }: { idea: Idea; open: boolean; initialItemId?: string | null; filter?: IdeaMediaKind | null; onClose: () => void }) {
+export function IdeaMediaModal({ idea, open, initialItemId, filter, onClose }: { idea: LegacyIdea; open: boolean; initialItemId?: string | null; filter?: IdeaMediaKind | null; onClose: () => void }) {
   const allItems = useMemo(() => ideaFeedMedia(idea), [idea])
   const items = useMemo(() => filter ? allItems.filter((item) => item.kind === filter) : allItems, [allItems, filter])
   const [index, setIndex] = useState(0)

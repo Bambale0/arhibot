@@ -133,3 +133,20 @@
   .idea-meta-more{font-size:12px}
   .idea-feed-meta>p,.idea-tags{display:none}
 }
+
+/* Generated-work feed. Ideas are publications of accepted Create results. */
+.idea-work-card{gap:13px}
+.idea-work-stage{position:relative;flex:1 1 auto;min-height:360px;border-radius:24px;overflow:hidden;background:#e6ded2;box-shadow:0 18px 48px rgba(42,34,25,.12)}
+.idea-work-stage>img{display:block;width:100%;height:100%;min-height:360px;max-height:54dvh;object-fit:cover}
+.idea-work-empty{height:100%;min-height:360px;display:grid;place-items:center;color:#77736d;background:#eee8df}
+.idea-work-actions{position:absolute;right:12px;top:12px;display:flex;flex-direction:column;gap:8px}
+.idea-work-actions button{width:44px;height:44px;border:1px solid rgba(20,35,45,.1);border-radius:14px;background:rgba(250,247,241,.9);backdrop-filter:blur(10px);display:grid;place-items:center;color:#14232d;cursor:pointer;box-shadow:0 6px 18px rgba(25,22,18,.08)}
+.idea-work-actions button.active{color:#b85e38;background:#fff7f2}.idea-work-actions svg{width:21px;height:21px}
+.idea-work-meta{display:grid;gap:8px}.idea-work-summary{border-top:1px solid rgba(20,35,45,.1);padding-top:8px}
+.idea-work-summary summary{cursor:pointer;color:#59636a;font-size:11px;font-weight:700;list-style:none}.idea-work-summary summary::-webkit-details-marker{display:none}
+.idea-work-summary>div{max-height:180px;overflow:auto;margin-top:8px;display:grid;gap:7px;padding-right:4px}
+.idea-work-summary section{display:grid;gap:2px}.idea-work-summary section strong{font-size:11px;color:#26343d}.idea-work-summary section span{font-size:11px;line-height:1.35;color:#777872}
+.ideas-floating-error{position:absolute;z-index:45;top:78px;left:50%;transform:translateX(-50%);width:min(700px,calc(100% - 28px));display:flex;align-items:center;justify-content:space-between;gap:12px}
+.ideas-floating-error button{border:0;background:transparent;color:inherit;font-weight:700;cursor:pointer}
+@media(max-width:520px){.idea-work-stage{min-height:330px}.idea-work-stage>img,.idea-work-empty{min-height:330px}.idea-work-actions button{width:40px;height:40px;border-radius:12px}.idea-work-summary>div{max-height:130px}}
+@media(max-width:520px) and (max-height:950px){.idea-work-card{gap:7px}.idea-work-stage{min-height:0;flex:1 1 0}.idea-work-stage>img,.idea-work-empty{height:100%;min-height:0;max-height:none}.idea-work-summary>div{max-height:105px}.idea-work-summary summary{font-size:9px}.idea-work-summary section strong,.idea-work-summary section span{font-size:9px}}

@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.api.dependencies.auth import AdminUser, DbSession
 from app.core.config import Settings, get_settings
@@ -24,9 +24,10 @@ from app.schemas.admin import (
     GenerationPriceUpdate,
     GenerationRuntimeResponse,
     GenerationRuntimeUpdate,
-    IdeaCreate,
-    IdeaResponse,
-    IdeaUpdate,
+    IdeaCandidateResponse,
+    IdeaPublicationCreate,
+    IdeaPublicationResponse,
+    IdeaPublicationUpdate,
     OperationalSettingsResponse,
     OperationalSettingsUpdate,
     PromptTemplateResponse,
@@ -84,51 +85,59 @@ async def update_billing_settings(payload: BillingSettingsUpdate, admin: AdminUs
     return await AdminBillingService(session, settings).update_settings(admin, payload)
 
 
-@router.get("/ideas", response_model=list[IdeaResponse])
-async def list_ideas(_admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> list[IdeaResponse]:
-    return await AdminIdeaService(session, settings).list_all()
+@router.get("/idea-candidates", response_model=list[IdeaCandidateResponse])
+async def list_idea_candidates(
+    _admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+) -> list[IdeaCandidateResponse]:
+    return await AdminIdeaService(session, settings).list_candidates(limit=limit)
 
 
-@router.post("/ideas", response_model=IdeaResponse, status_code=status.HTTP_201_CREATED)
-async def create_idea(payload: IdeaCreate, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> IdeaResponse:
+@router.get("/ideas", response_model=list[IdeaPublicationResponse])
+async def list_ideas(
+    _admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+) -> list[IdeaPublicationResponse]:
+    return await AdminIdeaService(session, settings).list_all(limit=limit)
+
+
+@router.post(
+    "/ideas",
+    response_model=IdeaPublicationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def publish_idea(
+    payload: IdeaPublicationCreate,
+    admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> IdeaPublicationResponse:
     return await AdminIdeaService(session, settings).create(admin, payload)
 
 
-@router.patch("/ideas/{idea_id}", response_model=IdeaResponse)
-async def update_idea(idea_id: UUID, payload: IdeaUpdate, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> IdeaResponse:
+@router.patch("/ideas/{idea_id}", response_model=IdeaPublicationResponse)
+async def update_idea(
+    idea_id: UUID,
+    payload: IdeaPublicationUpdate,
+    admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> IdeaPublicationResponse:
     return await AdminIdeaService(session, settings).update(admin, idea_id, payload)
 
 
-@router.delete("/ideas/{idea_id}", response_model=IdeaResponse)
-async def archive_idea(idea_id: UUID, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> IdeaResponse:
+@router.delete("/ideas/{idea_id}", response_model=IdeaPublicationResponse)
+async def archive_idea(
+    idea_id: UUID,
+    admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> IdeaPublicationResponse:
     return await AdminIdeaService(session, settings).archive(admin, idea_id)
-
-
-@router.put("/ideas/{idea_id}/model", response_model=IdeaResponse)
-async def upload_idea_model(
-    idea_id: UUID,
-    admin: AdminUser,
-    session: DbSession,
-    file: Annotated[UploadFile, File(description="Self-contained binary glTF 2.0 (.glb)")],
-    settings: Settings = Depends(get_settings),
-) -> IdeaResponse:
-    data = await file.read(settings.max_model_size_bytes + 1)
-    return await AdminIdeaService(session, settings).upload_model(
-        admin,
-        idea_id,
-        data=data,
-        original_filename=file.filename,
-    )
-
-
-@router.delete("/ideas/{idea_id}/model", response_model=IdeaResponse)
-async def delete_idea_model(
-    idea_id: UUID,
-    admin: AdminUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> IdeaResponse:
-    return await AdminIdeaService(session, settings).delete_model(admin, idea_id)
 
 
 @router.get("/generation", response_model=GenerationRuntimeResponse)

@@ -7,6 +7,7 @@ import type {
   AdminGenerationPrice,
   AdminGenerationSettings,
   AdminIdea,
+  AdminIdeaCandidate,
   AdminOperationalSettings,
   AdminOverview,
   AdminPayment,
@@ -22,7 +23,6 @@ import type {
   GenerationList,
   GenerationMode,
   Idea,
-  IdeaMediaKind,
   Project,
   ProjectContext,
   ProjectList,
@@ -137,7 +137,8 @@ export function listGenerations(projectId?: string, limit = 50, cursor?: string 
   const params = new URLSearchParams({ limit: String(limit) }); if (projectId) params.set('project_id', projectId); if (cursor) params.set('cursor', cursor)
   return request<GenerationList>(`/generations?${params}`)
 }
-export function listIdeas() { return request<Idea[]>('/ideas') }
+export function listIdeas(limit = 50) { return request<Idea[]>(`/ideas?limit=${limit}`) }
+export function startProjectFromIdea(ideaId: string) { return request<Project>(`/ideas/${ideaId}/project`, { method: 'POST' }) }
 
 export function getBillingSummary() { return request<BillingSummary>('/billing') }
 export function createBillingPayment(packageCode: string, receiptEmail?: string | null) {
@@ -158,19 +159,14 @@ export function adminGetBillingSettings() { return request<AdminBillingSettings>
 export function adminUpdateBillingSettings(payload: Omit<AdminBillingSettings, 'updated_at'>) { return request<AdminBillingSettings>('/admin/billing-settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
 
 export function adminListIdeas() { return request<AdminIdea[]>('/admin/ideas') }
-export function adminCreateIdea(payload: { title: string; category: string; text: string; generation_type: GenerationMode; prompt: string; image_asset_id?: string | null; architecture_project_id?: string | null; media: Array<{ asset_id: string; kind: IdeaMediaKind; label: string }>; is_active: boolean; sort_order: number }) {
-  return request<AdminIdea>('/admin/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+export function adminListIdeaCandidates() { return request<AdminIdeaCandidate[]>('/admin/idea-candidates') }
+export function adminPublishIdea(generationId: string, sortOrder = 0) {
+  return request<AdminIdea>('/admin/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generation_id: generationId, is_active: true, sort_order: sortOrder }) })
 }
-export function adminUpdateIdea(id: string, payload: Partial<{ title: string; category: string; text: string; generation_type: GenerationMode; prompt: string; image_asset_id: string | null; architecture_project_id: string | null; media: Array<{ asset_id: string; kind: IdeaMediaKind; label: string }>; is_active: boolean; sort_order: number }>) {
+export function adminUpdateIdea(id: string, payload: Partial<{ is_active: boolean; sort_order: number }>) {
   return request<AdminIdea>(`/admin/ideas/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 }
 export function adminArchiveIdea(id: string) { return request<AdminIdea>(`/admin/ideas/${id}`, { method: 'DELETE' }) }
-
-export function adminUploadIdeaModel(id: string, file: File) {
-  const form = new FormData(); form.append('file', file)
-  return request<AdminIdea>(`/admin/ideas/${id}/model`, { method: 'PUT', body: form })
-}
-export function adminDeleteIdeaModel(id: string) { return request<AdminIdea>(`/admin/ideas/${id}/model`, { method: 'DELETE' }) }
 
 export function adminGetGenerationSettings() { return request<AdminGenerationSettings>('/admin/generation') }
 export function adminUpdateGenerationSettings(payload: { primary_model: string; fallback_model: string | null; primary_params: Record<string, unknown>; fallback_params: Record<string, unknown>; mode_params: Record<string, Record<string, unknown>> }) {
