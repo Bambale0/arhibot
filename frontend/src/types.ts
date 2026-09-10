@@ -72,7 +72,6 @@ export type Generation = {
   output_asset: Asset | null
   type: GenerationMode
   status: GenerationStatus
-  prompt: string
   credits_charged: number
   model_name: string | null
   fallback_used: boolean

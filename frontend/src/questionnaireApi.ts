@@ -1,5 +1,5 @@
 import { request as apiRequest } from './api'
-import type { Project } from './types'
+import type { Generation, Project } from './types'
 import type { DesignSession, QuestionnaireApplicationSubmitResponse, QuestionnaireCatalog } from './questionnaireTypes'
 
 export function getQuestionnaireCatalog():Promise<QuestionnaireCatalog> {
@@ -38,4 +38,8 @@ export function submitQuestionnaireApplication(projectId:string, session:DesignS
     headers:{ 'Content-Type':'application/json' },
     body:JSON.stringify(session),
   })
+}
+
+export function createQuestionnaireGeneration(projectId:string):Promise<Generation> {
+  return apiRequest<Generation>(`/projects/${projectId}/questionnaire-generation`, { method:'POST' })
 }

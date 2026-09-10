@@ -225,7 +225,6 @@ class GenerationService:
             output_asset=output_asset,
             type=generation.type,
             status=generation.status,
-            prompt=generation.prompt,
             credits_charged=generation.credits_charged,
             model_name=generation.model_name,
             fallback_used=generation.fallback_used,

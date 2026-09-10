@@ -52,9 +52,9 @@ def _answer_text(value: object) -> str:
     if isinstance(value, list):
         return ", ".join(str(item) for item in value)
     if value is True:
-        return "Согласен"
+        return "Да"
     if value is False:
-        return "false"
+        return "Нет"
     if value is None:
         return ""
     if isinstance(value, float) and value.is_integer():
@@ -116,15 +116,24 @@ def build_questionnaire_generation_prompt(
         )
 
     parts = [
-        f"AuRoom. Точный опросник: {definition['title']}.",
-        scene,
-        region_instruction,
+        "Создай точную фотореалистичную архитектурную визуализацию по данным опросника AuRoom.",
+        f"ТЕКУЩИЙ ОБЪЕКТ: {definition['title']}.",
+        "СЧИТАЙ КАЖДЫЙ ОТВЕТ ПОЛЬЗОВАТЕЛЯ ОБЯЗАТЕЛЬНЫМ ОГРАНИЧЕНИЕМ. "
+        "Не заменяй выбранные параметры своими предположениями и не добавляй противоречащие им решения.",
+        f"СЦЕНА И КОМПОЗИЦИЯ: {scene}",
+        f"ОБЛАСТЬ ИЗМЕНЕНИЯ: {region_instruction}" if region_instruction else "",
         (
+            "ОГРАНИЧЕНИЯ: визуализируй только внешний вид дома. "
             "Планировок, комнат и внутренних помещений не придумывать."
             if object_key == "eskez-doma"
-            else "Если выбран «Как у дома», наследуй стиль, материалы и кровлю принятого дома."
+            else "ОГРАНИЧЕНИЯ: если выбран «Как у дома», точно наследуй стиль, "
+            "материалы и кровлю уже принятого дома; ранее принятые объекты не изменяй."
         ),
-        *lines,
+        "ТРЕБОВАНИЯ ИЗ ОПРОСНИКА:",
+        *[f"- {line}" for line in lines],
+        "ПРИОРИТЕТ ТОЧНОСТИ: геометрия, этажность, габариты, материалы, цвета, кровля, "
+        "остекление, расположение объектов и прочие явно выбранные параметры должны "
+        "соответствовать ответам. Не показывай текст, подписи, размеры или интерфейс на изображении.",
     ]
     review_comment = session.review_comments.get(object_key, "")
     if review_comment:

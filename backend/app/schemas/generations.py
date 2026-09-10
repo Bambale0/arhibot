@@ -98,7 +98,6 @@ class GenerationResponse(BaseModel):
     output_asset: AssetResponse | None = None
     type: GenerationType
     status: GenerationStatus
-    prompt: str
     credits_charged: int = 0
     model_name: str | None = None
     fallback_used: bool = False
