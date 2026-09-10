@@ -1,8 +1,10 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Depends, Response, status
 
 from app.api.dependencies.auth import CurrentUser, DbSession
+from app.core.config import Settings, get_settings
+from app.schemas.generations import QuestionnaireGenerationResponse
 from app.schemas.projects import ProjectResponse
 from app.schemas.questionnaires import (
     DesignSession,
@@ -11,6 +13,7 @@ from app.schemas.questionnaires import (
     QuestionnaireCatalogResponse,
     QuestionnaireProjectStartRequest,
 )
+from app.services.generation_service import build_generation_service
 from app.services.questionnaire_project_service import QuestionnaireProjectService
 from app.services.questionnaire_service import QuestionnaireService
 
@@ -80,6 +83,37 @@ async def save_questionnaire_session(
     if saved is None:
         saved = await QuestionnaireService(session).save_session(user, project_id, payload)
     return DesignSessionResponse(session=saved)
+
+
+@router.post(
+    "/projects/{project_id}/questionnaire-generation",
+    operation_id="createProjectQuestionnaireGeneration",
+    response_model=QuestionnaireGenerationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_questionnaire_generation(
+    project_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> QuestionnaireGenerationResponse:
+    questionnaire = QuestionnaireService(session)
+    payload, expected_session, object_key = await questionnaire.build_generation_request(
+        user, project_id
+    )
+
+    def bind_generation(generation, project) -> None:
+        questionnaire.bind_generation_before_commit(
+            project,
+            expected_session=expected_session,
+            object_key=object_key,
+            generation_id=generation.id,
+        )
+
+    created = await build_generation_service(session, settings).create(
+        user, payload, before_commit=bind_generation
+    )
+    return QuestionnaireGenerationResponse.model_validate(created)
 
 
 @router.post(

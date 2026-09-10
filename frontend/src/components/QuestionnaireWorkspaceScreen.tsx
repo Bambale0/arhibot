@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import * as api from '../api'
 import {
+  createQuestionnaireGeneration,
   getQuestionnaireCatalog,
   getQuestionnaireSession,
   saveQuestionnaireSession,
@@ -15,7 +16,7 @@ import type {
   QuestionnaireQuestion,
   NormalizedRect,
 } from '../questionnaireTypes'
-import type { AdminIdea, Asset, Generation, GenerationMode, Project } from '../types'
+import type { AdminIdea, Asset, Generation, Project } from '../types'
 import { BackIcon, ImageIcon, SparkIcon, UploadIcon } from './Icons'
 
 const delay = (ms:number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -343,34 +344,6 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     return definition.questions.filter((q) => q.phase === 'pre_render' && conditionOk(q.condition, answers, next.accepted_objects.includes('eskez-doma')))
   }
 
-  function prompt(definition:QuestionnaireDefinition, next:DesignSession) {
-    const answers = next.answers[definition.key] || {}
-    const lines = preQuestions(definition, next)
-      .map((q) => answers[q.id] == null || text(answers[q.id]) === '' ? null : `${q.id}. ${q.text} — ${text(answers[q.id])}`)
-      .filter(Boolean)
-    const scene = next.accepted_objects.length > 0 && next.scene_asset_id
-      ? 'Используй исходное изображение как текущую принятую сцену. Сохрани существующий дом и все уже принятые объекты, их геометрию, пропорции, положение, окружение, ракурс и свет. Добавь или измени только текущий объект.'
-      : next.source_asset_id
-        ? 'Используй фотографию участка как исходный контекст. Сохрани геометрию участка, перспективу, ракурс и существующее окружение. Создай или добавь только текущий проектируемый объект.'
-        : definition.key === 'eskez-doma'
-          ? 'Создай внешний вид дома на участке. Камера: дрон 40–50 м, сверху угловой вид.'
-          : 'Создай объект на участке. Камера: дрон сверху, угловой вид.'
-    const region = next.edit_regions[definition.key]
-    const regionInstruction = region
-      ? `Новый объект и все новые пиксели должны находиться внутри разрешённой области кадра: слева ${Math.round(region.x*100)}%, сверху ${Math.round(region.y*100)}%, ширина ${Math.round(region.width*100)}%, высота ${Math.round(region.height*100)}%. За пределами этой области ничего не менять.`
-      : ''
-    return [
-      `AuRoom. Точный опросник: ${definition.title}.`,
-      scene,
-      regionInstruction,
-      definition.key === 'eskez-doma'
-        ? 'Планировок, комнат и внутренних помещений не придумывать.'
-        : 'Если выбран «Как у дома», наследуй стиль, материалы и кровлю принятого дома.',
-      ...lines,
-      next.review_comments[definition.key] ? `Комментарий к уточнению: ${next.review_comments[definition.key]}` : '',
-    ].filter(Boolean).join('\n')
-  }
-
   function suggestedRegion(next:DesignSession, definition:QuestionnaireDefinition):NormalizedRect {
     const values = Object.values(next.answers[definition.key] || {}).flatMap((value) => Array.isArray(value) ? value : [value]).map(String).join(' ').toLowerCase()
     if (values.includes('слева')) return { x:0.03, y:0.18, width:0.42, height:0.66 }
@@ -422,38 +395,21 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     setError(null)
     setRenderOutput(null)
     try {
-      const input = next.scene_asset_id || next.source_asset_id
-      const mode:GenerationMode = definition.key === 'eskez-doma' && input ? 'facade' : 'master_plan'
-      const editRegion = next.edit_regions[definition.key] || null
-      const masked = Boolean(input && next.accepted_objects.length > 0 && editRegion)
-      const protectedRegions = next.accepted_objects
-        .map((key) => next.lock_regions[key])
-        .filter((region):region is NormalizedRect => Boolean(region))
-      const queued = await api.createGeneration({
-        project_id:project.id,
-        input_asset_id:input,
-        type:mode,
-        prompt:prompt(definition, next),
-        composition_mode:masked ? 'masked_edit' : 'replace',
-        edit_region:masked ? editRegion : null,
-        protected_regions:masked ? protectedRegions : [],
-      })
+      const queued = await createQuestionnaireGeneration(project.id)
       const queuedState = {
         ...next,
         generation_ids:{ ...next.generation_ids, [definition.key]:queued.id },
       }
-      let saved = await persist(queuedState)
-      if (!saved) {
-        await delay(750)
-        saved = await persist(queuedState)
-      }
-      if (!saved) throw new Error('Задача создана, но не удалось сохранить её номер. Откройте проект повторно.')
+      // The backend stores this generation ID atomically with generation creation.
+      // Mirror it locally only; a second PUT here would reopen the race this endpoint removes.
+      setSession(queuedState)
+      syncProject(queuedState)
 
       const generation = await poll(queued)
       setRenderOutput(generation.output_asset)
       const review = definition.questions.find((q) => q.phase === 'review')
       await persist({
-        ...saved,
+        ...queuedState,
         current_question_id:review?.id || null,
       })
     } catch (err) {

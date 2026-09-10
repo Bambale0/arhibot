@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
+from app.db.models.projects import Project
 from app.db.models.questionnaires import (
     QuestionnaireApplication,
     QuestionnaireCatalogConfig,
@@ -25,6 +26,7 @@ from app.repositories.assets import AssetRepository
 from app.repositories.generations import GenerationRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.questionnaires import QuestionnaireRepository
+from app.schemas.generations import GenerationCreate
 from app.schemas.questionnaires import (
     DesignSession,
     QuestionnaireApplicationResponse,
@@ -141,6 +143,128 @@ class QuestionnaireService:
         await self.session.refresh(application)
         await self.session.refresh(project)
         return payload, QuestionnaireApplicationResponse.model_validate(application)
+
+    async def build_generation_request(
+        self, user: User, project_id: UUID
+    ) -> tuple[GenerationCreate, DesignSession, str]:
+        """Build the internal generation request from the persisted questionnaire state.
+
+        The client never supplies or receives the questionnaire prompt. The server owns
+        questionnaire-to-prompt translation so generation provenance cannot drift from
+        saved answers or be altered in the browser.
+        """
+        project = await ProjectService(self.projects).get_owned_model(user, project_id)
+        session = self._stored_session(project.context)
+        if session is None or not session.source_step_completed:
+            raise self._invalid("Start the questionnaire before requesting a generation.")
+        if session.application_submitted:
+            raise self._invalid("A submitted questionnaire cannot create another sketch.")
+        object_key = session.current_object
+        if not object_key or object_key == "zayavka":
+            raise self._invalid("Choose a questionnaire object before requesting a generation.")
+        if object_key in session.accepted_objects:
+            raise self._invalid("An accepted questionnaire object cannot be regenerated.")
+        if object_key in session.generation_ids:
+            raise self._invalid("This questionnaire object already has a generation task.")
+
+        catalog = await self.catalog_for_version(session.catalog_version)
+        if catalog is None:
+            raise AppError(
+                type="questionnaire_catalog_version_unavailable",
+                title="Questionnaire version unavailable",
+                status=409,
+                detail="The questionnaire revision for this project is unavailable.",
+            )
+        definitions = {item["key"]: item for item in catalog["questionnaires"]}
+        definition = definitions.get(object_key)
+        if definition is None:
+            raise self._invalid("The current questionnaire object is not in the catalog.")
+
+        answers = session.answers.get(object_key, {})
+        house_accepted = "eskez-doma" in session.accepted_objects
+        active_pre_render = [
+            question
+            for question in definition["questions"]
+            if question["phase"] == "pre_render"
+            and self._condition_ok(question.get("condition"), answers, house_accepted)
+        ]
+        missing = [question["id"] for question in active_pre_render if question["id"] not in answers]
+        if missing:
+            raise self._invalid(
+                f"Answer every active question before generation: {', '.join(missing)}."
+            )
+
+        input_asset_id = session.scene_asset_id or session.source_asset_id
+        generation_type = (
+            GenerationType.FACADE
+            if object_key == "eskez-doma" and input_asset_id is not None
+            else GenerationType.MASTER_PLAN
+        )
+        accepted_before = list(session.accepted_objects)
+        edit_region = session.edit_regions.get(object_key)
+        masked = bool(accepted_before and input_asset_id is not None)
+        if masked and edit_region is None:
+            raise self._invalid("Choose the edit region before adding an object to the accepted scene.")
+        protected_regions = []
+        if masked:
+            for accepted_key in accepted_before:
+                lock = session.lock_regions.get(accepted_key)
+                if lock is None:
+                    raise self._invalid(
+                        f"Accepted object {accepted_key} must have a locked visual region."
+                    )
+                protected_regions.append(lock)
+
+        prompt = build_questionnaire_generation_prompt(
+            definition,
+            session,
+            accepted_before=accepted_before,
+            input_asset_present=input_asset_id is not None,
+        )
+        payload = GenerationCreate(
+            project_id=project_id,
+            input_asset_id=input_asset_id,
+            type=generation_type,
+            prompt=prompt,
+            composition_mode="masked_edit" if masked else "replace",
+            edit_region=edit_region if masked else None,
+            protected_regions=protected_regions,
+        )
+        return payload, session, object_key
+
+    @classmethod
+    def bind_generation_before_commit(
+        cls,
+        project: Project,
+        *,
+        expected_session: DesignSession,
+        object_key: str,
+        generation_id: UUID,
+    ) -> None:
+        current = cls._stored_session(project.context)
+        if current is None or current != expected_session:
+            raise AppError(
+                type="questionnaire_generation_state_changed",
+                title="Questionnaire state changed",
+                status=409,
+                detail=(
+                    "The questionnaire changed while generation was being created. "
+                    "Reload the project before retrying."
+                ),
+            )
+        if object_key in current.generation_ids:
+            raise AppError(
+                type="questionnaire_generation_exists",
+                title="Questionnaire generation already exists",
+                status=409,
+                detail="This questionnaire object already has a generation task.",
+            )
+        bound = current.model_copy(deep=True)
+        bound.generation_ids[object_key] = generation_id
+        project.context = {
+            **(project.context or {}),
+            "design_session": bound.model_dump(mode="json"),
+        }
 
     async def admin_catalog(self) -> QuestionnaireCatalogAdminResponse:
         row = await self.repository.get_catalog()
