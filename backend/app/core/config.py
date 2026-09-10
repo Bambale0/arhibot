@@ -15,7 +15,6 @@ class Settings(BaseSettings):
 
     app_env: str = "local"
     app_name: str = "AuRoom API"
-    app_version: str = "0.6.0"
     release_sha: str = "unknown"
     api_v1_prefix: str = "/api/v1"
     log_level: str = "INFO"

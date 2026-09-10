@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ai-architecture-backend"
-version = "0.4.0"
+dynamic = ["version"]
 description = "Backend platform for AuRoom"
 requires-python = ">=3.12"
 dependencies = [
@@ -33,6 +33,9 @@ dev = [
   "ruff>=0.12,<1.0",
   "mypy>=1.16,<2.0",
 ]
+
+[tool.hatch.version]
+path = "app/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]

@@ -1,5 +1,5 @@
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +13,7 @@ from app.core.errors import install_exception_handlers
 from app.core.logging import configure_logging
 from app.core.redis import redis_client
 from app.db.session import dispose_engine
+from app.version import __version__
 
 settings = get_settings()
 configure_logging(settings)
@@ -27,7 +28,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title=settings.app_name,
-    version=settings.app_version,
+    version=__version__,
     description=(
         "Official backend contract for web, Telegram, admin, mobile, and future clients. "
         "Business logic lives behind application services rather than client-specific handlers."
