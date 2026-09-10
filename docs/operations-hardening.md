@@ -42,7 +42,7 @@ Deploy refuses to start at 90% filesystem usage and warns at 80%. `ops/runtime_h
 ./ops/runtime_housekeeping.sh /root/arhibot REPORT
 ```
 
-`APPLY` deletes expired release workdirs and prunes old dangling Docker images. It is a maintenance action and must not run automatically or without operator approval.
+`APPLY` deletes expired release workdirs and prunes dangling Docker images plus unused builder cache. A successful deploy runs `APPLY` after the rollout has already passed health gates; cleanup failure is reported but does not roll back a healthy release. `REPORT` remains available for read-only inspection.
 
 Runtime DB/media backups keep their existing database-managed retention. Release workdir and Docker cleanup are separate from backup retention.
 
@@ -50,11 +50,16 @@ Runtime DB/media backups keep their existing database-managed retention. Release
 
 The 3D renderer is intentionally disabled while the product does not expose 3D. `renderer-worker` is behind the Compose `3d` profile, regular deploys keep it stopped, and server smoke fails if it is unexpectedly running. Re-enabling 3D requires a separate product/release decision and validation of its deploy parity and capacity budget.
 
+## Runtime guardrails and monitor
+
+Compose applies environment-overridable CPU, memory, PID and json-file log-rotation budgets to every active AuRoom service; the disabled 3D renderer remains outside this capacity claim until it is explicitly re-enabled and re-sized. The initial defaults were chosen after a live read-only pre-production baseline: the API stayed below 100 MiB during a 20-concurrent request burst, while the generation worker retains a much larger memory budget for image decoding/composition. Re-measure before materially increasing traffic or image limits.
+
+`ops/runtime_monitor.sh` runs from root cron every 15 minutes. It checks HTTP readiness, release SHA parity, Docker health, worker heartbeats, stale processing generations, filesystem usage and runtime-backup age. State transitions to WARN/FAIL and recovery back to OK are sent once to active Telegram admins; unchanged state is not re-sent every cycle. Thresholds are environment-overridable.
+
 ## Still required before a production-grade promotion
 
 - encrypted off-site backups plus periodic isolated restore drills; choose the storage provider from the deployment environment and define RPO/RTO first;
-- metrics/tracing and user-facing SLO alerts (RED for API, queue age/provider errors for workers, disk/backup age for host operations);
-- measured resource limits/capacity based on load and soak tests;
+- full RED metrics/tracing and longer-term dashboards; the runtime watchdog now covers immediate operational alerts but is not a metrics backend;
+- soak/load tests that include authenticated writes and generation-provider latency, not only public read paths;
 - blue-green/canary or another zero-downtime release strategy;
-- circuit breaking/bounded retry budgets for critical external dependencies;
-- controlled failure-injection tests in a non-production environment.
+- controlled failure-injection tests at process/network level in a non-production environment.

@@ -1,5 +1,11 @@
 name: arhibot
 
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "${AUROOM_LOG_MAX_SIZE:-10m}"
+    max-file: "${AUROOM_LOG_MAX_FILES:-3}"
+
 services:
   api:
     labels:
@@ -18,6 +24,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    mem_limit: "${AUROOM_API_MEMORY_LIMIT:-512m}"
+    cpus: "${AUROOM_API_CPU_LIMIT:-0.75}"
+    pids_limit: ${AUROOM_API_PIDS_LIMIT:-256}
+    logging: *default-logging
     restart: unless-stopped
 
   bot:
@@ -29,6 +39,10 @@ services:
       - .env
     depends_on:
       - api
+    mem_limit: "${AUROOM_BOT_MEMORY_LIMIT:-192m}"
+    cpus: "${AUROOM_BOT_CPU_LIMIT:-0.25}"
+    pids_limit: ${AUROOM_BOT_PIDS_LIMIT:-128}
+    logging: *default-logging
     restart: unless-stopped
 
   worker:
@@ -51,6 +65,10 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    mem_limit: "${AUROOM_WORKER_MEMORY_LIMIT:-1536m}"
+    cpus: "${AUROOM_WORKER_CPU_LIMIT:-1.25}"
+    pids_limit: ${AUROOM_WORKER_PIDS_LIMIT:-256}
+    logging: *default-logging
     restart: unless-stopped
 
   renderer-worker:
@@ -89,6 +107,10 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    mem_limit: "${AUROOM_BROADCAST_WORKER_MEMORY_LIMIT:-256m}"
+    cpus: "${AUROOM_BROADCAST_WORKER_CPU_LIMIT:-0.35}"
+    pids_limit: ${AUROOM_BROADCAST_WORKER_PIDS_LIMIT:-128}
+    logging: *default-logging
     restart: unless-stopped
 
   maintenance:
@@ -111,6 +133,10 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    mem_limit: "${AUROOM_MAINTENANCE_MEMORY_LIMIT:-384m}"
+    cpus: "${AUROOM_MAINTENANCE_CPU_LIMIT:-0.35}"
+    pids_limit: ${AUROOM_MAINTENANCE_PIDS_LIMIT:-128}
+    logging: *default-logging
     restart: unless-stopped
 
   frontend:
@@ -123,6 +149,10 @@ services:
         VITE_APP_NAME: ${FRONTEND_APP_NAME:-AuRoom}
     expose:
       - "80"
+    mem_limit: "${AUROOM_FRONTEND_MEMORY_LIMIT:-128m}"
+    cpus: "${AUROOM_FRONTEND_CPU_LIMIT:-0.25}"
+    pids_limit: ${AUROOM_FRONTEND_PIDS_LIMIT:-64}
+    logging: *default-logging
     restart: unless-stopped
 
   nginx:
@@ -136,6 +166,10 @@ services:
     depends_on:
       - api
       - frontend
+    mem_limit: "${AUROOM_NGINX_MEMORY_LIMIT:-128m}"
+    cpus: "${AUROOM_NGINX_CPU_LIMIT:-0.25}"
+    pids_limit: ${AUROOM_NGINX_PIDS_LIMIT:-64}
+    logging: *default-logging
     restart: unless-stopped
 
   postgres:
@@ -151,6 +185,10 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    mem_limit: "${AUROOM_POSTGRES_MEMORY_LIMIT:-1024m}"
+    cpus: "${AUROOM_POSTGRES_CPU_LIMIT:-1.00}"
+    pids_limit: ${AUROOM_POSTGRES_PIDS_LIMIT:-256}
+    logging: *default-logging
     restart: unless-stopped
 
   redis:
@@ -163,6 +201,10 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    mem_limit: "${AUROOM_REDIS_MEMORY_LIMIT:-256m}"
+    cpus: "${AUROOM_REDIS_CPU_LIMIT:-0.35}"
+    pids_limit: ${AUROOM_REDIS_PIDS_LIMIT:-128}
+    logging: *default-logging
     restart: unless-stopped
 
 volumes:
