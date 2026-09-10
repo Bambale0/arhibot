@@ -22,37 +22,47 @@ from app.services.generation_service import GENERATION_QUEUE_KEY  # noqa: E402
 from app.workers.generation_worker import process_generation  # noqa: E402
 
 
-async def _register_admin(client: AsyncClient) -> tuple[dict, dict[str, str]]:
+async def _register_user(
+    client: AsyncClient, *, display_name: str = "Product Chain User"
+) -> tuple[dict, dict[str, str]]:
     email = f"product-{uuid4()}@example.com"
     register = await client.post(
         "/api/v1/auth/register",
         json={
             "email": email,
             "password": "correct-horse-battery-staple",
-            "display_name": "Product Chain Admin",
+            "display_name": display_name,
         },
     )
     assert register.status_code == 201, register.text
     tokens = register.json()
+    return tokens, {"Authorization": f"Bearer {tokens['access_token']}"}
+
+
+async def _register_admin(
+    client: AsyncClient, *, role: UserRole = UserRole.SUPERADMIN
+) -> tuple[dict, dict[str, str]]:
+    tokens, headers = await _register_user(client, display_name="Product Chain Admin")
     user_id = UUID(tokens["user"]["id"])
     async with get_session_factory()() as session:
         user = await session.get(User, user_id)
         assert user is not None
-        user.role = UserRole.SUPERADMIN
+        user.role = role
         await session.commit()
-    return tokens, {"Authorization": f"Bearer {tokens['access_token']}"}
+    return tokens, headers
 
 
 @pytest.mark.asyncio
 async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        tokens, headers = await _register_admin(client)
+        _, admin_headers = await _register_admin(client)
+        tokens, headers = await _register_user(client)
         user_id = tokens["user"]["id"]
 
         runtime = await client.put(
             "/api/v1/admin/generation",
-            headers=headers,
+            headers=admin_headers,
             json={
                 "primary_model": "integration-image-model",
                 "fallback_model": None,
@@ -64,19 +74,19 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
         assert runtime.status_code == 200, runtime.text
         prompt = await client.put(
             "/api/v1/admin/prompts/floor_plan",
-            headers=headers,
+            headers=admin_headers,
             json={"template": "Create a floor plan. {user_prompt}"},
         )
         assert prompt.status_code == 200, prompt.text
         price = await client.put(
             "/api/v1/admin/generation-prices/floor_plan",
-            headers=headers,
+            headers=admin_headers,
             json={"credits": 2, "is_active": True},
         )
         assert price.status_code == 200, price.text
         credit = await client.post(
             f"/api/v1/admin/users/{user_id}/credits",
-            headers=headers,
+            headers=admin_headers,
             json={"delta": 5, "reason": "integration generation budget"},
         )
         assert credit.status_code == 200, credit.text
@@ -84,7 +94,7 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
 
         ops = await client.put(
             "/api/v1/admin/operations",
-            headers=headers,
+            headers=admin_headers,
             json={
                 "auth_rate_limit_per_minute": None,
                 "generation_rate_limit_per_minute": 50,
@@ -138,7 +148,7 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
 
         ledger = await client.get(
             f"/api/v1/admin/credit-transactions?user_id={user_id}&limit=50",
-            headers=headers,
+            headers=admin_headers,
         )
         assert ledger.status_code == 200, ledger.text
         movements = [(item["kind"], item["amount"]) for item in ledger.json()]
@@ -147,7 +157,7 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
 
         debit = await client.post(
             f"/api/v1/admin/users/{user_id}/credits",
-            headers=headers,
+            headers=admin_headers,
             json={"delta": -5, "reason": "integration zero balance"},
         )
         assert debit.status_code == 200, debit.text
@@ -160,6 +170,65 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
         assert insufficient.json()["type"] == "insufficient_credits"
 
         await redis_client.lpop(GENERATION_QUEUE_KEY)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", [UserRole.ADMIN, UserRole.SUPERADMIN])
+async def test_admin_generation_is_free_and_writes_no_credit_movement(role: UserRole) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _, operator_headers = await _register_admin(client)
+        tokens, headers = await _register_admin(client, role=role)
+        user_id = tokens["user"]["id"]
+
+        prompt = await client.put(
+            "/api/v1/admin/prompts/floor_plan",
+            headers=operator_headers,
+            json={"template": "Create a floor plan. {user_prompt}"},
+        )
+        assert prompt.status_code == 200, prompt.text
+        price = await client.put(
+            "/api/v1/admin/generation-prices/floor_plan",
+            headers=operator_headers,
+            json={"credits": 7, "is_active": True},
+        )
+        assert price.status_code == 200, price.text
+
+        project = await client.post(
+            "/api/v1/projects",
+            headers=headers,
+            json={"name": "Admin free generation", "context": {}},
+        )
+        assert project.status_code == 201, project.text
+
+        generation = await client.post(
+            "/api/v1/generations",
+            headers=headers,
+            json={
+                "project_id": project.json()["id"],
+                "type": "floor_plan",
+                "prompt": "Admin test generation",
+            },
+        )
+        assert generation.status_code == 202, generation.text
+        row = generation.json()
+        assert row["credits_charged"] == 0
+
+        me = await client.get("/api/v1/me", headers=headers)
+        assert me.status_code == 200, me.text
+        assert me.json()["credits_balance"] == 0
+
+        ledger = await client.get(
+            f"/api/v1/admin/credit-transactions?user_id={user_id}&limit=50",
+            headers=operator_headers,
+        )
+        assert ledger.status_code == 200, ledger.text
+        generation_movements = [
+            item for item in ledger.json() if item["kind"].startswith("generation_")
+        ]
+        assert generation_movements == []
+
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, row["id"])
 
 
 @pytest.mark.asyncio
