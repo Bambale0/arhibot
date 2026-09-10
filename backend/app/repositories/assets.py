@@ -22,3 +22,12 @@ class AssetRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def list_active_for_project(self, project_id: UUID) -> list[Asset]:
+        result = await self.session.execute(
+            select(Asset).where(
+                Asset.project_id == project_id,
+                Asset.deleted_at.is_(None),
+            )
+        )
+        return list(result.scalars().all())

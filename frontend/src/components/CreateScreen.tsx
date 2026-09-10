@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as api from '../api'
-import { getQuestionnaireCatalog } from '../questionnaireApi'
-import { createDesignSession, type QuestionnaireCatalog } from '../questionnaireTypes'
+import { getQuestionnaireCatalog, startQuestionnaireProject as startQuestionnaireProjectApi } from '../questionnaireApi'
+import type { QuestionnaireCatalog } from '../questionnaireTypes'
 import type { GenerationMode, Project } from '../types'
 import { ArrowIcon, BackIcon, HomeIcon, PlanIcon, RoomIcon, SiteIcon } from './Icons'
 import '../questionnaire.css'
@@ -13,13 +13,6 @@ const legacyModes: { id: GenerationMode; title: string; text: string; icon: type
   { id: 'master_plan', title: 'Мастер-план участка', text: 'Разместить дом, парковку, террасу, баню и основные зоны участка.', icon: SiteIcon },
   { id: 'interior', title: 'Дизайн помещений', text: 'Создать интерьерную концепцию комнаты по фотографии и пожеланиям.', icon: RoomIcon },
 ]
-
-function automaticProjectName(titles: string[]) {
-  const primary = titles[0] || 'Новый проект'
-  const suffix = titles.length > 1 ? ` +${titles.length - 1}` : ''
-  const date = new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit' }).format(new Date())
-  return `${primary}${suffix} · ${date}`.slice(0, 160)
-}
 
 export function CreateScreen({ initialMode, initialPrompt, onOpenProject, onOpenQuestionnaire }: {
   initialMode?: GenerationMode | null
@@ -82,13 +75,7 @@ export function CreateScreen({ initialMode, initialPrompt, onOpenProject, onOpen
     try {
       const catalogOrder = catalog.sections.flatMap((item) => item.object_keys)
       const orderedObjects = catalogOrder.filter((key) => selectedObjects.includes(key))
-      const titles = orderedObjects.map((key) => definitions.get(key)?.title).filter((value): value is string => Boolean(value))
-      const designSession = createDesignSession(catalog.version, orderedObjects)
-      const project = await api.createProject({
-        name: automaticProjectName(titles),
-        description: 'Проект создан через опросник AuRoom.',
-        context: { design_session: designSession },
-      })
+      const project = await startQuestionnaireProjectApi(orderedObjects)
       onOpenQuestionnaire(project, orderedObjects)
     } catch (err) {
       setStartError(err instanceof Error ? err.message : 'Не удалось создать проект')

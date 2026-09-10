@@ -37,10 +37,13 @@ class ProjectContextResponse(ProjectContext):
 
     Database rows can outlive old application versions. Unknown historical/internal
     keys must never turn an otherwise readable project list into a 500. They are
-    ignored on output while the write model above remains strict.
+    ignored on output while the write model above remains strict. Server-owned
+    lifecycle metadata is exposed here without making it writable through generic
+    project create/update endpoints.
     """
 
     model_config = ConfigDict(extra="ignore")
+    questionnaire_draft: bool | None = None
 
 
 class ProjectCreateRequest(BaseModel):

@@ -90,6 +90,17 @@ class ProjectService:
     ) -> ProjectResponse:
         project = await self.get_owned_model(user, project_id)
         fields = payload.model_fields_set
+        if (
+            "context" in fields
+            and payload.context is not None
+            and (project.context or {}).get("questionnaire_draft") is True
+        ):
+            raise AppError(
+                type="questionnaire_project_draft_locked",
+                title="Questionnaire project draft is locked",
+                status=409,
+                detail="Complete or discard the questionnaire source step before editing project context.",
+            )
         if "name" in fields and payload.name is not None:
             project.name = self._normalize_name(payload.name)
         if "description" in fields:
@@ -101,6 +112,9 @@ class ProjectService:
             existing_architecture = (project.context or {}).get("architecture")
             if existing_architecture is not None and "architecture" not in updated_context:
                 updated_context["architecture"] = existing_architecture
+            existing_questionnaire_draft = (project.context or {}).get("questionnaire_draft")
+            if existing_questionnaire_draft is not None:
+                updated_context["questionnaire_draft"] = existing_questionnaire_draft
             project.context = updated_context
         await self.repository.session.commit()
         await self.repository.session.refresh(project)

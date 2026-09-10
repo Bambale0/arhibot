@@ -29,6 +29,7 @@ export type ProjectContext = {
   architecture_style?: string | null
   architecture?: ArchitecturePackage | null
   design_session?: import('./questionnaireTypes').DesignSession | null
+  questionnaire_draft?: boolean | null
 }
 
 export type Project = {

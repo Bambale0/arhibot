@@ -15,12 +15,14 @@ from app.db.models.generations import Generation
 from app.db.session import dispose_engine, get_session_factory
 from app.repositories.operations import OperationalSettingsRepository
 from app.services.asset_service import LocalMediaStorage
+from app.services.questionnaire_project_service import QuestionnaireProjectService
 from app.telegram_bot.questionnaire_notifications import deliver_pending_applications_once
 
 logger = logging.getLogger(__name__)
 WORKER_INTERVAL_SECONDS = 30
 MEDIA_CLEANUP_INTERVAL_SECONDS = 3600
 CLEANUP_BATCH_SIZE = 100
+QUESTIONNAIRE_DRAFT_RETENTION_HOURS = 24
 
 
 async def _is_referenced(session, asset_id) -> bool:
@@ -75,6 +77,15 @@ async def cleanup_media_once() -> int:
     return removed
 
 
+async def cleanup_questionnaire_drafts_once() -> int:
+    cutoff = datetime.now(UTC) - timedelta(hours=QUESTIONNAIRE_DRAFT_RETENTION_HOURS)
+    async with get_session_factory()() as session:
+        return await QuestionnaireProjectService(session).cleanup_expired_drafts(
+            cutoff=cutoff,
+            limit=CLEANUP_BATCH_SIZE,
+        )
+
+
 async def run_worker() -> None:
     settings = get_settings()
     logging.basicConfig(
@@ -95,6 +106,9 @@ async def run_worker() -> None:
 
             now = monotonic()
             if now >= next_cleanup_at:
+                removed_drafts = await cleanup_questionnaire_drafts_once()
+                if removed_drafts:
+                    logger.info("Discarded %s abandoned questionnaire draft project(s)", removed_drafts)
                 removed = await cleanup_media_once()
                 if removed:
                     logger.info("Removed %s expired soft-deleted media asset(s)", removed)
