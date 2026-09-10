@@ -45,6 +45,15 @@ export default function App() {
 
   function openWorkspace(project: Project, mode: GenerationMode = 'floor_plan', prompt = '', asset: Asset | null = null) { setWorkspaceMode(mode); setWorkspacePrompt(prompt); setWorkspaceAsset(asset); setActiveProject(project) }
   function openQuestionnaire(project: Project, selectedObjects: string[]) { setQuestionnaireObjects(selectedObjects); setQuestionnaireProject(project) }
+  function openQuestionnaireProject(project: Project): boolean {
+    const selectedObjects = project.context.design_session?.selected_objects || []
+    if (!selectedObjects.length) return false
+    openQuestionnaire(project, selectedObjects)
+    return true
+  }
+  function openProject(project: Project) {
+    if (!openQuestionnaireProject(project)) openWorkspace(project, 'floor_plan')
+  }
   async function closeQuestionnaire() {
     const project = questionnaireProject
     setQuestionnaireProject(null)
@@ -53,19 +62,24 @@ export default function App() {
       try { await discardQuestionnaireDraft(project.id) } catch { /* maintenance removes abandoned drafts later */ }
     }
   }
-  async function openHistoryGeneration(generation: Generation, useOutput: boolean) {
-    const project = await api.getProject(generation.project_id); let asset: Asset | null = useOutput ? generation.output_asset : null
-    if (!useOutput && generation.input_asset_id) { try { asset = await api.getAsset(generation.input_asset_id) } catch { asset = null } }
+  async function openHistoryGeneration(generation: Generation) {
+    const project = await api.getProject(generation.project_id)
+    if (openQuestionnaireProject(project)) return
+
+    let asset: Asset | null = generation.output_asset
+    if (!asset && generation.input_asset_id) {
+      try { asset = await api.getAsset(generation.input_asset_id) } catch { asset = null }
+    }
     openWorkspace(project, generation.type, generation.prompt, asset)
   }
   function navigate(next: AppSection) { setSection(next) }
 
   return <AppFrame active={section} onNavigate={navigate}>
-    {section === 'home' && <ProjectsScreen onOpenProject={(project) => openWorkspace(project, 'floor_plan')} />}
+    {section === 'home' && <ProjectsScreen onOpenProject={openProject} />}
     {section !== 'home' && <Suspense fallback={<Loader />}>
       {section === 'ideas' && <IdeasScreen onOpenQuestionnaire={openQuestionnaire} />}
       {section === 'create' && <CreateScreen onOpenQuestionnaire={openQuestionnaire} />}
-      {section === 'history' && <HistoryScreen onOpenGeneration={(generation) => { void openHistoryGeneration(generation, false) }} onUseAsSource={(generation) => { void openHistoryGeneration(generation, true) }} />}
+      {section === 'history' && <HistoryScreen onOpenGeneration={(generation) => { void openHistoryGeneration(generation) }} />}
       {section === 'profile' && <ProfileScreen onOpenAdmin={isAdmin ? () => setAdminOpen(true) : undefined} />}
     </Suspense>}
   </AppFrame>
