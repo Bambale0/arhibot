@@ -86,6 +86,11 @@ class QuestionnaireCatalogAdminResponse(QuestionnaireCatalogAdminUpdate):
     updated_at: datetime
 
 
+class QuestionnaireProjectStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    selected_objects: list[str] = Field(min_length=1, max_length=26)
+
+
 class DesignSession(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: UUID = Field(default_factory=uuid4)
@@ -106,7 +111,6 @@ class DesignSession(BaseModel):
     region_mode: Literal["edit", "lock"] | None = None
     region_object: str | None = None
     application_submitted: bool = False
-
 
     @model_validator(mode="after")
     def validate_region_step(self) -> DesignSession:
