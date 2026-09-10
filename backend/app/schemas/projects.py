@@ -30,6 +30,7 @@ class ProjectContext(BaseModel):
     glazed_veranda: bool | None = None
     architecture: ArchitecturePackage | None = None
     design_session: DesignSession | None = None
+    questionnaire_draft: bool | None = None
 
 
 class ProjectContextResponse(ProjectContext):
