@@ -40,7 +40,17 @@ jobs:
 
       - name: Validate operations scripts
         working-directory: .
-        run: bash -n ops/deploy_docker.sh ops/backup_runtime.sh ops/restore_runtime.sh
+        run: |
+          bash -n ops/deploy_docker.sh ops/backup_runtime.sh ops/restore_runtime.sh ops/runtime_housekeeping.sh ops/install_host_nginx.sh
+          python -m py_compile ops/runtime_preflight.py
+
+      - name: Validate Docker Compose
+        working-directory: .
+        run: |
+          cp backend/.env.example backend/.env
+          trap 'rm -f backend/.env' EXIT
+          docker compose --project-directory backend -f backend/docker-compose.yml config --quiet
+          docker compose --project-directory backend -f backend/docker-compose.yml build api frontend
 
       - name: Unit and contract tests
         run: pytest -q -m 'not integration'
@@ -107,6 +117,9 @@ jobs:
       - name: Apply migrations
         run: alembic upgrade head
 
+      - name: Verify migration metadata is at head
+        run: alembic check
+
       - name: Integration tests
         run: pytest -q -m integration
 
@@ -126,7 +139,7 @@ jobs:
           node-version: '22'
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Typecheck
         run: npm run typecheck

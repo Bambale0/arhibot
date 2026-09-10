@@ -190,33 +190,49 @@ def _best_effort_setup(api: TelegramBotApi, method: str, payload: dict[str, Any]
         logger.warning("Telegram setup skipped for %s: %s", method, exc)
 
 
+def _telegram_state(api: TelegramBotApi, method: str) -> object | None:
+    try:
+        return api.call(method)
+    except RuntimeError as exc:
+        logger.warning("Telegram setup state check failed for %s: %s", method, exc)
+        return None
+
+
 def apply_bot_content(
     api: TelegramBotApi,
     webapp_url: str,
     content: TelegramBotContent,
 ) -> None:
-    _best_effort_setup(api, "setMyName", {"name": content.bot_name})
-    _best_effort_setup(
-        api,
-        "setMyShortDescription",
-        {"short_description": content.short_description},
-    )
-    _best_effort_setup(api, "setMyDescription", {"description": content.description})
-    _best_effort_setup(
-        api,
-        "setMyCommands",
-        {
-            "commands": [
-                {"command": "start", "description": content.start_command_description},
-                {"command": "app", "description": content.app_command_description},
-            ]
-        },
-    )
-    _best_effort_setup(
-        api,
-        "setChatMenuButton",
-        {"menu_button": menu_button(webapp_url, content)},
-    )
+    # Telegram branding endpoints are rate-limited independently of getUpdates.
+    # Compare before writing so routine process restarts do not generate setter storms.
+    name = _telegram_state(api, "getMyName")
+    if not isinstance(name, dict) or name.get("name") != content.bot_name:
+        _best_effort_setup(api, "setMyName", {"name": content.bot_name})
+
+    short = _telegram_state(api, "getMyShortDescription")
+    if not isinstance(short, dict) or short.get("short_description") != content.short_description:
+        _best_effort_setup(
+            api,
+            "setMyShortDescription",
+            {"short_description": content.short_description},
+        )
+
+    description = _telegram_state(api, "getMyDescription")
+    if not isinstance(description, dict) or description.get("description") != content.description:
+        _best_effort_setup(api, "setMyDescription", {"description": content.description})
+
+    commands = [
+        {"command": "start", "description": content.start_command_description},
+        {"command": "app", "description": content.app_command_description},
+    ]
+    current_commands = _telegram_state(api, "getMyCommands")
+    if current_commands != commands:
+        _best_effort_setup(api, "setMyCommands", {"commands": commands})
+
+    expected_menu = menu_button(webapp_url, content)
+    current_menu = _telegram_state(api, "getChatMenuButton")
+    if current_menu != expected_menu:
+        _best_effort_setup(api, "setChatMenuButton", {"menu_button": expected_menu})
 
 
 def configure_bot(

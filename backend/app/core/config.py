@@ -21,6 +21,8 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://app:app@localhost:5432/app"
     redis_url: str = "redis://localhost:6379/0"
+    redis_socket_connect_timeout_seconds: float = 2.0
+    redis_socket_timeout_seconds: float = 5.0
     cors_origins: str = "http://localhost:3000"
 
     jwt_secret: str = "local-only-change-me-access-secret-32-bytes"
@@ -50,6 +52,8 @@ class Settings(BaseSettings):
 
     media_root: str = "/data/media"
     media_public_base_url: str = "http://localhost:8000"
+    media_signing_secret: str | None = None
+    media_url_ttl_seconds: int = 900
     max_image_size_bytes: int = 20 * 1024 * 1024
     max_image_pixels: int = 80_000_000
     max_model_size_bytes: int = 80 * 1024 * 1024
@@ -70,6 +74,10 @@ class Settings(BaseSettings):
             raise ValueError("REFRESH_TOKEN_TTL_SECONDS must exceed access-token TTL")
         if self.telegram_init_data_ttl_seconds < 60:
             raise ValueError("TELEGRAM_INIT_DATA_TTL_SECONDS must be at least 60")
+        if self.redis_socket_connect_timeout_seconds <= 0 or self.redis_socket_timeout_seconds <= 0:
+            raise ValueError("Redis socket timeouts must be greater than zero")
+        if not 60 <= self.media_url_ttl_seconds <= 3600:
+            raise ValueError("MEDIA_URL_TTL_SECONDS must be between 60 and 3600")
         if self.max_image_size_bytes < 1_048_576:
             raise ValueError("MAX_IMAGE_SIZE_BYTES must be at least 1 MiB")
         if self.max_image_pixels < 1_000_000:
@@ -89,6 +97,12 @@ class Settings(BaseSettings):
                 raise ValueError("Production JWT/refresh secrets must be explicitly configured")
             if len(self.jwt_secret) < 32 or len(self.refresh_token_secret) < 32:
                 raise ValueError("Production JWT/refresh secrets must be at least 32 characters")
+            if self.jwt_secret == self.refresh_token_secret:
+                raise ValueError("Production JWT and refresh secrets must be different")
+            if not self.media_signing_secret or len(self.media_signing_secret) < 32:
+                raise ValueError("Production media signing secret must be explicitly configured with at least 32 characters")
+            if self.media_signing_secret in {self.jwt_secret, self.refresh_token_secret}:
+                raise ValueError("Production media signing secret must be independent from auth secrets")
         return self
 
 

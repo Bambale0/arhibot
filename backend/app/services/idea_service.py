@@ -61,7 +61,7 @@ class IdeaService:
         asset = await self.session.get(Asset, generation.output_asset_id)
         if asset is None or asset.deleted_at is not None:
             return None
-        return self.storage.public_url(asset.storage_path)
+        return self.storage.signed_url(asset.storage_path)
 
     async def _publication_response(
         self, publication: IdeaPublication, *, require_public_ready: bool = False

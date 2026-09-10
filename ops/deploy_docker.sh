@@ -16,6 +16,10 @@ code_backup="${backup_dir}/app-code.tar.gz"
 restore_root="${release_root}/rollback-${release_sha}"
 mutation_started=0
 rollout_succeeded=0
+migration_applied=0
+runtime_backup=""
+previous_release_sha="unknown"
+export AUROOM_RELEASE_SHA="${release_sha}"
 
 if docker compose version >/dev/null 2>&1; then
   compose() {
@@ -37,6 +41,7 @@ rollback_code() {
   fi
 
   echo "Restoring previous application files"
+  export AUROOM_RELEASE_SHA="${previous_release_sha}"
   rm -rf "${restore_root}"
   mkdir -p "${restore_root}"
   tar -xzf "${code_backup}" -C "${restore_root}"
@@ -48,6 +53,7 @@ rollback_code() {
     "${restore_root}/" "${app_dir}/"
 
   compose build api bot worker broadcast-worker maintenance frontend || true
+  compose stop renderer-worker >/dev/null 2>&1 || true
   compose up -d --remove-orphans || true
   compose up -d --force-recreate nginx || true
 }
@@ -55,8 +61,15 @@ rollback_code() {
 on_exit() {
   status=$?
   if (( status != 0 )) && (( mutation_started == 1 )) && (( rollout_succeeded == 0 )); then
-    echo "Rollout failed; restoring previous code" >&2
-    rollback_code || true
+    if (( migration_applied == 1 )); then
+      echo "Rollout failed after database migration; automatic code rollback is suppressed to avoid code/schema mismatch." >&2
+      if [[ -n "${runtime_backup}" ]]; then
+        echo "Approved recovery path: ${app_dir}/ops/restore_runtime.sh ${app_dir} ${runtime_backup} RESTORE" >&2
+      fi
+    else
+      echo "Rollout failed before database migration completed; restoring previous code" >&2
+      rollback_code || true
+    fi
   fi
   exit "${status}"
 }
@@ -80,7 +93,26 @@ rm -rf "${candidate}"
 mkdir -p "${candidate}"
 tar -xzf "${archive}" -C "${candidate}"
 python3 -m compileall -q "${candidate}/backend/app" "${candidate}/backend/scripts"
-bash -n "${candidate}/ops/backup_runtime.sh" "${candidate}/ops/restore_runtime.sh"
+bash -n "${candidate}/ops/backup_runtime.sh" "${candidate}/ops/restore_runtime.sh" "${candidate}/ops/runtime_housekeeping.sh"
+python3 -m py_compile "${candidate}/ops/runtime_preflight.py"
+
+# The public development host is internet-facing; fail closed before touching code, DB, or containers.
+python3 "${candidate}/ops/runtime_preflight.py" "${app_dir}/backend/.env"
+
+disk_used_pct=$(df -P "${app_dir}" | awk 'NR==2 {gsub(/%/, "", $5); print $5}')
+if [[ "${disk_used_pct}" =~ ^[0-9]+$ ]] && (( disk_used_pct >= 90 )); then
+  echo "Refusing deploy: host disk usage is ${disk_used_pct}% (safety limit 90%)." >&2
+  echo "Run ops/runtime_housekeeping.sh in REPORT mode and perform approved cleanup first." >&2
+  exit 1
+elif [[ "${disk_used_pct}" =~ ^[0-9]+$ ]] && (( disk_used_pct >= 80 )); then
+  echo "Warning: host disk usage is ${disk_used_pct}%." >&2
+fi
+
+if [[ -s "${release_root}/current.env" ]]; then
+  cp "${release_root}/current.env" "${backup_dir}/previous-release.env"
+  previous_release_sha=$(awk -F= '$1 == "RELEASE_SHA" {print $2}' "${release_root}/current.env" | head -n1)
+  previous_release_sha=${previous_release_sha:-unknown}
+fi
 
 if find "${app_dir}" -mindepth 1 -maxdepth 1 \
   ! -name '.release' ! -name 'backups' -print -quit | grep -q .; then
@@ -94,7 +126,10 @@ if find "${app_dir}" -mindepth 1 -maxdepth 1 \
   sha256sum "${code_backup}" > "${code_backup}.sha256"
 
   echo "Creating runtime DB/media backup before migrations"
-  "${candidate}/ops/backup_runtime.sh" "${app_dir}" "${app_dir}/backups/runtime" force
+  backup_output=$("${candidate}/ops/backup_runtime.sh" "${app_dir}" "${app_dir}/backups/runtime" force)
+  echo "${backup_output}"
+  runtime_backup=$(printf '%s\n' "${backup_output}" | sed -n 's/^AuRoom runtime backup: //p' | tail -n1)
+  [[ -n "${runtime_backup}" ]] || { echo "Could not determine pre-migration runtime backup path" >&2; exit 1; }
 fi
 
 mutation_started=1
@@ -111,8 +146,12 @@ compose build api bot worker broadcast-worker maintenance frontend
 
 echo "Applying database migrations"
 compose run --rm api alembic upgrade head
+migration_applied=1
 
 echo "Starting production stack"
+# 3D is intentionally disabled for the current product release. Keep an old renderer
+# container from surviving previous deployments. It can be explicitly enabled later via profile 3d.
+compose stop renderer-worker >/dev/null 2>&1 || true
 compose up -d --remove-orphans
 compose up -d --force-recreate nginx
 
@@ -150,6 +189,18 @@ if command -v crontab >/dev/null 2>&1; then
 else
   echo "Warning: crontab is unavailable; scheduled runtime backups will require an external scheduler" >&2
 fi
+
+db_revision=$(compose exec -T postgres psql -U app -d app -Atc "select version_num from alembic_version" | tr -d '[:space:]')
+cat > "${release_root}/current.env" <<EOF
+RELEASE_SHA=${release_sha}
+ALEMBIC_VERSION=${db_revision}
+DEPLOYED_AT=${timestamp}
+PRE_DEPLOY_CODE_BACKUP=${backup_dir}
+PRE_MIGRATION_RUNTIME_BACKUP=${runtime_backup}
+EOF
+chmod 600 "${release_root}/current.env"
+
+"${app_dir}/ops/runtime_housekeeping.sh" "${app_dir}" REPORT || true
 
 rollout_succeeded=1
 echo "Deploy SHA: ${release_sha}"

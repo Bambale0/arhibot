@@ -65,6 +65,8 @@ jobs:
           set -Eeuo pipefail
           app_dir=$1
           cd "${app_dir}/backend"
+          expected_sha=$(awk -F= '$1 == "RELEASE_SHA" {print $2}' "${app_dir}/.release/current.env" 2>/dev/null || true)
+          [[ -n "${expected_sha}" ]] || { echo "Missing deployed release manifest" >&2; exit 1; }
 
           if docker compose version >/dev/null 2>&1; then
             compose=(docker compose)
@@ -85,6 +87,23 @@ jobs:
           curl -fsS http://127.0.0.1:18080/health/live >/dev/null
           curl -fsS http://127.0.0.1:18080/health/ready >/dev/null
           curl -fsS http://127.0.0.1:18080/ | grep -q '<div id="root"></div>'
+
+          raw_media_status=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/uploads/auroom-private-media-probe)
+          [[ "${raw_media_status}" == "404" ]] || {
+            echo "Raw /uploads access must be disabled, got HTTP ${raw_media_status}" >&2
+            exit 1
+          }
+
+          "${compose[@]}" exec -T api python - <<'PY'
+          from app.core.config import get_settings
+
+          settings = get_settings()
+          if not settings.is_production:
+              raise SystemExit("Public AuRoom runtime must use APP_ENV=production")
+          if not settings.media_signing_secret:
+              raise SystemExit("Public AuRoom runtime requires MEDIA_SIGNING_SECRET")
+          print("production_runtime=true signed_media=true")
+          PY
 
           public_webapp_url=$("${compose[@]}" exec -T bot python - <<'PY'
           from app.core.config import get_settings
@@ -180,12 +199,25 @@ jobs:
             exit 1
           fi
 
-          for service in api bot maintenance worker renderer-worker frontend nginx postgres redis; do
+          for service in api bot maintenance worker broadcast-worker frontend nginx postgres redis; do
             container_id=$("${compose[@]}" ps -q "${service}")
             [[ -n "${container_id}" ]] || { echo "Missing container: ${service}" >&2; exit 1; }
             running=$(docker inspect -f '{{.State.Running}}' "${container_id}")
             [[ "${running}" == "true" ]] || { echo "Container is not running: ${service}" >&2; exit 1; }
+            if [[ "${service}" != "postgres" && "${service}" != "redis" ]]; then
+              release_label=$(docker inspect -f '{{ index .Config.Labels "com.auroom.release" }}' "${container_id}")
+              [[ "${release_label}" == "${expected_sha}" ]] || {
+                echo "Release mismatch for ${service}: ${release_label:-missing} != ${expected_sha}" >&2
+                exit 1
+              }
+            fi
           done
 
-          echo "Development API, public Mini App URL, Telegram menu button, questionnaire catalog, project contexts, frontend, Telegram bot, questionnaire delivery worker, generation worker and renderer worker are running"
+          renderer_id=$("${compose[@]}" --profile 3d ps -q renderer-worker || true)
+          if [[ -n "${renderer_id}" ]] && [[ "$(docker inspect -f '{{.State.Running}}' "${renderer_id}" 2>/dev/null || true)" == "true" ]]; then
+            echo "renderer-worker must be stopped while 3D is disabled" >&2
+            exit 1
+          fi
+
+          echo "Development API, public Mini App URL, Telegram menu button, questionnaire catalog, project contexts, frontend and workers match release ${expected_sha}; 3D renderer is disabled"
           REMOTE

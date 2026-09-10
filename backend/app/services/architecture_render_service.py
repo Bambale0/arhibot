@@ -53,7 +53,7 @@ class ArchitectureRenderService:
         self.storage = LocalMediaStorage(settings)
 
     def _to_response(self, render: ArchitectureRender) -> ArchitectureRenderResponse:
-        image_url = self.storage.public_url(render.storage_path) if render.storage_path else None
+        image_url = self.storage.signed_url(render.storage_path) if render.storage_path else None
         return ArchitectureRenderResponse(
             id=render.id,
             project_id=render.project_id,

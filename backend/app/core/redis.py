@@ -18,6 +18,10 @@ class LazyRedisClient:
                 settings.redis_url,
                 encoding="utf-8",
                 decode_responses=True,
+                socket_connect_timeout=settings.redis_socket_connect_timeout_seconds,
+                socket_timeout=settings.redis_socket_timeout_seconds,
+                socket_keepalive=True,
+                health_check_interval=30,
             )
         return self._client
 

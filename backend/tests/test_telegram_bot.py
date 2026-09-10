@@ -102,6 +102,8 @@ def test_configure_bot_keeps_running_when_branding_is_rate_limited() -> None:
             calls.append(method)
             if method == "setMyName":
                 raise RuntimeError("Telegram API request failed: setMyName")
+            if method.startswith("getMy") or method == "getChatMenuButton":
+                return None
             return True
 
     configure_bot(FakeApi(), "https://archi.example.com", content())  # type: ignore[arg-type]
@@ -109,3 +111,54 @@ def test_configure_bot_keeps_running_when_branding_is_rate_limited() -> None:
     assert calls[0] == "deleteWebhook"
     assert "setMyName" in calls
     assert "setChatMenuButton" in calls
+
+
+def test_configure_bot_does_not_rewrite_unchanged_branding() -> None:
+    calls: list[str] = []
+    expected = content()
+
+    class FakeApi:
+        def call(self, method: str, payload=None, *, timeout: int = 15):
+            calls.append(method)
+            states = {
+                "getMyName": {"name": expected.bot_name},
+                "getMyShortDescription": {"short_description": expected.short_description},
+                "getMyDescription": {"description": expected.description},
+                "getMyCommands": [
+                    {"command": "start", "description": expected.start_command_description},
+                    {"command": "app", "description": expected.app_command_description},
+                ],
+                "getChatMenuButton": menu_button("https://archi.example.com", expected),
+            }
+            return states.get(method, True)
+
+    configure_bot(FakeApi(), "https://archi.example.com", expected)  # type: ignore[arg-type]
+
+    assert calls[0] == "deleteWebhook"
+    assert not any(method.startswith("setMy") for method in calls)
+    assert "setChatMenuButton" not in calls
+
+
+def test_configure_bot_updates_only_changed_branding_field() -> None:
+    calls: list[tuple[str, object]] = []
+    expected = content()
+
+    class FakeApi:
+        def call(self, method: str, payload=None, *, timeout: int = 15):
+            calls.append((method, payload))
+            states = {
+                "getMyName": {"name": "Old name"},
+                "getMyShortDescription": {"short_description": expected.short_description},
+                "getMyDescription": {"description": expected.description},
+                "getMyCommands": [
+                    {"command": "start", "description": expected.start_command_description},
+                    {"command": "app", "description": expected.app_command_description},
+                ],
+                "getChatMenuButton": menu_button("https://archi.example.com", expected),
+            }
+            return states.get(method, True)
+
+    configure_bot(FakeApi(), "https://archi.example.com", expected)  # type: ignore[arg-type]
+
+    setter_calls = [(method, payload) for method, payload in calls if method.startswith("set")]
+    assert setter_calls == [("setMyName", {"name": expected.bot_name})]

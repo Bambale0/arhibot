@@ -30,7 +30,7 @@ if [[ "${confirm}" == "VERIFY" ]]; then
   exit 0
 fi
 
-compose stop api bot worker broadcast-worker maintenance nginx frontend
+compose stop api bot worker renderer-worker broadcast-worker maintenance nginx frontend
 compose exec -T postgres psql -U app -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'app' AND pid <> pg_backend_pid();
 DROP DATABASE IF EXISTS app;
@@ -38,6 +38,9 @@ CREATE DATABASE app OWNER app;
 SQL
 compose exec -T postgres pg_restore -U app -d app --no-owner --no-privileges < "${backup_dir}/postgres.dump"
 compose run --rm -T api sh -lc 'rm -rf /data/media/* && tar -xzf - -C /data/media' < "${backup_dir}/media.tar.gz"
+# Restore data first, then migrate it forward to the code currently installed on disk.
+compose run --rm api alembic upgrade head
+compose stop renderer-worker >/dev/null 2>&1 || true
 compose up -d --remove-orphans
 compose up -d --force-recreate nginx
 
