@@ -14,6 +14,7 @@ from app.schemas.health import (
     ReadyHealthResponse,
     VersionHealthResponse,
 )
+from app.version import __version__
 
 router = APIRouter(tags=["Health"])
 
@@ -75,7 +76,7 @@ async def readiness() -> ReadyHealthResponse:
 async def version_health() -> VersionHealthResponse:
     settings = get_settings()
     return VersionHealthResponse(
-        app_version=settings.app_version,
+        app_version=__version__,
         release_sha=settings.release_sha,
         environment=settings.app_env,
     )
