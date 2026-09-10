@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import pytest
@@ -144,7 +145,7 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
         assert publication["generation_id"] == str(generation_id)
         assert publication["is_active"] is True
         assert publication["sort_order"] == 0
-        assert publication["image_url"].endswith(".png")
+        assert urlsplit(publication["image_url"]).path.endswith(".png")
         assert publication["objects"][0]["answers"] == [
             {"question": "Какой стиль вам нравится?", "answer": "Современный минимализм"}
         ]

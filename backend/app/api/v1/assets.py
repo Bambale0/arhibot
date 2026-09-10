@@ -18,8 +18,8 @@ router = APIRouter(prefix="/assets", tags=["Assets"])
     operation_id="uploadAsset",
     summary="Upload image",
     description=(
-        "Uploads an image to backend-owned local media storage. The returned URL is served "
-        "as static media by the public Nginx domain."
+        "Uploads an image to backend-owned local media storage. The returned URL is a "
+        "short-lived signed media link."
     ),
     response_model=AssetResponse,
     status_code=status.HTTP_201_CREATED,
@@ -52,7 +52,7 @@ async def upload_asset(
     "/{asset_id}",
     operation_id="getAsset",
     summary="Get asset",
-    description="Returns metadata and the public static URL for an asset owned by the current user.",
+    description="Returns metadata and a short-lived signed URL for an asset owned by the current user.",
     response_model=AssetResponse,
     responses={
         401: {"model": ProblemDetails, "description": "Authentication required."},

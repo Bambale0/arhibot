@@ -2,6 +2,8 @@ name: arhibot
 
 services:
   api:
+    labels:
+      com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     build: .
     ports:
       - "127.0.0.1:18000:8000"
@@ -19,6 +21,8 @@ services:
     restart: unless-stopped
 
   bot:
+    labels:
+      com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     build: .
     command: ["python", "-m", "app.telegram_bot.main"]
     env_file:
@@ -28,6 +32,8 @@ services:
     restart: unless-stopped
 
   worker:
+    labels:
+      com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     build: .
     command: ["python", "-m", "app.workers.generation_worker"]
     env_file:
@@ -42,6 +48,9 @@ services:
     restart: unless-stopped
 
   renderer-worker:
+    profiles: ["3d"]
+    labels:
+      com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     build:
       context: .
       dockerfile: Dockerfile.renderer
@@ -57,6 +66,8 @@ services:
     restart: unless-stopped
 
   broadcast-worker:
+    labels:
+      com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     build: .
     command: ["python", "-m", "app.workers.broadcast_worker"]
     env_file:
@@ -69,6 +80,8 @@ services:
     restart: unless-stopped
 
   maintenance:
+    labels:
+      com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     build: .
     command: ["python", "-m", "app.workers.maintenance_worker"]
     env_file:
@@ -81,6 +94,8 @@ services:
     restart: unless-stopped
 
   frontend:
+    labels:
+      com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     build:
       context: ../frontend
       args:
@@ -91,12 +106,13 @@ services:
     restart: unless-stopped
 
   nginx:
+    labels:
+      com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     image: nginx:1.28-alpine
     ports:
       - "127.0.0.1:18080:80"
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
-      - media_data:/srv/media:ro
     depends_on:
       - api
       - frontend

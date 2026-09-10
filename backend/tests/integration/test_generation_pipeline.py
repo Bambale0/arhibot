@@ -1,5 +1,6 @@
 import os
 from io import BytesIO
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import pytest
@@ -163,7 +164,13 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
         assert body["status"] == "completed"
         assert body["output_asset"]["mime_type"] == "image/png"
         assert body["composition_mode"] == "masked_edit"
-        assert provider_calls and provider_calls[0]["image_url"] == uploaded.json()["url"]
+        assert provider_calls
+        provider_url = provider_calls[0]["image_url"]
+        assert provider_url is not None
+        assert urlsplit(provider_url).path == urlsplit(uploaded.json()["url"]).path
+        signed_media = await client.get(f"{urlsplit(provider_url).path}?{urlsplit(provider_url).query}")
+        assert signed_media.status_code == 200, signed_media.text
+        assert signed_media.content == base_data
         assert "Add a bathhouse only in the editable area" in provider_calls[0]["prompt"]
 
         async with get_session_factory()() as session:

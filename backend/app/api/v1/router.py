@@ -8,6 +8,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.billing import router as billing_router
 from app.api.v1.generations import router as generations_router
 from app.api.v1.ideas import router as ideas_router
+from app.api.v1.media import router as media_router
 from app.api.v1.projects import router as projects_router
 from app.api.v1.questionnaires import router as questionnaires_router
 from app.api.v1.telegram import router as telegram_router
@@ -37,6 +38,7 @@ router.include_router(projects_router)
 router.include_router(questionnaires_router)
 router.include_router(architecture_router)
 router.include_router(assets_router)
+router.include_router(media_router)
 router.include_router(generations_router)
 router.include_router(ideas_router)
 router.include_router(billing_router)

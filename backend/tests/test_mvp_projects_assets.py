@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from io import BytesIO
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import pytest
@@ -66,7 +67,15 @@ async def test_local_media_storage_writes_under_root(settings: Settings) -> None
     relative = "users/abc/2026/09/file.png"
     await storage.write(relative, b"payload")
     assert storage.absolute_path(relative).read_bytes() == b"payload"
-    assert storage.public_url(relative) == "https://media.example.test/uploads/users/abc/2026/09/file.png"
+    signed = storage.signed_url(relative, ttl_seconds=120)
+    parsed = urlsplit(signed)
+    assert parsed.path == "/api/v1/media/users/abc/2026/09/file.png"
+    query = parse_qs(parsed.query)
+    expires = int(query["expires"][0])
+    signature = query["signature"][0]
+    assert storage.verify_signature(relative, expires=expires, signature=signature)
+    assert not storage.verify_signature(relative, expires=expires, signature="0" * 64)
+    assert not storage.verify_signature(relative, expires=expires, signature=signature, now=expires + 1)
 
 
 def test_local_media_storage_blocks_path_escape(settings: Settings) -> None:

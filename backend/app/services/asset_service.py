@@ -1,8 +1,12 @@
 import asyncio
+import hashlib
+import hmac
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 from PIL import Image, UnidentifiedImageError
@@ -31,6 +35,11 @@ class LocalMediaStorage:
     def __init__(self, settings: Settings) -> None:
         self.root = Path(settings.media_root).resolve()
         self.public_base_url = settings.media_public_base_url.rstrip("/")
+        # Local/test environments may reuse JWT_SECRET for convenience. Production
+        # validation requires a dedicated MEDIA_SIGNING_SECRET.
+        signing_secret = settings.media_signing_secret or settings.jwt_secret
+        self.signing_key = signing_secret.encode("utf-8")
+        self.url_ttl_seconds = settings.media_url_ttl_seconds
 
     def absolute_path(self, relative_path: str) -> Path:
         target = (self.root / relative_path).resolve()
@@ -43,8 +52,34 @@ class LocalMediaStorage:
         await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread(target.write_bytes, data)
 
-    def public_url(self, relative_path: str) -> str:
-        return f"{self.public_base_url}/uploads/{relative_path}"
+    def _signature(self, relative_path: str, expires: int) -> str:
+        payload = f"{expires}\n{relative_path}".encode()
+        return hmac.new(self.signing_key, payload, hashlib.sha256).hexdigest()
+
+    def signed_url(self, relative_path: str, *, ttl_seconds: int | None = None) -> str:
+        # Resolve once before signing so traversal attempts cannot obtain a valid token.
+        self.absolute_path(relative_path)
+        ttl = ttl_seconds if ttl_seconds is not None else self.url_ttl_seconds
+        expires = int(time.time()) + max(1, int(ttl))
+        signature = self._signature(relative_path, expires)
+        encoded_path = quote(relative_path, safe="/")
+        return (
+            f"{self.public_base_url}/api/v1/media/{encoded_path}"
+            f"?expires={expires}&signature={signature}"
+        )
+
+    def verify_signature(
+        self, relative_path: str, *, expires: int, signature: str, now: int | None = None
+    ) -> bool:
+        try:
+            self.absolute_path(relative_path)
+        except ValueError:
+            return False
+        current = int(time.time()) if now is None else int(now)
+        if expires < current:
+            return False
+        expected = self._signature(relative_path, expires)
+        return hmac.compare_digest(expected, signature)
 
 
 class AssetService:
@@ -124,7 +159,7 @@ class AssetService:
             size_bytes=asset.size_bytes,
             width=asset.width,
             height=asset.height,
-            url=self.storage.public_url(asset.storage_path),
+            url=self.storage.signed_url(asset.storage_path),
             created_at=asset.created_at,
         )
 
