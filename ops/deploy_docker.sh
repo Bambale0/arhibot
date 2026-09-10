@@ -200,9 +200,11 @@ PRE_MIGRATION_RUNTIME_BACKUP=${runtime_backup}
 EOF
 chmod 600 "${release_root}/current.env"
 
-"${app_dir}/ops/runtime_housekeeping.sh" "${app_dir}" REPORT || true
-
 rollout_succeeded=1
+if ! "${app_dir}/ops/runtime_housekeeping.sh" "${app_dir}" APPLY; then
+  echo "Warning: post-deploy housekeeping failed; rollout remains healthy." >&2
+fi
+
 echo "Deploy SHA: ${release_sha}"
 echo "Backup directory: ${backup_dir}"
 echo "AuRoom automated rollout passed"
