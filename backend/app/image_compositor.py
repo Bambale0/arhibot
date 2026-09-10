@@ -15,8 +15,11 @@ class MaskedCompositeResult:
     height: int
 
 
-def _read_rgb(data: bytes) -> Image.Image:
+def _read_rgb(data: bytes, *, max_pixels: int | None = None) -> Image.Image:
     with Image.open(BytesIO(data)) as image:
+        width, height = image.size
+        if max_pixels is not None and (width <= 0 or height <= 0 or width * height > max_pixels):
+            raise ValueError("Composite image dimensions exceed the configured pixel limit")
         return ImageOps.exif_transpose(image).convert("RGB")
 
 
@@ -68,6 +71,7 @@ def compose_masked_edit(
     edit_region: Mapping[str, float],
     protected_regions: Sequence[Mapping[str, float]] = (),
     feather_px: int = 3,
+    max_pixels: int | None = None,
 ) -> MaskedCompositeResult:
     """Composite an AI candidate into a previous accepted scene.
 
@@ -76,8 +80,8 @@ def compose_masked_edit(
     pixels remain stable after persistence and in every later generation step.
     """
 
-    base = _read_rgb(base_data)
-    candidate = _read_rgb(candidate_data)
+    base = _read_rgb(base_data, max_pixels=max_pixels)
+    candidate = _read_rgb(candidate_data, max_pixels=max_pixels)
     if candidate.size != base.size:
         candidate = candidate.resize(base.size, Image.Resampling.LANCZOS)
 

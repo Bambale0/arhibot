@@ -23,6 +23,49 @@ class NormalizedRect(BaseModel):
         return self
 
 
+def _has_editable_area(edit: NormalizedRect, protected: list[NormalizedRect]) -> bool:
+    clips: list[tuple[float, float, float, float]] = []
+    edit_right = edit.x + edit.width
+    edit_bottom = edit.y + edit.height
+    for region in protected:
+        left = max(edit.x, region.x)
+        top = max(edit.y, region.y)
+        right = min(edit_right, region.x + region.width)
+        bottom = min(edit_bottom, region.y + region.height)
+        if right > left and bottom > top:
+            clips.append((left, top, right, bottom))
+    if not clips:
+        return True
+
+    xs = sorted({edit.x, edit_right, *(value for clip in clips for value in (clip[0], clip[2]))})
+    covered = 0.0
+    for left, right in zip(xs, xs[1:], strict=False):
+        if right <= left:
+            continue
+        middle = (left + right) / 2
+        intervals = sorted(
+            (top, bottom)
+            for clip_left, top, clip_right, bottom in clips
+            if clip_left <= middle < clip_right
+        )
+        merged = 0.0
+        current_top: float | None = None
+        current_bottom: float | None = None
+        for top, bottom in intervals:
+            if current_top is None:
+                current_top, current_bottom = top, bottom
+            elif top <= (current_bottom or top):
+                current_bottom = max(current_bottom or bottom, bottom)
+            else:
+                merged += (current_bottom or current_top) - current_top
+                current_top, current_bottom = top, bottom
+        if current_top is not None:
+            merged += (current_bottom or current_top) - current_top
+        covered += (right - left) * merged
+
+    return edit.width * edit.height - covered > 1e-9
+
+
 class GenerationCreate(BaseModel):
     project_id: UUID
     input_asset_id: UUID | None = None
@@ -39,6 +82,8 @@ class GenerationCreate(BaseModel):
                 raise ValueError("Masked edit requires an input image.")
             if self.edit_region is None:
                 raise ValueError("Masked edit requires an edit region.")
+            if not _has_editable_area(self.edit_region, self.protected_regions):
+                raise ValueError("Masked edit region is fully covered by protected regions.")
         elif self.edit_region is not None or self.protected_regions:
             raise ValueError("Edit/protected regions require masked_edit composition mode.")
         return self

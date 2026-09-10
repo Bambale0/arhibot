@@ -46,3 +46,45 @@ def test_normalized_region_must_stay_inside_image() -> None:
             composition_mode="masked_edit",
             edit_region={"x": 0.8, "y": 0.2, "width": 0.4, "height": 0.5},
         )
+
+
+def test_masked_generation_rejects_fully_protected_edit_area() -> None:
+    with pytest.raises(ValidationError, match="fully covered"):
+        GenerationCreate(
+            project_id="00000000-0000-0000-0000-000000000001",
+            input_asset_id="00000000-0000-0000-0000-000000000002",
+            type=GenerationType.MASTER_PLAN,
+            prompt="add object",
+            composition_mode="masked_edit",
+            edit_region={"x": 0.1, "y": 0.1, "width": 0.8, "height": 0.8},
+            protected_regions=[{"x": 0.1, "y": 0.1, "width": 0.8, "height": 0.8}],
+        )
+
+
+def test_masked_generation_rejects_union_covering_whole_edit_area() -> None:
+    with pytest.raises(ValidationError, match="fully covered"):
+        GenerationCreate(
+            project_id="00000000-0000-0000-0000-000000000001",
+            input_asset_id="00000000-0000-0000-0000-000000000002",
+            type=GenerationType.MASTER_PLAN,
+            prompt="add object",
+            composition_mode="masked_edit",
+            edit_region={"x": 0.1, "y": 0.1, "width": 0.8, "height": 0.8},
+            protected_regions=[
+                {"x": 0.1, "y": 0.1, "width": 0.4, "height": 0.8},
+                {"x": 0.5, "y": 0.1, "width": 0.4, "height": 0.8},
+            ],
+        )
+
+
+def test_masked_generation_allows_partially_overlapping_protected_area() -> None:
+    payload = GenerationCreate(
+        project_id="00000000-0000-0000-0000-000000000001",
+        input_asset_id="00000000-0000-0000-0000-000000000002",
+        type=GenerationType.MASTER_PLAN,
+        prompt="add object",
+        composition_mode="masked_edit",
+        edit_region={"x": 0.1, "y": 0.1, "width": 0.8, "height": 0.8},
+        protected_regions=[{"x": 0.1, "y": 0.1, "width": 0.4, "height": 0.8}],
+    )
+    assert payload.edit_region is not None

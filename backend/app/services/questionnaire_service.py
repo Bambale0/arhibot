@@ -9,7 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
 from app.db.models.questionnaires import QuestionnaireApplication, QuestionnaireCatalogConfig
 from app.db.models.users import User
-from app.domain.generations.enums import GenerationStatus
+from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.questionnaires.generation_prompt import (
+    build_questionnaire_generation_prompt,
+)
+from app.questionnaires.generation_prompt import (
+    condition_ok as questionnaire_condition_ok,
+)
 from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
 from app.repositories.generations import GenerationRepository
@@ -62,7 +68,9 @@ class QuestionnaireService:
         self._validate_accepted_object_locks(previous, payload)
         self._validate_acceptance_completion(previous, payload, catalog)
         await self._validate_assets(user, project.id, payload)
-        await self._validate_generations(user, project.id, payload, previous=previous)
+        await self._validate_generations(
+            user, project.id, payload, catalog=catalog, previous=previous
+        )
         project.context = {
             **(project.context or {}),
             "design_session": payload.model_dump(mode="json"),
@@ -83,7 +91,9 @@ class QuestionnaireService:
         if not payload.application_submitted:
             raise self._invalid("The application must be marked submitted.")
         await self._validate_assets(user, project.id, payload)
-        await self._validate_generations(user, project.id, payload, previous=previous)
+        await self._validate_generations(
+            user, project.id, payload, catalog=catalog, previous=previous
+        )
 
         existing = await self.repository.get_application_by_session(payload.session_id)
         if existing is not None:
@@ -331,6 +341,7 @@ class QuestionnaireService:
         user: User,
         project_id: UUID,
         payload: DesignSession,
+        catalog: dict,
         *,
         previous: DesignSession | None = None,
     ) -> None:
@@ -357,6 +368,37 @@ class QuestionnaireService:
                     f"Accepted object {object_key} must reference a completed generation with output."
                 )
 
+        previous_accepted = (
+            previous.accepted_objects
+            if previous is not None and previous.session_id == payload.session_id
+            else []
+        )
+        if len(payload.accepted_objects) == len(previous_accepted) + 1:
+            new_key = payload.accepted_objects[-1]
+            generation = resolved[new_key]
+            expected_type = (
+                GenerationType.FACADE
+                if new_key == "eskez-doma" and generation.input_asset_id is not None
+                else GenerationType.MASTER_PLAN
+            )
+            if generation.type != expected_type:
+                raise self._invalid(
+                    f"Questionnaire object {new_key} must use {expected_type.value} generation."
+                )
+            definition = next(
+                item for item in catalog["questionnaires"] if item["key"] == new_key
+            )
+            expected_prompt = build_questionnaire_generation_prompt(
+                definition,
+                payload,
+                accepted_before=previous_accepted,
+                input_asset_present=generation.input_asset_id is not None,
+            )
+            if generation.prompt != expected_prompt:
+                raise self._invalid(
+                    "The accepted generation prompt must match the current questionnaire answers."
+                )
+
         if payload.accepted_objects:
             latest_key = payload.accepted_objects[-1]
             latest_generation = resolved[latest_key]
@@ -366,11 +408,6 @@ class QuestionnaireService:
                 )
 
         if payload.accepted_objects:
-            previous_accepted = (
-                previous.accepted_objects
-                if previous is not None and previous.session_id == payload.session_id
-                else []
-            )
             if len(payload.accepted_objects) == len(previous_accepted) + 1 and not previous_accepted:
                 new_key = payload.accepted_objects[-1]
                 generation = resolved[new_key]
@@ -643,30 +680,7 @@ class QuestionnaireService:
     def _condition_ok(
         cls, condition: dict | None, answers: dict[str, object], house_accepted: bool
     ) -> bool:
-        if not condition:
-            return True
-        operator = condition.get("operator")
-        if operator == "house_accepted":
-            return house_accepted
-        if operator == "all":
-            return all(cls._condition_ok(item, answers, house_accepted) for item in condition.get("conditions", []))
-        if operator == "any":
-            return any(cls._condition_ok(item, answers, house_accepted) for item in condition.get("conditions", []))
-        answer = answers.get(condition.get("question_id"))
-        value = condition.get("value")
-        if operator == "eq":
-            return answer == value
-        if operator == "neq":
-            return answer != value
-        if operator == "in":
-            return isinstance(answer, str) and isinstance(value, list) and answer in value
-        if operator == "contains":
-            return isinstance(answer, list) and isinstance(value, str) and value in answer
-        if operator == "starts_with":
-            return isinstance(answer, str) and isinstance(value, str) and answer.startswith(value)
-        if operator == "not_contains_any":
-            return not isinstance(answer, list) or not isinstance(value, list) or not any(item in answer for item in value)
-        return True
+        return questionnaire_condition_ok(condition, answers, house_accepted)
 
     @staticmethod
     def _validate_catalog_sources(payload: QuestionnaireCatalogAdminUpdate) -> None:

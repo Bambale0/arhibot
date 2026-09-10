@@ -17,7 +17,11 @@ from app.domain.assets.enums import AssetPurpose, AssetType  # noqa: E402
 from app.domain.generations.enums import GenerationStatus, GenerationType  # noqa: E402
 from app.domain.users.enums import AuthProvider, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
-from app.telegram_bot.questionnaire_notifications import deliver_pending_applications_once  # noqa: E402
+from app.questionnaires.generation_prompt import build_questionnaire_generation_prompt  # noqa: E402
+from app.schemas.questionnaires import DesignSession  # noqa: E402
+from app.telegram_bot.questionnaire_notifications import (  # noqa: E402
+    deliver_pending_applications_once,
+)
 
 
 async def _register_admin(client: AsyncClient) -> tuple[dict, dict[str, str]]:
@@ -187,13 +191,19 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
             height=1024,
             storage_path=f"integration/questionnaires/{uuid4()}.webp",
         )
+        canonical_house_prompt = build_questionnaire_generation_prompt(
+            house_definition,
+            DesignSession.model_validate(fake_session),
+            accepted_before=[],
+            input_asset_present=False,
+        )
         generation = Generation(
             user_id=user_id,
             project_id=project_id,
             input_asset_id=None,
             type=GenerationType.MASTER_PLAN,
             status=GenerationStatus.COMPLETED,
-            prompt="integration questionnaire render",
+            prompt=canonical_house_prompt,
             credits_charged=0,
         )
         async with get_session_factory()() as session:
@@ -324,13 +334,24 @@ async def test_second_accepted_object_requires_masked_composition() -> None:
             height=1024,
             storage_path=f"integration/questionnaires/{uuid4()}.png",
         )
+        house_prompt_session = DesignSession(
+            catalog_version=catalog["version"],
+            selected_objects=["eskez-doma", "banya"],
+            source_step_completed=True,
+            answers={"eskez-doma": house_answers},
+        )
         house_generation = Generation(
             user_id=user_id,
             project_id=project_id,
             input_asset_id=None,
             type=GenerationType.MASTER_PLAN,
             status=GenerationStatus.COMPLETED,
-            prompt="house",
+            prompt=build_questionnaire_generation_prompt(
+                house_definition,
+                house_prompt_session,
+                accepted_before=[],
+                input_asset_present=False,
+            ),
             credits_charged=0,
         )
         async with get_session_factory()() as session:
@@ -372,6 +393,23 @@ async def test_second_accepted_object_requires_masked_composition() -> None:
         )
         assert saved_house.status_code == 200, saved_house.text
 
+        bath_prompt_session = DesignSession.model_validate(
+            {
+                **house_session,
+                "answers": {
+                    "eskez-doma": house_answers,
+                    "banya": bath_answers,
+                },
+                "edit_regions": {"banya": bath_region},
+            }
+        )
+        canonical_bath_prompt = build_questionnaire_generation_prompt(
+            bath_definition,
+            bath_prompt_session,
+            accepted_before=["eskez-doma"],
+            input_asset_present=True,
+        )
+
         replace_output = Asset(
             user_id=user_id,
             project_id=project_id,
@@ -390,7 +428,7 @@ async def test_second_accepted_object_requires_masked_composition() -> None:
             input_asset_id=house_output.id,
             type=GenerationType.MASTER_PLAN,
             status=GenerationStatus.COMPLETED,
-            prompt="bath without compositor",
+            prompt=canonical_bath_prompt,
             credits_charged=0,
             composition_mode="replace",
         )
@@ -434,6 +472,95 @@ async def test_second_accepted_object_requires_masked_composition() -> None:
         assert forged.status_code == 422, forged.text
         assert "session id" in forged.json()["detail"].lower()
 
+        bad_prompt_output = Asset(
+            user_id=user_id,
+            project_id=project_id,
+            type=AssetType.IMAGE,
+            purpose=AssetPurpose.GENERATION_OUTPUT,
+            original_filename="bath-bad-prompt.png",
+            mime_type="image/png",
+            size_bytes=128,
+            width=1024,
+            height=1024,
+            storage_path=f"integration/questionnaires/{uuid4()}.png",
+        )
+        bad_prompt_generation = Generation(
+            user_id=user_id,
+            project_id=project_id,
+            input_asset_id=house_output.id,
+            type=GenerationType.MASTER_PLAN,
+            status=GenerationStatus.COMPLETED,
+            prompt="forged questionnaire prompt",
+            credits_charged=0,
+            composition_mode="masked_edit",
+            edit_region=bath_region,
+            protected_regions=[house_lock],
+        )
+        wrong_type_output = Asset(
+            user_id=user_id,
+            project_id=project_id,
+            type=AssetType.IMAGE,
+            purpose=AssetPurpose.GENERATION_OUTPUT,
+            original_filename="bath-wrong-type.png",
+            mime_type="image/png",
+            size_bytes=128,
+            width=1024,
+            height=1024,
+            storage_path=f"integration/questionnaires/{uuid4()}.png",
+        )
+        wrong_type_generation = Generation(
+            user_id=user_id,
+            project_id=project_id,
+            input_asset_id=house_output.id,
+            type=GenerationType.FACADE,
+            status=GenerationStatus.COMPLETED,
+            prompt=canonical_bath_prompt,
+            credits_charged=0,
+            composition_mode="masked_edit",
+            edit_region=bath_region,
+            protected_regions=[house_lock],
+        )
+        async with get_session_factory()() as session:
+            session.add_all([bad_prompt_output, wrong_type_output])
+            await session.flush()
+            bad_prompt_generation.output_asset_id = bad_prompt_output.id
+            wrong_type_generation.output_asset_id = wrong_type_output.id
+            session.add_all([bad_prompt_generation, wrong_type_generation])
+            await session.commit()
+            await session.refresh(bad_prompt_generation)
+            await session.refresh(wrong_type_generation)
+
+        bad_prompt_payload = {
+            **unsafe_payload,
+            "scene_asset_id": str(bad_prompt_output.id),
+            "generation_ids": {
+                "eskez-doma": str(house_generation.id),
+                "banya": str(bad_prompt_generation.id),
+            },
+        }
+        bad_prompt_response = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=bad_prompt_payload,
+        )
+        assert bad_prompt_response.status_code == 422, bad_prompt_response.text
+        assert "prompt" in bad_prompt_response.json()["detail"].lower()
+
+        wrong_type_payload = {
+            **unsafe_payload,
+            "scene_asset_id": str(wrong_type_output.id),
+            "generation_ids": {
+                "eskez-doma": str(house_generation.id),
+                "banya": str(wrong_type_generation.id),
+            },
+        }
+        wrong_type_response = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=wrong_type_payload,
+        )
+        assert wrong_type_response.status_code == 422, wrong_type_response.text
+        assert "master_plan" in wrong_type_response.json()["detail"]
 
         masked_output = Asset(
             user_id=user_id,
@@ -453,7 +580,7 @@ async def test_second_accepted_object_requires_masked_composition() -> None:
             input_asset_id=house_output.id,
             type=GenerationType.MASTER_PLAN,
             status=GenerationStatus.COMPLETED,
-            prompt="bath with compositor",
+            prompt=canonical_bath_prompt,
             credits_charged=0,
             composition_mode="masked_edit",
             edit_region=bath_region,

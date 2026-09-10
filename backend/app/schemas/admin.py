@@ -205,6 +205,18 @@ class GenerationRuntimeUpdate(BaseModel):
         unknown = set(self.mode_params) - allowed
         if unknown:
             raise ValueError(f"Unknown generation modes: {', '.join(sorted(unknown))}")
+        reserved = {"model_name", "prompt", "image_url", "image_urls"}
+        groups = {
+            "primary_params": self.primary_params,
+            "fallback_params": self.fallback_params,
+            **{f"mode_params.{key}": value for key, value in self.mode_params.items()},
+        }
+        for label, params in groups.items():
+            conflict = reserved.intersection(params)
+            if conflict:
+                raise ValueError(
+                    f"{label} cannot override provider fields: {', '.join(sorted(conflict))}"
+                )
         return self
 
 
@@ -231,6 +243,14 @@ class GenerationPriceResponse(BaseModel):
 
 class PromptTemplateUpdate(BaseModel):
     template: str = Field(min_length=1, max_length=20_000)
+
+    @field_validator("template")
+    @classmethod
+    def require_user_prompt_placeholder(cls, value: str) -> str:
+        value = value.strip()
+        if "{user_prompt}" not in value:
+            raise ValueError("Generation prompt template must contain {user_prompt}.")
+        return value
 
 
 class PromptTemplateResponse(BaseModel):

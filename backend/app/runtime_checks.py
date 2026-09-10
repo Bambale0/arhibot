@@ -15,7 +15,10 @@ from app.core.config import get_settings
 from app.db.models.projects import Project
 from app.db.models.users import AuthIdentity, User
 from app.db.session import dispose_engine, get_session_factory
+from app.domain.generations.enums import GenerationType
 from app.domain.users.enums import AuthProvider, UserRole, UserStatus
+from app.repositories.admin import AdminRepository
+from app.repositories.credits import CreditRepository
 from app.schemas.projects import ProjectContextResponse
 
 
@@ -68,11 +71,57 @@ async def validate_questionnaire_delivery_readiness() -> int:
     return 0 if ready else 1
 
 
+async def validate_generation_readiness() -> int:
+    settings = get_settings()
+    provider_configured = bool((settings.nexus_api_key or "").strip())
+    provider_url_secure = settings.nexus_base_url.strip().startswith("https://")
+    required_types = (GenerationType.FACADE, GenerationType.MASTER_PLAN)
+    missing_prompts: list[str] = []
+    missing_prices: list[str] = []
+    runtime_configured = False
+
+    async with get_session_factory()() as session:
+        admin = AdminRepository(session)
+        credits = CreditRepository(session)
+        runtime = await admin.get_generation_settings()
+        runtime_configured = bool(runtime and runtime.primary_model.strip())
+        for generation_type in required_types:
+            prompt = await admin.get_prompt_template(generation_type.value)
+            if (
+                prompt is None
+                or not prompt.template.strip()
+                or "{user_prompt}" not in prompt.template
+            ):
+                missing_prompts.append(generation_type.value)
+            price = await credits.get_price(generation_type.value)
+            if price is None or not price.is_active or price.credits <= 0:
+                missing_prices.append(generation_type.value)
+
+    ready = (
+        provider_configured
+        and provider_url_secure
+        and runtime_configured
+        and not missing_prompts
+        and not missing_prices
+    )
+    print(
+        "questionnaire_generation_readiness "
+        f"provider_configured={str(provider_configured).lower()} "
+        f"provider_url_secure={str(provider_url_secure).lower()} "
+        f"runtime_configured={str(runtime_configured).lower()} "
+        f"missing_prompts={','.join(missing_prompts) or '-'} "
+        f"missing_prices={','.join(missing_prices) or '-'} "
+        f"ready={str(ready).lower()}"
+    )
+    return 0 if ready else 1
+
+
 async def run_checks() -> int:
     try:
         project_status = await validate_project_contexts()
         delivery_status = await validate_questionnaire_delivery_readiness()
-        return 1 if project_status or delivery_status else 0
+        generation_status = await validate_generation_readiness()
+        return 1 if project_status or delivery_status or generation_status else 0
     finally:
         await dispose_engine()
 
