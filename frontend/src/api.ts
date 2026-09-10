@@ -63,6 +63,11 @@ async function parseError(response: Response): Promise<ApiError> {
   try { body = await response.json() } catch { /* generic */ }
   const title = typeof body.title === 'string' ? body.title : `HTTP ${response.status}`
   const detail = typeof body.detail === 'string' ? body.detail : undefined
+  const errorType = typeof body.type === 'string' ? body.type : undefined
+  const tokenError = errorType === 'invalid_access_token' || errorType === 'invalid_refresh_token' || errorType === 'refresh_token_reused'
+  if (response.status === 401 && tokenError) {
+    return new ApiError(response.status, 'Сессия истекла. Откройте приложение заново.', detail)
+  }
   return new ApiError(response.status, detail || title, detail)
 }
 
@@ -78,7 +83,7 @@ async function refreshSession(): Promise<TokenPair> {
   return refreshPromise
 }
 
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { auth = true, retryAuth = true, headers, ...rest } = options
   const finalHeaders = new Headers(headers)
   const accessToken = localStorage.getItem(ACCESS_KEY)
