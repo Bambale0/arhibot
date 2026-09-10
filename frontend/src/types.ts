@@ -1,15 +1,11 @@
-export type UserRole = 'user' | 'admin' | 'superadmin'
-
 export type User = {
   id: string
+  email: string | null
   display_name: string
-  avatar_url?: string | null
-  status: 'active' | 'disabled'
-  role: UserRole
-  credits_balance: number
+  role: 'user' | 'admin' | 'superadmin'
+  credits: number
   created_at: string
   updated_at: string
-  capabilities?: { can_generate?: boolean }
 }
 
 export type TokenPair = {
@@ -27,8 +23,13 @@ export type ProjectContext = {
   bedrooms?: number | null
   bathrooms?: number | null
   architecture_style?: string | null
+  garage_cars?: number | null
+  pool?: boolean | null
+  attic?: boolean | null
+  glazed_veranda?: boolean | null
   architecture?: ArchitecturePackage | null
   design_session?: import('./questionnaireTypes').DesignSession | null
+  questionnaire_draft?: boolean | null
 }
 
 export type Project = {
@@ -62,256 +63,64 @@ export type Asset = {
 }
 
 export type GenerationMode = 'floor_plan' | 'facade' | 'master_plan' | 'interior'
-export type GenerationStatus = 'queued' | 'processing' | 'completed' | 'failed'
+export type NormalizedRect = { x:number; y:number; width:number; height:number }
 
 export type Generation = {
   id: string
   project_id: string
+  user_id: string
   input_asset_id: string | null
-  output_asset: Asset | null
   type: GenerationMode
-  status: GenerationStatus
   prompt: string
-  credits_charged: number
-  model_name: string | null
-  fallback_used: boolean
+  status: 'queued' | 'processing' | 'completed' | 'failed'
   composition_mode: 'replace' | 'masked_edit'
-  edit_region: import('./questionnaireTypes').NormalizedRect | null
-  protected_regions: import('./questionnaireTypes').NormalizedRect[]
+  edit_region: NormalizedRect | null
+  protected_regions: NormalizedRect[]
+  provider: string | null
+  external_task_id: string | null
+  output_asset_id: string | null
+  output_asset: Asset | null
   error: string | null
   created_at: string
   updated_at: string
-  started_at: string | null
-  completed_at: string | null
 }
 
 export type GenerationList = {
   items: Generation[]
-  next_cursor: string | null
-  has_more: boolean
+  next_cursor?: string | null
+  has_more?: boolean
 }
 
-export type BillingPackage = {
-  code: string
-  label: string
-  credits: number
-  amount: string
-  currency: string
-}
-
-export type BillingPayment = {
-  id: string
-  package_code: string
-  credits: number
-  amount: string
-  currency: string
-  status: string
-  confirmation_url: string | null
-  receipt_email: string | null
-  refund_status: string | null
-  created_at: string
-  paid_at: string | null
-  refunded_at: string | null
-}
+export type IdeaMediaKind = 'photo' | 'floor_plan' | 'section' | 'facade'
+export type IdeaMedia = { asset: Asset; kind: IdeaMediaKind; label: string }
+export type Idea = { id:string; title:string; category:string; text:string; generation_type:GenerationMode; prompt:string; image_asset:Asset|null; media:IdeaMedia[]; model_url:string|null }
 
 export type BillingSummary = {
-  enabled: boolean
-  receipt_required: boolean
-  credits_balance: number
-  packages: BillingPackage[]
-  payments: BillingPayment[]
-}
-
-export type Point2D = { x: number; y: number }
-export type Polygon2D = { points: Point2D[] }
-export type ArchitectureLevel = {
-  id: string
-  label: string
-  z: number
-  height: number
-  footprint: Polygon2D
-  rooms: { id: string; name: string; kind: string; polygon: Polygon2D; target_area_sqm?: number | null }[]
-}
-export type ArchitecturePackage = {
-  schema_version: '1.0'
-  program: { living_area_sqm?: number | null; bedrooms?: number | null; bathrooms?: number | null; storeys?: number | null; garage_cars?: number | null }
-  geometry: {
-    levels: ArchitectureLevel[]
-    external_objects: { id: string; label: string; type: string; polygon: Polygon2D; z: number; height: number; level_id?: string | null }[]
-    roof?: { type: 'gable' | 'hip' | 'flat'; eave_z: number; ridge_z: number; ridge_start?: Point2D | null; ridge_end?: Point2D | null; overhang_m: number } | null
-  }
-  appearance: { architecture_style?: string | null; primary_material?: string | null; accent_materials: string[]; roof_material?: string | null; glazing?: string | null; lighting?: string | null }
-}
-
-export type IdeaMediaKind = 'photo' | 'reference' | 'scheme'
-export type IdeaMedia = {
-  asset_id: string
-  kind: IdeaMediaKind
-  label: string
-  url: string
-}
-
-export type Idea = {
-  id: string
-  title: string
-  category: string
-  text: string
-  generation_type: GenerationMode
-  prompt: string
-  image_url: string | null
-  media: IdeaMedia[]
-  architecture: ArchitecturePackage | null
-  model_url: string | null
-}
-
-export type AdminOverview = {
-  yookassa_configured: boolean
-  nexus_configured: boolean
-  telegram_configured: boolean
-}
-
-export type AdminTariff = {
-  id: string
-  code: string
-  name: string
-  description: string | null
   credits: number
-  amount: string
-  currency: string
-  is_active: boolean
-  sort_order: number
-  created_at: string
-  updated_at: string
+  tariffs: Array<{ code:string; name:string; description:string|null; credits:number; amount:string; currency:string }>
+  payments: Array<{ id:string; package_code:string; status:string; amount:string; currency:string; credits:number; confirmation_url:string|null; created_at:string; paid_at:string|null }>
 }
+export type BillingPayment = BillingSummary['payments'][number]
 
-export type AdminBillingSettings = {
-  receipts_enabled: boolean
-  vat_code: number | null
-  payment_subject: string | null
-  payment_mode: string | null
-  updated_at: string | null
-}
+export type ArchitecturePoint = { x:number; y:number }
+export type ArchitectureOpening = { id:string; kind:'door'|'window'|'opening'; wall_id:string; offset_mm:number; width_mm:number; height_mm:number; sill_mm?:number|null }
+export type ArchitectureWall = { id:string; level_id:string; start:ArchitecturePoint; end:ArchitecturePoint; thickness_mm:number; height_mm:number; exterior:boolean }
+export type ArchitectureRoom = { id:string; level_id:string; name:string; polygon:ArchitecturePoint[]; target_area_m2?:number|null }
+export type ArchitectureLevel = { id:string; name:string; elevation_mm:number; height_mm:number; boundary:ArchitecturePoint[]; slab_thickness_mm:number }
+export type ArchitectureRoof = { kind:'flat'|'gable'|'hip'; base_level_id:string; ridge_height_mm:number; overhang_mm:number; ridge_axis?:'x'|'y'|null }
+export type ArchitectureProgram = { house_area_m2:number; floors:number; bedrooms:number; bathrooms:number; architecture_style:string|null }
+export type ArchitectureGeometry = { levels:ArchitectureLevel[]; walls:ArchitectureWall[]; openings:ArchitectureOpening[]; rooms:ArchitectureRoom[]; roof:ArchitectureRoof|null }
+export type ArchitecturePackage = { version:string; units:'mm'; program:ArchitectureProgram; geometry:ArchitectureGeometry; metadata:Record<string,unknown> }
 
-export type AdminIdea = Idea & {
-  image_asset_id: string | null
-  architecture_project_id: string | null
-  model_original_filename: string | null
-  model_size_bytes: number | null
-  is_active: boolean
-  sort_order: number
-  created_at: string
-  updated_at: string
-}
-
-export type AdminGenerationSettings = {
-  primary_model: string | null
-  fallback_model: string | null
-  primary_params: Record<string, unknown>
-  fallback_params: Record<string, unknown>
-  mode_params: Record<string, Record<string, unknown>>
-  updated_at: string | null
-}
-
-export type AdminGenerationPrice = {
-  generation_type: GenerationMode
-  credits: number
-  is_active: boolean
-  updated_at: string
-}
-
-export type AdminPrompt = {
-  generation_type: GenerationMode
-  template: string
-  updated_at: string
-}
-
-export type AdminUser = {
-  id: string
-  display_name: string
-  status: 'active' | 'disabled'
-  role: UserRole
-  credits_balance: number
-  created_at: string
-  updated_at: string
-}
-
-export type AdminCreditTransaction = {
-  id: string
-  user_id: string
-  amount: number
-  balance_after: number
-  kind: string
-  reference_type: string | null
-  reference_id: string | null
-  reason: string | null
-  actor_user_id: string | null
-  created_at: string
-}
-
-export type AdminPayment = {
-  id: string
-  user_id: string
-  package_code: string
-  credits: number
-  amount: string
-  currency: string
-  status: string
-  yookassa_payment_id: string | null
-  receipt_email: string | null
-  refund_id: string | null
-  refund_status: string | null
-  provider_error: string | null
-  created_at: string
-  updated_at: string
-  paid_at: string | null
-  refunded_at: string | null
-}
-
-export type BroadcastSegment = 'all' | 'with_credits' | 'without_credits'
-
-export type AdminBroadcast = {
-  id: string
-  text: string
-  status: string
-  segment: BroadcastSegment
-  recipient_count: number
-  sent_count: number
-  failed_count: number
-  scheduled_at: string | null
-  canceled_at: string | null
-  created_at: string
-  updated_at: string
-  sent_at: string | null
-}
-
-export type AdminTelegramContent = {
-  configured: boolean
-  bot_name: string | null
-  short_description: string | null
-  description: string | null
-  start_text: string | null
-  open_button_text: string | null
-  start_command_description: string | null
-  app_command_description: string | null
-  updated_at: string | null
-}
-
-export type AdminOperationalSettings = {
-  auth_rate_limit_per_minute: number | null
-  generation_rate_limit_per_minute: number | null
-  payment_rate_limit_per_minute: number | null
-  media_retention_days: number | null
-  backup_interval_hours: number | null
-  backup_retention_days: number | null
-  updated_at: string | null
-}
-
-export type AdminAudit = {
-  id: string
-  actor_user_id: string | null
-  action: string
-  entity_type: string
-  entity_id: string | null
-  details: Record<string, unknown>
-  created_at: string
-}
+export type AdminOverview = { users:number; active_projects:number; generations:number; completed_generations:number; payments:number; paid_revenue:string; currency:string }
+export type AdminTariff = { id:string; code:string; name:string; description:string|null; credits:number; amount:string; currency:string; is_active:boolean; sort_order:number; created_at:string; updated_at:string }
+export type AdminBillingSettings = { receipt_enabled:boolean; vat_code:number|null; payment_mode:string|null; payment_subject:string|null; updated_at:string }
+export type AdminIdea = { id:string; title:string; category:string; text:string; generation_type:GenerationMode; prompt:string; image_asset_id:string|null; architecture_project_id:string|null; media:Array<{asset_id:string;kind:IdeaMediaKind;label:string}>; model_url:string|null; is_active:boolean; sort_order:number; created_at:string; updated_at:string }
+export type AdminGenerationSettings = { primary_model:string; fallback_model:string|null; primary_params:Record<string,unknown>; fallback_params:Record<string,unknown>; mode_params:Record<string,Record<string,unknown>>; updated_at:string }
+export type AdminGenerationPrice = { mode:GenerationMode; credits:number; is_active:boolean; updated_at:string }
+export type AdminPrompt = { mode:GenerationMode; template:string; updated_at:string }
+export type AdminUser = { id:string; email:string|null; display_name:string; role:'user'|'admin'|'superadmin'; credits:number; created_at:string }
+export type AdminBroadcast = { id:string; title:string; message:string; audience:string; status:string; total_recipients:number; sent_count:number; failed_count:number; created_at:string; started_at:string|null; completed_at:string|null }
+export type AdminAudit = { id:string; actor_user_id:string; action:string; entity_type:string; entity_id:string|null; details:Record<string,unknown>; created_at:string }
+export type AdminOperationalSettings = { generation_rate_limit_per_minute:number; payment_rate_limit_per_minute:number; media_retention_days:number|null; backup_interval_hours:number; backup_retention_days:number; updated_at:string }
+export type AdminTelegramContent = { bot_name:string; short_description:string; description:string; start_message:string; mini_app_button_text:string; commands:Array<{command:string;description:string}>; updated_at:string }
