@@ -87,7 +87,7 @@ export function HistoryScreen({ onOpenGeneration }: Props) {
                   <p>{item.status === 'failed' ? 'Работу не удалось завершить. Откройте проект и попробуйте снова.' : item.status === 'completed' ? 'Готовая работа сохранена в проекте.' : 'Работа выполняется и появится здесь после завершения.'}</p>
                   <small>{new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.created_at))}{item.fallback_used ? ' · резервная модель' : ''}</small>
                   <div className="history-actions">
-                    <button className="secondary-button" onClick={() => onOpenGeneration(item)}>Открыть проект</button>
+                    <button className="secondary-button" onClick={() => onOpenGeneration(item)}>Открыть работу</button>
                   </div>
                 </div>
               </article>
