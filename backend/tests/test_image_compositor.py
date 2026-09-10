@@ -56,3 +56,17 @@ def test_masked_edit_resizes_candidate_but_keeps_base_dimensions() -> None:
     assert output.size == (120, 90)
     assert output.getpixel((5, 5)) == (100, 110, 120)
     assert output.getpixel((100, 80)) == (9, 8, 7)
+
+
+def test_masked_edit_rejects_image_over_pixel_limit_before_compositing() -> None:
+    try:
+        compose_masked_edit(
+            base_data=_png((100, 100), (1, 2, 3)),
+            candidate_data=_png((100, 100), (4, 5, 6)),
+            edit_region={"x": 0.1, "y": 0.1, "width": 0.4, "height": 0.4},
+            max_pixels=9_999,
+        )
+    except ValueError as exc:
+        assert "pixel limit" in str(exc)
+    else:
+        raise AssertionError("Expected compositor to enforce max_pixels")

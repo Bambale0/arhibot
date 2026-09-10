@@ -39,3 +39,22 @@ def test_admin_prompt_template_renders_project_context_and_client_preferences() 
     assert "house_area_m2=180" in prompt
     assert "architecture_style=minimalism" in prompt
     assert "warm stone and timber" in prompt
+
+
+def test_nexus_model_params_cannot_override_prompt_model_or_reference() -> None:
+    params = NexusImageProvider._build_params(
+        model_name="real-model",
+        prompt="canonical prompt",
+        image_url="https://media.example.com/base.png",
+        model_params={
+            "model_name": "forged-model",
+            "prompt": "forged prompt",
+            "image_urls": ["https://evil.example.com/other.png"],
+            "steps": 24,
+        },
+    )
+
+    assert params["model_name"] == "real-model"
+    assert params["prompt"] == "canonical prompt"
+    assert params["image_urls"] == ["https://media.example.com/base.png"]
+    assert params["steps"] == 24

@@ -32,16 +32,31 @@ GENERATION_PROCESSING_KEY = "auroom:generation_processing"
 
 
 async def _download_image(url: str, settings: Settings) -> bytes:
+    if not url.startswith("https://"):
+        raise RuntimeError("Generated image URL must use HTTPS")
+    limit = settings.max_image_size_bytes
+    chunks: list[bytes] = []
+    received = 0
     async with httpx.AsyncClient(timeout=httpx.Timeout(60.0), follow_redirects=True) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        content_length = response.headers.get("content-length")
-        if content_length and int(content_length) > settings.max_image_size_bytes:
-            raise RuntimeError("Generated image exceeds media size limit")
-        data = response.content
-    if len(data) > settings.max_image_size_bytes:
-        raise RuntimeError("Generated image exceeds media size limit")
-    return data
+        async with client.stream("GET", url) as response:
+            response.raise_for_status()
+            if not str(response.url).startswith("https://"):
+                raise RuntimeError("Generated image redirect must remain on HTTPS")
+            content_length = response.headers.get("content-length")
+            if content_length:
+                try:
+                    if int(content_length) > limit:
+                        raise RuntimeError("Generated image exceeds media size limit")
+                except ValueError:
+                    # A malformed length header is not trusted; the streamed byte limit below
+                    # remains authoritative.
+                    pass
+            async for chunk in response.aiter_bytes():
+                received += len(chunk)
+                if received > limit:
+                    raise RuntimeError("Generated image exceeds media size limit")
+                chunks.append(chunk)
+    return b"".join(chunks)
 
 
 async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -> None:
@@ -173,6 +188,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 candidate_data=data,
                 edit_region=edit_region,
                 protected_regions=protected_regions,
+                max_pixels=settings.max_image_pixels,
             )
             data = composite.data
 

@@ -43,13 +43,12 @@ class NexusImageProvider:
         model_params: dict[str, object] | None,
         idempotency_key: str,
     ) -> NexusImageResult:
-        params: dict[str, object] = {
-            "model_name": model_name,
-            "prompt": prompt,
-        }
-        if image_url:
-            params["image_urls"] = [image_url]
-        params.update(model_params or {})
+        params = self._build_params(
+            model_name=model_name,
+            prompt=prompt,
+            image_url=image_url,
+            model_params=model_params,
+        )
 
         headers = {**self.headers, "Idempotency-Key": idempotency_key}
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
@@ -64,13 +63,19 @@ class NexusImageProvider:
 
             if response.status_code >= 400:
                 detail = self._safe_error(response)
-                retryable = response.status_code >= 500 or response.status_code in {408}
+                retryable = response.status_code >= 500 or response.status_code in {408, 429}
                 raise NexusProviderError(
                     f"Nexus create failed ({response.status_code}): {detail}",
                     retryable=retryable,
                 )
 
-            payload = response.json()
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise NexusProviderError(
+                    "Nexus returned an invalid create-task response",
+                    retryable=True,
+                ) from exc
             immediate_url = self._extract_image_url(payload, payload.get("result") or {})
             task_id = str(payload.get("task_id") or "").strip()
             if immediate_url:
@@ -94,13 +99,22 @@ class NexusImageProvider:
 
                 if task_response.status_code >= 400:
                     detail = self._safe_error(task_response)
-                    retryable = task_response.status_code >= 500 or task_response.status_code in {408}
+                    retryable = (
+                        task_response.status_code >= 500
+                        or task_response.status_code in {408, 429}
+                    )
                     raise NexusProviderError(
                         f"Nexus polling failed ({task_response.status_code}): {detail}",
                         retryable=retryable,
                     )
 
-                task = task_response.json()
+                try:
+                    task = task_response.json()
+                except ValueError as exc:
+                    raise NexusProviderError(
+                        "Nexus returned an invalid task-status response",
+                        retryable=True,
+                    ) from exc
                 status = str(task.get("status") or "").lower()
                 if status == "completed":
                     result = task.get("result") or {}
@@ -116,6 +130,28 @@ class NexusImageProvider:
                     raise NexusProviderError(f"Nexus task failed: {error}", retryable=True)
 
             raise NexusProviderError("Nexus task timed out", retryable=True)
+
+    @staticmethod
+    def _build_params(
+        *,
+        model_name: str,
+        prompt: str,
+        image_url: str | None,
+        model_params: dict[str, object] | None,
+    ) -> dict[str, object]:
+        # Operator-controlled tuning parameters must never override provenance-critical
+        # request fields. The generation row must describe what Nexus actually receives.
+        reserved = {"model_name", "prompt", "image_url", "image_urls"}
+        params = {
+            key: value
+            for key, value in (model_params or {}).items()
+            if key not in reserved
+        }
+        params["model_name"] = model_name
+        params["prompt"] = prompt
+        if image_url:
+            params["image_urls"] = [image_url]
+        return params
 
     @staticmethod
     def _extract_image_url(task: dict, result: object) -> str | None:

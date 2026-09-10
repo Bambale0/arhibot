@@ -175,7 +175,7 @@ jobs:
           rm -f "${questionnaire_body}"
 
           if ! "${compose[@]}" exec -T api python -m app.runtime_checks; then
-            echo "Runtime contract checks failed (project contexts or questionnaire Telegram delivery readiness)" >&2
+            echo "Runtime contract checks failed (project contexts, Telegram delivery or questionnaire generation readiness)" >&2
             dump_api_failure
             exit 1
           fi

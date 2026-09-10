@@ -149,6 +149,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const [reviewComment, setReviewComment] = useState<string>('')
   const [customOption, setCustomOption] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [generationInFlight, setGenerationInFlight] = useState(false)
   const [error, setError] = useState<string|null>(null)
 
   useEffect(() => {
@@ -183,14 +184,6 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         if (initial.scene_asset_id) {
           try { setSceneAsset(await api.getAsset(initial.scene_asset_id)) } catch { /* deleted scene */ }
         }
-        const previewKey = initial.current_object || initial.accepted_objects.at(-1) || null
-        const generationId = previewKey ? initial.generation_ids[previewKey] : null
-        if (generationId) {
-          try {
-            const generation = await api.getGeneration(generationId)
-            if (generation.output_asset) setRenderOutput(generation.output_asset)
-          } catch { /* stale generation */ }
-        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Не удалось открыть опросник')
       }
@@ -204,12 +197,46 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const objectAnswers = current && session ? session.answers[current.key] || {} : {}
   const visible = current ? current.questions.filter((q) => conditionOk(q.condition, objectAnswers, houseAccepted)) : []
   const active = current && session ? visible.find((q) => q.id === session.current_question_id) || null : null
+  const currentGenerationId = current && session ? session.generation_ids[current.key] || null : null
 
   useEffect(() => {
-    if (!session || !current || session.current_question_id || session.region_mode) return
+    if (!session || !current || session.current_question_id || session.region_mode || generationInFlight) return
+    if (current.key !== 'zayavka' && currentGenerationId) return
     const first = visible.find((q) => q.phase === (current.key === 'zayavka' ? 'application' : 'pre_render'))
     if (first && session.source_step_completed) void persist({ ...session, current_question_id:first.id })
-  }, [session?.source_step_completed, current?.key])
+  }, [session?.source_step_completed, current?.key, currentGenerationId, generationInFlight])
+
+  useEffect(() => {
+    if (!session || !current || current.key === 'zayavka' || !currentGenerationId || generationInFlight) return
+    let stopped = false
+    setGenerationInFlight(true)
+    setBusy(true)
+    setError(null)
+    void (async () => {
+      try {
+        const generation = await api.getGeneration(currentGenerationId)
+        const completed = await poll(generation)
+        if (stopped) return
+        setRenderOutput(completed.output_asset)
+        if (!session.current_question_id) {
+          const review = current.questions.find((q) => q.phase === 'review')
+          const next = { ...session, current_question_id:review?.id || null }
+          const saved = await saveQuestionnaireSession(project.id, next)
+          if (stopped) return
+          setSession(saved)
+          syncProject(saved)
+        }
+      } catch (err) {
+        if (!stopped) setError(err instanceof Error ? err.message : 'Не удалось восстановить генерацию')
+      } finally {
+        if (!stopped) {
+          setBusy(false)
+          setGenerationInFlight(false)
+        }
+      }
+    })()
+    return () => { stopped = true }
+  }, [project.id, current?.key, currentGenerationId])
 
   useEffect(() => {
     if (!active || !current || !session) return
@@ -307,11 +334,13 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     const lines = preQuestions(definition, next)
       .map((q) => answers[q.id] == null || text(answers[q.id]) === '' ? null : `${q.id}. ${q.text} — ${text(answers[q.id])}`)
       .filter(Boolean)
-    const scene = next.scene_asset_id || next.source_asset_id
-      ? 'Используй исходное изображение как текущую сцену. Сохрани существующий дом и все уже принятые объекты, их геометрию, пропорции, положение, окружение, ракурс и свет. Добавь или измени только текущий объект.'
-      : definition.key === 'eskez-doma'
-        ? 'Создай внешний вид дома на участке. Камера: дрон 40–50 м, сверху угловой вид.'
-        : 'Создай объект на участке. Камера: дрон сверху, угловой вид.'
+    const scene = next.accepted_objects.length > 0 && next.scene_asset_id
+      ? 'Используй исходное изображение как текущую принятую сцену. Сохрани существующий дом и все уже принятые объекты, их геометрию, пропорции, положение, окружение, ракурс и свет. Добавь или измени только текущий объект.'
+      : next.source_asset_id
+        ? 'Используй фотографию участка как исходный контекст. Сохрани геометрию участка, перспективу, ракурс и существующее окружение. Создай или добавь только текущий проектируемый объект.'
+        : definition.key === 'eskez-doma'
+          ? 'Создай внешний вид дома на участке. Камера: дрон 40–50 м, сверху угловой вид.'
+          : 'Создай объект на участке. Камера: дрон сверху, угловой вид.'
     const region = next.edit_regions[definition.key]
     const regionInstruction = region
       ? `Новый объект и все новые пиксели должны находиться внутри разрешённой области кадра: слева ${Math.round(region.x*100)}%, сверху ${Math.round(region.y*100)}%, ширина ${Math.round(region.width*100)}%, высота ${Math.round(region.height*100)}%. За пределами этой области ничего не менять.`
@@ -341,14 +370,31 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     if (next.accepted_objects.length > 0 && next.scene_asset_id && !next.edit_regions[definition.key]) {
       return persist({ ...next, current_question_id:null, region_mode:'edit', region_object:definition.key })
     }
-    return generate({ ...next, current_question_id:null, region_mode:null, region_object:null }, definition)
+    setGenerationInFlight(true)
+    const staged = await persist({ ...next, current_question_id:null, region_mode:null, region_object:null })
+    if (!staged) {
+      setGenerationInFlight(false)
+      return null
+    }
+    return generate(staged, definition)
   }
 
   async function poll(generation:Generation) {
     let currentGeneration = generation
-    for (let i=0; i<90 && ['queued','processing'].includes(currentGeneration.status); i++) {
+    const deadline = Date.now() + 6 * 60 * 1000
+    let transientErrors = 0
+    while (['queued','processing'].includes(currentGeneration.status) && Date.now() < deadline) {
       await delay(2000)
-      currentGeneration = await api.getGeneration(currentGeneration.id)
+      try {
+        currentGeneration = await api.getGeneration(currentGeneration.id)
+        transientErrors = 0
+      } catch (err) {
+        transientErrors += 1
+        if (transientErrors >= 5) throw err
+      }
+    }
+    if (['queued','processing'].includes(currentGeneration.status)) {
+      throw new Error('Генерация всё ещё выполняется. Результат сохранён — откройте проект чуть позже.')
     }
     if (currentGeneration.status !== 'completed' || !currentGeneration.output_asset) {
       throw new Error(currentGeneration.error || 'Генерация не завершилась')
@@ -357,6 +403,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }
 
   async function generate(next:DesignSession, definition:QuestionnaireDefinition) {
+    setGenerationInFlight(true)
     setBusy(true)
     setError(null)
     setRenderOutput(null)
@@ -368,7 +415,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       const protectedRegions = next.accepted_objects
         .map((key) => next.lock_regions[key])
         .filter((region):region is NormalizedRect => Boolean(region))
-      const generation = await poll(await api.createGeneration({
+      const queued = await api.createGeneration({
         project_id:project.id,
         input_asset_id:input,
         type:mode,
@@ -376,12 +423,23 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         composition_mode:masked ? 'masked_edit' : 'replace',
         edit_region:masked ? editRegion : null,
         protected_regions:masked ? protectedRegions : [],
-      }))
+      })
+      const queuedState = {
+        ...next,
+        generation_ids:{ ...next.generation_ids, [definition.key]:queued.id },
+      }
+      let saved = await persist(queuedState)
+      if (!saved) {
+        await delay(750)
+        saved = await persist(queuedState)
+      }
+      if (!saved) throw new Error('Задача создана, но не удалось сохранить её номер. Откройте проект повторно.')
+
+      const generation = await poll(queued)
       setRenderOutput(generation.output_asset)
       const review = definition.questions.find((q) => q.phase === 'review')
       await persist({
-        ...next,
-        generation_ids:{ ...next.generation_ids, [definition.key]:generation.id },
+        ...saved,
         current_question_id:review?.id || null,
       })
     } catch (err) {
@@ -389,6 +447,35 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       else setError(err instanceof Error ? err.message : 'Не удалось создать эскиз')
     } finally {
       setBusy(false)
+      setGenerationInFlight(false)
+    }
+  }
+
+  async function resumeOrRetryGeneration() {
+    if (!session || !current || current.key === 'zayavka') return
+    const generationId = session.generation_ids[current.key]
+    if (!generationId) return startGenerationOrRegion(session, current)
+    setGenerationInFlight(true)
+    setBusy(true)
+    setError(null)
+    try {
+      const existing = await api.getGeneration(generationId)
+      if (existing.status !== 'failed') {
+        const generation = await poll(existing)
+        setRenderOutput(generation.output_asset)
+        const review = current.questions.find((q) => q.phase === 'review')
+        await persist({ ...session, current_question_id:review?.id || null })
+        return
+      }
+      const generationIds = { ...session.generation_ids }
+      delete generationIds[current.key]
+      const saved = await persist({ ...session, generation_ids:generationIds })
+      if (saved) await generate(saved, current)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось восстановить генерацию')
+    } finally {
+      setBusy(false)
+      setGenerationInFlight(false)
     }
   }
 
@@ -506,7 +593,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         region_object:objectKey,
       }
       const saved = await persist(staged)
-      if (saved) await generate({ ...saved, region_mode:null, region_object:null }, definition)
+      if (saved) await startGenerationOrRegion({ ...saved, region_mode:null, region_object:null }, definition)
       return
     }
     const next:DesignSession = {
@@ -576,9 +663,9 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{hasAccepted ? 'Что дальше?' : 'Выбор объекта'}</span></header><section className="questionnaire-card"><span className="eyebrow">{hasAccepted ? 'ЭСКИЗ ПРИНЯТ' : 'НАЧАЛО ОПРОСА'}</span><h1>{hasAccepted ? 'Что проектируем дальше?' : 'С чего начнём?'}</h1><p>{hasAccepted ? 'Принятый кадр зафиксирован. Выберите следующий объект или переходите к заявке.' : 'Вы выбрали несколько элементов. Выберите, какой опросник пройти первым.'}</p>{hasAccepted && sceneAsset && <div className="questionnaire-result"><img src={sceneAsset.url} alt="Последний принятый эскиз"/></div>}{remaining.length > 0 && <div className="questionnaire-options">{remaining.map((key) => <button key={key} className="questionnaire-option" disabled={busy} onClick={() => void chooseObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void chooseApplication()}>Перейти к заявке</button></div>}{error && <div className="banner-error">{error}</div>}</section></main>
   }
 
-  if (busy && !active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card generating-card"><SparkIcon/><h1>Создаём: {current.title}</h1><p>Сохраняем текущую сцену, ракурс и уже принятые объекты.</p>{error && <div className="banner-error">{error}</div>}</section></main>
+  if ((busy || generationInFlight) && !active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card generating-card"><SparkIcon/><h1>Создаём: {current.title}</h1><p>Сохраняем текущую сцену, ракурс и уже принятые объекты.</p>{error && <div className="banner-error">{error}</div>}</section></main>
 
-  if (!active) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>{current.title}</h1><p>Подготавливаем следующий шаг…</p>{error && <div className="banner-error">{error}</div>}</section></main>
+  if (!active) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>{current.title}</h1><p>{currentGenerationId ? 'Генерация не завершена. Можно безопасно проверить текущую задачу и повторить только если она действительно завершилась ошибкой.' : 'Подготавливаем следующий шаг…'}</p>{error && <div className="banner-error">{error}</div>}{currentGenerationId && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void resumeOrRetryGeneration()}>Проверить генерацию</button></div>}</section></main>
 
   const options = availableOptions(active)
   const currentValue = objectAnswers[active.id]
