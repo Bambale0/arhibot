@@ -1,3 +1,4 @@
+import type { Project } from './types'
 import type { DesignSession, QuestionnaireApplicationSubmitResponse, QuestionnaireCatalog } from './questionnaireTypes'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
@@ -16,11 +17,24 @@ async function questionnaireRequest<T>(path:string, options:RequestInit = {}):Pr
     } catch { /* generic error */ }
     throw new Error(detail)
   }
+  if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
 }
 
 export function getQuestionnaireCatalog():Promise<QuestionnaireCatalog> {
   return questionnaireRequest<QuestionnaireCatalog>('/questionnaires')
+}
+
+export function startQuestionnaireProject(selectedObjects:string[]):Promise<Project> {
+  return questionnaireRequest<Project>('/questionnaire-projects', {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json' },
+    body:JSON.stringify({ selected_objects:selectedObjects }),
+  })
+}
+
+export function discardQuestionnaireDraft(projectId:string):Promise<void> {
+  return questionnaireRequest<void>(`/questionnaire-projects/${projectId}/draft`, { method:'DELETE' })
 }
 
 export async function getQuestionnaireSession(projectId:string):Promise<DesignSession|null> {
