@@ -26,6 +26,7 @@ from app.repositories.projects import ProjectRepository
 from app.services.asset_service import AssetService, LocalMediaStorage
 from app.services.credit_service import CreditService
 from app.services.generation_service import GENERATION_QUEUE_KEY
+from app.workers.heartbeat import worker_heartbeat
 
 logger = logging.getLogger(__name__)
 GENERATION_PROCESSING_KEY = "auroom:generation_processing"
@@ -395,7 +396,8 @@ async def run_worker() -> None:
 
 async def _main() -> None:
     try:
-        await run_worker()
+        async with worker_heartbeat("generation"):
+            await run_worker()
     finally:
         await redis_client.aclose()
         await dispose_engine()

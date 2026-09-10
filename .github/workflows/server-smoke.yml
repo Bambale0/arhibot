@@ -213,6 +213,16 @@ jobs:
             fi
           done
 
+          for service in maintenance worker broadcast-worker frontend postgres redis; do
+            container_id=$("${compose[@]}" ps -q "${service}")
+            health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "${container_id}")
+            [[ "${health}" == "healthy" ]] || {
+              echo "Container health is not healthy for ${service}: ${health}" >&2
+              "${compose[@]}" logs --tail 100 "${service}" 2>&1 >&2 || true
+              exit 1
+            }
+          done
+
           renderer_id=$("${compose[@]}" --profile 3d ps -q renderer-worker || true)
           if [[ -n "${renderer_id}" ]] && [[ "$(docker inspect -f '{{.State.Running}}' "${renderer_id}" 2>/dev/null || true)" == "true" ]]; then
             echo "renderer-worker must be stopped while 3D is disabled" >&2

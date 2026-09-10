@@ -183,6 +183,25 @@ for service in bot worker broadcast-worker maintenance; do
   fi
 done
 
+for service in worker broadcast-worker maintenance frontend; do
+  service_id=$(compose ps -q "${service}")
+  health_passed=0
+  for attempt in $(seq 1 18); do
+    health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "${service_id}" 2>/dev/null || true)
+    if [[ "${health}" == "healthy" ]]; then
+      health_passed=1
+      break
+    fi
+    sleep 3
+  done
+  if (( health_passed == 0 )); then
+    echo "${service} container health did not become healthy" >&2
+    compose logs --tail 100 "${service}" 2>&1 \
+      | sed -E 's/(token|password|secret|api[_-]?key)=([^[:space:]]+)/\1=[REDACTED]/Ig' >&2 || true
+    exit 1
+  fi
+done
+
 if command -v crontab >/dev/null 2>&1; then
   backup_cron="17 * * * * ${app_dir}/ops/backup_runtime.sh ${app_dir} ${app_dir}/backups/runtime scheduled >> ${app_dir}/backups/runtime.log 2>&1 # AuRoom runtime backup"
   (crontab -l 2>/dev/null | grep -v 'AuRoom runtime backup' || true; echo "${backup_cron}") | crontab -
