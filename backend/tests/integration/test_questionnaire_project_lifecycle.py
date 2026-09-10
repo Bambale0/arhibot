@@ -55,6 +55,13 @@ async def test_questionnaire_project_is_hidden_until_source_step_and_can_be_disc
         assert hidden_list.status_code == 200, hidden_list.text
         assert project_id not in {item["id"] for item in hidden_list.json()["items"]}
 
+        locked_context = await client.patch(
+            f"/api/v1/projects/{project_id}",
+            headers=headers,
+            json={"context": {}},
+        )
+        assert locked_context.status_code == 409, locked_context.text
+
         design_session["source_step_completed"] = True
         saved = await client.put(
             f"/api/v1/projects/{project_id}/questionnaire-session",
