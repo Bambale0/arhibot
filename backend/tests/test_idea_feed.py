@@ -1,59 +1,34 @@
-import json
-import struct
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 
-from app.core.errors import AppError
-from app.schemas.admin import IdeaCreate, IdeaMediaInput
-from app.services.idea_service import validate_glb
+from app.schemas.admin import (
+    IdeaPublicationCreate,
+    IdeaPublicationUpdate,
+    PublicIdeaPublicationResponse,
+)
+from app.services.idea_service import _answer_text
 
 
-def test_idea_media_label_is_trimmed() -> None:
-    media = IdeaMediaInput(
-        asset_id="00000000-0000-0000-0000-000000000001", kind="reference", label="  Stone facade  "
-    )
-    assert media.label == "Stone facade"
+def test_idea_publication_contract_has_no_parallel_prompt_or_media_editor() -> None:
+    assert set(IdeaPublicationCreate.model_fields) == {"generation_id"}
+    assert set(IdeaPublicationUpdate.model_fields) == {"is_active", "sort_order"}
+    public_fields = set(PublicIdeaPublicationResponse.model_fields)
+    assert "prompt" not in public_fields
+    assert "text" not in public_fields
+    assert "media" not in public_fields
+    assert "model_url" not in public_fields
 
 
-def test_idea_media_is_bounded() -> None:
-    media = [
-        {
-            "asset_id": f"00000000-0000-0000-0000-{index:012d}",
-            "kind": "photo",
-            "label": f"Photo {index}",
-        }
-        for index in range(25)
-    ]
+def test_admin_idea_publication_order_is_bounded() -> None:
     with pytest.raises(ValidationError):
-        IdeaCreate(
-            title="Too many files",
-            category="Facade",
-            text="Media bound",
-            generation_type="facade",
-            media=media,
-        )
+        IdeaPublicationUpdate(sort_order=100_001)
+    assert IdeaPublicationCreate(generation_id=uuid4()).generation_id
 
 
-def _glb(document: dict) -> bytes:
-    payload = json.dumps(document, separators=(",", ":")).encode("utf-8")
-    payload += b" " * ((4 - len(payload) % 4) % 4)
-    total = 12 + 8 + len(payload)
-    header = struct.pack("<4sII", b"glTF", 2, total)
-    json_chunk = struct.pack("<II", len(payload), 0x4E4F534A) + payload
-    return header + json_chunk
-
-
-def test_glb_validation_accepts_self_contained_gltf2() -> None:
-    document = {"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": []}], "nodes": []}
-    assert validate_glb(_glb(document), max_size_bytes=1024 * 1024)["asset"]["version"] == "2.0"
-
-
-def test_glb_validation_rejects_external_resources() -> None:
-    document = {
-        "asset": {"version": "2.0"},
-        "buffers": [{"uri": "mesh.bin", "byteLength": 4}],
-    }
-    with pytest.raises(AppError) as exc:
-        validate_glb(_glb(document), max_size_bytes=1024 * 1024)
-    assert exc.value.type == "external_idea_model_resource"
+def test_answer_text_is_user_facing() -> None:
+    assert _answer_text(True) == "Да"
+    assert _answer_text(False) == "Нет"
+    assert _answer_text(["Кирпич", "Дерево"]) == "Кирпич, Дерево"
+    assert _answer_text(None) == ""

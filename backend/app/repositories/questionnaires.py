@@ -3,7 +3,11 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.questionnaires import QuestionnaireApplication, QuestionnaireCatalogConfig
+from app.db.models.questionnaires import (
+    QuestionnaireApplication,
+    QuestionnaireCatalogConfig,
+    QuestionnaireCatalogRevision,
+)
 
 
 class QuestionnaireRepository:
@@ -18,6 +22,12 @@ class QuestionnaireRepository:
         return result.scalar_one_or_none()
 
     def add_catalog(self, row: QuestionnaireCatalogConfig) -> None:
+        self.session.add(row)
+
+    async def get_catalog_revision(self, version: str) -> QuestionnaireCatalogRevision | None:
+        return await self.session.get(QuestionnaireCatalogRevision, version)
+
+    def add_catalog_revision(self, row: QuestionnaireCatalogRevision) -> None:
         self.session.add(row)
 
     async def get_application_by_session(self, session_id: UUID) -> QuestionnaireApplication | None:

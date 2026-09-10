@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import * as api from '../api'
 import type {
   AdminAudit,
@@ -17,9 +17,6 @@ import type {
   AdminUser,
   BroadcastSegment,
   GenerationMode,
-  IdeaMedia,
-  IdeaMediaKind,
-  Project,
   UserRole,
 } from '../types'
 
@@ -55,7 +52,6 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   const [tariffs, setTariffs] = useState<AdminTariff[]>([])
   const [billingSettings, setBillingSettings] = useState<AdminBillingSettings | null>(null)
   const [ideas, setIdeas] = useState<AdminIdea[]>([])
-  const [projects, setProjects] = useState<Project[]>([])
   const [generation, setGeneration] = useState<AdminGenerationSettings | null>(null)
   const [prices, setPrices] = useState<AdminGenerationPrice[]>([])
   const [prompts, setPrompts] = useState<AdminPrompt[]>([])
@@ -72,12 +68,11 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   async function reload() {
     setError(null)
     try {
-      const [o, t, bs, i, projectPage, g, gp, p, u, tx, pay, b, tg, ops, a] = await Promise.all([
+      const [o, t, bs, i, g, gp, p, u, tx, pay, b, tg, ops, a] = await Promise.all([
         api.adminOverview(),
         api.adminListTariffs(),
         api.adminGetBillingSettings(),
         api.adminListIdeas(),
-        api.listProjects(null, 100),
         api.adminGetGenerationSettings(),
         api.adminListGenerationPrices(),
         api.adminListPrompts(),
@@ -93,7 +88,6 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       setTariffs(t)
       setBillingSettings(bs)
       setIdeas(i)
-      setProjects(projectPage.items)
       setGeneration(g)
       setPrices(gp)
       setPrompts(p)
@@ -130,7 +124,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       {loading ? <div className="admin-loading">Загружаем настройки…</div> : (
         <div className="admin-content">
           {tab === 'tariffs' && billingSettings && <TariffsPanel items={tariffs} onItems={setTariffs} billingSettings={billingSettings} onBillingSettings={setBillingSettings} onError={setError} />}
-          {tab === 'ideas' && <IdeasPanel items={ideas} projects={projects} onItems={setIdeas} onError={setError} />}
+          {tab === 'ideas' && <IdeasPanel items={ideas} onItems={setIdeas} onError={setError} />}
           {tab === 'generation' && generation && <GenerationPanel settings={generation} prices={prices} prompts={prompts} onSettings={setGeneration} onPrices={setPrices} onPrompts={setPrompts} onError={setError} />}
           {tab === 'users' && <UsersPanel items={users} transactions={transactions} onItems={setUsers} onTransactions={setTransactions} onError={setError} />}
           {tab === 'payments' && <PaymentsPanel items={payments} onItems={setPayments} onError={setError} />}
@@ -213,85 +207,45 @@ function BillingSettingsEditor({ settings, onSaved, onError }: { settings: Admin
   return <div className="admin-subpanel"><div className="admin-panel-title"><div><h3>Фискальные чеки YooKassa</h3><p>При включении клиент указывает email, а чек передаётся в платёж.</p></div></div><div className="admin-form-grid compact"><label className="admin-checkbox"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)}/> Передавать receipt</label><label>Код НДС<input type="number" min="1" max="12" disabled={!enabled} value={vat} onChange={(e) => setVat(e.target.value)}/></label><label>Предмет расчёта<input disabled={!enabled} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="service"/></label><label>Способ расчёта<input disabled={!enabled} value={mode} onChange={(e) => setMode(e.target.value)} placeholder="full_payment"/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={() => void save()}>Сохранить кассу</button></div></div></div>
 }
 
-function IdeasPanel({ items, projects, onItems, onError }: { items: AdminIdea[]; projects: Project[]; onItems: (v: AdminIdea[]) => void; onError: (v: string | null) => void }) {
-  const [editing, setEditing] = useState<AdminIdea | null>(null)
-  const [title, setTitle] = useState('')
-  const [category, setCategory] = useState('')
-  const [text, setText] = useState('')
-  const [prompt, setPrompt] = useState('')
-  const [mode, setMode] = useState<GenerationMode>('facade')
-  const [sortOrder, setSortOrder] = useState('0')
-  const [active, setActive] = useState(true)
-  const [imageAssetId, setImageAssetId] = useState<string | null>(null)
-  const [imageUrl, setImageUrl] = useState<string | null>(null)
-  const [architectureProjectId, setArchitectureProjectId] = useState<string>('')
-  const [media, setMedia] = useState<IdeaMedia[]>([])
-  const [modelFile, setModelFile] = useState<File | null>(null)
-  const [modelUrl, setModelUrl] = useState<string | null>(null)
-  const [modelFilename, setModelFilename] = useState<string | null>(null)
-  const [modelSize, setModelSize] = useState<number | null>(null)
-  const [removeModel, setRemoveModel] = useState(false)
-  const [uploading, setUploading] = useState(false)
-  const [busy, setBusy] = useState(false)
+function IdeasPanel({ items, onItems, onError }: {
+  items: AdminIdea[]
+  onItems: (v: AdminIdea[]) => void
+  onError: (v: string | null) => void
+}) {
+  const [busy, setBusy] = useState<string | null>(null)
 
-  function reset(){setEditing(null);setTitle('');setCategory('');setText('');setPrompt('');setMode('facade');setSortOrder('0');setActive(true);setImageAssetId(null);setImageUrl(null);setArchitectureProjectId('');setMedia([]);setModelFile(null);setModelUrl(null);setModelFilename(null);setModelSize(null);setRemoveModel(false)}
-  function edit(item:AdminIdea){setEditing(item);setTitle(item.title);setCategory(item.category);setText(item.text);setPrompt(item.prompt);setMode(item.generation_type);setSortOrder(String(item.sort_order));setActive(item.is_active);setImageAssetId(item.image_asset_id);setImageUrl(item.image_url);setArchitectureProjectId(item.architecture_project_id || '');setMedia(item.media);setModelFile(null);setModelUrl(item.model_url);setModelFilename(item.model_original_filename);setModelSize(item.model_size_bytes);setRemoveModel(false)}
-  async function uploadImage(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploading(true); onError(null)
-    try { const asset = await api.uploadAsset(null, file, 'project_reference'); setImageAssetId(asset.id); setImageUrl(asset.url) }
-    catch (err) { onError(errorText(err)) }
-    finally { setUploading(false); e.target.value = '' }
-  }
-  async function uploadMedia(e: ChangeEvent<HTMLInputElement>, kind: IdeaMediaKind) {
-    const files = Array.from(e.target.files || [])
-    if (!files.length) return
-    if (media.length + files.length > 24) { onError('У идеи может быть не больше 24 дополнительных материалов.'); e.target.value = ''; return }
-    setUploading(true); onError(null)
+  async function toggle(item: AdminIdea) {
+    if (busy) return
+    setBusy(item.id); onError(null)
     try {
-      const uploaded: IdeaMedia[] = []
-      for (const file of files) {
-        const asset = await api.uploadAsset(null, file, 'project_reference')
-        uploaded.push({ asset_id: asset.id, kind, label: file.name.replace(/\.[^.]+$/, '').slice(0, 120) || 'Материал', url: asset.url })
-      }
-      setMedia((current) => [...current, ...uploaded])
+      const saved = await api.adminUpdateIdea(item.id, { is_active: !item.is_active })
+      onItems(items.map((current) => current.id === saved.id ? saved : current))
     } catch (err) { onError(errorText(err)) }
-    finally { setUploading(false); e.target.value = '' }
+    finally { setBusy(null) }
   }
-  function chooseModel(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] || null
-    if (!file) return
-    if (!file.name.toLowerCase().endsWith('.glb')) { onError('Для точного 3D загрузите self-contained файл .glb.'); e.target.value=''; return }
-    setModelFile(file); setModelFilename(file.name); setModelSize(file.size); setRemoveModel(false); onError(null)
+
+  async function changeOrder(item: AdminIdea, value: string) {
+    const sortOrder = Number(value)
+    if (!Number.isInteger(sortOrder) || sortOrder < -100000 || sortOrder > 100000 || sortOrder === item.sort_order) return
+    if (busy) return
+    setBusy(item.id); onError(null)
+    try {
+      const saved = await api.adminUpdateIdea(item.id, { sort_order: sortOrder })
+      onItems(items.map((current) => current.id === saved.id ? saved : current))
+    } catch (err) { onError(errorText(err)) }
+    finally { setBusy(null) }
   }
-  async function submit(e:FormEvent){
-    e.preventDefault();setBusy(true);onError(null)
-    try{
-      const payload={title:title.trim(),category:category.trim(),text:text.trim(),prompt:prompt.trim(),generation_type:mode,image_asset_id:imageAssetId,architecture_project_id:architectureProjectId || null,media:media.map(({asset_id,kind,label})=>({asset_id,kind,label})),is_active:active,sort_order:Number(sortOrder)}
-      let saved=editing?await api.adminUpdateIdea(editing.id,payload):await api.adminCreateIdea(payload)
-      if (modelFile) saved=await api.adminUploadIdeaModel(saved.id,modelFile)
-      else if (removeModel && saved.model_url) saved=await api.adminDeleteIdeaModel(saved.id)
-      onItems(editing?items.map(x=>x.id===saved.id?saved:x):[...items,saved]);reset()
-    }catch(err){onError(errorText(err))}finally{setBusy(false)}
-  }
-  async function toggle(item:AdminIdea){try{const saved=await api.adminUpdateIdea(item.id,{is_active:!item.is_active});onItems(items.map(x=>x.id===saved.id?saved:x))}catch(err){onError(errorText(err))}}
-  return <section className="admin-panel"><div className="admin-panel-title"><div><h2>Идеи</h2><p>Публикация использует точную GLB-модель для 360°, визуализацию, референсы и схемы.</p></div></div>
-    <form className="admin-form-grid" onSubmit={(e)=>void submit(e)}><label>Название<input required value={title} onChange={e=>setTitle(e.target.value)}/></label><label>Категория<input required value={category} onChange={e=>setCategory(e.target.value)}/></label><label>Сценарий<select value={mode} onChange={e=>setMode(e.target.value as GenerationMode)}>{modes.map(m=><option value={m.id} key={m.id}>{m.label}</option>)}</select></label><label>Порядок<input type="number" value={sortOrder} onChange={e=>setSortOrder(e.target.value)}/></label><label className="admin-span-2">Текст<textarea required value={text} onChange={e=>setText(e.target.value)}/></label><label className="admin-span-2">Промпт при выборе<textarea value={prompt} onChange={e=>setPrompt(e.target.value)}/></label>
-      <label className="admin-span-2">Главная визуализация<input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} onChange={(e) => void uploadImage(e)}/>{imageUrl && <img className="admin-idea-preview" src={imageUrl} alt="Превью идеи"/>}</label>
-      <label className="admin-span-2">Точная 3D-модель · GLB<input type="file" accept=".glb,model/gltf-binary" disabled={busy} onChange={chooseModel}/><small>Self-contained glTF 2.0: геометрия, UV и текстуры должны быть внутри GLB. Именно этот объект будет вращаться в ленте.</small>{(modelFile || modelUrl) && <span className="admin-model-file"><b>{modelFile?.name || modelFilename || 'model.glb'}</b>{modelSize ? ` · ${(modelSize/1024/1024).toFixed(1)} МБ` : ''}{modelFile ? ' · будет загружена после сохранения' : ''}</span>}</label>
-      <label className="admin-span-2">Проект для схем<select value={architectureProjectId} onChange={(e)=>setArchitectureProjectId(e.target.value)}><option value="">Без канонических схем</option>{projects.map((project)=><option key={project.id} value={project.id} disabled={!project.context.architecture}>{project.name}{project.context.architecture?' · geometry ready':' · без geometry'}</option>)}</select><small>Каноническая геометрия проекта используется для планов этажей. Она больше не подменяет точную 3D-модель.</small></label>
-      <div className="admin-span-2 admin-idea-media-editor">
-        <div><strong>Материалы карусели</strong><span>До 24 файлов: фотографии, референсы и схемы.</span></div>
-        <div className="admin-media-upload-row">
-          <label>+ Фото<input hidden multiple type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} onChange={(e)=>void uploadMedia(e,'photo')}/></label>
-          <label>+ Референсы<input hidden multiple type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} onChange={(e)=>void uploadMedia(e,'reference')}/></label>
-          <label>+ Схемы<input hidden multiple type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} onChange={(e)=>void uploadMedia(e,'scheme')}/></label>
-        </div>
-        {media.length > 0 && <div className="admin-idea-media-grid">{media.map((item,index)=><div key={`${item.asset_id}-${index}`}><img src={item.url} alt={item.label}/><span><b>{item.kind==='photo'?'Фото':item.kind==='reference'?'Референс':'Схема'}</b>{item.label}</span><button type="button" aria-label={`Убрать ${item.label}`} onClick={()=>setMedia(media.filter((_,mediaIndex)=>mediaIndex!==index))}>×</button></div>)}</div>}
-      </div>
-      <label className="admin-checkbox"><input type="checkbox" checked={active} onChange={e=>setActive(e.target.checked)}/> Опубликована</label><div className="admin-form-actions">{imageAssetId && <button type="button" className="secondary-button" onClick={() => {setImageAssetId(null);setImageUrl(null)}}>Убрать визуализацию</button>}{modelUrl && !removeModel && !modelFile && <button type="button" className="secondary-button" onClick={()=>{setRemoveModel(true);setModelUrl(null);setModelFilename(null);setModelSize(null)}}>Убрать 3D</button>}{removeModel && <button type="button" className="secondary-button" onClick={()=>{if(editing){setRemoveModel(false);setModelUrl(editing.model_url);setModelFilename(editing.model_original_filename);setModelSize(editing.model_size_bytes)}}}>Вернуть 3D</button>}<button className="primary-button" disabled={busy||uploading}>{editing?'Сохранить':'Добавить идею'}</button>{editing&&<button type="button" className="secondary-button" onClick={reset}>Отмена</button>}</div></form>
-    <div className="admin-card-list">{items.map(item=><article className="admin-list-card admin-idea-card" key={item.id}>{item.image_url && <img src={item.image_url} alt={item.title}/>}<div><strong>{item.title}</strong><span>{item.category} · {modes.find(m=>m.id===item.generation_type)?.label}</span><p>{item.text}</p><small>{item.media.length} материалов · 360°: {item.model_url?'точный GLB':'нет модели'} · схемы: {item.architecture?'есть':'нет'}</small></div><div><span className={`status-pill ${item.is_active?'':'muted'}`}>{item.is_active?'Опубликована':'Скрыта'}</span><button onClick={()=>edit(item)}>Изменить</button><button onClick={()=>void toggle(item)}>{item.is_active?'Скрыть':'Опубликовать'}</button></div></article>)}</div>
+
+  return <section className="admin-panel">
+    <div className="admin-panel-title"><div><h2>Идеи</h2><p>Пользователи сами добавляют принятые работы из «Создать». Здесь остаются только модерация, видимость и порядок ленты.</p></div></div>
+    <div className="admin-subpanel">
+      <div className="admin-panel-title"><div><h3>Лента</h3><p>Содержание берётся из принятой работы и ответов опросника. Отдельные промпты, картинки и 3D для идеи не используются.</p></div></div>
+      <div className="admin-card-list">{items.length ? items.map((item) => <article className="admin-list-card admin-idea-card" key={item.id}>
+        {item.image_url && <img src={item.image_url} alt={item.title}/>}
+        <div><strong>{item.title}</strong><span>{item.category} · {modes.find((mode) => mode.id === item.generation_type)?.label}</span><p>{item.objects.reduce((count, object) => count + object.answers.length, 0)} параметров · добавлено {formatDate(item.published_at)}</p></div>
+        <div><span className={`status-pill ${item.is_active ? '' : 'muted'}`}>{item.is_active ? 'В ленте' : 'Скрыта'}</span><label>Порядок<input type="number" min="-100000" max="100000" defaultValue={item.sort_order} disabled={busy !== null} onBlur={(event) => void changeOrder(item, event.target.value)}/></label><button disabled={busy !== null} onClick={() => void toggle(item)}>{item.is_active ? 'Скрыть' : 'Вернуть в ленту'}</button></div>
+      </article>) : <div className="empty-inline"><p>Пользователи пока не добавили работы в ленту.</p></div>}</div>
+    </div>
   </section>
 }
 

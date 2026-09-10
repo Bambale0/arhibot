@@ -30,11 +30,17 @@ An admin-managed prompt body for one generation mode. The stable placeholders ar
 
 ## Idea
 
-An admin-managed item in the public authenticated Ideas feed. It can preselect a generation mode and a user prompt when the user starts a generation from the idea.
+An Idea is a user-published accepted work created through the normal `Создать` questionnaire flow. The Ideas feed is a showcase of real generated results, not a second generation editor.
 
-### Exact 3D model
-
-An Idea may have one operator-uploaded, self-contained glTF 2.0 `.glb` model. This GLB is the only source for an interactive 360° object in the Ideas feed: the client must render the imported mesh/materials and must not synthesize a fake 3D object by wrapping photos around primitive geometry. If no GLB is configured, the feed shows the hero visualization as a non-interactive image. Canonical Architecture geometry remains the source for derived floor-plan schemes, not a substitute for the exact presentation mesh.
+- A publication references one completed Generation that was accepted into its Project questionnaire session.
+- The publication stores a presentation snapshot of the accepted questionnaire object names and user-facing question/answer pairs so later display-copy changes do not mutate the published card.
+- Questionnaire catalog revisions are preserved in the database. Publishing an older accepted work resolves its exact historical catalog revision, so normal admin-managed catalog evolution does not require code-level compatibility tuples.
+- The generated output asset is the hero image. Ideas do not own a separate prompt, manually uploaded hero, media carousel, or presentation-only GLB.
+- `Создать похожее` starts a fresh questionnaire Project with the same selected object set, then follows the same source step, questions, validation, generation and acceptance rules as normal `Создать`. It does not copy the original user's answers into the new project.
+- The owner explicitly adds an accepted generated work to Ideas from the Create flow. This action is the publication consent; another user cannot publish the generation by id.
+- Only pre-render design answers are included in the presentation snapshot; application/contact answers are never exposed in the feed.
+- Web admin does not create publications. It can moderate visibility and ordering. Hiding a publication removes it from the public feed without deleting the source Project or Generation.
+- Interactive 3D is intentionally disabled for the current Ideas release. The feed renders the generated output as a static image only; dormant legacy 3D code is not imported into the feed bundle.
 
 ## Broadcast Campaign
 

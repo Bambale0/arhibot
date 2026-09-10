@@ -26,6 +26,17 @@ class QuestionnaireCatalogConfig(Base):
     )
 
 
+class QuestionnaireCatalogRevision(Base):
+    __tablename__ = "questionnaire_catalog_revisions"
+
+    version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    catalog: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    source_texts: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class QuestionnaireApplication(Base):
     __tablename__ = "questionnaire_applications"
     __table_args__ = (

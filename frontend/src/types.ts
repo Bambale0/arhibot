@@ -152,17 +152,26 @@ export type IdeaMedia = {
   url: string
 }
 
+export type IdeaAnswerSummary = {
+  question: string
+  answer: string
+}
+
+export type IdeaObjectSummary = {
+  key: string
+  title: string
+  answers: IdeaAnswerSummary[]
+}
+
 export type Idea = {
   id: string
   title: string
   category: string
-  text: string
   generation_type: GenerationMode
-  prompt: string
   image_url: string | null
-  media: IdeaMedia[]
-  architecture: ArchitecturePackage | null
-  model_url: string | null
+  objects: IdeaObjectSummary[]
+  selected_objects: string[]
+  published_at: string
 }
 
 export type AdminOverview = {
@@ -194,15 +203,12 @@ export type AdminBillingSettings = {
 }
 
 export type AdminIdea = Idea & {
-  image_asset_id: string | null
-  architecture_project_id: string | null
-  model_original_filename: string | null
-  model_size_bytes: number | null
+  generation_id: string
   is_active: boolean
   sort_order: number
-  created_at: string
   updated_at: string
 }
+
 
 export type AdminGenerationSettings = {
   primary_model: string | null

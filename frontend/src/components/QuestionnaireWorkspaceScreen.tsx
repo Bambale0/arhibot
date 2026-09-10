@@ -15,7 +15,7 @@ import type {
   QuestionnaireQuestion,
   NormalizedRect,
 } from '../questionnaireTypes'
-import type { Asset, Generation, GenerationMode, Project } from '../types'
+import type { AdminIdea, Asset, Generation, GenerationMode, Project } from '../types'
 import { BackIcon, ImageIcon, SparkIcon, UploadIcon } from './Icons'
 
 const delay = (ms:number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -150,6 +150,8 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const [customOption, setCustomOption] = useState(false)
   const [busy, setBusy] = useState(false)
   const [generationInFlight, setGenerationInFlight] = useState(false)
+  const [ideaPublication, setIdeaPublication] = useState<AdminIdea|null|undefined>(undefined)
+  const [ideaPublishing, setIdeaPublishing] = useState(false)
   const [error, setError] = useState<string|null>(null)
 
   useEffect(() => {
@@ -198,6 +200,18 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const visible = current ? current.questions.filter((q) => conditionOk(q.condition, objectAnswers, houseAccepted)) : []
   const active = current && session ? visible.find((q) => q.id === session.current_question_id) || null : null
   const currentGenerationId = current && session ? session.generation_ids[current.key] || null : null
+  const latestAcceptedKey = session?.accepted_objects.at(-1) || null
+  const latestAcceptedGenerationId = latestAcceptedKey ? session?.generation_ids[latestAcceptedKey] || null : null
+
+  useEffect(() => {
+    setIdeaPublication(undefined)
+    if (!latestAcceptedGenerationId) return
+    let stopped = false
+    api.getOwnIdeaPublication(latestAcceptedGenerationId)
+      .then((publication) => { if (!stopped) setIdeaPublication(publication) })
+      .catch(() => { if (!stopped) setIdeaPublication(null) })
+    return () => { stopped = true }
+  }, [latestAcceptedGenerationId])
 
   useEffect(() => {
     if (!session || !current || session.current_question_id || session.region_mode || generationInFlight) return
@@ -610,12 +624,43 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     await persist({ ...session, lock_regions:{ ...session.lock_regions, [objectKey]:region } })
   }
 
+  async function publishLatestIdea() {
+    if (!latestAcceptedGenerationId || ideaPublishing || ideaPublication) return
+    setIdeaPublishing(true)
+    setError(null)
+    try {
+      setIdeaPublication(await api.publishIdea(latestAcceptedGenerationId))
+    } catch (err) {
+      if (err instanceof api.ApiError && err.status === 409) {
+        try {
+          setIdeaPublication(await api.getOwnIdeaPublication(latestAcceptedGenerationId))
+          return
+        } catch { /* show the original conflict below */ }
+      }
+      setError(err instanceof Error ? err.message : 'Не удалось добавить работу в Идеи')
+    } finally {
+      setIdeaPublishing(false)
+    }
+  }
+
+  const ideaPublishControl = latestAcceptedGenerationId ? <div className="questionnaire-idea-share">
+    <p>Хотите показать эту работу другим? В ленту попадут только изображение и параметры проектирования — без данных заявки.</p>
+    <button
+      type="button"
+      className="secondary-button questionnaire-wide"
+      disabled={ideaPublishing || ideaPublication === undefined || Boolean(ideaPublication)}
+      onClick={() => void publishLatestIdea()}
+    >
+      {ideaPublishing ? 'Добавляем…' : ideaPublication?.is_active ? 'Добавлено в Идеи' : ideaPublication ? 'Работа скрыта из Идей' : ideaPublication === undefined ? 'Проверяем публикацию…' : 'Добавить в Идеи'}
+    </button>
+  </div> : null
+
   if (error && (!catalog || !session)) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>Опросник не открылся</h1><div className="banner-error">{error}</div><button className="secondary-button" onClick={onBack}>Назад</button></section></main>
   if (!catalog || !session) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>Загружаем опросник…</h1></section></main>
 
   if (!session.source_step_completed) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon /> Назад</button><strong>{project.name}</strong><span>Исходный кадр</span></header><section className="questionnaire-card"><span className="eyebrow">ОДИН РАЗ ДО ОПРОСА</span><h1>Загрузите фото участка</h1><p>Или продолжите без фотографии. Для следующих объектов будет использоваться последний принятый кадр.</p><input ref={fileRef} hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={upload}/><button className="questionnaire-upload" disabled={busy} onClick={() => fileRef.current?.click()}><UploadIcon/><strong>Выбрать фото</strong><span>JPG, PNG или WebP</span></button><button className="secondary-button questionnaire-wide" disabled={busy} onClick={() => void setSource(null)}>Продолжить без фото</button>{error && <div className="banner-error">{error}</div>}</section></main>
 
-  if (session.application_submitted) return <main className="questionnaire-shell"><section className="questionnaire-card finish-card"><SparkIcon/><span className="eyebrow">ГОТОВО</span><h1>Заявка отправлена</h1><p>Эскизы и ответы сохранены. Заявка отправляется администратору в Telegram.</p><button className="primary-button" onClick={onBack}>Вернуться к проектам</button></section></main>
+  if (session.application_submitted) return <main className="questionnaire-shell"><section className="questionnaire-card finish-card"><SparkIcon/><span className="eyebrow">ГОТОВО</span><h1>Заявка отправлена</h1><p>Эскизы и ответы сохранены. Заявка отправляется администратору в Telegram.</p>{ideaPublishControl}<button className="primary-button" onClick={onBack}>Вернуться к проектам</button></section></main>
 
   if (session.region_mode && session.region_object) {
     const regionDefinition = definitions.get(session.region_object)
@@ -660,7 +705,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         onConfirm={(region) => void confirmLegacyLock(missingLock, region)}
       />
     }
-    return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{hasAccepted ? 'Что дальше?' : 'Выбор объекта'}</span></header><section className="questionnaire-card"><span className="eyebrow">{hasAccepted ? 'ЭСКИЗ ПРИНЯТ' : 'НАЧАЛО ОПРОСА'}</span><h1>{hasAccepted ? 'Что проектируем дальше?' : 'С чего начнём?'}</h1><p>{hasAccepted ? 'Принятый кадр зафиксирован. Выберите следующий объект или переходите к заявке.' : 'Вы выбрали несколько элементов. Выберите, какой опросник пройти первым.'}</p>{hasAccepted && sceneAsset && <div className="questionnaire-result"><img src={sceneAsset.url} alt="Последний принятый эскиз"/></div>}{remaining.length > 0 && <div className="questionnaire-options">{remaining.map((key) => <button key={key} className="questionnaire-option" disabled={busy} onClick={() => void chooseObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void chooseApplication()}>Перейти к заявке</button></div>}{error && <div className="banner-error">{error}</div>}</section></main>
+    return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{hasAccepted ? 'Что дальше?' : 'Выбор объекта'}</span></header><section className="questionnaire-card"><span className="eyebrow">{hasAccepted ? 'ЭСКИЗ ПРИНЯТ' : 'НАЧАЛО ОПРОСА'}</span><h1>{hasAccepted ? 'Что проектируем дальше?' : 'С чего начнём?'}</h1><p>{hasAccepted ? 'Принятый кадр зафиксирован. Выберите следующий объект или переходите к заявке.' : 'Вы выбрали несколько элементов. Выберите, какой опросник пройти первым.'}</p>{hasAccepted && sceneAsset && <div className="questionnaire-result"><img src={sceneAsset.url} alt="Последний принятый эскиз"/></div>}{remaining.length > 0 && <div className="questionnaire-options">{remaining.map((key) => <button key={key} className="questionnaire-option" disabled={busy} onClick={() => void chooseObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && ideaPublishControl}{hasAccepted && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void chooseApplication()}>Перейти к заявке</button></div>}{error && <div className="banner-error">{error}</div>}</section></main>
   }
 
   if ((busy || generationInFlight) && !active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card generating-card"><SparkIcon/><h1>Создаём: {current.title}</h1><p>Сохраняем текущую сцену, ракурс и уже принятые объекты.</p>{error && <div className="banner-error">{error}</div>}</section></main>
