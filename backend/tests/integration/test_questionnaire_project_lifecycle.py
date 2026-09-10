@@ -1,5 +1,6 @@
 import os
-from uuid import uuid4
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -9,7 +10,10 @@ pytestmark = pytest.mark.integration
 if os.getenv("RUN_INTEGRATION_TESTS") != "1":
     pytest.skip("set RUN_INTEGRATION_TESTS=1 with a migrated test database", allow_module_level=True)
 
+from app.db.models.projects import Project  # noqa: E402
+from app.db.session import get_session_factory  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services.questionnaire_project_service import QuestionnaireProjectService  # noqa: E402
 
 
 async def _register(client: AsyncClient) -> dict[str, str]:
@@ -31,18 +35,20 @@ async def test_questionnaire_project_is_hidden_until_source_step_and_can_be_disc
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         headers = await _register(client)
+        catalog = (await client.get("/api/v1/questionnaires", headers=headers)).json()
 
         start = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["eskez-doma"]},
+            json={"selected_objects": ["banya", "eskez-doma"]},
         )
         assert start.status_code == 201, start.text
         project = start.json()
         project_id = project["id"]
         assert project["context"]["questionnaire_draft"] is True
         design_session = project["context"]["design_session"]
-        assert design_session["selected_objects"] == ["eskez-doma"]
+        assert design_session["catalog_version"] == catalog["version"]
+        assert design_session["selected_objects"] == ["eskez-doma", "banya"]
         assert design_session["source_step_completed"] is False
 
         hidden_list = await client.get("/api/v1/projects", headers=headers)
@@ -65,6 +71,12 @@ async def test_questionnaire_project_is_hidden_until_source_step_and_can_be_disc
         assert visible_list.status_code == 200, visible_list.text
         assert project_id in {item["id"] for item in visible_list.json()["items"]}
 
+        cannot_discard_started = await client.delete(
+            f"/api/v1/questionnaire-projects/{project_id}/draft",
+            headers=headers,
+        )
+        assert cannot_discard_started.status_code == 409, cannot_discard_started.text
+
         draft = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
@@ -84,7 +96,7 @@ async def test_questionnaire_project_is_hidden_until_source_step_and_can_be_disc
 
 
 @pytest.mark.asyncio
-async def test_questionnaire_project_start_rejects_unknown_duplicates_and_client_catalog_version() -> None:
+async def test_questionnaire_project_start_rejects_unknown_duplicates_and_client_owned_metadata() -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         headers = await _register(client)
@@ -109,3 +121,42 @@ async def test_questionnaire_project_start_rejects_unknown_duplicates_and_client
             json={"selected_objects": ["eskez-doma"], "catalog_version": "stale-client-value"},
         )
         assert client_version.status_code == 422, client_version.text
+
+        forged_marker = await client.post(
+            "/api/v1/projects",
+            headers=headers,
+            json={
+                "name": "Forged hidden project",
+                "context": {"questionnaire_draft": True},
+            },
+        )
+        assert forged_marker.status_code == 422, forged_marker.text
+
+
+@pytest.mark.asyncio
+async def test_abandoned_questionnaire_draft_is_expired_by_cleanup() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        headers = await _register(client)
+        draft = await client.post(
+            "/api/v1/questionnaire-projects",
+            headers=headers,
+            json={"selected_objects": ["eskez-doma"]},
+        )
+        assert draft.status_code == 201, draft.text
+        project_id = UUID(draft.json()["id"])
+
+        async with get_session_factory()() as session:
+            project = await session.get(Project, project_id)
+            assert project is not None
+            project.created_at = datetime.now(UTC) - timedelta(hours=25)
+            await session.commit()
+
+        async with get_session_factory()() as session:
+            removed = await QuestionnaireProjectService(session).cleanup_expired_drafts(
+                cutoff=datetime.now(UTC) - timedelta(hours=24),
+            )
+            assert removed >= 1
+
+        missing = await client.get(f"/api/v1/projects/{project_id}", headers=headers)
+        assert missing.status_code == 404, missing.text
