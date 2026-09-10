@@ -1,4 +1,5 @@
 import os
+from json import loads
 from uuid import UUID, uuid4
 
 import pytest
@@ -193,8 +194,17 @@ async def test_questionnaire_generation_prompt_is_built_only_on_server_and_hidde
         async with get_session_factory()() as session:
             generation = await session.get(Generation, generation_id)
             assert generation is not None
-            assert "ТРЕБОВАНИЯ ИЗ ОПРОСНИКА:" in generation.prompt
-            assert "СЧИТАЙ КАЖДЫЙ ОТВЕТ ПОЛЬЗОВАТЕЛЯ ОБЯЗАТЕЛЬНЫМ ОГРАНИЧЕНИЕМ" in generation.prompt
+            assert generation.prompt.startswith("AUROOM_RENDER_SPEC_V1")
+            spec_payload = generation.prompt.split("STRUCTURED_SPEC:\n", 1)[1].split(
+                "\nFINAL_CHECK:", 1
+            )[0]
+            spec = loads(spec_payload)
+            assert spec["schema"] == "auroom.questionnaire_render.v1"
+            assert spec["task"]["object_key"] == "eskez-doma"
+            constraints = {
+                item["question"]: item["answer"]
+                for item in spec["questionnaire_constraints"]
+            }
             for question in house_definition["questions"]:
                 if (
                     question["phase"] == "pre_render"
@@ -202,7 +212,7 @@ async def test_questionnaire_generation_prompt_is_built_only_on_server_and_hidde
                     and _condition_ok(question.get("condition"), answers, False)
                     and answers[question["id"]] not in (None, "", [])
                 ):
-                    assert str(question["text"]) in generation.prompt
+                    assert str(question["text"]) in constraints
 
         fetched = await client.get(f"/api/v1/generations/{generation_id}", headers=headers)
         assert fetched.status_code == 200, fetched.text
