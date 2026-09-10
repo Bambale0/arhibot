@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState } from 'react'
 import * as api from './api'
 import { useAuth } from './auth'
+import { discardQuestionnaireDraft } from './questionnaireApi'
 import type { Asset, Generation, GenerationMode, Project } from './types'
 import { AppFrame, type AppSection } from './components/AppFrame'
 import { AuthScreen } from './components/AuthScreen'
@@ -41,11 +42,19 @@ export default function App() {
   if (!user) { if (window.Telegram?.WebApp?.initData) return <TelegramAuthError message={error} />; return <AuthScreen /> }
   const isAdmin = user.role === 'admin' || user.role === 'superadmin'
   if (adminOpen && isAdmin) return <Suspense fallback={<Loader />}><AdminScreen onClose={() => setAdminOpen(false)} /></Suspense>
-  if (questionnaireProject) return <Suspense fallback={<Loader />}><QuestionnaireWorkspaceScreen project={questionnaireProject} selectedObjects={questionnaireObjects} onBack={() => { setQuestionnaireProject(null); setQuestionnaireObjects([]) }} onProjectChange={setQuestionnaireProject} /></Suspense>
+  if (questionnaireProject) return <Suspense fallback={<Loader />}><QuestionnaireWorkspaceScreen project={questionnaireProject} selectedObjects={questionnaireObjects} onBack={() => { void closeQuestionnaire() }} onProjectChange={setQuestionnaireProject} /></Suspense>
   if (activeProject) return <Suspense fallback={<Loader />}><WorkspaceScreen project={activeProject} initialMode={workspaceMode} initialPrompt={workspacePrompt} initialAsset={workspaceAsset} onBack={() => { setActiveProject(null); setWorkspaceAsset(null) }} onProjectChange={setActiveProject} /></Suspense>
 
   function openWorkspace(project: Project, mode: GenerationMode = 'floor_plan', prompt = '', asset: Asset | null = null) { setWorkspaceMode(mode); setWorkspacePrompt(prompt); setWorkspaceAsset(asset); setActiveProject(project) }
   function openQuestionnaire(project: Project, selectedObjects: string[]) { setQuestionnaireObjects(selectedObjects); setQuestionnaireProject(project) }
+  async function closeQuestionnaire() {
+    const project = questionnaireProject
+    setQuestionnaireProject(null)
+    setQuestionnaireObjects([])
+    if (project?.context.questionnaire_draft && !project.context.design_session?.source_step_completed) {
+      try { await discardQuestionnaireDraft(project.id) } catch { /* maintenance removes abandoned drafts later */ }
+    }
+  }
   async function openHistoryGeneration(generation: Generation, useOutput: boolean) {
     const project = await api.getProject(generation.project_id); let asset: Asset | null = useOutput ? generation.output_asset : null
     if (!useOutput && generation.input_asset_id) { try { asset = await api.getAsset(generation.input_asset_id) } catch { asset = null } }
