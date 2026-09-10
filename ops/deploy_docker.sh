@@ -93,7 +93,7 @@ rm -rf "${candidate}"
 mkdir -p "${candidate}"
 tar -xzf "${archive}" -C "${candidate}"
 python3 -m compileall -q "${candidate}/backend/app" "${candidate}/backend/scripts"
-bash -n "${candidate}/ops/backup_runtime.sh" "${candidate}/ops/restore_runtime.sh" "${candidate}/ops/runtime_housekeeping.sh"
+bash -n "${candidate}/ops/backup_runtime.sh" "${candidate}/ops/restore_runtime.sh" "${candidate}/ops/runtime_housekeeping.sh" "${candidate}/ops/runtime_monitor.sh"
 python3 -m py_compile "${candidate}/ops/runtime_preflight.py"
 
 # The public development host is internet-facing; fail closed before touching code, DB, or containers.
@@ -204,9 +204,14 @@ done
 
 if command -v crontab >/dev/null 2>&1; then
   backup_cron="17 * * * * ${app_dir}/ops/backup_runtime.sh ${app_dir} ${app_dir}/backups/runtime scheduled >> ${app_dir}/backups/runtime.log 2>&1 # AuRoom runtime backup"
-  (crontab -l 2>/dev/null | grep -v 'AuRoom runtime backup' || true; echo "${backup_cron}") | crontab -
+  monitor_cron="*/15 * * * * ${app_dir}/ops/runtime_monitor.sh ${app_dir} >> ${app_dir}/runtime-monitor.log 2>&1 # AuRoom runtime monitor"
+  (
+    crontab -l 2>/dev/null | grep -v 'AuRoom runtime backup' | grep -v 'AuRoom runtime monitor' || true
+    echo "${backup_cron}"
+    echo "${monitor_cron}"
+  ) | crontab -
 else
-  echo "Warning: crontab is unavailable; scheduled runtime backups will require an external scheduler" >&2
+  echo "Warning: crontab is unavailable; runtime backup and monitoring require an external scheduler" >&2
 fi
 
 db_revision=$(compose exec -T postgres psql -U app -d app -Atc "select version_num from alembic_version" | tr -d '[:space:]')
