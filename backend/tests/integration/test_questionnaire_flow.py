@@ -1,3 +1,4 @@
+import asyncio
 import os
 from json import loads
 from uuid import UUID, uuid4
@@ -21,6 +22,7 @@ from app.domain.users.enums import AuthProvider, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
 from app.questionnaires.generation_prompt import build_questionnaire_generation_prompt  # noqa: E402
 from app.schemas.questionnaires import DesignSession  # noqa: E402
+from app.services.questionnaire_service import QuestionnaireService  # noqa: E402
 from app.services.generation_service import GENERATION_QUEUE_KEY  # noqa: E402
 from app.telegram_bot.questionnaire_notifications import (  # noqa: E402
     deliver_pending_applications_once,
@@ -214,10 +216,120 @@ async def test_questionnaire_generation_prompt_is_built_only_on_server_and_hidde
                 ):
                     assert str(question["text"]) in constraints
 
+        stored_after_queue = await client.get(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+        )
+        assert stored_after_queue.status_code == 200, stored_after_queue.text
+        assert (
+            stored_after_queue.json()["session"]["generation_ids"]["eskez-doma"]
+            == str(generation_id)
+        )
+
+        duplicate = await client.post(
+            f"/api/v1/projects/{project_id}/questionnaire-generation",
+            headers=headers,
+        )
+        assert duplicate.status_code == 422, duplicate.text
+
         fetched = await client.get(f"/api/v1/generations/{generation_id}", headers=headers)
         assert fetched.status_code == 200, fetched.text
-        assert "prompt" not in fetched.json()
+        assert fetched.json()["prompt"] == generation.prompt
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+
+
+@pytest.mark.asyncio
+async def test_questionnaire_generation_is_atomic_under_concurrent_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _, headers = await _register_admin(client)
+        catalog = (await client.get("/api/v1/questionnaires", headers=headers)).json()
+        house_definition = next(
+            item for item in catalog["questionnaires"] if item["key"] == "eskez-doma"
+        )
+        price = await client.put(
+            "/api/v1/admin/generation-prices/master_plan",
+            headers=headers,
+            json={"credits": 7, "is_active": True},
+        )
+        assert price.status_code == 200, price.text
+
+        started = await client.post(
+            "/api/v1/questionnaire-projects",
+            headers=headers,
+            json={"selected_objects": ["eskez-doma"]},
+        )
+        project_id = started.json()["id"]
+        design_session = started.json()["context"]["design_session"]
+        design_session["source_step_completed"] = True
+        saved = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=design_session,
+        )
+        assert saved.status_code == 200, saved.text
+        design_session = saved.json()["session"]
+
+        answers = _valid_object_answers(house_definition, house_accepted=False)
+        review_id = next(
+            question["id"]
+            for question in house_definition["questions"]
+            if question["phase"] == "review"
+            and question.get("options")
+            and question["options"][0].startswith("Да")
+        )
+        answers.pop(review_id)
+        design_session["answers"] = {"eskez-doma": answers}
+        design_session["current_question_id"] = None
+        saved = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=design_session,
+        )
+        assert saved.status_code == 200, saved.text
+
+        original = QuestionnaireService.build_generation_request
+        release = asyncio.Event()
+        ready = 0
+
+        async def synchronized_build(self, user, current_project_id):  # noqa: ANN001
+            nonlocal ready
+            plan = await original(self, user, current_project_id)
+            ready += 1
+            if ready == 2:
+                release.set()
+            await release.wait()
+            return plan
+
+        monkeypatch.setattr(
+            QuestionnaireService,
+            "build_generation_request",
+            synchronized_build,
+        )
+        endpoint = f"/api/v1/projects/{project_id}/questionnaire-generation"
+        first, second = await asyncio.gather(
+            client.post(endpoint, headers=headers),
+            client.post(endpoint, headers=headers),
+        )
+        statuses = sorted([first.status_code, second.status_code])
+        assert statuses == [202, 409], (first.text, second.text)
+        success = first if first.status_code == 202 else second
+        conflict = second if first.status_code == 202 else first
+        assert conflict.json()["type"] == "questionnaire_generation_state_changed"
+
+        generation_id = success.json()["id"]
+        stored = await client.get(
+            f"/api/v1/projects/{project_id}/questionnaire-session", headers=headers
+        )
+        assert stored.json()["session"]["generation_ids"]["eskez-doma"] == generation_id
+        listed = await client.get(
+            f"/api/v1/generations?project_id={project_id}", headers=headers
+        )
+        assert listed.status_code == 200, listed.text
+        assert [item["id"] for item in listed.json()["items"]] == [generation_id]
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, generation_id)
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
+from app.db.models.projects import Project
 from app.db.models.questionnaires import (
     QuestionnaireApplication,
     QuestionnaireCatalogConfig,
@@ -145,7 +146,7 @@ class QuestionnaireService:
 
     async def build_generation_request(
         self, user: User, project_id: UUID
-    ) -> GenerationCreate:
+    ) -> tuple[GenerationCreate, DesignSession, str]:
         """Build the internal generation request from the persisted questionnaire state.
 
         The client never supplies or receives the questionnaire prompt. The server owns
@@ -220,7 +221,7 @@ class QuestionnaireService:
             accepted_before=accepted_before,
             input_asset_present=input_asset_id is not None,
         )
-        return GenerationCreate(
+        payload = GenerationCreate(
             project_id=project_id,
             input_asset_id=input_asset_id,
             type=generation_type,
@@ -229,6 +230,41 @@ class QuestionnaireService:
             edit_region=edit_region if masked else None,
             protected_regions=protected_regions,
         )
+        return payload, session, object_key
+
+    @classmethod
+    def bind_generation_before_commit(
+        cls,
+        project: Project,
+        *,
+        expected_session: DesignSession,
+        object_key: str,
+        generation_id: UUID,
+    ) -> None:
+        current = cls._stored_session(project.context)
+        if current is None or current != expected_session:
+            raise AppError(
+                type="questionnaire_generation_state_changed",
+                title="Questionnaire state changed",
+                status=409,
+                detail=(
+                    "The questionnaire changed while generation was being created. "
+                    "Reload the project before retrying."
+                ),
+            )
+        if object_key in current.generation_ids:
+            raise AppError(
+                type="questionnaire_generation_exists",
+                title="Questionnaire generation already exists",
+                status=409,
+                detail="This questionnaire object already has a generation task.",
+            )
+        bound = current.model_copy(deep=True)
+        bound.generation_ids[object_key] = generation_id
+        project.context = {
+            **(project.context or {}),
+            "design_session": bound.model_dump(mode="json"),
+        }
 
     async def admin_catalog(self) -> QuestionnaireCatalogAdminResponse:
         row = await self.repository.get_catalog()

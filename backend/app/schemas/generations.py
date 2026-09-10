@@ -89,7 +89,7 @@ class GenerationCreate(BaseModel):
         return self
 
 
-class GenerationResponse(BaseModel):
+class GenerationResultResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
@@ -109,6 +109,16 @@ class GenerationResponse(BaseModel):
     updated_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
+
+
+class QuestionnaireGenerationResponse(GenerationResultResponse):
+    """Prompt-free response used by the questionnaire product flow."""
+
+
+class GenerationResponse(GenerationResultResponse):
+    """Legacy/generic generation contract; prompt remains for API compatibility."""
+
+    prompt: str
 
 
 class GenerationListResponse(BaseModel):

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,6 +8,7 @@ from app.core.cursor import decode_cursor, encode_cursor
 from app.core.errors import AppError
 from app.core.redis import redis_client
 from app.db.models.generations import Generation
+from app.db.models.projects import Project
 from app.db.models.users import User
 from app.domain.generations.enums import GenerationStatus, GenerationType
 from app.domain.users.enums import UserRole
@@ -36,7 +38,13 @@ class GenerationService:
         self.credit_service = CreditService(session)
         self.asset_service: AssetService = build_asset_service(session, settings)
 
-    async def create(self, user: User, payload: GenerationCreate) -> GenerationResponse:
+    async def create(
+        self,
+        user: User,
+        payload: GenerationCreate,
+        *,
+        before_commit: Callable[[Generation, Project], None] | None = None,
+    ) -> GenerationResponse:
         await RateLimitService(self.session).enforce("generation", str(user.id))
         if not (self.settings.nexus_api_key or "").strip():
             raise AppError(
@@ -46,7 +54,9 @@ class GenerationService:
                 detail="NexusAPI is not configured for this environment.",
             )
 
-        project = await self.projects.get_owned(payload.project_id, user.id)
+        project = await self.projects.get_owned(
+            payload.project_id, user.id, for_update=before_commit is not None
+        )
         if not project:
             raise AppError(
                 type="project_not_found",
@@ -113,6 +123,8 @@ class GenerationService:
                     reference_id=str(generation.id),
                     reason=f"AuRoom generation: {payload.type.value}",
                 )
+            if before_commit is not None:
+                before_commit(generation, project)
             await self.session.commit()
         except Exception:
             await self.session.rollback()
@@ -225,6 +237,7 @@ class GenerationService:
             output_asset=output_asset,
             type=generation.type,
             status=generation.status,
+            prompt=generation.prompt,
             credits_charged=generation.credits_charged,
             model_name=generation.model_name,
             fallback_used=generation.fallback_used,

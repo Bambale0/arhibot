@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Response, status
 
 from app.api.dependencies.auth import CurrentUser, DbSession
 from app.core.config import Settings, get_settings
-from app.schemas.generations import GenerationResponse
+from app.schemas.generations import QuestionnaireGenerationResponse
 from app.schemas.projects import ProjectResponse
 from app.schemas.questionnaires import (
     DesignSession,
@@ -88,7 +88,7 @@ async def save_questionnaire_session(
 @router.post(
     "/projects/{project_id}/questionnaire-generation",
     operation_id="createProjectQuestionnaireGeneration",
-    response_model=GenerationResponse,
+    response_model=QuestionnaireGenerationResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def create_questionnaire_generation(
@@ -96,10 +96,24 @@ async def create_questionnaire_generation(
     user: CurrentUser,
     session: DbSession,
     settings: Settings = Depends(get_settings),
-) -> GenerationResponse:
+) -> QuestionnaireGenerationResponse:
     questionnaire = QuestionnaireService(session)
-    payload = await questionnaire.build_generation_request(user, project_id)
-    return await build_generation_service(session, settings).create(user, payload)
+    payload, expected_session, object_key = await questionnaire.build_generation_request(
+        user, project_id
+    )
+
+    def bind_generation(generation, project) -> None:
+        questionnaire.bind_generation_before_commit(
+            project,
+            expected_session=expected_session,
+            object_key=object_key,
+            generation_id=generation.id,
+        )
+
+    created = await build_generation_service(session, settings).create(
+        user, payload, before_commit=bind_generation
+    )
+    return QuestionnaireGenerationResponse.model_validate(created)
 
 
 @router.post(

@@ -400,18 +400,16 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         ...next,
         generation_ids:{ ...next.generation_ids, [definition.key]:queued.id },
       }
-      let saved = await persist(queuedState)
-      if (!saved) {
-        await delay(750)
-        saved = await persist(queuedState)
-      }
-      if (!saved) throw new Error('Задача создана, но не удалось сохранить её номер. Откройте проект повторно.')
+      // The backend stores this generation ID atomically with generation creation.
+      // Mirror it locally only; a second PUT here would reopen the race this endpoint removes.
+      setSession(queuedState)
+      syncProject(queuedState)
 
       const generation = await poll(queued)
       setRenderOutput(generation.output_asset)
       const review = definition.questions.find((q) => q.phase === 'review')
       await persist({
-        ...saved,
+        ...queuedState,
         current_question_id:review?.id || null,
       })
     } catch (err) {

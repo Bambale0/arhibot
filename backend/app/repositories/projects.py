@@ -14,14 +14,17 @@ class ProjectRepository:
     def add(self, project: Project) -> None:
         self.session.add(project)
 
-    async def get_owned(self, project_id: UUID, user_id: UUID) -> Project | None:
-        result = await self.session.execute(
-            select(Project).where(
-                Project.id == project_id,
-                Project.user_id == user_id,
-                Project.deleted_at.is_(None),
-            )
+    async def get_owned(
+        self, project_id: UUID, user_id: UUID, *, for_update: bool = False
+    ) -> Project | None:
+        query = select(Project).where(
+            Project.id == project_id,
+            Project.user_id == user_id,
+            Project.deleted_at.is_(None),
         )
+        if for_update:
+            query = query.with_for_update().execution_options(populate_existing=True)
+        result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
     async def list_owned(
