@@ -123,6 +123,34 @@ jobs:
       - name: Integration tests
         run: pytest -q -m integration
 
+      - name: Controlled Redis pause/recovery probe
+        working-directory: .
+        run: |
+          set -Eeuo pipefail
+          docker run -d --name auroom-chaos-redis -p 127.0.0.1::6379 redis:8-alpine >/dev/null
+          trap 'docker rm -f auroom-chaos-redis >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 20); do
+            docker exec auroom-chaos-redis redis-cli ping >/dev/null 2>&1 && break
+            sleep 0.25
+          done
+          chaos_port=$(docker port auroom-chaos-redis 6379/tcp | sed -E 's/.*:([0-9]+)$/\1/' | head -n1)
+          [[ "${chaos_port}" =~ ^[0-9]+$ ]] || { echo "Could not resolve chaos Redis port" >&2; exit 1; }
+          export REDIS_URL="redis://127.0.0.1:${chaos_port}/0"
+          export REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS=1
+          export REDIS_SOCKET_TIMEOUT_SECONDS=1
+          python backend/scripts/redis_failure_probe.py expect-up 2
+          docker pause auroom-chaos-redis >/dev/null
+          python backend/scripts/redis_failure_probe.py expect-down 3
+          docker unpause auroom-chaos-redis >/dev/null
+          for attempt in $(seq 1 20); do
+            if python backend/scripts/redis_failure_probe.py expect-up 2; then
+              exit 0
+            fi
+            sleep 0.25
+          done
+          echo "Redis did not recover after controlled pause" >&2
+          exit 1
+
   frontend:
     name: Frontend build
     runs-on: ubuntu-latest

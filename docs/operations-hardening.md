@@ -59,7 +59,7 @@ Compose applies environment-overridable CPU, memory, PID and json-file log-rotat
 ## Still required before a production-grade promotion
 
 - encrypted off-site backups plus periodic isolated restore drills; choose the storage provider from the deployment environment and define RPO/RTO first;
-- full RED metrics/tracing and longer-term dashboards; the runtime watchdog now covers immediate operational alerts but is not a metrics backend;
+- persistent telemetry storage/dashboards and distributed tracing; the API now exposes internal Prometheus-compatible RED/runtime metrics, while the runtime watchdog covers immediate operational alerts;
 - soak/load tests that include authenticated writes and generation-provider latency, not only public read paths;
 - blue-green/canary or another zero-downtime release strategy;
-- controlled failure-injection tests at process/network level in a non-production environment.
+- broader controlled failure-injection beyond the Redis pause/recovery CI probe: PostgreSQL outage, provider 429/5xx storms and process-kill recovery in a non-production environment.

@@ -86,6 +86,10 @@ jobs:
 
           curl -fsS http://127.0.0.1:18080/health/live >/dev/null
           curl -fsS http://127.0.0.1:18080/health/ready >/dev/null
+          version_sha=$(curl -fsS http://127.0.0.1:18080/health/version | python3 -c 'import json,sys; print(json.load(sys.stdin).get("release_sha", ""))')
+          [[ "${version_sha}" == "${expected_sha}" ]] || { echo "HTTP release mismatch: ${version_sha:-missing} != ${expected_sha}" >&2; exit 1; }
+          [[ "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/metrics)" == "404" ]] || { echo "Container edge exposed /metrics" >&2; exit 1; }
+          curl -fsS http://127.0.0.1:18000/metrics | grep '^auroom_build_info' >/dev/null || { echo "Internal metrics missing build info" >&2; exit 1; }
           curl -fsS http://127.0.0.1:18080/ | grep -q '<div id="root"></div>'
 
           raw_media_status=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/uploads/auroom-private-media-probe)

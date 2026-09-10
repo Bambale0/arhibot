@@ -1,7 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from sqlalchemy import text
 
+from app.core.config import get_settings
 from app.core.errors import AppError
+from app.core.metrics import metrics_payload, refresh_runtime_metrics
 from app.core.redis import redis_client
 from app.db.session import get_engine
 from app.schemas.errors import ProblemDetails
@@ -10,6 +12,7 @@ from app.schemas.health import (
     HealthStatus,
     LiveHealthResponse,
     ReadyHealthResponse,
+    VersionHealthResponse,
 )
 
 router = APIRouter(tags=["Health"])
@@ -61,3 +64,26 @@ async def readiness() -> ReadyHealthResponse:
         )
 
     return ReadyHealthResponse(status=HealthStatus.OK, dependencies=dependencies)
+
+
+@router.get(
+    "/health/version",
+    operation_id="getVersionHealth",
+    summary="Release identity",
+    response_model=VersionHealthResponse,
+)
+async def version_health() -> VersionHealthResponse:
+    settings = get_settings()
+    return VersionHealthResponse(
+        app_version=settings.app_version,
+        release_sha=settings.release_sha,
+        environment=settings.app_env,
+    )
+
+
+@router.get("/metrics", include_in_schema=False)
+async def metrics() -> Response:
+    settings = get_settings()
+    await refresh_runtime_metrics(release_sha=settings.release_sha)
+    payload, media_type = metrics_payload()
+    return Response(content=payload, media_type=media_type)
