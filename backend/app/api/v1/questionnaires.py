@@ -75,8 +75,10 @@ async def get_questionnaire_session(
 async def save_questionnaire_session(
     project_id: UUID, payload: DesignSession, user: CurrentUser, session: DbSession
 ) -> DesignSessionResponse:
-    saved = await QuestionnaireService(session).save_session(user, project_id, payload)
-    await QuestionnaireProjectService(session).promote_if_started(user, project_id, saved)
+    lifecycle = QuestionnaireProjectService(session)
+    saved = await lifecycle.save_source_if_draft(user, project_id, payload)
+    if saved is None:
+        saved = await QuestionnaireService(session).save_session(user, project_id, payload)
     return DesignSessionResponse(session=saved)
 
 
@@ -91,7 +93,6 @@ async def submit_questionnaire_application(
     saved_session, application = await QuestionnaireService(session).submit_application(
         user, project_id, payload
     )
-    await QuestionnaireProjectService(session).promote_if_started(user, project_id, saved_session)
     return QuestionnaireApplicationSubmitResponse(
         session=saved_session,
         application=application,
