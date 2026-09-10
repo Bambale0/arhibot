@@ -26,6 +26,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await dispose_engine()
 
 
+documentation_enabled = not settings.is_production
+
 app = FastAPI(
     title=settings.app_name,
     version=__version__,
@@ -33,9 +35,9 @@ app = FastAPI(
         "Official backend contract for web, Telegram, admin, mobile, and future clients. "
         "Business logic lives behind application services rather than client-specific handlers."
     ),
-    openapi_url="/openapi.json",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    openapi_url="/openapi.json" if documentation_enabled else None,
+    docs_url="/docs" if documentation_enabled else None,
+    redoc_url="/redoc" if documentation_enabled else None,
     lifespan=lifespan,
 )
 

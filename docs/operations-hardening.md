@@ -56,6 +56,12 @@ Compose applies environment-overridable CPU, memory, PID and json-file log-rotat
 
 `ops/runtime_monitor.sh` runs from root cron every 15 minutes. It checks HTTP readiness, release SHA parity, Docker health, worker heartbeats, stale processing generations, filesystem usage and runtime-backup age. State transitions to WARN/FAIL and recovery back to OK are sent once to active Telegram admins; unchanged state is not re-sent every cycle. Thresholds are environment-overridable.
 
+## Public surface and supply chain
+
+Production disables FastAPI Swagger/ReDoc/OpenAPI HTTP routes and the public host Nginx explicitly returns 404 for docs, OpenAPI and metrics. The HTTPS ingress sets HSTS, nosniff, a strict referrer policy, a conservative permissions policy and a Telegram-compatible CSP; Nginx version disclosure is disabled. Deploy applies the canonical host Nginx config with backup, syntax validation, reload verification and rollback on failure.
+
+CI audits Python runtime dependencies with pip-audit and frontend production dependencies with npm audit, builds backend/frontend Docker images, and pins GitHub Actions plus runtime base images to immutable commit/digest identities. Dependabot watches Python, npm, Actions and Docker sources weekly. Python runtime dependencies are still declared as compatible ranges rather than a hash-locked transitive set; producing and maintaining a reproducible lock remains a further supply-chain improvement.
+
 ## Still required before a production-grade promotion
 
 - encrypted off-site backups plus periodic isolated restore drills; choose the storage provider from the deployment environment and define RPO/RTO first;

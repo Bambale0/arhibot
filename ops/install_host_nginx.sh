@@ -28,14 +28,28 @@ fi
 [[ "${EUID}" -eq 0 ]] || { echo "APPLY requires root" >&2; exit 1; }
 backup="${target}.auroom-before-$(date -u +%Y%m%dT%H%M%SZ)"
 cp -a "${target}" "${backup}"
-install -m 0644 "${source_file}" "${target}"
-if ! nginx -t; then
-  echo "Nginx validation failed; restoring ${backup}" >&2
+restore_previous() {
+  echo "Restoring previous Nginx config from ${backup}" >&2
   cp -a "${backup}" "${target}"
   nginx -t
+  systemctl reload nginx || true
+}
+
+install -m 0644 "${source_file}" "${target}"
+if ! nginx -t; then
+  echo "Nginx validation failed" >&2
+  restore_previous
   exit 1
 fi
-systemctl reload nginx
-curl -fsS --connect-timeout 3 --max-time 5 http://127.0.0.1:18080/health/live >/dev/null
+if ! systemctl reload nginx; then
+  echo "Nginx reload failed" >&2
+  restore_previous
+  exit 1
+fi
+if ! curl -fsS --connect-timeout 3 --max-time 5 http://127.0.0.1:18080/health/live >/dev/null; then
+  echo "Post-reload AuRoom health check failed" >&2
+  restore_previous
+  exit 1
+fi
 
 echo "AuRoom host Nginx config applied; backup=${backup}"

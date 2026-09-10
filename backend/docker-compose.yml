@@ -168,7 +168,7 @@ services:
   nginx:
     labels:
       com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
-    image: nginx:1.28-alpine
+    image: nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
     ports:
       - "127.0.0.1:18080:80"
     volumes:
@@ -183,7 +183,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     environment:
       POSTGRES_DB: app
       POSTGRES_USER: app
@@ -202,7 +202,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:8-alpine
+    image: redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
