@@ -7,6 +7,12 @@ from time import monotonic
 import httpx
 
 from app.core.config import Settings
+from app.core.resilience import (
+    CircuitOpenError,
+    RetryPolicy,
+    get_circuit_breaker,
+    request_with_resilience,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +35,16 @@ class NexusImageProvider:
         self.base_url = settings.nexus_base_url.rstrip("/")
         self.timeout_seconds = settings.nexus_task_timeout_seconds
         self.poll_interval_seconds = settings.nexus_poll_interval_seconds
+        self.breaker = get_circuit_breaker(
+            'nexus',
+            failure_threshold=settings.nexus_circuit_failure_threshold,
+            recovery_seconds=settings.nexus_circuit_recovery_seconds,
+        )
+        self.retry_policy = RetryPolicy(max_attempts=settings.nexus_retry_attempts)
+        self.http_timeout = httpx.Timeout(
+            settings.nexus_http_read_timeout_seconds,
+            connect=settings.nexus_http_connect_timeout_seconds,
+        )
         self.headers = {
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
@@ -43,6 +59,7 @@ class NexusImageProvider:
         model_params: dict[str, object] | None,
         idempotency_key: str,
     ) -> NexusImageResult:
+        deadline = monotonic() + self.timeout_seconds
         params = self._build_params(
             model_name=model_name,
             prompt=prompt,
@@ -51,14 +68,23 @@ class NexusImageProvider:
         )
 
         headers = {**self.headers, "Idempotency-Key": idempotency_key}
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with httpx.AsyncClient(timeout=self.http_timeout) as client:
             try:
-                response = await client.post(
-                    f"{self.base_url}/generate",
-                    headers=headers,
-                    json={"params": params},
+                response = await request_with_resilience(
+                    lambda: client.post(
+                        f"{self.base_url}/generate",
+                        headers=headers,
+                        json={"params": params},
+                    ),
+                    dependency="nexus",
+                    operation="create_generation",
+                    breaker=self.breaker,
+                    policy=self.retry_policy,
+                    deadline_monotonic=deadline,
                 )
-            except httpx.HTTPError as exc:
+            except CircuitOpenError as exc:
+                raise NexusProviderError("Nexus is temporarily unavailable", retryable=False) from exc
+            except (httpx.HTTPError, TimeoutError) as exc:
                 raise NexusProviderError("Nexus generation request failed", retryable=True) from exc
 
             if response.status_code >= 400:
@@ -86,15 +112,23 @@ class NexusImageProvider:
                     retryable=True,
                 )
 
-            deadline = monotonic() + self.timeout_seconds
             while monotonic() < deadline:
                 await asyncio.sleep(self.poll_interval_seconds)
                 try:
-                    task_response = await client.get(
-                        f"{self.base_url}/tasks/{task_id}",
-                        headers=self.headers,
+                    task_response = await request_with_resilience(
+                        lambda: client.get(
+                            f"{self.base_url}/tasks/{task_id}",
+                            headers=self.headers,
+                        ),
+                        dependency="nexus",
+                        operation="poll_generation",
+                        breaker=self.breaker,
+                        policy=self.retry_policy,
+                        deadline_monotonic=deadline,
                     )
-                except httpx.HTTPError as exc:
+                except CircuitOpenError as exc:
+                    raise NexusProviderError("Nexus is temporarily unavailable", retryable=False) from exc
+                except (httpx.HTTPError, TimeoutError) as exc:
                     raise NexusProviderError("Nexus polling failed", retryable=True) from exc
 
                 if task_response.status_code >= 400:

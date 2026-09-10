@@ -17,7 +17,12 @@ from app.db.session import get_session_factory  # noqa: E402
 from app.domain.users.enums import UserRole  # noqa: E402
 from app.main import app  # noqa: E402
 from app.providers.nexus import NexusImageProvider, NexusProviderError  # noqa: E402
-from app.providers.yookassa import YooKassaPayment, YooKassaProvider, YooKassaRefund  # noqa: E402
+from app.providers.yookassa import (  # noqa: E402
+    YooKassaError,
+    YooKassaPayment,
+    YooKassaProvider,
+    YooKassaRefund,
+)
 from app.services.generation_service import GENERATION_QUEUE_KEY  # noqa: E402
 from app.workers.generation_worker import process_generation  # noqa: E402
 
@@ -300,8 +305,28 @@ async def test_yookassa_payment_webhook_credits_once_and_full_refund(monkeypatch
         assert me_paid.json()["credits_balance"] == 7
 
         remote_refund_id = f"refund-{uuid4().hex}"
+        refund_attempt_keys: list[str] = []
+
+        async def uncertain_refund(self, *, payment_id, amount, currency, description, idempotence_key):  # noqa: ANN001, ARG001
+            refund_attempt_keys.append(idempotence_key)
+            raise YooKassaError("refund response lost", ambiguous=True)
+
+        monkeypatch.setattr(YooKassaProvider, "create_refund", uncertain_refund)
+        uncertain = await client.post(
+            f"/api/v1/admin/payments/{local_payment_id}/refund",
+            headers=headers,
+        )
+        assert uncertain.status_code == 503, uncertain.text
+        assert uncertain.json()["type"] == "refund_provider_uncertain"
+
+        me_reserved = await client.get("/api/v1/me", headers=headers)
+        assert me_reserved.json()["credits_balance"] == 0
+        payments = await client.get("/api/v1/admin/payments", headers=headers)
+        current = next(item for item in payments.json() if item["id"] == local_payment_id)
+        assert current["refund_status"] == "uncertain"
 
         async def create_refund(self, *, payment_id, amount, currency, description, idempotence_key):  # noqa: ANN001, ARG001
+            refund_attempt_keys.append(idempotence_key)
             return YooKassaRefund(
                 id=remote_refund_id,
                 payment_id=remote_payment_id,
@@ -318,6 +343,8 @@ async def test_yookassa_payment_webhook_credits_once_and_full_refund(monkeypatch
         assert refunded.status_code == 200, refunded.text
         assert refunded.json()["status"] == "refunded"
         assert refunded.json()["refund_status"] == "succeeded"
+        assert len(refund_attempt_keys) == 2
+        assert refund_attempt_keys[0] == refund_attempt_keys[1]
 
         me_refunded = await client.get("/api/v1/me", headers=headers)
         assert me_refunded.json()["credits_balance"] == 0
@@ -330,6 +357,7 @@ async def test_yookassa_payment_webhook_credits_once_and_full_refund(monkeypatch
         movements = [(item["kind"], item["amount"]) for item in ledger.json()]
         assert movements.count(("payment_credit", 7)) == 1
         assert movements.count(("payment_refund_debit", -7)) == 1
+        assert movements.count(("payment_refund_rollback", 7)) == 0
 
 
 @pytest.mark.asyncio

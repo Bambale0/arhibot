@@ -104,6 +104,8 @@ class AdminBillingService:
         payment = await self.repository.get_payment(payment_id) or payment
         if payment.refund_id:
             await billing.sync_refund(payment)
+        elif payment.refund_status == "uncertain" and payment.refund_idempotence_key:
+            await billing.request_full_refund(payment.id)
         payment = await self.repository.get_payment(payment_id) or payment
         self.audit.add_audit(
             actor_user_id=actor.id,

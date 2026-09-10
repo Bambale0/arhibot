@@ -1,16 +1,26 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
+from time import monotonic
 from typing import Any
 
 import httpx
 
 from app.core.config import Settings
+from app.core.resilience import (
+    CircuitOpenError,
+    RetryPolicy,
+    get_circuit_breaker,
+    request_with_resilience,
+)
 
 
 class YooKassaError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, ambiguous: bool = False) -> None:
+        super().__init__(message)
+        self.ambiguous = ambiguous
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +50,17 @@ class YooKassaProvider:
             raise YooKassaError("YooKassa is not configured")
         self.base_url = settings.yookassa_base_url.rstrip("/")
         self.auth = httpx.BasicAuth(shop_id, secret_key)
+        self.breaker = get_circuit_breaker(
+            "yookassa",
+            failure_threshold=settings.yookassa_circuit_failure_threshold,
+            recovery_seconds=settings.yookassa_circuit_recovery_seconds,
+        )
+        self.retry_policy = RetryPolicy(max_attempts=settings.yookassa_retry_attempts)
+        self.request_deadline_seconds = settings.yookassa_request_deadline_seconds
+        self.http_timeout = httpx.Timeout(
+            settings.yookassa_http_read_timeout_seconds,
+            connect=settings.yookassa_http_connect_timeout_seconds,
+        )
 
     async def create_payment(
         self,
@@ -61,17 +82,21 @@ class YooKassaProvider:
         }
         if receipt is not None:
             payload["receipt"] = receipt
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), auth=self.auth) as client:
-            response = await client.post(
+        response = await self._request(
+            "create payment",
+            lambda client: client.post(
                 f"{self.base_url}/payments",
                 headers={"Idempotence-Key": idempotence_key},
                 json=payload,
-            )
+            ),
+            mutation=True,
+        )
         return self._parse_payment(response, operation="create payment")
 
     async def get_payment(self, payment_id: str) -> YooKassaPayment:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0), auth=self.auth) as client:
-            response = await client.get(f"{self.base_url}/payments/{payment_id}")
+        response = await self._request(
+            "get payment", lambda client: client.get(f"{self.base_url}/payments/{payment_id}")
+        )
         return self._parse_payment(response, operation="get payment")
 
     async def create_refund(
@@ -88,18 +113,54 @@ class YooKassaProvider:
             "amount": {"value": f"{amount:.2f}", "currency": currency},
             "description": description[:250],
         }
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), auth=self.auth) as client:
-            response = await client.post(
+        response = await self._request(
+            "create refund",
+            lambda client: client.post(
                 f"{self.base_url}/refunds",
                 headers={"Idempotence-Key": idempotence_key},
                 json=payload,
-            )
+            ),
+            mutation=True,
+        )
         return self._parse_refund(response, operation="create refund")
 
     async def get_refund(self, refund_id: str) -> YooKassaRefund:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0), auth=self.auth) as client:
-            response = await client.get(f"{self.base_url}/refunds/{refund_id}")
+        response = await self._request(
+            "get refund", lambda client: client.get(f"{self.base_url}/refunds/{refund_id}")
+        )
         return self._parse_refund(response, operation="get refund")
+
+
+    async def _request(
+        self,
+        operation: str,
+        request_factory: Callable[[httpx.AsyncClient], Awaitable[httpx.Response]],
+        *,
+        mutation: bool = False,
+    ) -> httpx.Response:
+        async with httpx.AsyncClient(timeout=self.http_timeout, auth=self.auth) as client:
+            try:
+                response = await request_with_resilience(
+                    lambda: request_factory(client),
+                    dependency="yookassa",
+                    operation=operation.replace(" ", "_"),
+                    breaker=self.breaker,
+                    policy=self.retry_policy,
+                    deadline_monotonic=monotonic() + self.request_deadline_seconds,
+                )
+                if mutation and response.status_code in {408, 500, 502, 503, 504}:
+                    raise YooKassaError(
+                        f"YooKassa {operation} outcome is uncertain",
+                        ambiguous=True,
+                    )
+                return response
+            except CircuitOpenError as exc:
+                raise YooKassaError("YooKassa is temporarily unavailable") from exc
+            except (httpx.HTTPError, TimeoutError) as exc:
+                raise YooKassaError(
+                    f"YooKassa {operation} request failed",
+                    ambiguous=mutation,
+                ) from exc
 
     @staticmethod
     def _error_message(response: httpx.Response) -> str:
@@ -116,7 +177,10 @@ class YooKassaProvider:
                 f"YooKassa {operation} failed ({response.status_code}): {cls._error_message(response)}"
             )
 
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise YooKassaError(f"YooKassa {operation} returned invalid JSON") from exc
         amount = payload.get("amount") or {}
         confirmation = payload.get("confirmation") or {}
         metadata = payload.get("metadata") or {}
@@ -143,7 +207,10 @@ class YooKassaProvider:
             raise YooKassaError(
                 f"YooKassa {operation} failed ({response.status_code}): {cls._error_message(response)}"
             )
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise YooKassaError(f"YooKassa {operation} returned invalid JSON") from exc
         amount = payload.get("amount") or {}
         refund_id = str(payload.get("id") or "").strip()
         payment_id = str(payload.get("payment_id") or "").strip()

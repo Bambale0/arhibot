@@ -18,7 +18,11 @@ from app.providers.yookassa import (
     YooKassaRefund,
 )
 from app.repositories.billing import BillingRepository
-from app.schemas.billing import BillingPackageResponse, BillingPaymentResponse, BillingSummaryResponse
+from app.schemas.billing import (
+    BillingPackageResponse,
+    BillingPaymentResponse,
+    BillingSummaryResponse,
+)
 from app.services.credit_service import CreditService
 
 
@@ -319,7 +323,13 @@ class BillingService:
             await self.sync_refund(payment)
             current = await self.repository.get_payment(payment.id) or payment
             return self._payment_response(current)
-        if payment.status != "succeeded" or not payment.yookassa_payment_id:
+
+        resuming_uncertain = bool(
+            payment.refund_id is None
+            and payment.refund_idempotence_key
+            and payment.refund_status in {"creating", "uncertain"}
+        )
+        if not resuming_uncertain and (payment.status != "succeeded" or not payment.yookassa_payment_id):
             raise AppError(
                 type="payment_not_refundable",
                 title="Payment cannot be refunded",
@@ -327,20 +337,27 @@ class BillingService:
                 detail="Only a successful YooKassa payment can be refunded.",
             )
 
-        attempt_key = str(uuid4())
-        await self.credit_service.apply(
-            user_id=payment.user_id,
-            amount=-payment.credits,
-            kind="payment_refund_debit",
-            idempotency_key=f"payment:{payment.id}:refund-debit:{attempt_key}",
-            reference_type="billing_payment",
-            reference_id=str(payment.id),
-            reason="Full YooKassa refund",
-        )
-        payment.refund_idempotence_key = attempt_key
-        payment.refund_status = "creating"
-        payment.provider_error = None
-        await self.session.commit()
+        if resuming_uncertain:
+            attempt_key = payment.refund_idempotence_key
+            assert attempt_key is not None
+            payment.refund_status = "creating"
+            payment.provider_error = None
+            await self.session.commit()
+        else:
+            attempt_key = str(uuid4())
+            await self.credit_service.apply(
+                user_id=payment.user_id,
+                amount=-payment.credits,
+                kind="payment_refund_debit",
+                idempotency_key=f"payment:{payment.id}:refund-debit:{attempt_key}",
+                reference_type="billing_payment",
+                reference_id=str(payment.id),
+                reason="Full YooKassa refund",
+            )
+            payment.refund_idempotence_key = attempt_key
+            payment.refund_status = "creating"
+            payment.provider_error = None
+            await self.session.commit()
 
         try:
             remote = await YooKassaProvider(self.settings).create_refund(
@@ -352,6 +369,20 @@ class BillingService:
             )
         except YooKassaError as exc:
             payment = await self.repository.get_payment_for_update(payment.id) or payment
+            if exc.ambiguous or resuming_uncertain:
+                payment.refund_status = "uncertain"
+                payment.provider_error = str(exc)[:1000]
+                await self.session.commit()
+                raise AppError(
+                    type="refund_provider_uncertain",
+                    title="Refund outcome is being reconciled",
+                    status=503,
+                    detail=(
+                        "YooKassa did not confirm the refund outcome. Reserved credits remain "
+                        "locked; retry reconciliation with the same request."
+                    ),
+                ) from exc
+
             await self.credit_service.apply(
                 user_id=payment.user_id,
                 amount=payment.credits,
@@ -368,7 +399,7 @@ class BillingService:
                 type="refund_provider_unavailable",
                 title="Refund provider unavailable",
                 status=502,
-                detail="YooKassa could not create the refund. Reserved credits were returned.",
+                detail="YooKassa rejected the refund request. Reserved credits were returned.",
             ) from exc
 
         await self.apply_refund_remote(remote, expected_local_id=payment.id)

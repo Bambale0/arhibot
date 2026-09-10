@@ -43,12 +43,23 @@ class Settings(BaseSettings):
     nexus_base_url: str = "https://nexusapi.dev"
     nexus_task_timeout_seconds: int = 180
     nexus_poll_interval_seconds: float = 2.0
+    nexus_http_connect_timeout_seconds: float = 5.0
+    nexus_http_read_timeout_seconds: float = 30.0
+    nexus_retry_attempts: int = 3
+    nexus_circuit_failure_threshold: int = 5
+    nexus_circuit_recovery_seconds: float = 30.0
 
     # YooKassa credentials/infrastructure only. Tariffs live in DB/admin.
     yookassa_shop_id: str | None = None
     yookassa_secret_key: str | None = None
     yookassa_base_url: str = "https://api.yookassa.ru/v3"
     yookassa_return_url: str | None = None
+    yookassa_http_connect_timeout_seconds: float = 5.0
+    yookassa_http_read_timeout_seconds: float = 20.0
+    yookassa_request_deadline_seconds: float = 30.0
+    yookassa_retry_attempts: int = 3
+    yookassa_circuit_failure_threshold: int = 5
+    yookassa_circuit_recovery_seconds: float = 30.0
 
     media_root: str = "/data/media"
     media_public_base_url: str = "http://localhost:8000"
@@ -88,6 +99,20 @@ class Settings(BaseSettings):
             raise ValueError("NEXUS_TASK_TIMEOUT_SECONDS must be at least 30")
         if self.nexus_poll_interval_seconds < 0.5:
             raise ValueError("NEXUS_POLL_INTERVAL_SECONDS must be at least 0.5")
+        if self.nexus_http_connect_timeout_seconds <= 0 or self.nexus_http_read_timeout_seconds <= 0:
+            raise ValueError("Nexus HTTP timeouts must be greater than zero")
+        if not 1 <= self.nexus_retry_attempts <= 5:
+            raise ValueError("NEXUS_RETRY_ATTEMPTS must be between 1 and 5")
+        if self.nexus_circuit_failure_threshold < 1 or self.nexus_circuit_recovery_seconds <= 0:
+            raise ValueError("Nexus circuit breaker settings must be positive")
+        if self.yookassa_http_connect_timeout_seconds <= 0 or self.yookassa_http_read_timeout_seconds <= 0:
+            raise ValueError("YooKassa HTTP timeouts must be greater than zero")
+        if self.yookassa_request_deadline_seconds <= 0:
+            raise ValueError("YOOKASSA_REQUEST_DEADLINE_SECONDS must be greater than zero")
+        if not 1 <= self.yookassa_retry_attempts <= 5:
+            raise ValueError("YOOKASSA_RETRY_ATTEMPTS must be between 1 and 5")
+        if self.yookassa_circuit_failure_threshold < 1 or self.yookassa_circuit_recovery_seconds <= 0:
+            raise ValueError("YooKassa circuit breaker settings must be positive")
         if self.is_production:
             insecure = {
                 "local-only-change-me-access-secret-32-bytes",
