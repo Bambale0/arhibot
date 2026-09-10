@@ -20,7 +20,8 @@ class QuestionnaireProjectService:
     """Owns the lifecycle of projects created by the questionnaire entry flow.
 
     A questionnaire project is intentionally hidden while it is still on the one-time
-    source step. It becomes a normal project as soon as that source choice is saved.
+    source step. It becomes a normal project in the same transaction that saves that
+    source choice, so no half-started hidden project can be left by a partial request.
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -113,23 +114,59 @@ class QuestionnaireProjectService:
         await self.session.refresh(project)
         return ProjectService.to_response(project)
 
-    async def promote_if_started(
+    async def save_source_if_draft(
         self,
         user: User,
         project_id: UUID,
-        design_session: DesignSession,
-    ) -> None:
-        if not design_session.source_step_completed:
-            return
+        payload: DesignSession,
+    ) -> DesignSession | None:
         project = await ProjectService(self.projects).get_owned_model(user, project_id)
         if (project.context or {}).get("questionnaire_draft") is not True:
-            return
+            return None
+
+        raw = (project.context or {}).get("design_session")
+        previous = DesignSession.model_validate(raw) if raw else None
+        if previous is None or not self._is_pristine(previous):
+            raise self._invalid("The questionnaire draft is not in its initial source-step state.")
+
+        catalog = await QuestionnaireService(self.session).catalog()
+        if payload.catalog_version != catalog["version"]:
+            raise AppError(
+                type="questionnaire_catalog_version_mismatch",
+                title="Questionnaire catalog changed",
+                status=409,
+                detail="Reload the questionnaire before continuing.",
+            )
+        if payload.session_id != previous.session_id:
+            raise self._invalid("The questionnaire draft cannot change its session id.")
+        if not payload.source_step_completed:
+            raise self._invalid("Choose a site photo or continue without one before starting.")
+        if payload.scene_asset_id != payload.source_asset_id:
+            raise self._invalid("The initial scene must equal the one-time site source.")
+
+        expected = previous.model_copy(
+            update={
+                "source_step_completed": True,
+                "source_asset_id": payload.source_asset_id,
+                "scene_asset_id": payload.scene_asset_id,
+            }
+        )
+        if payload != expected:
+            raise self._invalid("Only the one-time source choice may change while the project is a draft.")
+
+        if payload.source_asset_id is not None:
+            asset = await self.assets.get_owned(payload.source_asset_id, user.id)
+            if asset is None or asset.project_id != project.id:
+                raise self._invalid("The site source asset must belong to the questionnaire project.")
+
         project.context = {
             **(project.context or {}),
             "questionnaire_draft": False,
-            "design_session": design_session.model_dump(mode="json"),
+            "design_session": payload.model_dump(mode="json"),
         }
         await self.session.commit()
+        await self.session.refresh(project)
+        return payload
 
     async def _discard_model(self, project: Project, deleted_at: datetime) -> None:
         for asset in await self.assets.list_active_for_project(project.id):
@@ -150,10 +187,11 @@ class QuestionnaireProjectService:
 
     async def cleanup_expired_drafts(self, *, cutoff: datetime, limit: int = 100) -> int:
         removed = 0
+        deleted_at = datetime.now(UTC)
         for project in await self.projects.list_expired_questionnaire_drafts(cutoff=cutoff, limit=limit):
             if not self.is_discardable_context(project.context):
                 continue
-            await self._discard_model(project, datetime.now(UTC))
+            await self._discard_model(project, deleted_at)
             removed += 1
         if removed:
             await self.session.commit()
