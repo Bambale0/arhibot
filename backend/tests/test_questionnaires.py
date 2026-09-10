@@ -34,6 +34,14 @@ def test_questionnaire_catalog_matches_source_bundle() -> None:
     assert catalog.application_key == "zayavka"
 
 
+def test_legacy_catalog_builder_preserves_historical_copy_for_revision_archive() -> None:
+    legacy = build_catalog(user_facing=False, version="2026-09-09.2")
+    house = next(item for item in legacy["questionnaires"] if item["key"] == "eskez-doma")
+    garage_place = next(item for item in house["questions"] if item["id"] == "6а")
+    assert legacy["version"] == "2026-09-09.2"
+    assert garage_place["text"] == "Где гараж?  (если «да»)"
+
+
 def test_house_questionnaire_keeps_exact_branches_defaults_and_limits() -> None:
     style = _question("eskez-doma", "1")
     garage = _question("eskez-doma", "6")

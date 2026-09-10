@@ -127,7 +127,9 @@ def user_question_title(title: str) -> str:
     return re.sub(r"\s*\(\s*если\b[^)]*\)\s*$", "", title, flags=re.IGNORECASE).strip()
 
 
-def _parse_question(qid: str, title: str, block: list[str]) -> dict[str, Any]:
+def _parse_question(
+    qid: str, title: str, block: list[str], *, user_facing: bool = True
+) -> dict[str, Any]:
     options: list[str] = []
     for line in block:
         match = re.match(r"^\s*\d+\.\s+(.+?\S)\s*$", line)
@@ -156,7 +158,7 @@ def _parse_question(qid: str, title: str, block: list[str]) -> dict[str, Any]:
         kind = "multi"
     return {
         "id": qid,
-        "text": user_question_title(title),
+        "text": user_question_title(title) if user_facing else title.strip(),
         "kind": kind,
         "options": options,
         "required": any("Обязательн" in line for line in block),
@@ -170,11 +172,15 @@ def _parse_question(qid: str, title: str, block: list[str]) -> dict[str, Any]:
         "edit_targets": {},
     }
 
-def _parse_questions(key: str, text: str) -> list[dict[str, Any]]:
+def _parse_questions(
+    key: str, text: str, *, user_facing: bool = True
+) -> list[dict[str, Any]]:
     lines = text.splitlines()
     headers = _question_headers(text)
     questions = [
-        _parse_question(qid, title, _question_block(lines, headers, pos))
+        _parse_question(
+            qid, title, _question_block(lines, headers, pos), user_facing=user_facing
+        )
         for pos, (_, qid, title) in enumerate(headers)
     ]
     # The house area is defined by hints instead of numbered choices.
@@ -365,8 +371,8 @@ def _apply_common_overrides(key: str, questions: list[dict[str, Any]]) -> None:
     if key == "vorota" and "2" in by_id:
         by_id["2"]["condition"] = {"question_id": "1", "operator": "neq", "value": "Без ворот, только калитка"}
 
-def _application_questions(text: str) -> list[dict[str, Any]]:
-    questions = _parse_questions("zayavka", text)
+def _application_questions(text: str, *, user_facing: bool = True) -> list[dict[str, Any]]:
+    questions = _parse_questions("zayavka", text, user_facing=user_facing)
     by_id = {q["id"]: q for q in questions}
     for qid in ("20", "21", "22", "23", "24", "25"):
         by_id[qid]["required"] = True
@@ -377,14 +383,16 @@ def _application_questions(text: str) -> list[dict[str, Any]]:
     by_id["25"]["options"] = []
     return questions
 
-@lru_cache(maxsize=1)
-def build_catalog() -> dict[str, Any]:
+@lru_cache(maxsize=4)
+def build_catalog(
+    *, user_facing: bool = True, version: str = CATALOG_VERSION
+) -> dict[str, Any]:
     sources = _load_sources()
     definitions: list[dict[str, Any]] = []
     for _, _, keys in SECTION_SPECS:
         for order, key in enumerate(keys):
             source = sources[key]
-            questions = _parse_questions(key, source["text"])
+            questions = _parse_questions(key, source["text"], user_facing=user_facing)
             _apply_common_overrides(key, questions)
             definitions.append({
                 "key": key,
@@ -404,7 +412,7 @@ def build_catalog() -> dict[str, Any]:
         "title": OBJECT_TITLES["zayavka"],
         "source_file": app_source["filename"],
         "order": 999,
-        "questions": _application_questions(app_source["text"]),
+        "questions": _application_questions(app_source["text"], user_facing=user_facing),
         "scene_policy": None,
     })
     sections = [
@@ -416,7 +424,7 @@ def build_catalog() -> dict[str, Any]:
         for section_key, title, object_keys in SECTION_SPECS
     ]
     return {
-        "version": CATALOG_VERSION,
+        "version": version,
         "sections": sections,
         "questionnaires": definitions,
         "application_key": "zayavka",
