@@ -20,8 +20,9 @@ let project:any
 let generationCount=0
 let publication:any=null
 let savedIdea=false
+let hideIdeaFromFeed=false
 function resetState(){
-  generationCount=0; publication=null; savedIdea=false
+  generationCount=0; publication=null; savedIdea=false; hideIdeaFromFeed=false
   session={session_id:'77777777-7777-4777-8777-777777777777',catalog_version:catalog.version,selected_objects:['lavochka'],current_object:null,current_question_id:null,source_step_completed:false,source_asset_id:null,scene_asset_id:null,answers:{},accepted_objects:[],generation_ids:{},edit_question_ids:[],review_comments:{},edit_regions:{},lock_regions:{},region_mode:null,region_object:null,application_submitted:false}
   project={id:projectId,name:'Лавочка',description:null,status:'active',context:{questionnaire_draft:false,design_session:session},created_at:now,updated_at:now}
 }
@@ -42,7 +43,8 @@ test.beforeEach(async ({page})=>{
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='PUT') {session=JSON.parse(req.postData()||'{}');project={...project,context:{...project.context,design_session:session}};return json(route,{session})}
     if(path.endsWith(`/projects/${projectId}/questionnaire-generation`)&&method==='POST'){const i=generationCount++;return json(route,generation(i,'queued'),202)}
     for(let i=0;i<generationIds.length;i++) if(path.endsWith(`/projects/${projectId}/questionnaire-generation/${generationIds[i]}`)&&method==='GET') return json(route,generation(i))
-    if(path.endsWith('/ideas')&&method==='GET') return json(route,[{id:ideaId,title:'Лавочка',category:'Мебель и площадки',generation_type:'master_plan',image_url:asset(1).url,objects:[],selected_objects:['lavochka'],published_at:now,is_saved:savedIdea}])
+    if(path.endsWith('/ideas')&&method==='GET') return json(route,hideIdeaFromFeed?[]:[{id:ideaId,title:'Лавочка',category:'Мебель и площадки',generation_type:'master_plan',image_url:asset(1).url,objects:[],selected_objects:['lavochka'],published_at:now,is_saved:savedIdea}])
+    if(path.endsWith(`/ideas/${ideaId}`)&&method==='GET') return json(route,{id:ideaId,title:'Лавочка',category:'Мебель и площадки',generation_type:'master_plan',image_url:asset(1).url,objects:[],selected_objects:['lavochka'],published_at:now,is_saved:savedIdea})
     if(path.endsWith(`/ideas/${ideaId}/save`)&&method==='PUT'){savedIdea=true;return json(route,{idea_id:ideaId,is_saved:true})}
     if(path.endsWith(`/ideas/${ideaId}/save`)&&method==='DELETE'){savedIdea=false;return json(route,{idea_id:ideaId,is_saved:false})}
     if(path.endsWith(`/ideas/mine/${generationIds[1]}`)&&method==='GET') return json(route,publication)
@@ -79,6 +81,7 @@ test('canonical create flow supports refinement and own unpublish without techni
 
 
 test('shared idea deep-link opens exact work and saves on the server',async({page})=>{
+  hideIdeaFromFeed=true
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'share', {
       configurable:true,
