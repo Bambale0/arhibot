@@ -355,7 +355,7 @@ class QuestionnaireService:
         storage = LocalMediaStorage(get_settings())
 
         catalog_row = await self.repository.get_catalog()
-        versions = {item.catalog_version for item, _, _, _ in rows}
+        versions = {row[0].catalog_version for row in rows}
         missing_versions = {
             version
             for version in versions
