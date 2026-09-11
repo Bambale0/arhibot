@@ -175,6 +175,20 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
         assert "model_url" not in idea
         assert "media" not in idea
 
+        saved = await client.put(
+            f"/api/v1/ideas/{idea['id']}/saved", headers=user_headers
+        )
+        assert saved.status_code == 204, saved.text
+        saved_ids = await client.get("/api/v1/ideas/saved", headers=user_headers)
+        assert saved_ids.status_code == 200, saved_ids.text
+        assert idea["id"] in saved_ids.json()
+        unsaved = await client.delete(
+            f"/api/v1/ideas/{idea['id']}/saved", headers=user_headers
+        )
+        assert unsaved.status_code == 204, unsaved.text
+        saved_after = await client.get("/api/v1/ideas/saved", headers=user_headers)
+        assert idea["id"] not in saved_after.json()
+
         owner_hidden = await client.delete(
             f"/api/v1/ideas/mine/{generation_id}", headers=user_headers
         )
