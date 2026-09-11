@@ -20,7 +20,7 @@ def _question(key: str, question_id: str) -> dict:
 def test_questionnaire_catalog_matches_source_bundle() -> None:
     catalog = QuestionnaireCatalogResponse.model_validate(build_catalog())
     sources = _load_sources()
-    assert catalog.version == "2026-09-10.1"
+    assert catalog.version == "2026-09-11.1"
     assert CATALOG_VERSION == catalog.version
     assert len(catalog.sections) == 6
     assert len(catalog.questionnaires) == 27
@@ -81,6 +81,8 @@ def test_each_object_ends_with_review_and_application_is_separate() -> None:
         assert reviews[0]["options"][1].startswith("Нет")
     application = _definition("zayavka")
     assert [q["id"] for q in application["questions"]] == ["20", "21", "22", "23", "24", "25"]
+    assert _question("zayavka", "24")["text"] == "Оставьте телефон или @username Telegram"
+    assert _question("zayavka", "24")["field_hint"] == "Телефон или @username Telegram"
     assert _question("zayavka", "25")["kind"] == "consent"
 
 
