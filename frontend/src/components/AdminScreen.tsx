@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import * as api from '../api'
+import type { QuestionnaireApplication } from '../questionnaireTypes'
 import type {
   AdminAudit,
   AdminBillingSettings,
@@ -27,7 +28,7 @@ const modes: { id: GenerationMode; label: string }[] = [
   { id: 'interior', label: 'Интерьер' },
 ]
 
-type Tab = 'tariffs' | 'ideas' | 'generation' | 'users' | 'payments' | 'broadcasts' | 'telegram' | 'system' | 'audit'
+type Tab = 'tariffs' | 'ideas' | 'applications' | 'generation' | 'users' | 'payments' | 'broadcasts' | 'telegram' | 'system' | 'audit'
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : 'Не удалось выполнить операцию'
@@ -52,6 +53,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   const [tariffs, setTariffs] = useState<AdminTariff[]>([])
   const [billingSettings, setBillingSettings] = useState<AdminBillingSettings | null>(null)
   const [ideas, setIdeas] = useState<AdminIdea[]>([])
+  const [applications, setApplications] = useState<QuestionnaireApplication[]>([])
   const [generation, setGeneration] = useState<AdminGenerationSettings | null>(null)
   const [prices, setPrices] = useState<AdminGenerationPrice[]>([])
   const [prompts, setPrompts] = useState<AdminPrompt[]>([])
@@ -68,11 +70,12 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   async function reload() {
     setError(null)
     try {
-      const [o, t, bs, i, g, gp, p, u, tx, pay, b, tg, ops, a] = await Promise.all([
+      const [o, t, bs, i, apps, g, gp, p, u, tx, pay, b, tg, ops, a] = await Promise.all([
         api.adminOverview(),
         api.adminListTariffs(),
         api.adminGetBillingSettings(),
         api.adminListIdeas(),
+        api.adminListQuestionnaireApplications(),
         api.adminGetGenerationSettings(),
         api.adminListGenerationPrices(),
         api.adminListPrompts(),
@@ -88,6 +91,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       setTariffs(t)
       setBillingSettings(bs)
       setIdeas(i)
+      setApplications(apps)
       setGeneration(g)
       setPrices(gp)
       setPrompts(p)
@@ -117,7 +121,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       {error && <div className="banner-error">{error}<button onClick={() => setError(null)}>Закрыть</button></div>}
       <nav className="admin-tabs">
         {([
-          ['tariffs','Тарифы и касса'], ['ideas','Идеи'], ['generation','AI и стоимость'], ['users','Пользователи и кредиты'],
+          ['tariffs','Тарифы и касса'], ['ideas','Идеи'], ['applications','Заявки'], ['generation','AI и стоимость'], ['users','Пользователи и кредиты'],
           ['payments','Платежи'], ['broadcasts','Рассылки'], ['telegram','Telegram'], ['system','Система'], ['audit','Аудит'],
         ] as [Tab,string][]).map(([id,label]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>)}
       </nav>
@@ -125,6 +129,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
         <div className="admin-content">
           {tab === 'tariffs' && billingSettings && <TariffsPanel items={tariffs} onItems={setTariffs} billingSettings={billingSettings} onBillingSettings={setBillingSettings} onError={setError} />}
           {tab === 'ideas' && <IdeasPanel items={ideas} onItems={setIdeas} onError={setError} />}
+          {tab === 'applications' && <ApplicationsPanel items={applications} />}
           {tab === 'generation' && generation && <GenerationPanel settings={generation} prices={prices} prompts={prompts} onSettings={setGeneration} onPrices={setPrices} onPrompts={setPrompts} onError={setError} />}
           {tab === 'users' && <UsersPanel items={users} transactions={transactions} onItems={setUsers} onTransactions={setTransactions} onError={setError} />}
           {tab === 'payments' && <PaymentsPanel items={payments} onItems={setPayments} onError={setError} />}
@@ -136,6 +141,52 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       )}
     </main>
   )
+}
+
+function applicationAnswer(value: unknown) {
+  if (Array.isArray(value)) return value.join(', ')
+  if (value === true) return 'Да'
+  if (value === false) return 'Нет'
+  if (value == null || value === '') return '—'
+  return String(value)
+}
+
+function ApplicationsPanel({ items }: { items: QuestionnaireApplication[] }) {
+  const [expanded, setExpanded] = useState<string | null>(items[0]?.id || null)
+  return <section className="admin-panel">
+    <div className="admin-panel-title"><div><h2>Заявки</h2><p>Полный проектный brief, контакт клиента, статус доставки в Telegram и финальный принятый эскиз.</p></div></div>
+    <div className="admin-card-list">
+      {items.length ? items.map((item) => {
+        const lead = item.answers.zayavka || {}
+        const isOpen = expanded === item.id
+        return <article className="admin-list-card" key={item.id}>
+          <div className="admin-panel-title">
+            <div>
+              <h3>{item.project_name || 'Проект без названия'}</h3>
+              <p>{applicationAnswer(lead['23'])} · {applicationAnswer(lead['24'])} · {formatDate(item.created_at)}</p>
+            </div>
+            <span>{item.telegram_delivery_status === 'sent' ? 'Telegram: отправлено' : 'Telegram: ожидает'}</span>
+          </div>
+          {item.scene_asset_url && <img className="admin-application-image" src={item.scene_asset_url} alt="Финальный эскиз заявки"/>}
+          <div className="admin-table-wrap"><table className="admin-table"><tbody>
+            <tr><th>Участок</th><td>{applicationAnswer(lead['20'])}</td></tr>
+            <tr><th>Бюджет</th><td>{applicationAnswer(lead['21'])}</td></tr>
+            <tr><th>Срок</th><td>{applicationAnswer(lead['22'])}</td></tr>
+            <tr><th>ID заявки</th><td><small>{item.id}</small></td></tr>
+          </tbody></table></div>
+          <div className="admin-form-actions"><button type="button" className="secondary-button" onClick={() => setExpanded(isOpen ? null : item.id)}>{isOpen ? 'Скрыть подробный brief' : 'Открыть подробный brief'}</button></div>
+          {isOpen && <div className="admin-subpanel">
+            {item.brief.length ? item.brief.map((object) => <div key={object.key} className="admin-application-brief">
+              <h3>{object.title} <small>{object.accepted ? '· принят' : '· не принят'}</small></h3>
+              {object.answers.length ? <div className="admin-table-wrap"><table className="admin-table"><tbody>
+                {object.answers.map((answer) => <tr key={answer.question_id}><th>{answer.question}</th><td>{applicationAnswer(answer.answer)}</td></tr>)}
+              </tbody></table></div> : <p>Ответов по объекту нет.</p>}
+            </div>) : <p>Подробный brief недоступен для этой исторической заявки.</p>}
+          </div>}
+        </article>
+      }) : <p>Заявок пока нет.</p>}
+    </div>
+  </section>
 }
 
 function TariffsPanel({ items, onItems, billingSettings, onBillingSettings, onError }: {
