@@ -43,7 +43,7 @@ export default function App() {
   const deepLinkHandled = useRef(false)
 
   useEffect(() => {
-    if (loading || !user || deepLinkHandled.current) return
+    if (loading || !user || adminOpen || deepLinkHandled.current) return
     const params = new URLSearchParams(window.location.search)
     const generationId = params.get('generation')
     const projectId = params.get('project')
@@ -67,7 +67,7 @@ export default function App() {
         setSection(generationId ? 'history' : 'home')
       }
     })()
-  }, [loading, user])
+  }, [adminOpen, loading, user])
 
   if (loading) return <Loader />
   if (!user) { if (window.Telegram?.WebApp?.initData) return <TelegramAuthError message={error} />; return <AuthScreen /> }
