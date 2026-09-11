@@ -44,7 +44,11 @@ class GenerationRepository:
                 Generation.output_asset_id.is_not(None),
                 Generation.telegram_delivery_status == "pending",
             )
-            .order_by(Generation.completed_at.asc(), Generation.created_at.asc())
+            .order_by(
+                Generation.telegram_delivery_attempts.asc(),
+                Generation.completed_at.asc(),
+                Generation.created_at.asc(),
+            )
             .limit(limit)
         )
         return list(result.scalars().all())
