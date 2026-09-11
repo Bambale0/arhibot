@@ -161,7 +161,9 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
             headers=user_headers,
             json={"generation_id": str(generation_id)},
         )
-        assert duplicate.status_code == 409, duplicate.text
+        assert duplicate.status_code == 201, duplicate.text
+        assert duplicate.json()["id"] == publication["id"]
+        assert duplicate.json()["is_active"] is True
 
         public = await client.get("/api/v1/ideas", headers=user_headers)
         assert public.status_code == 200, public.text
@@ -172,6 +174,20 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
         assert "text" not in idea
         assert "model_url" not in idea
         assert "media" not in idea
+
+        owner_hidden = await client.delete(
+            f"/api/v1/ideas/mine/{generation_id}", headers=user_headers
+        )
+        assert owner_hidden.status_code == 200, owner_hidden.text
+        assert owner_hidden.json()["is_active"] is False
+        republished = await client.post(
+            "/api/v1/ideas",
+            headers=user_headers,
+            json={"generation_id": str(generation_id)},
+        )
+        assert republished.status_code == 201, republished.text
+        assert republished.json()["id"] == publication["id"]
+        assert republished.json()["is_active"] is True
 
         started = await client.post(
             f"/api/v1/ideas/{idea['id']}/project", headers=user_headers
