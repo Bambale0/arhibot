@@ -174,6 +174,11 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
         assert "text" not in idea
         assert "model_url" not in idea
         assert "media" not in idea
+        exact_public = await client.get(
+            f"/api/v1/ideas/{idea['id']}", headers=user_headers
+        )
+        assert exact_public.status_code == 200, exact_public.text
+        assert exact_public.json() == idea
 
         saved = await client.put(
             f"/api/v1/ideas/{idea['id']}/saved", headers=user_headers
