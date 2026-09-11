@@ -130,3 +130,4 @@ async def test_questionnaire_delivery_resumes_after_partial_failure() -> None:
     assert [method for method, _ in api.calls].count("sendPhoto") == 1
     sent_texts = [payload["text"] for method, payload in api.calls if method == "sendMessage"]
     assert sent_texts == ["chunk-1", "chunk-2", "chunk-2", "chunk-3"]
+    assert session.commits == 4
