@@ -1,11 +1,8 @@
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
-from app.telegram_bot.generation_notifications import (
-    generation_caption,
-    generation_deep_link,
-    generation_keyboard,
-)
+from app.telegram_bot.generation_notifications import generation_caption, generation_keyboard
+from app.telegram_bot.links import webapp_deep_link
 
 
 def test_generation_deep_links_target_exact_project_and_generation() -> None:
@@ -13,8 +10,8 @@ def test_generation_deep_links_target_exact_project_and_generation() -> None:
     generation_id = uuid4()
     base = "https://app.example.test/app?idea=old&billing=return&keep=1"
 
-    project_url = generation_deep_link(base, project_id=project_id)
-    generation_url = generation_deep_link(base, generation_id=generation_id)
+    project_url = webapp_deep_link(base, project=project_id)
+    generation_url = webapp_deep_link(base, generation=generation_id)
 
     project_query = parse_qs(urlsplit(project_url).query)
     generation_query = parse_qs(urlsplit(generation_url).query)
