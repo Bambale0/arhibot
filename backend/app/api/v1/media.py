@@ -58,7 +58,7 @@ async def get_signed_media(
     signature: str,
     settings: Annotated[Settings, Depends(get_settings)],
     preview: str | None = None,
-) -> FileResponse | Response:
+) -> Response:
     storage = LocalMediaStorage(settings)
     if not storage.verify_signature(media_path, expires=expires, signature=signature):
         raise AppError(
