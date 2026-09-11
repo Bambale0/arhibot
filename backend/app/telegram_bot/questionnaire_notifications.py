@@ -128,36 +128,65 @@ async def _send_to_admins(
     recipient_ids: list[str],
     messages: list[str],
     *,
+    session: AsyncSession,
+    application: QuestionnaireApplication,
     photo_url: str | None = None,
-    application_id: object | None = None,
 ) -> tuple[int, list[str]]:
     sent = 0
     errors: list[str] = []
+
     for recipient_id in recipient_ids:
-        try:
-            if photo_url:
+        progress = dict(application.telegram_delivery_progress or {})
+        recipient = dict(progress.get(recipient_id) or {})
+        photo_sent = bool(recipient.get("photo_sent"))
+        chunks_sent = max(0, int(recipient.get("chunks_sent") or 0))
+
+        if (not photo_url or photo_sent) and chunks_sent >= len(messages):
+            sent += 1
+            continue
+
+        if photo_url and not photo_sent:
+            try:
                 await asyncio.to_thread(
                     api.call,
                     "sendPhoto",
                     {
                         "chat_id": recipient_id,
                         "photo": photo_url,
-                        "caption": (
-                            f"Финальный эскиз AuRoom · заявка {application_id}"
-                            if application_id is not None
-                            else "Финальный эскиз AuRoom"
-                        ),
+                        "caption": f"Финальный эскиз AuRoom · заявка {application.id}",
                     },
                 )
-            for message in messages:
+            except Exception as exc:  # Telegram adapter failure must stay retryable.
+                errors.append(f"{type(exc).__name__}: {str(exc)[:180]}")
+                continue
+            recipient["photo_sent"] = True
+            progress[recipient_id] = recipient
+            application.telegram_delivery_progress = progress
+            await session.commit()
+
+        failed_recipient = False
+        for index in range(chunks_sent, len(messages)):
+            try:
                 await asyncio.to_thread(
                     api.call,
                     "sendMessage",
-                    {"chat_id": recipient_id, "text": message},
+                    {"chat_id": recipient_id, "text": messages[index]},
                 )
+            except Exception as exc:  # Telegram adapter failure must stay retryable.
+                errors.append(f"{type(exc).__name__}: {str(exc)[:180]}")
+                failed_recipient = True
+                break
+
+            progress = dict(application.telegram_delivery_progress or {})
+            recipient = dict(progress.get(recipient_id) or {})
+            recipient["chunks_sent"] = index + 1
+            progress[recipient_id] = recipient
+            application.telegram_delivery_progress = progress
+            await session.commit()
+
+        if not failed_recipient:
             sent += 1
-        except Exception as exc:  # Telegram adapter failure must stay retryable.
-            errors.append(f"{type(exc).__name__}: {str(exc)[:180]}")
+
     return sent, errors
 
 
@@ -233,8 +262,9 @@ async def deliver_pending_applications_once(
                 api,
                 recipients,
                 _chunk_message(message),
+                session=session,
+                application=application,
                 photo_url=photo_url,
-                application_id=application.id,
             )
             if sent > 0:
                 application.telegram_delivery_status = "sent"
