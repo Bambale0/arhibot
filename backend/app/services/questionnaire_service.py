@@ -373,8 +373,9 @@ class QuestionnaireService:
             )
             response = QuestionnaireApplicationResponse.model_validate(item)
             result.append(
-                response.model_copy(
-                    update={
+                QuestionnaireApplicationResponse.model_validate(
+                    {
+                        **response.model_dump(mode="python"),
                         "project_name": project.name if project is not None else None,
                         "user_name": user.display_name if user is not None else None,
                         "scene_asset_url": scene_asset_url,
