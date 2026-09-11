@@ -180,7 +180,10 @@ async def _send_to_admins(
         failed_recipient = False
         for index in range(chunks_sent, len(messages)):
             try:
-                message_payload = {"chat_id": recipient_id, "text": messages[index]}
+                message_payload: dict[str, object] = {
+                    "chat_id": recipient_id,
+                    "text": messages[index],
+                }
                 if (
                     photo_url is None
                     and index == 0
