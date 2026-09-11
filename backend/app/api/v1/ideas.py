@@ -69,6 +69,19 @@ async def unsave_idea(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.get(
+    "/{idea_id}",
+    response_model=PublicIdeaPublicationResponse,
+    operation_id="getPublicIdea",
+)
+async def get_public_idea(
+    idea_id: UUID,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> PublicIdeaPublicationResponse:
+    return await IdeaService(session, settings).get_public(idea_id)
+
+
 @router.post(
     "",
     response_model=IdeaPublicationResponse,
