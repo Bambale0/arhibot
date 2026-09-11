@@ -701,7 +701,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         ? await api.unpublishIdea(latestAcceptedGenerationId)
         : await api.publishIdea(latestAcceptedGenerationId))
     } catch (err) {
-      if (err instanceof api.ApiError && err.status === 409) {
+      if (err instanceof api.ApiError && err.status === 409 && err.errorType !== 'idea_hidden_by_moderator') {
         try {
           setIdeaPublication(await api.getOwnIdeaPublication(latestAcceptedGenerationId))
           return
