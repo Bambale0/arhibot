@@ -492,7 +492,10 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
                 return {"message_id": len(self.calls)}
 
         fake_telegram = FakeTelegramApi()
-        delivered, failed = await deliver_pending_applications_once(api=fake_telegram)
+        delivered, failed = await deliver_pending_applications_once(
+            api=fake_telegram,
+            webapp_url="https://app.example.test/",
+        )
         assert delivered >= 1
         assert failed == 0
         assert any(
@@ -506,12 +509,28 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
             and "Архитектурный бриф" in payload["text"]
             for method, payload in fake_telegram.calls
         )
-        assert any(
-            method == "sendPhoto"
-            and payload["photo"]
-            and application_id in payload["caption"]
+        joined_admin_text = "\n".join(
+            payload["text"]
             for method, payload in fake_telegram.calls
+            if method == "sendMessage"
         )
+        assert "Контакт из заявки: +79990000000" in joined_admin_text
+        assert "E-mail аккаунта:" in joined_admin_text
+        assert "Telegram ID:" in joined_admin_text
+        assert f"User ID: {user_id}" in joined_admin_text
+        assert f"Проект ID: {project_id}" in joined_admin_text
+        assert f"Финальная работа generation: {generation.id}" in joined_admin_text
+        photo_payload = next(
+            payload
+            for method, payload in fake_telegram.calls
+            if method == "sendPhoto" and application_id in payload["caption"]
+        )
+        assert photo_payload["photo"]
+        keyboard = photo_payload["reply_markup"]["inline_keyboard"]
+        assert keyboard[0][0]["text"] == "Заявка в админке"
+        assert f"application={application_id}" in keyboard[0][0]["web_app"]["url"]
+        assert keyboard[1][0]["text"] == "Профиль клиента"
+        assert f"user={user_id}" in keyboard[1][0]["web_app"]["url"]
 
         applications = await client.get(
             "/api/v1/admin/questionnaire-applications",
@@ -525,6 +544,10 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
         assert stored_application["telegram_notified_at"] is not None
         assert stored_application["project_name"]
         assert stored_application["scene_asset_url"]
+        assert stored_application["application_contact"] == "+79990000000"
+        assert stored_application["telegram_user_id"]
+        assert stored_application["user_email"].endswith("@example.com")
+        assert stored_application["final_generation_id"] == str(generation.id)
         house_brief = next(
             item for item in stored_application["brief"] if item["key"] == "eskez-doma"
         )
