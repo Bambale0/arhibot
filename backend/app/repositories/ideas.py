@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.admin import IdeaPublication
+from app.db.models.admin import IdeaBookmark, IdeaPublication
 
 
 class IdeaRepository:
@@ -14,6 +14,28 @@ class IdeaRepository:
 
     def add(self, publication: IdeaPublication) -> None:
         self.session.add(publication)
+
+    def add_bookmark(self, bookmark: IdeaBookmark) -> None:
+        self.session.add(bookmark)
+
+    async def get_bookmark(self, user_id: UUID, idea_id: UUID) -> IdeaBookmark | None:
+        return await self.session.get(IdeaBookmark, (user_id, idea_id))
+
+    async def list_bookmark_ids(self, user_id: UUID) -> list[UUID]:
+        result = await self.session.execute(
+            select(IdeaBookmark.idea_id)
+            .where(IdeaBookmark.user_id == user_id)
+            .order_by(IdeaBookmark.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def remove_bookmark(self, user_id: UUID, idea_id: UUID) -> None:
+        await self.session.execute(
+            delete(IdeaBookmark).where(
+                IdeaBookmark.user_id == user_id,
+                IdeaBookmark.idea_id == idea_id,
+            )
+        )
 
     async def get(self, idea_id: UUID) -> IdeaPublication | None:
         return await self.session.get(IdeaPublication, idea_id)
