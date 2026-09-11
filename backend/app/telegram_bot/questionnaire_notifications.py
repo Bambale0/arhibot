@@ -180,10 +180,17 @@ async def _send_to_admins(
         failed_recipient = False
         for index in range(chunks_sent, len(messages)):
             try:
+                message_payload = {"chat_id": recipient_id, "text": messages[index]}
+                if (
+                    photo_url is None
+                    and index == 0
+                    and photo_reply_markup is not None
+                ):
+                    message_payload["reply_markup"] = photo_reply_markup
                 await asyncio.to_thread(
                     api.call,
                     "sendMessage",
-                    {"chat_id": recipient_id, "text": messages[index]},
+                    message_payload,
                 )
             except Exception as exc:  # Telegram adapter failure must stay retryable.
                 errors.append(f"{type(exc).__name__}: {str(exc)[:180]}")
