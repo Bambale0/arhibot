@@ -449,7 +449,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }
 
   async function startGenerationOrRegion(next:DesignSession, definition:QuestionnaireDefinition) {
-    if (next.accepted_objects.length > 0 && next.scene_asset_id && !next.edit_regions[definition.key]) {
+    if (next.accepted_objects.length > 0 && next.scene_asset_id) {
       return persist({
         ...next,
         current_question_id:null,
