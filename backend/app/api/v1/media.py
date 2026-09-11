@@ -16,20 +16,44 @@ router = APIRouter(prefix="/media", tags=["Media"])
 
 TELEGRAM_PREVIEW_MAX_BYTES = 4_500_000
 TELEGRAM_PREVIEW_MAX_SIDE = 2560
+TELEGRAM_PHOTO_MAX_ASPECT_RATIO = 20
 _PREVIEW_QUALITIES = (88, 82, 76, 70, 64, 58)
 _PREVIEW_SIDES = (2560, 2048, 1600, 1280)
+
+
+def _normalize_telegram_aspect(image: Image.Image) -> Image.Image:
+    width, height = image.size
+    if width > height * TELEGRAM_PHOTO_MAX_ASPECT_RATIO:
+        target_height = (width + TELEGRAM_PHOTO_MAX_ASPECT_RATIO - 1) // TELEGRAM_PHOTO_MAX_ASPECT_RATIO
+        canvas = Image.new("RGB", (width, target_height), "white")
+        canvas.paste(image, (0, (target_height - height) // 2))
+        return canvas
+    if height > width * TELEGRAM_PHOTO_MAX_ASPECT_RATIO:
+        target_width = (height + TELEGRAM_PHOTO_MAX_ASPECT_RATIO - 1) // TELEGRAM_PHOTO_MAX_ASPECT_RATIO
+        canvas = Image.new("RGB", (target_width, height), "white")
+        canvas.paste(image, ((target_width - width) // 2, 0))
+        return canvas
+    return image
 
 
 def _telegram_preview(path: Path) -> bytes:
     try:
         with Image.open(path) as source:
-            base = ImageOps.exif_transpose(source).convert("RGB")
+            # Downsample in-place before EXIF transposition or RGB conversion so a
+            # valid high-pixel-count upload cannot require multiple full-size rasters.
+            source.thumbnail(
+                (TELEGRAM_PREVIEW_MAX_SIDE, TELEGRAM_PREVIEW_MAX_SIDE),
+                Image.Resampling.LANCZOS,
+                reducing_gap=3.0,
+            )
+            image = ImageOps.exif_transpose(source).convert("RGB")
     except (UnidentifiedImageError, OSError, SyntaxError) as exc:
         raise ValueError("Source image cannot be converted for Telegram") from exc
 
+    image = _normalize_telegram_aspect(image)
     for max_side in _PREVIEW_SIDES:
-        image = base.copy()
-        image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+        if max(image.size) > max_side:
+            image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS, reducing_gap=3.0)
         for quality in _PREVIEW_QUALITIES:
             buffer = BytesIO()
             image.save(buffer, format="JPEG", quality=quality, optimize=True)
