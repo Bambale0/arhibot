@@ -30,6 +30,13 @@ const modes: { id: GenerationMode; label: string }[] = [
 
 type Tab = 'tariffs' | 'ideas' | 'applications' | 'generation' | 'users' | 'payments' | 'broadcasts' | 'telegram' | 'system' | 'audit'
 
+function initialAdminTab(): Tab {
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('application')) return 'applications'
+  if (params.get('user')) return 'users'
+  return 'tariffs'
+}
+
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : 'Не удалось выполнить операцию'
 }
@@ -48,7 +55,7 @@ function StatusDot({ ok, label }: { ok: boolean; label: string }) {
 }
 
 export function AdminScreen({ onClose }: { onClose: () => void }) {
-  const [tab, setTab] = useState<Tab>('tariffs')
+  const [tab, setTab] = useState<Tab>(initialAdminTab)
   const [overview, setOverview] = useState<AdminOverview | null>(null)
   const [tariffs, setTariffs] = useState<AdminTariff[]>([])
   const [billingSettings, setBillingSettings] = useState<AdminBillingSettings | null>(null)
@@ -129,9 +136,9 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
         <div className="admin-content">
           {tab === 'tariffs' && billingSettings && <TariffsPanel items={tariffs} onItems={setTariffs} billingSettings={billingSettings} onBillingSettings={setBillingSettings} onError={setError} />}
           {tab === 'ideas' && <IdeasPanel items={ideas} onItems={setIdeas} onError={setError} />}
-          {tab === 'applications' && <ApplicationsPanel items={applications} />}
+          {tab === 'applications' && <ApplicationsPanel items={applications} focusId={new URLSearchParams(window.location.search).get('application')} />}
           {tab === 'generation' && generation && <GenerationPanel settings={generation} prices={prices} prompts={prompts} onSettings={setGeneration} onPrices={setPrices} onPrompts={setPrompts} onError={setError} />}
-          {tab === 'users' && <UsersPanel items={users} transactions={transactions} onItems={setUsers} onTransactions={setTransactions} onError={setError} />}
+          {tab === 'users' && <UsersPanel items={users} transactions={transactions} onItems={setUsers} onTransactions={setTransactions} onError={setError} focusUserId={new URLSearchParams(window.location.search).get('user')} />}
           {tab === 'payments' && <PaymentsPanel items={payments} onItems={setPayments} onError={setError} />}
           {tab === 'broadcasts' && <BroadcastsPanel items={broadcasts} onItems={setBroadcasts} onError={setError} />}
           {tab === 'telegram' && telegramContent && <TelegramContentPanel settings={telegramContent} onSaved={setTelegramContent} onError={setError} />}
@@ -151,15 +158,21 @@ function applicationAnswer(value: unknown) {
   return String(value)
 }
 
-function ApplicationsPanel({ items }: { items: QuestionnaireApplication[] }) {
-  const [expanded, setExpanded] = useState<string | null>(items[0]?.id || null)
+function ApplicationsPanel({ items, focusId }: { items: QuestionnaireApplication[]; focusId:string|null }) {
+  const [expanded, setExpanded] = useState<string | null>(focusId || items[0]?.id || null)
+
+  useEffect(() => {
+    if (!focusId) return
+    setExpanded(focusId)
+    requestAnimationFrame(() => document.getElementById(`admin-application-${focusId}`)?.scrollIntoView({ block:'start' }))
+  }, [focusId])
   return <section className="admin-panel">
     <div className="admin-panel-title"><div><h2>Заявки</h2><p>Полный проектный brief, контакт клиента, статус доставки в Telegram и финальный принятый эскиз.</p></div></div>
     <div className="admin-card-list">
       {items.length ? items.map((item) => {
         const lead = item.answers.zayavka || {}
         const isOpen = expanded === item.id
-        return <article className="admin-list-card admin-application-card" key={item.id}>
+        return <article id={`admin-application-${item.id}`} className="admin-list-card admin-application-card" key={item.id}>
           <div className="admin-panel-title">
             <div>
               <h3>{item.project_name || 'Проект без названия'}</h3>
@@ -172,9 +185,20 @@ function ApplicationsPanel({ items }: { items: QuestionnaireApplication[] }) {
             <tr><th>Участок</th><td>{applicationAnswer(lead['20'])}</td></tr>
             <tr><th>Бюджет</th><td>{applicationAnswer(lead['21'])}</td></tr>
             <tr><th>Срок</th><td>{applicationAnswer(lead['22'])}</td></tr>
+            <tr><th>Контакт из заявки</th><td>{applicationAnswer(item.application_contact)}</td></tr>
+            <tr><th>E-mail аккаунта</th><td>{applicationAnswer(item.user_email)}</td></tr>
+            <tr><th>Telegram ID</th><td>{applicationAnswer(item.telegram_user_id)}</td></tr>
+            <tr><th>User ID</th><td><small>{item.user_id}</small></td></tr>
+            <tr><th>Project ID</th><td><small>{item.project_id}</small></td></tr>
+            <tr><th>Generation ID</th><td><small>{item.final_generation_id || '—'}</small></td></tr>
             <tr><th>ID заявки</th><td><small>{item.id}</small></td></tr>
           </tbody></table></div>
-          <div className="admin-form-actions"><button type="button" className="secondary-button" onClick={() => setExpanded(isOpen ? null : item.id)}>{isOpen ? 'Скрыть подробный brief' : 'Открыть подробный brief'}</button></div>
+          <div className="admin-form-actions">
+            {item.scene_asset_url && <a className="secondary-button" href={item.scene_asset_url} target="_blank" rel="noreferrer">Открыть работу</a>}
+            <a className="secondary-button" href={`/?admin=1&application=${item.id}`}>Ссылка на заявку</a>
+            <a className="secondary-button" href={`/?admin=1&user=${item.user_id}`}>Профиль клиента</a>
+            <button type="button" className="secondary-button" onClick={() => setExpanded(isOpen ? null : item.id)}>{isOpen ? 'Скрыть подробный brief' : 'Открыть подробный brief'}</button>
+          </div>
           {isOpen && <div className="admin-subpanel">
             {item.brief.length ? item.brief.map((object) => <div key={object.key} className="admin-application-brief">
               <h3>{object.title} <small>{object.accepted ? '· принят' : '· не принят'}</small></h3>
@@ -330,11 +354,12 @@ function PromptEditor({mode,label,item,onSaved,onError}:{mode:GenerationMode;lab
   return <div className="admin-prompt"><div><strong>{label}</strong><small>{item?`Обновлён ${formatDate(item.updated_at)}`:'Не настроен'}</small></div><textarea value={text} onChange={e=>setText(e.target.value)}/><button className="secondary-button" disabled={busy||!text.trim()} onClick={()=>void save()}>Сохранить</button></div>
 }
 
-function UsersPanel({ items, transactions, onItems, onTransactions, onError }: { items:AdminUser[]; transactions:AdminCreditTransaction[]; onItems:(v:AdminUser[])=>void; onTransactions:(v:AdminCreditTransaction[])=>void; onError:(v:string|null)=>void }) {
+function UsersPanel({ items, transactions, onItems, onTransactions, onError, focusUserId }: { items:AdminUser[]; transactions:AdminCreditTransaction[]; onItems:(v:AdminUser[])=>void; onTransactions:(v:AdminCreditTransaction[])=>void; onError:(v:string|null)=>void; focusUserId:string|null }) {
   const names=useMemo(()=>Object.fromEntries(items.map(u=>[u.id,u.display_name])),[items])
   async function update(user:AdminUser,payload:{status?:'active'|'disabled';role?:UserRole}){try{const saved=await api.adminUpdateUser(user.id,payload);onItems(items.map(x=>x.id===saved.id?saved:x))}catch(err){onError(errorText(err))}}
   async function changed(saved:AdminUser){onItems(items.map(x=>x.id===saved.id?saved:x));try{onTransactions(await api.adminListCreditTransactions())}catch(err){onError(errorText(err))}}
-  return <section className="admin-panel"><div className="admin-panel-title"><div><h2>Пользователи и кредиты</h2><p>Любое изменение баланса проходит через credit ledger.</p></div></div><div className="admin-card-list">{items.map(user=><article className="admin-list-card admin-user-card" key={user.id}><div><strong>{user.display_name}</strong><span>{user.id}</span><p>{user.credits_balance} кредитов · {user.role} · {user.status}</p></div><div className="admin-user-controls"><select value={user.role} onChange={e=>void update(user,{role:e.target.value as UserRole})}><option value="user">user</option><option value="admin">admin</option><option value="superadmin">superadmin</option></select><select value={user.status} onChange={e=>void update(user,{status:e.target.value as 'active'|'disabled'})}><option value="active">active</option><option value="disabled">disabled</option></select><CreditEditor user={user} onChanged={(saved)=>void changed(saved)} onError={onError}/></div></article>)}</div>
+  useEffect(()=>{if(!focusUserId)return;requestAnimationFrame(()=>document.getElementById(`admin-user-${focusUserId}`)?.scrollIntoView({block:'center'}))},[focusUserId,items.length])
+  return <section className="admin-panel"><div className="admin-panel-title"><div><h2>Пользователи и кредиты</h2><p>Любое изменение баланса проходит через credit ledger.</p></div></div><div className="admin-card-list">{items.map(user=><article id={`admin-user-${user.id}`} className="admin-list-card admin-user-card" key={user.id}><div><strong>{user.display_name}</strong><span>{user.id}</span><p>{user.credits_balance} кредитов · {user.role} · {user.status}</p></div><div className="admin-user-controls"><select value={user.role} onChange={e=>void update(user,{role:e.target.value as UserRole})}><option value="user">user</option><option value="admin">admin</option><option value="superadmin">superadmin</option></select><select value={user.status} onChange={e=>void update(user,{status:e.target.value as 'active'|'disabled'})}><option value="active">active</option><option value="disabled">disabled</option></select><CreditEditor user={user} onChanged={(saved)=>void changed(saved)} onError={onError}/></div></article>)}</div>
     <div className="admin-subpanel"><div className="admin-panel-title"><div><h3>Credit ledger</h3><p>Последние 200 движений баланса.</p></div><button className="secondary-button" onClick={()=>void api.adminListCreditTransactions().then(onTransactions).catch(err=>onError(errorText(err)))}>Обновить ledger</button></div><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Дата</th><th>Пользователь</th><th>Тип</th><th>Изменение</th><th>Баланс</th><th>Причина</th></tr></thead><tbody>{transactions.map(tx=><tr key={tx.id}><td>{formatDate(tx.created_at)}</td><td>{names[tx.user_id]||tx.user_id}</td><td>{tx.kind}</td><td className={tx.amount>=0?'admin-credit-plus':'admin-credit-minus'}>{tx.amount>0?'+':''}{tx.amount}</td><td>{tx.balance_after}</td><td>{tx.reason||'—'}</td></tr>)}</tbody></table></div></div>
   </section>
 }
