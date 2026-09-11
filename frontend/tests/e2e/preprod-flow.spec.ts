@@ -99,6 +99,16 @@ test('shared idea deep-link opens exact work and saves on the server',async({pag
   await page.goto(`/?idea=${ideaId}`)
   const card = page.locator(`[data-idea-id="${ideaId}"]`)
   await expect(card).toBeVisible()
+  await expect(card.getByText('Идеи AuRoom')).toBeVisible()
+  await expect(card.getByRole('button',{name:'Создать по этой работе'})).toBeVisible()
+  const brandStyle = await page.locator('.ideas-concept-topbar .wordmark').evaluate((element) => {
+    const style = getComputedStyle(element)
+    return { color:style.color, fontFamily:style.fontFamily }
+  })
+  expect(brandStyle.color).toBe('rgb(228, 198, 126)')
+  expect(brandStyle.fontFamily).not.toMatch(/Georgia|Times New Roman/)
+  const brandSymbol = await page.locator('.ideas-concept-topbar .wordmark-dot').evaluate((element) => getComputedStyle(element).backgroundImage)
+  expect(brandSymbol).toContain('/brand/auroom-symbol.webp')
   await card.getByRole('button',{name:'Сохранить'}).click()
   await expect(card.getByRole('button',{name:'Убрать из сохранённых'})).toBeVisible()
   expect(savedIdea).toBe(true)
