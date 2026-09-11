@@ -496,9 +496,21 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
         assert delivered >= 1
         assert failed == 0
         assert any(
+            method == "sendPhoto"
+            and payload["photo"]
+            and payload["chat_id"]
+            for method, payload in fake_telegram.calls
+        )
+        assert any(
             method == "sendMessage"
             and application_id in payload["text"]
             and payload["chat_id"]
+            for method, payload in fake_telegram.calls
+        )
+        assert any(
+            method == "sendMessage"
+            and "Архитектурный бриф" in payload["text"]
+            and "Какой стиль вам нравится?" in payload["text"]
             for method, payload in fake_telegram.calls
         )
 
@@ -512,6 +524,15 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
         )
         assert stored_application["telegram_delivery_status"] == "sent"
         assert stored_application["telegram_notified_at"] is not None
+        assert stored_application["project_name"] == "Questionnaire integration"
+        assert stored_application["user_name"] == "Questionnaire Admin"
+        assert stored_application["scene_image_url"]
+        assert stored_application["brief"]
+        house_brief = next(item for item in stored_application["brief"] if item["key"] == "eskez-doma")
+        assert any(
+            answer["question"] == "Какой стиль вам нравится?"
+            for answer in house_brief["answers"]
+        )
 
 
 @pytest.mark.asyncio
