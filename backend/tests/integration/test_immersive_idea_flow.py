@@ -183,6 +183,12 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
         public_saved = await client.get("/api/v1/ideas", headers=user_headers)
         saved_row = next(item for item in public_saved.json() if item["id"] == idea["id"])
         assert saved_row["is_saved"] is True
+        direct_saved = await client.get(
+            f"/api/v1/ideas/{idea['id']}", headers=user_headers
+        )
+        assert direct_saved.status_code == 200, direct_saved.text
+        assert direct_saved.json()["id"] == idea["id"]
+        assert direct_saved.json()["is_saved"] is True
         unsaved_idea = await client.delete(
             f"/api/v1/ideas/{idea['id']}/save", headers=user_headers
         )
