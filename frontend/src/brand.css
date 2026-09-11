@@ -447,3 +447,176 @@ textarea:focus-visible {
     background: linear-gradient(180deg, rgba(10,16,18,0), rgba(10,16,18,.97) 28%, #0a1012 100%);
   }
 }
+
+/* Approved AuRoom Ideas feed: black presentation board + gold technical accents. */
+.ideas-shell {
+  background: var(--brand-black);
+  color: var(--brand-ivory);
+}
+.ideas-page-concept {
+  background:
+    radial-gradient(circle at 50% 28%, rgba(228, 198, 126, .075), transparent 34%),
+    linear-gradient(180deg, #060b0a 0%, var(--brand-black) 58%, #020504 100%);
+}
+.ideas-concept-topbar {
+  background: linear-gradient(180deg, rgba(3, 8, 7, .99) 60%, rgba(3, 8, 7, 0));
+}
+.ideas-concept-topbar .wordmark {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -.025em;
+  color: var(--brand-gold);
+}
+.ideas-concept-topbar .wordmark-dot {
+  width: 27px;
+  height: 27px;
+  flex: 0 0 27px;
+  border-radius: 0;
+  transform: none;
+  background: url('/brand/auroom-symbol.webp') center / contain no-repeat;
+}
+.ideas-search input {
+  border-color: var(--brand-line);
+  background: rgba(10, 16, 18, .94);
+  color: var(--brand-ivory);
+  box-shadow: none;
+}
+.ideas-search input::placeholder { color: #777266; }
+.ideas-search button { color: var(--brand-gold); }
+.ideas-search button:hover { background: rgba(228, 198, 126, .08); }
+
+.idea-feed-card {
+  color: var(--brand-ivory);
+  background: transparent;
+}
+.idea-feed-kicker {
+  color: var(--brand-gold);
+  font-weight: 600;
+  letter-spacing: .045em;
+}
+.idea-feed-kicker b { color: var(--brand-muted); }
+.idea-feed-copy h1 {
+  max-width: 620px;
+  margin-bottom: 9px;
+  color: var(--brand-ivory);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: clamp(32px, 6.5vw, 48px);
+  line-height: 1.03;
+  letter-spacing: -.04em;
+  font-weight: 600;
+}
+.idea-feed-copy > p { color: var(--brand-muted); }
+
+.idea-work-stage {
+  border: 1px solid var(--brand-line);
+  border-radius: 6px;
+  background: var(--brand-black-soft);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .34);
+}
+.idea-work-stage > img {
+  background: #0a0f0e;
+  filter: saturate(.96) contrast(1.025);
+}
+.idea-work-empty {
+  color: var(--brand-muted);
+  background: var(--brand-black-soft);
+}
+.idea-work-actions button {
+  border-color: var(--brand-line);
+  border-radius: 7px;
+  background: rgba(7, 13, 12, .92);
+  color: var(--brand-ivory);
+  box-shadow: none;
+}
+.idea-work-actions button:hover:not(:disabled) {
+  border-color: rgba(228, 198, 126, .48);
+  color: var(--brand-gold);
+}
+.idea-work-actions button.active {
+  border-color: var(--brand-gold);
+  background: var(--brand-gold);
+  color: #090b09;
+}
+
+.idea-author-avatar {
+  border: 1px solid var(--brand-line);
+  border-radius: 4px;
+  background: #0b1110 url('/brand/auroom-symbol.webp') center / 72% no-repeat;
+  color: transparent;
+}
+.idea-author-row > strong { color: var(--brand-ivory); }
+.idea-use-button {
+  border-color: rgba(228, 198, 126, .48);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--brand-gold);
+  font-weight: 650;
+}
+.idea-use-button:hover:not(:disabled) {
+  border-color: var(--brand-gold);
+  background: var(--brand-gold);
+  color: #090b09;
+}
+.idea-use-button:disabled { opacity: .55; cursor: wait; }
+
+.idea-work-summary { border-top-color: var(--brand-line); }
+.idea-work-summary summary { color: #b9ae97; }
+.idea-work-summary section strong { color: var(--brand-ivory); }
+.idea-work-summary section span { color: var(--brand-muted); }
+
+.ideas-feed-status { color: var(--brand-muted); }
+.idea-feed-skeleton {
+  border: 1px solid var(--brand-line);
+  border-radius: 6px;
+  background: linear-gradient(100deg, #0a1012 20%, #151b1a 40%, #0a1012 60%);
+  background-size: 200% 100%;
+}
+.ideas-floating-error {
+  color: #ffd8cf;
+  background: rgba(41, 23, 21, .97);
+  border-color: #684039;
+}
+
+.ideas-shell .bottom-nav {
+  background: rgba(3, 8, 7, .98);
+  border-color: var(--brand-line);
+  box-shadow: 0 -14px 36px rgba(0, 0, 0, .34);
+}
+.ideas-shell .bottom-nav button {
+  color: #898375;
+  font-weight: 500;
+}
+.ideas-shell .bottom-nav button.active {
+  color: var(--brand-gold);
+  font-weight: 650;
+}
+.ideas-shell .bottom-nav button.active::after { background: var(--brand-gold); }
+.ideas-shell .bottom-nav button:nth-child(3) svg {
+  background: var(--brand-gold);
+  color: #080b09;
+  box-shadow: 0 8px 24px rgba(201, 159, 81, .18);
+}
+
+@media (min-width: 761px) {
+  .ideas-shell { background: #010403; }
+  .ideas-page-concept {
+    box-shadow:
+      0 0 0 1px rgba(228, 198, 126, .08),
+      0 0 80px rgba(0, 0, 0, .58);
+  }
+}
+@media (max-width: 520px) {
+  .ideas-concept-topbar .wordmark { font-size: 16px; }
+  .ideas-concept-topbar .wordmark-dot {
+    width: 24px;
+    height: 24px;
+    flex-basis: 24px;
+  }
+  .idea-feed-copy h1 { font-size: clamp(30px, 9.2vw, 38px); }
+  .idea-work-stage { border-radius: 4px; }
+  .idea-work-actions button {
+    border-radius: 6px;
+    background: rgba(7, 13, 12, .9);
+  }
+}
