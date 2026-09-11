@@ -8,17 +8,21 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.db.models.assets import Asset
 from app.db.models.projects import Project
 from app.db.models.questionnaires import QuestionnaireApplication
 from app.db.models.users import AuthIdentity, User
 from app.domain.users.enums import AuthProvider, UserRole, UserStatus
+from app.questionnaires.application_brief import build_application_brief
 from app.questionnaires.catalog import OBJECT_TITLES
 from app.repositories.questionnaires import QuestionnaireRepository
+from app.services.asset_service import LocalMediaStorage
 from app.telegram_bot.main import TelegramBotApi
 
 logger = logging.getLogger(__name__)
 DELIVERY_BATCH_SIZE = 20
 MAX_FIELD_LENGTH = 500
+TELEGRAM_TEXT_LIMIT = 3800
 
 
 def _display(value: object) -> str:
@@ -63,6 +67,56 @@ def build_application_message(
     )
 
 
+def _chunk_brief_lines(lines: list[str]) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+    current_length = 0
+    for line in lines:
+        safe_line = line[:1200]
+        added = len(safe_line) + (1 if current else 0)
+        if current and current_length + added > TELEGRAM_TEXT_LIMIT:
+            chunks.append("\n".join(current))
+            current = []
+            current_length = 0
+        current.append(safe_line)
+        current_length += len(safe_line) + (1 if len(current) > 1 else 0)
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
+
+
+def build_application_messages(
+    application: QuestionnaireApplication,
+    *,
+    catalog: dict,
+    project_name: str,
+    user_name: str,
+) -> list[str]:
+    messages = [
+        build_application_message(
+            application,
+            project_name=project_name,
+            user_name=user_name,
+        )
+    ]
+    brief = build_application_brief(
+        catalog,
+        accepted_objects=list(application.accepted_objects),
+        answers=dict(application.answers or {}),
+    )
+    lines = ["📐 Архитектурный бриф", f"Проект: {_display(project_name)}"]
+    for item in brief:
+        lines.append("")
+        lines.append(f"— {item['title']} —")
+        for answer in item["answers"]:
+            lines.append(
+                f"• {_display(answer['question'])}: {_display(answer['answer'])}"
+            )
+    if len(lines) > 2:
+        messages.extend(_chunk_brief_lines(lines))
+    return messages
+
+
 async def load_admin_telegram_ids(session: AsyncSession) -> list[str]:
     result = await session.execute(
         select(AuthIdentity.provider_user_id)
@@ -81,17 +135,31 @@ async def load_admin_telegram_ids(session: AsyncSession) -> list[str]:
 async def _send_to_admins(
     api: TelegramBotApi,
     recipient_ids: list[str],
-    message: str,
+    messages: list[str],
+    *,
+    photo_url: str | None = None,
+    photo_caption: str | None = None,
 ) -> tuple[int, list[str]]:
     sent = 0
     errors: list[str] = []
     for recipient_id in recipient_ids:
         try:
-            await asyncio.to_thread(
-                api.call,
-                "sendMessage",
-                {"chat_id": recipient_id, "text": message},
-            )
+            if photo_url:
+                await asyncio.to_thread(
+                    api.call,
+                    "sendPhoto",
+                    {
+                        "chat_id": recipient_id,
+                        "photo": photo_url,
+                        "caption": photo_caption or "Финальный эскиз AuRoom",
+                    },
+                )
+            for message in messages:
+                await asyncio.to_thread(
+                    api.call,
+                    "sendMessage",
+                    {"chat_id": recipient_id, "text": message},
+                )
             sent += 1
         except Exception as exc:  # Telegram adapter failure must stay retryable.
             errors.append(f"{type(exc).__name__}: {str(exc)[:180]}")
@@ -138,12 +206,41 @@ async def deliver_pending_applications_once(
                 await session.commit()
                 continue
 
-            message = build_application_message(
+            catalog_row = await repository.get_catalog()
+            if catalog_row is not None and catalog_row.version == application.catalog_version:
+                catalog = catalog_row.catalog
+            else:
+                revision = await repository.get_catalog_revision(application.catalog_version)
+                catalog = revision.catalog if revision is not None else None
+            if catalog is None:
+                application.telegram_delivery_error = (
+                    f"Questionnaire catalog {application.catalog_version} is unavailable"
+                )
+                failed += 1
+                await session.commit()
+                continue
+
+            messages = build_application_messages(
                 application,
+                catalog=catalog,
                 project_name=project.name,
                 user_name=user.display_name,
             )
-            sent, errors = await _send_to_admins(api, recipients, message)
+            photo_url: str | None = None
+            if application.scene_asset_id is not None:
+                scene_asset = await session.get(Asset, application.scene_asset_id)
+                if scene_asset is not None and scene_asset.deleted_at is None:
+                    photo_url = LocalMediaStorage(get_settings()).signed_url(
+                        scene_asset.storage_path,
+                        ttl_seconds=900,
+                    )
+            sent, errors = await _send_to_admins(
+                api,
+                recipients,
+                messages,
+                photo_url=photo_url,
+                photo_caption=f"Финальный эскиз · {_display(project.name)}",
+            )
             if sent > 0:
                 application.telegram_delivery_status = "sent"
                 application.telegram_delivery_error = None
