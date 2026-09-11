@@ -501,6 +501,17 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
             and payload["chat_id"]
             for method, payload in fake_telegram.calls
         )
+        assert any(
+            method == "sendMessage"
+            and "Архитектурный бриф" in payload["text"]
+            for method, payload in fake_telegram.calls
+        )
+        assert any(
+            method == "sendPhoto"
+            and payload["photo"]
+            and application_id in payload["caption"]
+            for method, payload in fake_telegram.calls
+        )
 
         applications = await client.get(
             "/api/v1/admin/questionnaire-applications",
