@@ -137,6 +137,33 @@ def test_canopy_house_style_does_not_override_explicit_polycarbonate_roof() -> N
     } in spec["questionnaire_constraints"]
 
 
+def test_full_house_rerender_ignores_stale_refinement_comment() -> None:
+    definition = _definition("eskez-doma")
+    session = DesignSession(
+        catalog_version=build_catalog()["version"],
+        selected_objects=["eskez-doma"],
+        source_step_completed=True,
+        answers={
+            "eskez-doma": {
+                "1": "Современный минимализм",
+                "15а": "Всё полностью, сделать заново",
+            }
+        },
+        review_comments={"eskez-doma": "Старый комментарий, который не должен применяться"},
+    )
+
+    spec = _spec(
+        build_questionnaire_generation_prompt(
+            definition,
+            session,
+            accepted_before=[],
+            input_asset_present=False,
+        )
+    )
+
+    assert spec["refinement_comment"] is None
+
+
 def test_prompt_excludes_inactive_and_review_answers() -> None:
     definition = _definition("eskez-doma")
     session = DesignSession(
