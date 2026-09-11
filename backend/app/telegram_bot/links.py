@@ -49,7 +49,7 @@ def admin_application_keyboard(
     rows = [
         [
             {
-                "text": "Открыть работу / проект",
+                "text": "Заявка в админке",
                 "web_app": {
                     "url": webapp_deep_link(
                         webapp_url,
