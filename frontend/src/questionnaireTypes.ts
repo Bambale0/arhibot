@@ -72,6 +72,18 @@ export function createDesignSession(catalogVersion:string, selectedObjects:strin
 }
 
 export type QuestionnaireProjectContext = { design_session?:DesignSession|null }
+export type QuestionnaireBriefAnswer = {
+  question_id:string
+  question:string
+  answer:QuestionnaireAnswer
+}
+export type QuestionnaireBriefObject = {
+  key:string
+  title:string
+  accepted:boolean
+  answers:QuestionnaireBriefAnswer[]
+}
+
 export type QuestionnaireApplication = {
   id:string
   session_id:string
@@ -86,5 +98,9 @@ export type QuestionnaireApplication = {
   telegram_delivery_status:string
   telegram_notified_at:string|null
   created_at:string
+  project_name:string|null
+  user_name:string|null
+  scene_asset_url:string|null
+  brief:QuestionnaireBriefObject[]
 }
 export type QuestionnaireApplicationSubmitResponse = { session:DesignSession; application:QuestionnaireApplication }
