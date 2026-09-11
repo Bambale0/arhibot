@@ -6,7 +6,9 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings
 from app.core.errors import AppError
+from app.db.models.assets import Asset
 from app.db.models.projects import Project
 from app.db.models.questionnaires import (
     QuestionnaireApplication,
@@ -15,6 +17,7 @@ from app.db.models.questionnaires import (
 )
 from app.db.models.users import User
 from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.questionnaires.application_brief import build_application_brief
 from app.questionnaires.generation_prompt import (
     build_questionnaire_generation_prompt,
 )
@@ -29,11 +32,13 @@ from app.repositories.questionnaires import QuestionnaireRepository
 from app.schemas.generations import GenerationCreate
 from app.schemas.questionnaires import (
     DesignSession,
+    QuestionnaireApplicationAdminResponse,
     QuestionnaireApplicationResponse,
     QuestionnaireCatalogAdminResponse,
     QuestionnaireCatalogAdminUpdate,
     QuestionnaireCatalogResponse,
 )
+from app.services.asset_service import LocalMediaStorage
 from app.services.project_service import ProjectService
 
 
@@ -346,11 +351,45 @@ class QuestionnaireService:
         await self.session.refresh(row)
         return await self.admin_catalog()
 
-    async def list_applications(self, *, limit: int = 200) -> list[QuestionnaireApplicationResponse]:
-        return [
-            QuestionnaireApplicationResponse.model_validate(item)
-            for item in await self.repository.list_applications(limit=limit)
-        ]
+    async def list_applications(
+        self, *, settings: Settings, limit: int = 200
+    ) -> list[QuestionnaireApplicationAdminResponse]:
+        storage = LocalMediaStorage(settings)
+        catalogs: dict[str, dict | None] = {}
+        result: list[QuestionnaireApplicationAdminResponse] = []
+
+        for item in await self.repository.list_applications(limit=limit):
+            if item.catalog_version not in catalogs:
+                catalogs[item.catalog_version] = await self.catalog_for_version(item.catalog_version)
+            catalog = catalogs[item.catalog_version]
+            project = await self.session.get(Project, item.project_id)
+            owner = await self.session.get(User, item.user_id)
+            scene_image_url: str | None = None
+            if item.scene_asset_id is not None:
+                asset = await self.session.get(Asset, item.scene_asset_id)
+                if asset is not None and asset.deleted_at is None:
+                    scene_image_url = storage.signed_url(asset.storage_path)
+
+            brief = (
+                build_application_brief(
+                    catalog,
+                    accepted_objects=list(item.accepted_objects),
+                    answers=dict(item.answers or {}),
+                )
+                if catalog is not None
+                else []
+            )
+            base = QuestionnaireApplicationResponse.model_validate(item).model_dump()
+            result.append(
+                QuestionnaireApplicationAdminResponse(
+                    **base,
+                    project_name=project.name if project is not None else str(item.project_id),
+                    user_name=owner.display_name if owner is not None else str(item.user_id),
+                    scene_image_url=scene_image_url,
+                    brief=brief,
+                )
+            )
+        return result
 
     @staticmethod
     def _stored_session(context: dict | None) -> DesignSession | None:
