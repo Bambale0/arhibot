@@ -252,6 +252,18 @@ class IdeaService:
                     status=409,
                     detail="This generated work already has an Ideas publication record.",
                 )
+            if not existing.is_active:
+                if existing.deactivation_source != "owner":
+                    raise AppError(
+                        type="idea_hidden_by_moderator",
+                        title="Work hidden by moderator",
+                        status=409,
+                        detail="Работа скрыта модератором и не может быть опубликована повторно пользователем.",
+                    )
+                existing.is_active = True
+                existing.deactivation_source = None
+                await self.session.commit()
+                await self.session.refresh(existing)
             if await self._image_url(generation) is None:
                 raise AppError(
                     type="idea_image_not_found",
@@ -259,10 +271,6 @@ class IdeaService:
                     status=404,
                     detail="The generated result image is no longer available.",
                 )
-            if not existing.is_active:
-                existing.is_active = True
-                await self.session.commit()
-                await self.session.refresh(existing)
             response = await self._publication_response(existing)
             if response is None:
                 raise AppError(
@@ -357,6 +365,7 @@ class IdeaService:
                 detail="This work is not published by the current user.",
             )
         publication.is_active = False
+        publication.deactivation_source = "owner"
         await self.session.commit()
         await self.session.refresh(publication)
         response = await self._publication_response(publication)
@@ -418,6 +427,7 @@ class AdminIdeaService(IdeaService):
             )
         if payload.is_active is not None:
             publication.is_active = payload.is_active
+            publication.deactivation_source = None if payload.is_active else "admin"
         if payload.sort_order is not None:
             publication.sort_order = payload.sort_order
         self.audit.add_audit(
