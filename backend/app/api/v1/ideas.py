@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from app.api.dependencies.auth import CurrentUser, DbSession
 from app.core.config import Settings, get_settings
@@ -24,6 +24,49 @@ async def list_ideas(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> list[PublicIdeaPublicationResponse]:
     return await IdeaService(session, settings).list_public(limit=limit)
+
+
+@router.get(
+    "/saved",
+    response_model=list[UUID],
+    operation_id="listSavedIdeas",
+)
+async def list_saved_ideas(
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> list[UUID]:
+    return await IdeaService(session, settings).list_saved_ids(user)
+
+
+@router.put(
+    "/{idea_id}/saved",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="saveIdea",
+)
+async def save_idea(
+    idea_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    await IdeaService(session, settings).save_idea(user, idea_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete(
+    "/{idea_id}/saved",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="unsaveIdea",
+)
+async def unsave_idea(
+    idea_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    await IdeaService(session, settings).unsave_idea(user, idea_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
