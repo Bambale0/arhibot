@@ -138,6 +138,9 @@ export function listGenerations(projectId?: string, limit = 50, cursor?: string 
   return request<GenerationList>(`/generations?${params}`)
 }
 export function listIdeas(limit = 50) { return request<Idea[]>(`/ideas?limit=${limit}`) }
+export function listSavedIdeas() { return request<string[]>('/ideas/saved') }
+export function saveIdea(ideaId: string) { return request<void>(`/ideas/${ideaId}/saved`, { method: 'PUT' }) }
+export function unsaveIdea(ideaId: string) { return request<void>(`/ideas/${ideaId}/saved`, { method: 'DELETE' }) }
 export function publishIdea(generationId: string) { return request<AdminIdea>('/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generation_id: generationId }) }) }
 export function getOwnIdeaPublication(generationId: string) { return request<AdminIdea | null>(`/ideas/mine/${generationId}`) }
 export function unpublishIdea(generationId: string) { return request<AdminIdea>(`/ideas/mine/${generationId}`, { method: 'DELETE' }) }
