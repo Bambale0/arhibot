@@ -81,6 +81,9 @@ def test_each_object_ends_with_review_and_application_is_separate() -> None:
         assert reviews[0]["options"][1].startswith("Нет")
     application = _definition("zayavka")
     assert [q["id"] for q in application["questions"]] == ["20", "21", "22", "23", "24", "25"]
+    contact = _question("zayavka", "24")
+    assert contact["text"] == "Оставьте телефон или @username Telegram"
+    assert contact["placeholder"] == "+7 999 123-45-67 или @username"
     assert _question("zayavka", "25")["kind"] == "consent"
 
 
