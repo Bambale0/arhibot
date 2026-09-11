@@ -68,6 +68,11 @@ class LocalMediaStorage:
             f"?expires={expires}&signature={signature}"
         )
 
+    def signed_telegram_photo_url(
+        self, relative_path: str, *, ttl_seconds: int | None = None
+    ) -> str:
+        return f"{self.signed_url(relative_path, ttl_seconds=ttl_seconds)}&preview=telegram"
+
     def verify_signature(
         self, relative_path: str, *, expires: int, signature: str, now: int | None = None
     ) -> bool:

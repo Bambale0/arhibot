@@ -124,7 +124,7 @@ async def deliver_pending_generations_once(
                 await session.commit()
                 continue
 
-            photo_url = LocalMediaStorage(settings).signed_url(
+            photo_url = LocalMediaStorage(settings).signed_telegram_photo_url(
                 output.storage_path,
                 ttl_seconds=3600,
             )

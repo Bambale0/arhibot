@@ -170,7 +170,9 @@ async def _send_to_admins(
                     },
                 )
             except Exception as exc:  # Telegram adapter failure must stay retryable.
-                errors.append(f"{type(exc).__name__}: {str(exc)[:180]}")
+                errors.append(
+                    f"recipient {recipient_id}: {type(exc).__name__}: {str(exc)[:160]}"
+                )
                 continue
             recipient["photo_sent"] = True
             progress[recipient_id] = recipient
@@ -196,7 +198,9 @@ async def _send_to_admins(
                     message_payload,
                 )
             except Exception as exc:  # Telegram adapter failure must stay retryable.
-                errors.append(f"{type(exc).__name__}: {str(exc)[:180]}")
+                errors.append(
+                    f"recipient {recipient_id}: {type(exc).__name__}: {str(exc)[:160]}"
+                )
                 failed_recipient = True
                 break
 
@@ -269,7 +273,7 @@ async def deliver_pending_applications_once(
                 else None
             )
             photo_url = (
-                LocalMediaStorage(get_settings()).signed_url(
+                LocalMediaStorage(get_settings()).signed_telegram_photo_url(
                     scene_asset.storage_path,
                     ttl_seconds=3600,
                 )
@@ -317,20 +321,24 @@ async def deliver_pending_applications_once(
                 photo_url=photo_url,
                 photo_reply_markup=photo_reply_markup,
             )
-            if sent > 0:
+            if sent == len(recipients):
                 application.telegram_delivery_status = "sent"
                 application.telegram_delivery_error = None
                 application.telegram_notified_at = datetime.now(UTC)
                 delivered += 1
-                if errors:
-                    logger.warning(
-                        "Questionnaire application %s reached an admin, but %s recipient(s) failed",
-                        application.id,
-                        len(errors),
-                    )
             else:
-                application.telegram_delivery_error = ("; ".join(errors) or "Telegram delivery failed")[:500]
+                application.telegram_delivery_status = "pending"
+                application.telegram_delivery_error = (
+                    "; ".join(errors)
+                    or f"Telegram delivery incomplete: {sent}/{len(recipients)} admins reached"
+                )[:500]
                 failed += 1
+                logger.warning(
+                    "Questionnaire application %s reached %s/%s admin recipient(s); retry remains pending",
+                    application.id,
+                    sent,
+                    len(recipients),
+                )
             await session.commit()
 
     return delivered, failed
