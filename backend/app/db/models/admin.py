@@ -117,6 +117,21 @@ class IdeaPublication(Base):
     )
 
 
+class IdeaBookmark(Base):
+    __tablename__ = "idea_bookmarks"
+    __table_args__ = (Index("ix_idea_bookmarks_user_created", "user_id", "created_at"),)
+
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    idea_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("idea_publications.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class GenerationRuntimeSettings(Base):
     __tablename__ = "generation_runtime_settings"
 
