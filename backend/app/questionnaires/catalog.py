@@ -165,6 +165,7 @@ def _parse_question(
         "skip_default": skip_default,
         "help": " ".join(notes) if notes else None,
         "field_hint": field,
+        "placeholder": None,
         "max_selections": None,
         "phase": "pre_render",
         "condition": None,
@@ -379,6 +380,8 @@ def _application_questions(text: str, *, user_facing: bool = True) -> list[dict[
         by_id[qid]["phase"] = "application"
     by_id["23"]["kind"] = "text"
     by_id["24"]["kind"] = "text"
+    by_id["24"]["text"] = "Оставьте телефон или @username Telegram"
+    by_id["24"]["placeholder"] = "+7 999 123-45-67 или @username"
     by_id["25"]["kind"] = "consent"
     by_id["25"]["options"] = []
     return questions

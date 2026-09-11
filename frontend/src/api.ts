@@ -1,4 +1,4 @@
-import type { NormalizedRect } from './questionnaireTypes'
+import type { NormalizedRect, QuestionnaireApplication } from './questionnaireTypes'
 import type {
   AdminAudit,
   AdminBillingSettings,
@@ -163,6 +163,8 @@ export function adminUpdateTariff(id: string, payload: Partial<{ name: string; d
 export function adminArchiveTariff(id: string) { return request<AdminTariff>(`/admin/tariffs/${id}`, { method: 'DELETE' }) }
 export function adminGetBillingSettings() { return request<AdminBillingSettings>('/admin/billing-settings') }
 export function adminUpdateBillingSettings(payload: Omit<AdminBillingSettings, 'updated_at'>) { return request<AdminBillingSettings>('/admin/billing-settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
+
+export function adminListQuestionnaireApplications() { return request<QuestionnaireApplication[]>('/admin/questionnaire-applications') }
 
 export function adminListIdeas() { return request<AdminIdea[]>('/admin/ideas') }
 export function adminUpdateIdea(id: string, payload: Partial<{ is_active: boolean; sort_order: number }>) {
