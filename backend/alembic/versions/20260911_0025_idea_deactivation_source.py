@@ -22,6 +22,26 @@ def upgrade() -> None:
         "idea_publications",
         sa.Column("deactivation_source", sa.String(length=16), nullable=True),
     )
+    op.execute(
+        sa.text(
+            """
+            UPDATE idea_publications AS publication
+            SET deactivation_source = CASE
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM admin_audit_log AS audit
+                    WHERE audit.action = 'idea.moderate'
+                      AND audit.entity_type = 'idea_publication'
+                      AND audit.entity_id = CAST(publication.id AS text)
+                      AND audit.details->'fields' ? 'is_active'
+                )
+                THEN 'admin'
+                ELSE 'owner'
+            END
+            WHERE publication.is_active = false
+            """
+        )
+    )
 
 
 def downgrade() -> None:
