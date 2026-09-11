@@ -4,13 +4,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.assets import Asset
+from app.db.models.generations import Generation
 from app.db.models.projects import Project
 from app.db.models.questionnaires import (
     QuestionnaireApplication,
     QuestionnaireCatalogConfig,
     QuestionnaireCatalogRevision,
 )
-from app.db.models.users import User
+from app.db.models.users import AuthIdentity, User
+from app.domain.users.enums import AuthProvider
 
 
 class QuestionnaireRepository:
@@ -44,13 +46,53 @@ class QuestionnaireRepository:
 
     async def list_applications_with_context(
         self, *, limit: int = 200
-    ) -> list[tuple[QuestionnaireApplication, str | None, str | None, str | None]]:
+    ) -> list[
+        tuple[
+            QuestionnaireApplication,
+            str | None,
+            str | None,
+            str | None,
+            UUID | None,
+            str | None,
+            str | None,
+        ]
+    ]:
+        final_generation_id = (
+            select(Generation.id)
+            .where(Generation.output_asset_id == QuestionnaireApplication.scene_asset_id)
+            .order_by(Generation.completed_at.desc(), Generation.created_at.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        telegram_user_id = (
+            select(AuthIdentity.provider_user_id)
+            .where(
+                AuthIdentity.user_id == QuestionnaireApplication.user_id,
+                AuthIdentity.provider == AuthProvider.TELEGRAM,
+            )
+            .order_by(AuthIdentity.created_at.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        user_email = (
+            select(AuthIdentity.provider_user_id)
+            .where(
+                AuthIdentity.user_id == QuestionnaireApplication.user_id,
+                AuthIdentity.provider == AuthProvider.EMAIL,
+            )
+            .order_by(AuthIdentity.created_at.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
         result = await self.session.execute(
             select(
                 QuestionnaireApplication,
                 Project.name,
                 User.display_name,
                 Asset.storage_path,
+                final_generation_id.label("final_generation_id"),
+                telegram_user_id.label("telegram_user_id"),
+                user_email.label("user_email"),
             )
             .outerjoin(Project, Project.id == QuestionnaireApplication.project_id)
             .outerjoin(User, User.id == QuestionnaireApplication.user_id)
@@ -59,6 +101,28 @@ class QuestionnaireRepository:
             .limit(limit)
         )
         return list(result.tuples().all())
+
+    async def get_user_contacts(self, user_id: UUID) -> dict[str, str]:
+        result = await self.session.execute(
+            select(AuthIdentity.provider, AuthIdentity.provider_user_id)
+            .where(AuthIdentity.user_id == user_id)
+            .order_by(AuthIdentity.created_at.desc())
+        )
+        contacts: dict[str, str] = {}
+        for provider, provider_user_id in result.tuples().all():
+            contacts.setdefault(provider.value, provider_user_id)
+        return contacts
+
+    async def get_generation_id_by_output_asset(self, asset_id: UUID | None) -> UUID | None:
+        if asset_id is None:
+            return None
+        result = await self.session.execute(
+            select(Generation.id)
+            .where(Generation.output_asset_id == asset_id)
+            .order_by(Generation.completed_at.desc(), Generation.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
     async def get_catalog_revisions(
         self, versions: set[str]
