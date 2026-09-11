@@ -564,6 +564,44 @@
   cursor: not-allowed;
 }
 
+.questionnaire-region-card { max-width: 940px; }
+.questionnaire-region-step { display: grid; gap: 16px; }
+.questionnaire-region-copy p,
+.questionnaire-region-hint {
+  margin: 0;
+  color: var(--q-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.questionnaire-region-frame {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--q-line-strong);
+  border-radius: 2px;
+  background: #e8ece8;
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+}
+.questionnaire-region-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 68dvh;
+  object-fit: contain;
+  pointer-events: none;
+}
+.questionnaire-region-rect {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--q-accent);
+  background: rgba(49, 93, 99, .13);
+  box-shadow: 0 0 0 9999px rgba(244, 246, 243, .16);
+  pointer-events: none;
+}
+.questionnaire-region-hint { font-size: 12px; }
+
 /* Pixel-lock region picker keeps technical-drawing conventions on purpose. */
 .region-picker-card { max-width: 940px; }
 .region-canvas {
