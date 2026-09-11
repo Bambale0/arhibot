@@ -145,20 +145,30 @@ async def test_questionnaire_delivery_resumes_after_partial_failure() -> None:
 def test_admin_application_keyboard_has_exact_admin_and_profile_links() -> None:
     application_id = uuid4()
     user_id = uuid4()
+    project_id = uuid4()
+    generation_id = uuid4()
     keyboard = admin_application_keyboard(
         "https://app.example.test/",
         application_id=application_id,
+        project_id=project_id,
+        final_generation_id=generation_id,
         user_id=user_id,
         telegram_user_id="900000001",
     )
     rows = keyboard["inline_keyboard"]
-    assert rows[0][0]["text"] == "Заявка в админке"
-    assert f"application={application_id}" in rows[0][0]["web_app"]["url"]
-    assert "admin=1" in rows[0][0]["web_app"]["url"]
-    assert rows[1][0]["text"] == "Профиль клиента"
-    assert f"user={user_id}" in rows[1][0]["web_app"]["url"]
+    assert rows[0][0]["text"] == "Работа / проект"
+    work_url = rows[0][0]["web_app"]["url"]
+    assert f"application={application_id}" in work_url
+    assert f"project={project_id}" in work_url
+    assert f"generation={generation_id}" in work_url
+    assert "admin=1" in work_url
+    assert rows[1][0]["text"] == "Заявка в админке"
+    assert f"application={application_id}" in rows[1][0]["web_app"]["url"]
     assert "admin=1" in rows[1][0]["web_app"]["url"]
-    assert rows[2][0] == {
+    assert rows[2][0]["text"] == "Профиль клиента"
+    assert f"user={user_id}" in rows[2][0]["web_app"]["url"]
+    assert "admin=1" in rows[2][0]["web_app"]["url"]
+    assert rows[3][0] == {
         "text": "Telegram профиль",
         "url": "tg://user?id=900000001",
     }
