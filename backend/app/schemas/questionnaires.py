@@ -136,6 +136,19 @@ class DesignSessionResponse(BaseModel):
     session: DesignSession | None = None
 
 
+class QuestionnaireBriefAnswer(BaseModel):
+    question_id: str
+    question: str
+    answer: QuestionAnswer
+
+
+class QuestionnaireBriefObject(BaseModel):
+    key: str
+    title: str
+    accepted: bool
+    answers: list[QuestionnaireBriefAnswer] = Field(default_factory=list)
+
+
 class QuestionnaireApplicationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
@@ -151,6 +164,10 @@ class QuestionnaireApplicationResponse(BaseModel):
     telegram_delivery_status: str
     telegram_notified_at: datetime | None
     created_at: datetime
+    project_name: str | None = None
+    user_name: str | None = None
+    scene_asset_url: str | None = None
+    brief: list[QuestionnaireBriefObject] = Field(default_factory=list)
 
 
 class QuestionnaireApplicationSubmitResponse(BaseModel):
