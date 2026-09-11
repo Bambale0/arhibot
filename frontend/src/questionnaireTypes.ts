@@ -16,6 +16,7 @@ export type QuestionnaireQuestion = {
   skip_condition:QuestionnaireCondition|null
   help:string|null
   field_hint:string|null
+  placeholder:string|null
   max_selections:number|null
   min_value?:number|null
   max_value?:number|null
