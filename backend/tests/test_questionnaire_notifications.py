@@ -1,5 +1,7 @@
 from uuid import uuid4
 
+import pytest
+
 from app.db.models.questionnaires import QuestionnaireApplication
 from app.questionnaires.catalog import build_catalog
 from app.telegram_bot.questionnaire_notifications import (
@@ -81,6 +83,7 @@ class _RetryingTelegramApi:
         return {"message_id": len(self.calls)}
 
 
+@pytest.mark.asyncio
 async def test_questionnaire_delivery_resumes_after_partial_failure() -> None:
     application = QuestionnaireApplication(
         id=uuid4(),
