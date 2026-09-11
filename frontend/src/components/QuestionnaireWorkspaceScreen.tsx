@@ -794,12 +794,8 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     && (active.min_value == null || numericDraft >= active.min_value)
     && (active.max_value == null || numericDraft <= active.max_value)
   const customDraftValid = Boolean(draft.trim()) && (!customInputIsNumber || numericDraftValid)
-  const activeTitle = current.key === 'zayavka' && active.id === '24'
-    ? 'Оставьте телефон или @username Telegram'
-    : active.text
-  const textPlaceholder = current.key === 'zayavka' && active.id === '24'
-    ? '+7 999 123-45-67 или @username'
-    : undefined
+  const activeTitle = active.text
+  const textPlaceholder = active.placeholder || undefined
 
   return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><div className="questionnaire-layout"><aside className="questionnaire-progress"><span className="eyebrow">ВЫБРАНО</span>{session.selected_objects.map((key, index) => <div key={key} className={`questionnaire-progress-item ${session.accepted_objects.includes(key) ? 'done' : key === current.key ? 'current' : ''}`}><b>{session.accepted_objects.includes(key) ? '✓' : index + 1}</b><span>{definitions.get(key)?.title || key}</span></div>)}<div className={`questionnaire-progress-item ${current.key === 'zayavka' ? 'current' : ''}`}><b>✓</b><span>Заявка</span></div>{sourceAsset && <div className="questionnaire-source-mini"><ImageIcon/><span>Фото участка загружено</span></div>}</aside><section className="questionnaire-card question-card"><div className="questionnaire-question-head"><div><span className="eyebrow">{active.phase === 'application' ? 'ЗАЯВКА' : review ? 'ОЦЕНКА ЭСКИЗА' : current.title.toUpperCase()}</span><h1>{activeTitle}</h1></div>{canSkip && <span className="optional-badge">можно пропустить</span>}</div>{review && renderOutput && <div className="questionnaire-result"><img src={renderOutput.url} alt={`Эскиз ${current.title}`}/></div>}
 
