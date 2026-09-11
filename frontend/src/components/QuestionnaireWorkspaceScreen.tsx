@@ -594,7 +594,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     setIdeaPublishing(true)
     setError(null)
     try {
-      setIdeaPublication(ideaPublication?.is_active
+      setIdeaPublication(ideaPublication?.owner_published
         ? await api.unpublishIdea(latestAcceptedGenerationId)
         : await api.publishIdea(latestAcceptedGenerationId))
     } catch (err) {
@@ -615,10 +615,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     <button
       type="button"
       className="secondary-button questionnaire-wide"
-      disabled={ideaPublishing || ideaPublication === undefined || Boolean(ideaPublication && !ideaPublication.is_active)}
+      disabled={ideaPublishing || ideaPublication === undefined}
       onClick={() => void publishLatestIdea()}
     >
-      {ideaPublishing ? 'Сохраняем…' : ideaPublication?.is_active ? 'Убрать из Идей' : ideaPublication ? 'Убрано из Идей' : ideaPublication === undefined ? 'Проверяем публикацию…' : 'Добавить в Идеи'}
+      {ideaPublishing ? 'Сохраняем…' : ideaPublication?.owner_published ? 'Убрать из Идей' : ideaPublication ? 'Вернуть в Идеи' : ideaPublication === undefined ? 'Проверяем публикацию…' : 'Добавить в Идеи'}
     </button>
   </div> : null
 
