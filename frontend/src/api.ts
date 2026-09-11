@@ -1,4 +1,4 @@
-import type { NormalizedRect } from './questionnaireTypes'
+import type { NormalizedRect, QuestionnaireApplicationAdmin } from './questionnaireTypes'
 import type {
   AdminAudit,
   AdminBillingSettings,
@@ -150,6 +150,7 @@ export function createBillingPayment(packageCode: string, receiptEmail?: string 
 export function getBillingPayment(paymentId: string) { return request<BillingPayment>(`/billing/payments/${paymentId}`) }
 
 export function adminOverview() { return request<AdminOverview>('/admin/overview') }
+export function adminListQuestionnaireApplications() { return request<QuestionnaireApplicationAdmin[]>('/admin/questionnaire-applications') }
 export function adminListTariffs() { return request<AdminTariff[]>('/admin/tariffs') }
 export function adminCreateTariff(payload: { code: string; name: string; description?: string | null; credits: number; amount: string; currency: string; is_active: boolean; sort_order: number }) {
   return request<AdminTariff>('/admin/tariffs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
