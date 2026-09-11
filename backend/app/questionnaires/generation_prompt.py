@@ -5,6 +5,7 @@ from json import dumps
 from math import floor
 from typing import Any
 
+from app.questionnaires.catalog import INHERITED_ROOF_QUESTION
 from app.schemas.questionnaires import DesignSession
 
 
@@ -149,14 +150,25 @@ def build_questionnaire_generation_prompt(
             "внутренних помещений не придумывать."
         )
 
-    inheritance_rule = (
-        "Не применяется к основному дому."
-        if object_key == "eskez-doma"
-        else (
-            "Если в ответах выбрано «Как у дома», точно наследовать стиль, "
-            "материалы и кровлю принятого дома."
-        )
-    )
+    inherited_style = object_key != "eskez-doma" and answers.get("1") == "Как у дома"
+    inherited_fields: list[str] = []
+    if inherited_style:
+        inherited_fields.append("architectural_style")
+        if object_key in INHERITED_ROOF_QUESTION:
+            inherited_fields.append("roof")
+    inheritance_rule = {
+        "enabled": inherited_style,
+        "source": "accepted_house" if inherited_style else None,
+        "fields": inherited_fields,
+        "explicit_questionnaire_answers_override": True,
+        "directive": (
+            "Наследовать от принятого дома только перечисленные fields. "
+            "Любой явно заданный ответ текущего объекта имеет приоритет и не должен "
+            "заменяться значением дома."
+            if inherited_style
+            else "Не наследовать параметры дома без явного ответа «Как у дома»."
+        ),
+    }
 
     spec = {
         "schema": "auroom.questionnaire_render.v1",
