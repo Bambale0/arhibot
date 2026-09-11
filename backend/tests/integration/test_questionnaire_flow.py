@@ -527,10 +527,13 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
         )
         assert photo_payload["photo"]
         keyboard = photo_payload["reply_markup"]["inline_keyboard"]
-        assert keyboard[0][0]["text"] == "Заявка в админке"
-        assert f"application={application_id}" in keyboard[0][0]["web_app"]["url"]
-        assert keyboard[1][0]["text"] == "Профиль клиента"
-        assert f"user={user_id}" in keyboard[1][0]["web_app"]["url"]
+        assert keyboard[0][0]["text"] == "Работа / проект"
+        assert f"project={project_id}" in keyboard[0][0]["web_app"]["url"]
+        assert f"generation={generation.id}" in keyboard[0][0]["web_app"]["url"]
+        assert keyboard[1][0]["text"] == "Заявка в админке"
+        assert f"application={application_id}" in keyboard[1][0]["web_app"]["url"]
+        assert keyboard[2][0]["text"] == "Профиль клиента"
+        assert f"user={user_id}" in keyboard[2][0]["web_app"]["url"]
 
         applications = await client.get(
             "/api/v1/admin/questionnaire-applications",
