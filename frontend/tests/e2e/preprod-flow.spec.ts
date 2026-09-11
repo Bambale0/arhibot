@@ -48,7 +48,7 @@ test.beforeEach(async ({page})=>{
   })
 })
 
-test('canonical create flow supports refinement and own unpublish without technical region UI',async({page})=>{
+test('canonical create flow supports refinement, confirmed lock region and idea republish',async({page})=>{
   const errors:string[]=[]; page.on('console',m=>{if(m.type()==='error')errors.push(m.text())})
   await page.goto('/')
   await page.getByRole('button',{name:'Создать проект'}).click()
@@ -60,9 +60,12 @@ test('canonical create flow supports refinement and own unpublish without techni
   await expect(page.getByText('Эскиз лавочки вам подходит?')).toBeVisible(); expect(generationCount).toBe(1)
   await page.getByRole('button',{name:'Уточнить'}).click(); await page.getByText('Металл + дерево',{exact:true}).click(); await page.getByText('Справа от дома',{exact:true}).click()
   await expect(page.getByText('Эскиз лавочки вам подходит?')).toBeVisible(); expect(generationCount).toBe(2); await expect(page.getByText('Недостаточно кредитов')).toHaveCount(0)
-  await page.getByRole('button',{name:'Подходит'}).click(); await expect(page.getByText('Что проектируем дальше?')).toBeVisible()
-  await expect(page.getByText(/ПИКСЕЛЬНАЯ|Зафиксируйте:|выделите прямоугольник/)).toHaveCount(0)
+  await page.getByRole('button',{name:'Подходит'}).click()
+  await expect(page.getByText('Зафиксируйте: Лавочка')).toBeVisible()
+  await page.getByRole('button',{name:'Зафиксировать область'}).click()
+  await expect(page.getByText('Что проектируем дальше?')).toBeVisible()
   await page.getByRole('button',{name:'Добавить в Идеи'}).click(); await expect(page.getByRole('button',{name:'Убрать из Идей'})).toBeVisible()
-  await page.getByRole('button',{name:'Убрать из Идей'}).click(); await expect(page.getByRole('button',{name:'Убрано из Идей'})).toBeVisible()
+  await page.getByRole('button',{name:'Убрать из Идей'}).click(); await expect(page.getByRole('button',{name:'Вернуть в Идеи'})).toBeVisible()
+  await page.getByRole('button',{name:'Вернуть в Идеи'}).click(); await expect(page.getByRole('button',{name:'Убрать из Идей'})).toBeVisible()
   await expect(page.getByText('AUROOM_RENDER_SPEC_V1')).toHaveCount(0); expect(errors).toEqual([])
 })
