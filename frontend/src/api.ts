@@ -138,6 +138,7 @@ export function listGenerations(projectId?: string, limit = 50, cursor?: string 
   return request<GenerationList>(`/generations?${params}`)
 }
 export function listIdeas(limit = 50) { return request<Idea[]>(`/ideas?limit=${limit}`) }
+export function getIdea(ideaId: string) { return request<Idea>(`/ideas/${ideaId}`) }
 export function listSavedIdeas() { return request<string[]>('/ideas/saved') }
 export function saveIdea(ideaId: string) { return request<void>(`/ideas/${ideaId}/saved`, { method: 'PUT' }) }
 export function unsaveIdea(ideaId: string) { return request<void>(`/ideas/${ideaId}/saved`, { method: 'DELETE' }) }
