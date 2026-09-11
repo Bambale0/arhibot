@@ -351,24 +351,33 @@ class QuestionnaireService:
         return await self.admin_catalog()
 
     async def list_applications(self, *, limit: int = 200) -> list[QuestionnaireApplicationResponse]:
-        items = await self.repository.list_applications(limit=limit)
+        rows = await self.repository.list_applications_with_context(limit=limit)
         storage = LocalMediaStorage(get_settings())
-        catalogs: dict[str, dict | None] = {}
-        result: list[QuestionnaireApplicationResponse] = []
-        for item in items:
-            if item.catalog_version not in catalogs:
-                catalogs[item.catalog_version] = await self.catalog_for_version(item.catalog_version)
-            catalog = catalogs[item.catalog_version]
-            project = await self.session.get(Project, item.project_id)
-            user = await self.session.get(User, item.user_id)
-            scene_asset = (
-                await self.session.get(Asset, item.scene_asset_id)
-                if item.scene_asset_id is not None
+
+        catalog_row = await self.repository.get_catalog()
+        versions = {item.catalog_version for item, _, _, _ in rows}
+        missing_versions = {
+            version
+            for version in versions
+            if catalog_row is None or version != catalog_row.version
+        }
+        revisions = await self.repository.get_catalog_revisions(missing_versions)
+        catalogs: dict[str, dict | None] = {
+            version: (
+                catalog_row.catalog
+                if catalog_row is not None and version == catalog_row.version
+                else revisions.get(version).catalog
+                if revisions.get(version) is not None
                 else None
             )
+            for version in versions
+        }
+
+        result: list[QuestionnaireApplicationResponse] = []
+        for item, project_name, user_name, scene_storage_path in rows:
             scene_asset_url = (
-                storage.signed_url(scene_asset.storage_path, ttl_seconds=3600)
-                if scene_asset is not None
+                storage.signed_url(scene_storage_path, ttl_seconds=3600)
+                if scene_storage_path
                 else None
             )
             response = QuestionnaireApplicationResponse.model_validate(item)
@@ -376,14 +385,14 @@ class QuestionnaireService:
                 QuestionnaireApplicationResponse.model_validate(
                     {
                         **response.model_dump(mode="python"),
-                        "project_name": project.name if project is not None else None,
-                        "user_name": user.display_name if user is not None else None,
+                        "project_name": project_name,
+                        "user_name": user_name,
                         "scene_asset_url": scene_asset_url,
                         "brief": build_application_brief(
                             selected_objects=item.selected_objects,
                             accepted_objects=item.accepted_objects,
                             answers=item.answers,
-                            catalog=catalog,
+                            catalog=catalogs[item.catalog_version],
                         ),
                     }
                 )
