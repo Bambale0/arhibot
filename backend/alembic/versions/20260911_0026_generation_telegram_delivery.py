@@ -26,8 +26,15 @@ def upgrade() -> None:
             "telegram_delivery_status",
             sa.String(length=32),
             nullable=False,
-            server_default="skipped",
+            server_default="pending",
         ),
+    )
+    op.execute(
+        """
+        UPDATE generations
+        SET telegram_delivery_status = 'skipped'
+        WHERE status IN ('completed', 'failed')
+        """
     )
     op.add_column(
         "generations",
@@ -45,13 +52,6 @@ def upgrade() -> None:
     op.add_column(
         "generations",
         sa.Column("telegram_notified_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.alter_column(
-        "generations",
-        "telegram_delivery_status",
-        existing_type=sa.String(length=32),
-        server_default="pending",
-        existing_nullable=False,
     )
     op.create_index(
         "ix_generations_telegram_delivery",
