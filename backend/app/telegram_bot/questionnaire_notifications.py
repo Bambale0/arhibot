@@ -170,7 +170,9 @@ async def _send_to_admins(
                     },
                 )
             except Exception as exc:  # Telegram adapter failure must stay retryable.
-                errors.append(f"{type(exc).__name__}: {str(exc)[:180]}")
+                errors.append(
+                    f"recipient {recipient_id}: {type(exc).__name__}: {str(exc)[:160]}"
+                )
                 continue
             recipient["photo_sent"] = True
             progress[recipient_id] = recipient
@@ -196,7 +198,9 @@ async def _send_to_admins(
                     message_payload,
                 )
             except Exception as exc:  # Telegram adapter failure must stay retryable.
-                errors.append(f"{type(exc).__name__}: {str(exc)[:180]}")
+                errors.append(
+                    f"recipient {recipient_id}: {type(exc).__name__}: {str(exc)[:160]}"
+                )
                 failed_recipient = True
                 break
 
