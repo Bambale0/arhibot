@@ -88,10 +88,10 @@ test('shared idea deep-link opens exact work and saves on the server',async({pag
       value: async (data:unknown) => { (window as typeof window & { __shareData?:unknown }).__shareData = data },
     })
     const originalScrollIntoView = Element.prototype.scrollIntoView
-    Element.prototype.scrollIntoView = function(...args) {
+    Element.prototype.scrollIntoView = function(arg?: boolean | ScrollIntoViewOptions) {
       const target = window as typeof window & { __ideaScrollCalls?:number }
       target.__ideaScrollCalls = (target.__ideaScrollCalls || 0) + 1
-      return originalScrollIntoView?.apply(this, args as [boolean | ScrollIntoViewOptions | undefined])
+      return originalScrollIntoView?.call(this, arg)
     }
   })
   await page.goto(`/?idea=${ideaId}`)
