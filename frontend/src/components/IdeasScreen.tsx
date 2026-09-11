@@ -86,38 +86,75 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
-  const [saved, setSaved] = useState<Set<string>>(() => readSaved())
+  const [saved, setSaved] = useState<Set<string>>(new Set())
   const [startingId, setStartingId] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    api.listIdeas()
-      .then((items) => { if (!cancelled) setIdeas(items) })
-      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Не удалось загрузить работы') })
-      .finally(() => { if (!cancelled) setLoading(false) })
+    void (async () => {
+      try {
+        const [items, savedIds] = await Promise.all([api.listIdeas(), api.listSavedIdeas()])
+        if (cancelled) return
+        setIdeas(items)
+        const availableIds = new Set(items.map((item) => item.id))
+        const legacy = readSaved()
+        const merged = new Set(savedIds)
+        const legacyToSync = [...legacy].filter((id) => availableIds.has(id) && !merged.has(id))
+        legacyToSync.forEach((id) => merged.add(id))
+        setSaved(merged)
+        if (legacyToSync.length) {
+          await Promise.allSettled(legacyToSync.map((id) => api.saveIdea(id)))
+        }
+        localStorage.removeItem(SAVED_KEY)
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Не удалось загрузить работы')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
     return () => { cancelled = true }
   }, [])
 
+  const deepLinkIdeaId = new URLSearchParams(window.location.search).get('idea')
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase()
-    if (!normalized) return ideas
-    return ideas.filter((idea) => searchableText(idea).includes(normalized))
-  }, [ideas, query])
+    const visible = normalized
+      ? ideas.filter((idea) => searchableText(idea).includes(normalized))
+      : [...ideas]
+    if (!normalized && deepLinkIdeaId) {
+      visible.sort((left, right) => Number(right.id === deepLinkIdeaId) - Number(left.id === deepLinkIdeaId))
+    }
+    return visible
+  }, [ideas, query, deepLinkIdeaId])
 
-  const toggleSaved = useCallback((ideaId: string) => {
+  const toggleSaved = useCallback(async (ideaId: string) => {
+    const wasSaved = saved.has(ideaId)
     setSaved((current) => {
       const next = new Set(current)
-      if (next.has(ideaId)) next.delete(ideaId); else next.add(ideaId)
-      localStorage.setItem(SAVED_KEY, JSON.stringify([...next]))
+      if (wasSaved) next.delete(ideaId); else next.add(ideaId)
       return next
     })
-  }, [])
+    try {
+      if (wasSaved) await api.unsaveIdea(ideaId)
+      else await api.saveIdea(ideaId)
+    } catch (err) {
+      setSaved((current) => {
+        const next = new Set(current)
+        if (wasSaved) next.add(ideaId); else next.delete(ideaId)
+        return next
+      })
+      setError(err instanceof Error ? err.message : 'Не удалось обновить сохранённые работы')
+    }
+  }, [saved])
 
   const shareIdea = useCallback(async (idea: Idea) => {
-    const shareData = { title: idea.title, text: `${idea.title} · ${idea.category}`, url: window.location.href }
+    const deepLink = new URL(window.location.href)
+    deepLink.search = ''
+    deepLink.searchParams.set('idea', idea.id)
+    const shareData = { title: idea.title, text: `${idea.title} · ${idea.category}`, url: deepLink.toString() }
     try {
       if (navigator.share) await navigator.share(shareData)
-      else if (navigator.clipboard) await navigator.clipboard.writeText(`${shareData.text}\n${window.location.href}`)
+      else if (navigator.clipboard) await navigator.clipboard.writeText(`${shareData.text}\n${shareData.url}`)
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return
       setError('Не удалось поделиться работой.')
@@ -157,7 +194,7 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
             total={filtered.length}
             saved={saved.has(idea.id)}
             starting={startingId === idea.id}
-            onSave={() => toggleSaved(idea.id)}
+            onSave={() => { void toggleSaved(idea.id) }}
             onShare={() => void shareIdea(idea)}
             onStart={() => void startFromIdea(idea)}
           />
