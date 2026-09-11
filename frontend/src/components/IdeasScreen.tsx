@@ -59,7 +59,7 @@ function WorkCard({
   const summary = idea.objects.flatMap((object) => object.answers.map((item) => ({ ...item, objectTitle: object.title })))
   return <article id={`idea-${idea.id}`} className="idea-feed-card idea-work-card" data-idea-id={idea.id}>
     <div className="idea-feed-copy">
-      <div className="idea-feed-kicker"><span>РАБОТЫ AUROOM</span><b>{index + 1} / {total}</b></div>
+      <div className="idea-feed-kicker"><span>Идеи AuRoom</span><b>{index + 1} / {total}</b></div>
       <h1>{idea.title}</h1>
       <p>{idea.category}</p>
     </div>
@@ -74,9 +74,9 @@ function WorkCard({
 
     <div className="idea-feed-meta idea-work-meta">
       <div className="idea-author-row">
-        <span className="idea-author-avatar">A</span>
+        <span className="idea-author-avatar" aria-hidden="true" />
         <strong>AuRoom</strong>
-        <button type="button" className="idea-use-button" disabled={starting} onClick={onStart}>{starting ? 'Создаём проект…' : 'Создать с такими объектами'}</button>
+        <button type="button" className="idea-use-button" disabled={starting} onClick={onStart}>{starting ? 'Создаём проект…' : 'Создать по этой работе'}</button>
       </div>
       {summary.length > 0 && <details className="idea-work-summary">
         <summary>Параметры работы · {summary.length}</summary>
