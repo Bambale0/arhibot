@@ -43,10 +43,26 @@ def admin_application_keyboard(
     webapp_url: str,
     *,
     application_id: object,
+    project_id: object,
+    final_generation_id: object | None,
     user_id: object,
     telegram_user_id: str | None,
 ) -> dict:
     rows = [
+        [
+            {
+                "text": "Работа / проект",
+                "web_app": {
+                    "url": webapp_deep_link(
+                        webapp_url,
+                        admin=1,
+                        application=application_id,
+                        project=project_id,
+                        generation=final_generation_id,
+                    )
+                },
+            }
+        ],
         [
             {
                 "text": "Заявка в админке",
