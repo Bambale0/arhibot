@@ -171,6 +171,7 @@ export type Idea = {
   objects: IdeaObjectSummary[]
   selected_objects: string[]
   published_at: string
+  is_saved: boolean
 }
 
 export type AdminOverview = {
@@ -203,6 +204,7 @@ export type AdminBillingSettings = {
 
 export type AdminIdea = Idea & {
   generation_id: string
+  owner_published: boolean
   is_active: boolean
   sort_order: number
   updated_at: string
