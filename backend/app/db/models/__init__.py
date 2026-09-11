@@ -4,6 +4,7 @@ from app.db.models.admin import (
     BroadcastCampaign,
     GenerationPromptTemplate,
     GenerationRuntimeSettings,
+    IdeaBookmark,
     IdeaPublication,
     IdeaTemplate,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "GenerationCreditPrice",
     "GenerationPromptTemplate",
     "GenerationRuntimeSettings",
+    "IdeaBookmark",
     "IdeaPublication",
     "IdeaTemplate",
     "OperationalSettings",
