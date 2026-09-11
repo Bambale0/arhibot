@@ -70,6 +70,20 @@ async def unpublish_idea(
     return await IdeaService(session, settings).unpublish(user, generation_id)
 
 
+@router.get(
+    "/{idea_id}",
+    response_model=PublicIdeaPublicationResponse,
+    operation_id="getIdea",
+)
+async def get_idea(
+    idea_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> PublicIdeaPublicationResponse:
+    return await IdeaService(session, settings).get_public(user, idea_id)
+
+
 @router.put(
     "/{idea_id}/save",
     response_model=IdeaSaveResponse,
