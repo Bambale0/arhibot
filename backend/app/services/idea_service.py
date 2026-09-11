@@ -394,7 +394,11 @@ class IdeaService:
 
     async def start_project(self, user: User, idea_id: UUID) -> ProjectResponse:
         publication = await self.repository.get(idea_id)
-        if publication is None or not publication.is_active:
+        if (
+            publication is None
+            or not publication.is_active
+            or not publication.owner_published
+        ):
             raise AppError(
                 type="idea_not_found",
                 title="Idea not found",
