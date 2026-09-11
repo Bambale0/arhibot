@@ -288,6 +288,8 @@ async def deliver_pending_applications_once(
                     photo_reply_markup = admin_application_keyboard(
                         resolved_webapp_url,
                         application_id=application.id,
+                        project_id=application.project_id,
+                        final_generation_id=final_generation_id,
                         user_id=application.user_id,
                         telegram_user_id=telegram_user_id,
                     )
