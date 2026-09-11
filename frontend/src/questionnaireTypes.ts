@@ -87,4 +87,12 @@ export type QuestionnaireApplication = {
   telegram_notified_at:string|null
   created_at:string
 }
+export type QuestionnaireBriefAnswer = { question:string; answer:string }
+export type QuestionnaireObjectBrief = { key:string; title:string; answers:QuestionnaireBriefAnswer[] }
+export type QuestionnaireApplicationAdmin = QuestionnaireApplication & {
+  project_name:string
+  user_name:string
+  scene_image_url:string|null
+  brief:QuestionnaireObjectBrief[]
+}
 export type QuestionnaireApplicationSubmitResponse = { session:DesignSession; application:QuestionnaireApplication }
