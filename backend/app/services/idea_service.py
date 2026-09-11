@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.db.models.admin import IdeaPublication
+from app.db.models.admin import IdeaBookmark, IdeaPublication
 from app.db.models.assets import Asset
 from app.db.models.generations import Generation
 from app.db.models.projects import Project
@@ -319,6 +319,32 @@ class IdeaService:
                 detail="The new publication could not be read back.",
             )
         return response
+
+    async def list_saved_ids(self, user: User) -> list[UUID]:
+        return await self.repository.list_bookmark_ids(user.id)
+
+    async def save_idea(self, user: User, idea_id: UUID) -> None:
+        publication = await self.repository.get(idea_id)
+        if publication is None or not publication.is_active:
+            raise AppError(
+                type="idea_not_found",
+                title="Idea not found",
+                status=404,
+                detail="This work is not available in Ideas.",
+            )
+        if await self.repository.get_bookmark(user.id, idea_id) is not None:
+            return
+        self.repository.add_bookmark(IdeaBookmark(user_id=user.id, idea_id=idea_id))
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            if await self.repository.get_bookmark(user.id, idea_id) is None:
+                raise
+
+    async def unsave_idea(self, user: User, idea_id: UUID) -> None:
+        await self.repository.remove_bookmark(user.id, idea_id)
+        await self.session.commit()
 
     async def unpublish(self, user: User, generation_id: UUID) -> IdeaPublicationResponse:
         await self._owned_generation(user, generation_id)
