@@ -118,3 +118,50 @@ def test_prompt_excludes_inactive_and_review_answers() -> None:
     assert spec["questionnaire_constraints"] == [
         {"question": "Какой стиль вам нравится?", "answer": "Современный минимализм"}
     ]
+
+
+def test_explicit_carport_roof_overrides_house_style_inheritance() -> None:
+    definition = _definition("naves")
+    roof_question = next(
+        question
+        for question in definition["questions"]
+        if question["phase"] == "pre_render" and "кров" in question["text"].lower()
+    )
+    polycarbonate = next(
+        option for option in roof_question["options"] if "поликарбонат" in option.lower()
+    )
+    session = DesignSession(
+        catalog_version=build_catalog()["version"],
+        selected_objects=["eskez-doma", "naves"],
+        source_step_completed=True,
+        accepted_objects=["eskez-doma"],
+        answers={
+            "naves": {
+                "1": "Как у дома",
+                roof_question["id"]: polycarbonate,
+            }
+        },
+        edit_regions={
+            "naves": {"x": 0.55, "y": 0.18, "width": 0.42, "height": 0.66}
+        },
+        lock_regions={
+            "eskez-doma": {"x": 0.1, "y": 0.1, "width": 0.7, "height": 0.7}
+        },
+    )
+
+    spec = _spec(
+        build_questionnaire_generation_prompt(
+            definition,
+            session,
+            accepted_before=["eskez-doma"],
+            input_asset_present=True,
+        )
+    )
+
+    assert {
+        "question": roof_question["text"],
+        "answer": polycarbonate,
+    } in spec["questionnaire_constraints"]
+    assert spec["questionnaire_semantics"]["explicit_selection_overrides_inheritance"] is True
+    assert "безусловный приоритет" in spec["inheritance"]
+    assert "точно наследовать стиль, материалы и кровлю" not in spec["inheritance"]
