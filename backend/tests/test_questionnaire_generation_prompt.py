@@ -89,7 +89,7 @@ def test_later_object_spec_contains_edit_lock_and_inheritance_rules() -> None:
     assert spec["questionnaire_constraints"] == [
         {"question": "Стиль как у дома или свой?", "answer": "Как у дома"}
     ]
-    assert "наследовать стиль" in spec["inheritance"]
+    assert "визуальный стиль принятого дома" in spec["inheritance"]
 
 
 def test_prompt_excludes_inactive_and_review_answers() -> None:
