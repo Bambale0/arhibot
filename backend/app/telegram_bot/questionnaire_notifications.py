@@ -206,6 +206,7 @@ async def _send_to_admins(
 async def deliver_pending_applications_once(
     *,
     api: TelegramBotApi | None = None,
+    webapp_url: str | None = None,
     limit: int = DELIVERY_BATCH_SIZE,
 ) -> tuple[int, int]:
     token = (get_settings().telegram_bot_token or "").strip()
@@ -281,11 +282,11 @@ async def deliver_pending_applications_once(
                 catalog=catalog,
             )
             photo_reply_markup = None
-            webapp_url = (get_settings().telegram_webapp_url or "").strip()
-            if webapp_url:
+            resolved_webapp_url = (webapp_url or get_settings().telegram_webapp_url or "").strip()
+            if resolved_webapp_url:
                 try:
                     photo_reply_markup = admin_application_keyboard(
-                        webapp_url,
+                        resolved_webapp_url,
                         application_id=application.id,
                         user_id=application.user_id,
                         telegram_user_id=telegram_user_id,
