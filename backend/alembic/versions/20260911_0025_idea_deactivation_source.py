@@ -33,7 +33,7 @@ def upgrade() -> None:
                     WHERE audit.action = 'idea.moderate'
                       AND audit.entity_type = 'idea_publication'
                       AND audit.entity_id = CAST(publication.id AS text)
-                      AND audit.details->'fields' ? 'is_active'
+                      AND jsonb_exists(audit.details->'fields', 'is_active')
                 )
                 THEN 'admin'
                 ELSE 'owner'
