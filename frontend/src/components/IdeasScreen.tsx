@@ -103,9 +103,13 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
         legacyToSync.forEach((id) => merged.add(id))
         setSaved(merged)
         if (legacyToSync.length) {
-          await Promise.allSettled(legacyToSync.map((id) => api.saveIdea(id)))
+          const results = await Promise.allSettled(legacyToSync.map((id) => api.saveIdea(id)))
+          const failed = legacyToSync.filter((_, index) => results[index]?.status === 'rejected')
+          if (failed.length) localStorage.setItem(SAVED_KEY, JSON.stringify(failed))
+          else localStorage.removeItem(SAVED_KEY)
+        } else {
+          localStorage.removeItem(SAVED_KEY)
         }
-        localStorage.removeItem(SAVED_KEY)
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Не удалось загрузить работы')
       } finally {
