@@ -18,6 +18,7 @@ from app.telegram_bot.main import TelegramBotApi, canonicalize_webapp_url
 
 logger = logging.getLogger(__name__)
 DELIVERY_BATCH_SIZE = 20
+MAX_DELIVERY_ATTEMPTS = 5
 
 
 def generation_keyboard(webapp_url: str, *, project_id: object, generation_id: object) -> dict:
@@ -112,7 +113,12 @@ async def deliver_pending_generations_once(
                 if generation.output_asset_id is not None
                 else None
             )
-            if project is None or output is None or output.deleted_at is not None:
+            if (
+                project is None
+                or project.deleted_at is not None
+                or output is None
+                or output.deleted_at is not None
+            ):
                 generation.telegram_delivery_status = "skipped"
                 generation.telegram_delivery_error = "Generation project or output asset is unavailable"
                 await session.commit()
@@ -141,6 +147,8 @@ async def deliver_pending_generations_once(
                 generation.telegram_delivery_error = (
                     f"{type(exc).__name__}: {str(exc)[:420]}"
                 )[:500]
+                if generation.telegram_delivery_attempts >= MAX_DELIVERY_ATTEMPTS:
+                    generation.telegram_delivery_status = "failed"
                 failed += 1
                 await session.commit()
                 continue
