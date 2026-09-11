@@ -243,7 +243,7 @@ function IdeasPanel({ items, onItems, onError }: {
       <div className="admin-card-list">{items.length ? items.map((item) => <article className="admin-list-card admin-idea-card" key={item.id}>
         {item.image_url && <img src={item.image_url} alt={item.title}/>}
         <div><strong>{item.title}</strong><span>{item.category} · {modes.find((mode) => mode.id === item.generation_type)?.label}</span><p>{item.objects.reduce((count, object) => count + object.answers.length, 0)} параметров · добавлено {formatDate(item.published_at)}</p></div>
-        <div><span className={`status-pill ${item.is_active ? '' : 'muted'}`}>{item.is_active ? 'В ленте' : 'Скрыта'}</span><label>Порядок<input type="number" min="-100000" max="100000" defaultValue={item.sort_order} disabled={busy !== null} onBlur={(event) => void changeOrder(item, event.target.value)}/></label><button disabled={busy !== null} onClick={() => void toggle(item)}>{item.is_active ? 'Скрыть' : 'Вернуть в ленту'}</button></div>
+        <div><span className={`status-pill ${item.owner_published && item.is_active ? '' : 'muted'}`}>{!item.owner_published ? 'Снята автором' : item.is_active ? 'В ленте' : 'Скрыта модерацией'}</span><label>Порядок<input type="number" min="-100000" max="100000" defaultValue={item.sort_order} disabled={busy !== null} onBlur={(event) => void changeOrder(item, event.target.value)}/></label><button disabled={busy !== null || !item.owner_published} onClick={() => void toggle(item)}>{!item.owner_published ? 'Автор снял' : item.is_active ? 'Скрыть' : 'Вернуть в ленту'}</button></div>
       </article>) : <div className="empty-inline"><p>Пользователи пока не добавили работы в ленту.</p></div>}</div>
     </div>
   </section>
