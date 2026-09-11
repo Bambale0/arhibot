@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type SVGProps } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type SVGProps } from 'react'
 import * as api from '../api'
 import type { Idea, Project } from '../types'
 
@@ -7,6 +7,19 @@ const iconProps = { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 
 const SearchIcon = (props: IconProps) => <svg {...iconProps} {...props}><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
 const BookmarkIcon = ({ filled, ...props }: IconProps & { filled?: boolean }) => <svg {...iconProps} {...props} fill={filled ? 'currentColor' : 'none'}><path d="M6 4.8A1.8 1.8 0 0 1 7.8 3h8.4A1.8 1.8 0 0 1 18 4.8V21l-6-3.8L6 21V4.8Z"/></svg>
 const ShareIcon = (props: IconProps) => <svg {...iconProps} {...props}><path d="M12 4v11M8 8l4-4 4 4"/><path d="M5 12v7h14v-7"/></svg>
+
+const LEGACY_SAVED_KEY = 'auroom.saved_ideas'
+
+function legacySavedIds(): string[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(LEGACY_SAVED_KEY) || '[]')
+    return Array.isArray(value)
+      ? [...new Set(value.filter((item): item is string => typeof item === 'string' && Boolean(item)))]
+      : []
+  } catch {
+    return []
+  }
+}
 
 function searchableText(idea: Idea) {
   return [
@@ -87,6 +100,7 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set())
   const [startingId, setStartingId] = useState<string | null>(null)
   const sharedIdeaId = new URLSearchParams(window.location.search).get('idea')
+  const sharedScrollDone = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -102,7 +116,22 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
             : Promise.resolve(null),
         ])
         if (cancelled) return
-        setIdeas(shared && !items.some((item) => item.id === shared.id) ? [shared, ...items] : items)
+        let nextItems = shared && !items.some((item) => item.id === shared.id) ? [shared, ...items] : items
+
+        const legacyIds = legacySavedIds()
+        if (legacyIds.length) {
+          const migrated = await Promise.allSettled(legacyIds.map((ideaId) => api.saveIdea(ideaId)))
+          if (cancelled) return
+          const savedIds = new Set(
+            migrated.flatMap((result, index) => result.status === 'fulfilled' ? [legacyIds[index]] : []),
+          )
+          nextItems = nextItems.map((item) => savedIds.has(item.id) ? { ...item, is_saved:true } : item)
+          const remaining = legacyIds.filter((ideaId) => !savedIds.has(ideaId))
+          if (remaining.length) localStorage.setItem(LEGACY_SAVED_KEY, JSON.stringify(remaining))
+          else localStorage.removeItem(LEGACY_SAVED_KEY)
+        }
+
+        setIdeas(nextItems)
         if (sharedIdeaId && !shared) setError('Эта работа больше не опубликована в Идеях.')
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Не удалось загрузить работы')
@@ -114,9 +143,12 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
   }, [sharedIdeaId])
 
   useEffect(() => {
-    if (loading || !sharedIdeaId) return
-    document.getElementById(`idea-${sharedIdeaId}`)?.scrollIntoView({ block:'start' })
-  }, [loading, ideas, sharedIdeaId])
+    if (loading || !sharedIdeaId || sharedScrollDone.current) return
+    const target = document.getElementById(`idea-${sharedIdeaId}`)
+    if (!target) return
+    target.scrollIntoView({ block:'start' })
+    sharedScrollDone.current = true
+  }, [loading, sharedIdeaId])
 
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase()
