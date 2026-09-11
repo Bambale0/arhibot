@@ -137,7 +137,13 @@ def build_questionnaire_generation_prompt(
     locked_objects = [
         key for key in accepted_before if session.lock_regions.get(key) is not None
     ]
-    refinement = session.review_comments.get(object_key, "").strip() or None
+    refinement_mode = answers.get("15а") if object_key == "eskez-doma" else None
+    refinement = (
+        session.review_comments.get(object_key, "").strip() or None
+        if isinstance(refinement_mode, str)
+        and refinement_mode.startswith("Что-то конкретное")
+        else None
+    )
 
     prohibitions = [
         "Не показывать на изображении текст, подписи, размеры, UI или технические аннотации.",
