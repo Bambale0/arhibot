@@ -197,6 +197,7 @@ function ApplicationsPanel({ items, focusId }: { items: QuestionnaireApplication
             {item.scene_asset_url && <a className="secondary-button" href={item.scene_asset_url} target="_blank" rel="noreferrer">Открыть работу</a>}
             <a className="secondary-button" href={`/?admin=1&application=${item.id}`}>Ссылка на заявку</a>
             <a className="secondary-button" href={`/?admin=1&user=${item.user_id}`}>Профиль клиента</a>
+            {item.telegram_user_id && /^\d+$/.test(item.telegram_user_id) && <a className="secondary-button" href={`tg://user?id=${item.telegram_user_id}`}>Telegram профиль</a>}
             <button type="button" className="secondary-button" onClick={() => setExpanded(isOpen ? null : item.id)}>{isOpen ? 'Скрыть подробный brief' : 'Открыть подробный brief'}</button>
           </div>
           {isOpen && <div className="admin-subpanel">
