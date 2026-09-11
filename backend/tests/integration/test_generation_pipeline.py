@@ -19,13 +19,14 @@ from app.core.config import get_settings  # noqa: E402
 from app.core.redis import redis_client  # noqa: E402
 from app.db.models.assets import Asset  # noqa: E402
 from app.db.models.generations import Generation  # noqa: E402
-from app.db.models.users import User  # noqa: E402
+from app.db.models.users import AuthIdentity, User  # noqa: E402
 from app.db.session import get_session_factory  # noqa: E402
-from app.domain.users.enums import UserRole  # noqa: E402
+from app.domain.users.enums import AuthProvider, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
 from app.providers.nexus import NexusImageProvider, NexusImageResult  # noqa: E402
 from app.services.asset_service import LocalMediaStorage  # noqa: E402
 from app.services.generation_service import GENERATION_QUEUE_KEY  # noqa: E402
+from app.telegram_bot.generation_notifications import deliver_pending_generations_once  # noqa: E402
 from app.workers import generation_worker  # noqa: E402
 
 
@@ -188,6 +189,47 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
         me = await client.get("/api/v1/me", headers=headers)
         assert me.status_code == 200
         assert me.json()["credits_balance"] == 3
+
+        async with get_session_factory()() as session:
+            session.add(
+                AuthIdentity(
+                    user_id=UUID(user_id),
+                    provider=AuthProvider.TELEGRAM,
+                    provider_user_id="900000001",
+                )
+            )
+            await session.commit()
+
+        class FakeTelegramApi:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict]] = []
+
+            def call(self, method: str, payload: dict, *, timeout: int = 15):
+                self.calls.append((method, payload))
+                return {"message_id": 1}
+
+        telegram = FakeTelegramApi()
+        sent, failed = await deliver_pending_generations_once(
+            api=telegram,  # type: ignore[arg-type]
+            webapp_url="https://app.example.test/",
+        )
+        assert sent == 1
+        assert failed == 0
+        assert len(telegram.calls) == 1
+        method, telegram_payload = telegram.calls[0]
+        assert method == "sendPhoto"
+        assert telegram_payload["chat_id"] == "900000001"
+        assert "Add a bathhouse only in the editable area" not in telegram_payload["caption"]
+        keyboard = telegram_payload["reply_markup"]["inline_keyboard"]
+        assert f"project={project_id}" in keyboard[0][0]["web_app"]["url"]
+        assert f"generation={generation_id}" in keyboard[1][0]["web_app"]["url"]
+
+        async with get_session_factory()() as session:
+            generation = await session.get(Generation, generation_id)
+            assert generation is not None
+            assert generation.telegram_delivery_status == "sent"
+            assert generation.telegram_delivery_attempts == 1
+            assert generation.telegram_notified_at is not None
 
 @pytest.mark.asyncio
 async def test_structured_questionnaire_prompt_bypasses_legacy_template_and_inherits_ratio(
