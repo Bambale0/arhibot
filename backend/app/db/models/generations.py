@@ -18,6 +18,7 @@ class Generation(Base):
         Index("ix_generations_user_created", "user_id", "created_at"),
         Index("ix_generations_project_created", "project_id", "created_at"),
         Index("ix_generations_status_created", "status", "created_at"),
+        Index("ix_generations_telegram_delivery", "telegram_delivery_status", "completed_at"),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
