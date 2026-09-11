@@ -17,6 +17,7 @@ from app.questionnaires.application_brief import build_application_brief
 from app.questionnaires.catalog import OBJECT_TITLES
 from app.repositories.questionnaires import QuestionnaireRepository
 from app.services.asset_service import LocalMediaStorage
+from app.telegram_bot.links import admin_application_keyboard
 from app.telegram_bot.main import TelegramBotApi
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,9 @@ def build_application_message(
     *,
     project_name: str,
     user_name: str,
+    user_email: str | None = None,
+    telegram_user_id: str | None = None,
+    final_generation_id: object | None = None,
     catalog: dict | None = None,
 ) -> str:
     application_answers = application.answers.get("zayavka", {})
@@ -60,7 +64,12 @@ def build_application_message(
         f"Бюджет: {_display(application_answers.get('21'))}",
         f"Срок: {_display(application_answers.get('22'))}",
         f"Имя: {_display(application_answers.get('23'))}",
-        f"Контакт: {_display(application_answers.get('24'))}",
+        "",
+        "👤 Контакты клиента",
+        f"Контакт из заявки: {_display(application_answers.get('24'))}",
+        f"E-mail аккаунта: {_display(user_email)}",
+        f"Telegram ID: {_display(telegram_user_id)}",
+        f"User ID: {application.user_id}",
         f"Согласие ПД: {_display(application_answers.get('25'))}",
         "",
         "📐 Архитектурный бриф",
@@ -82,6 +91,8 @@ def build_application_message(
     lines.extend(
         [
             "",
+            f"Проект ID: {application.project_id}",
+            f"Финальная работа generation: {_display(final_generation_id)}",
             f"Финальный эскиз asset: {_display(application.scene_asset_id)}",
             f"ID заявки: {application.id}",
         ]
@@ -131,6 +142,7 @@ async def _send_to_admins(
     session: AsyncSession,
     application: QuestionnaireApplication,
     photo_url: str | None = None,
+    photo_reply_markup: dict | None = None,
 ) -> tuple[int, list[str]]:
     sent = 0
     errors: list[str] = []
@@ -154,6 +166,7 @@ async def _send_to_admins(
                         "chat_id": recipient_id,
                         "photo": photo_url,
                         "caption": f"Финальный эскиз AuRoom · заявка {application.id}",
+                        **({"reply_markup": photo_reply_markup} if photo_reply_markup else {}),
                     },
                 )
             except Exception as exc:  # Telegram adapter failure must stay retryable.
@@ -252,12 +265,36 @@ async def deliver_pending_applications_once(
                 if scene_asset is not None
                 else None
             )
+            contacts = await repository.get_user_contacts(application.user_id)
+            telegram_user_id = contacts.get(AuthProvider.TELEGRAM.value)
+            user_email = contacts.get(AuthProvider.EMAIL.value)
+            final_generation_id = await repository.get_generation_id_by_output_asset(
+                application.scene_asset_id
+            )
             message = build_application_message(
                 application,
                 project_name=project.name,
                 user_name=user.display_name,
+                user_email=user_email,
+                telegram_user_id=telegram_user_id,
+                final_generation_id=final_generation_id,
                 catalog=catalog,
             )
+            photo_reply_markup = None
+            webapp_url = (get_settings().telegram_webapp_url or "").strip()
+            if webapp_url:
+                try:
+                    photo_reply_markup = admin_application_keyboard(
+                        webapp_url,
+                        application_id=application.id,
+                        user_id=application.user_id,
+                        telegram_user_id=telegram_user_id,
+                    )
+                except ValueError:
+                    logger.warning(
+                        "Application %s has no valid Telegram Mini App URL for admin links",
+                        application.id,
+                    )
             sent, errors = await _send_to_admins(
                 api,
                 recipients,
@@ -265,6 +302,7 @@ async def deliver_pending_applications_once(
                 session=session,
                 application=application,
                 photo_url=photo_url,
+                photo_reply_markup=photo_reply_markup,
             )
             if sent > 0:
                 application.telegram_delivery_status = "sent"
