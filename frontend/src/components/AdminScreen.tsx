@@ -159,7 +159,7 @@ function ApplicationsPanel({ items }: { items: QuestionnaireApplication[] }) {
       {items.length ? items.map((item) => {
         const lead = item.answers.zayavka || {}
         const isOpen = expanded === item.id
-        return <article className="admin-list-card" key={item.id}>
+        return <article className="admin-list-card admin-application-card" key={item.id}>
           <div className="admin-panel-title">
             <div>
               <h3>{item.project_name || 'Проект без названия'}</h3>
