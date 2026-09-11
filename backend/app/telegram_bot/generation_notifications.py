@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-
 from sqlalchemy import select
 
 from app.core.config import get_settings
@@ -15,38 +13,11 @@ from app.db.session import get_session_factory
 from app.domain.users.enums import AuthProvider
 from app.repositories.generations import GenerationRepository
 from app.services.asset_service import LocalMediaStorage
+from app.telegram_bot.links import webapp_deep_link
 from app.telegram_bot.main import TelegramBotApi, canonicalize_webapp_url
 
 logger = logging.getLogger(__name__)
 DELIVERY_BATCH_SIZE = 20
-
-
-def generation_deep_link(
-    webapp_url: str,
-    *,
-    project_id: object | None = None,
-    generation_id: object | None = None,
-) -> str:
-    safe = canonicalize_webapp_url(webapp_url)
-    parsed = urlsplit(safe)
-    query = [
-        (key, value)
-        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-        if key not in {"project", "generation", "idea", "billing", "admin"}
-    ]
-    if project_id is not None:
-        query.append(("project", str(project_id)))
-    if generation_id is not None:
-        query.append(("generation", str(generation_id)))
-    return urlunsplit(
-        (
-            parsed.scheme,
-            parsed.netloc,
-            parsed.path,
-            urlencode(query),
-            parsed.fragment,
-        )
-    )
 
 
 def generation_keyboard(webapp_url: str, *, project_id: object, generation_id: object) -> dict:
@@ -56,9 +27,9 @@ def generation_keyboard(webapp_url: str, *, project_id: object, generation_id: o
                 {
                     "text": "Продолжить проект",
                     "web_app": {
-                        "url": generation_deep_link(
+                        "url": webapp_deep_link(
                             webapp_url,
-                            project_id=project_id,
+                            project=project_id,
                         )
                     },
                 }
@@ -67,9 +38,9 @@ def generation_keyboard(webapp_url: str, *, project_id: object, generation_id: o
                 {
                     "text": "Открыть результат",
                     "web_app": {
-                        "url": generation_deep_link(
+                        "url": webapp_deep_link(
                             webapp_url,
-                            generation_id=generation_id,
+                            generation=generation_id,
                         )
                     },
                 }
