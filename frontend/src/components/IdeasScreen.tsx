@@ -8,16 +8,6 @@ const SearchIcon = (props: IconProps) => <svg {...iconProps} {...props}><circle 
 const BookmarkIcon = ({ filled, ...props }: IconProps & { filled?: boolean }) => <svg {...iconProps} {...props} fill={filled ? 'currentColor' : 'none'}><path d="M6 4.8A1.8 1.8 0 0 1 7.8 3h8.4A1.8 1.8 0 0 1 18 4.8V21l-6-3.8L6 21V4.8Z"/></svg>
 const ShareIcon = (props: IconProps) => <svg {...iconProps} {...props}><path d="M12 4v11M8 8l4-4 4 4"/><path d="M5 12v7h14v-7"/></svg>
 
-const SAVED_KEY = 'auroom.saved_ideas'
-function readSaved() {
-  try {
-    const value = JSON.parse(localStorage.getItem(SAVED_KEY) || '[]')
-    return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [])
-  } catch {
-    return new Set<string>()
-  }
-}
-
 function searchableText(idea: Idea) {
   return [
     idea.title,
@@ -26,11 +16,19 @@ function searchableText(idea: Idea) {
   ].join(' ').toLowerCase()
 }
 
+function ideaShareUrl(ideaId:string) {
+  const url = new URL(window.location.href)
+  url.searchParams.delete('billing')
+  url.searchParams.delete('admin')
+  url.searchParams.set('idea', ideaId)
+  return url.toString()
+}
+
 function WorkCard({
   idea,
   index,
   total,
-  saved,
+  saving,
   starting,
   onSave,
   onShare,
@@ -39,14 +37,14 @@ function WorkCard({
   idea: Idea
   index: number
   total: number
-  saved: boolean
+  saving: boolean
   starting: boolean
   onSave: () => void
   onShare: () => void
   onStart: () => void
 }) {
   const summary = idea.objects.flatMap((object) => object.answers.map((item) => ({ ...item, objectTitle: object.title })))
-  return <article className="idea-feed-card idea-work-card">
+  return <article id={`idea-${idea.id}`} className="idea-feed-card idea-work-card" data-idea-id={idea.id}>
     <div className="idea-feed-copy">
       <div className="idea-feed-kicker"><span>РАБОТЫ AUROOM</span><b>{index + 1} / {total}</b></div>
       <h1>{idea.title}</h1>
@@ -56,7 +54,7 @@ function WorkCard({
     <div className="idea-work-stage">
       {idea.image_url ? <img src={idea.image_url} alt={idea.title} loading={index === 0 ? 'eager' : 'lazy'} /> : <div className="idea-work-empty">Работа временно недоступна</div>}
       <div className="idea-work-actions">
-        <button type="button" className={saved ? 'active' : ''} aria-label={saved ? 'Убрать из сохранённых' : 'Сохранить'} onClick={onSave}><BookmarkIcon filled={saved}/></button>
+        <button type="button" disabled={saving} className={idea.is_saved ? 'active' : ''} aria-label={idea.is_saved ? 'Убрать из сохранённых' : 'Сохранить'} onClick={onSave}><BookmarkIcon filled={idea.is_saved}/></button>
         <button type="button" aria-label="Поделиться" onClick={onShare}><ShareIcon /></button>
       </div>
     </div>
@@ -86,7 +84,7 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
-  const [saved, setSaved] = useState<Set<string>>(() => readSaved())
+  const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set())
   const [startingId, setStartingId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -98,26 +96,45 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
     return () => { cancelled = true }
   }, [])
 
+  useEffect(() => {
+    if (loading || !ideas.length) return
+    const ideaId = new URLSearchParams(window.location.search).get('idea')
+    if (!ideaId) return
+    const target = document.getElementById(`idea-${ideaId}`)
+    if (target) target.scrollIntoView({ block:'start' })
+    else setError('Эта работа больше не опубликована в Идеях.')
+  }, [loading, ideas])
+
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     if (!normalized) return ideas
     return ideas.filter((idea) => searchableText(idea).includes(normalized))
   }, [ideas, query])
 
-  const toggleSaved = useCallback((ideaId: string) => {
-    setSaved((current) => {
-      const next = new Set(current)
-      if (next.has(ideaId)) next.delete(ideaId); else next.add(ideaId)
-      localStorage.setItem(SAVED_KEY, JSON.stringify([...next]))
-      return next
-    })
-  }, [])
+  const toggleSaved = useCallback(async (idea: Idea) => {
+    if (savingIds.has(idea.id)) return
+    setSavingIds((current) => new Set(current).add(idea.id))
+    setError(null)
+    try {
+      const result = idea.is_saved ? await api.unsaveIdea(idea.id) : await api.saveIdea(idea.id)
+      setIdeas((current) => current.map((item) => item.id === idea.id ? { ...item, is_saved:result.is_saved } : item))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось изменить сохранённые работы')
+    } finally {
+      setSavingIds((current) => {
+        const next = new Set(current)
+        next.delete(idea.id)
+        return next
+      })
+    }
+  }, [savingIds])
 
   const shareIdea = useCallback(async (idea: Idea) => {
-    const shareData = { title: idea.title, text: `${idea.title} · ${idea.category}`, url: window.location.href }
+    const url = ideaShareUrl(idea.id)
+    const shareData = { title: idea.title, text: `${idea.title} · ${idea.category}`, url }
     try {
       if (navigator.share) await navigator.share(shareData)
-      else if (navigator.clipboard) await navigator.clipboard.writeText(`${shareData.text}\n${window.location.href}`)
+      else if (navigator.clipboard) await navigator.clipboard.writeText(`${shareData.text}\n${url}`)
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return
       setError('Не удалось поделиться работой.')
@@ -155,9 +172,9 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
             idea={idea}
             index={index}
             total={filtered.length}
-            saved={saved.has(idea.id)}
+            saving={savingIds.has(idea.id)}
             starting={startingId === idea.id}
-            onSave={() => toggleSaved(idea.id)}
+            onSave={() => void toggleSaved(idea)}
             onShare={() => void shareIdea(idea)}
             onStart={() => void startFromIdea(idea)}
           />
