@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import * as api from '../api'
 import {
   createQuestionnaireGeneration,
@@ -64,6 +64,100 @@ function newSession(version:string, selected:string[]):DesignSession {
 function answerEquals(left:QuestionnaireAnswer|undefined, right:QuestionnaireAnswer|undefined):boolean {
   if (Array.isArray(left) || Array.isArray(right)) return JSON.stringify(left) === JSON.stringify(right)
   return left === right
+}
+
+function clamp(value:number, min=0, max=1) { return Math.min(max, Math.max(min, value)) }
+
+function RegionSelector({
+  imageUrl,
+  value,
+  objectTitle,
+  mode,
+  disabled,
+  onConfirm,
+}: {
+  imageUrl:string
+  value:NormalizedRect
+  objectTitle:string
+  mode:'edit'|'lock'
+  disabled:boolean
+  onConfirm:(region:NormalizedRect)=>void
+}) {
+  const frameRef = useRef<HTMLDivElement>(null)
+  const [draft, setDraft] = useState<NormalizedRect>(value)
+  const [start, setStart] = useState<{x:number;y:number}|null>(null)
+
+  useEffect(() => { setDraft(value) }, [value.x, value.y, value.width, value.height])
+
+  function point(event:ReactPointerEvent<HTMLDivElement>) {
+    const bounds = frameRef.current?.getBoundingClientRect()
+    if (!bounds || bounds.width <= 0 || bounds.height <= 0) return null
+    return {
+      x:clamp((event.clientX - bounds.left) / bounds.width),
+      y:clamp((event.clientY - bounds.top) / bounds.height),
+    }
+  }
+
+  function begin(event:ReactPointerEvent<HTMLDivElement>) {
+    const next = point(event)
+    if (!next || disabled) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setStart(next)
+    setDraft({ x:next.x, y:next.y, width:0.01, height:0.01 })
+  }
+
+  function move(event:ReactPointerEvent<HTMLDivElement>) {
+    if (!start || disabled) return
+    const next = point(event)
+    if (!next) return
+    const x = Math.min(start.x, next.x)
+    const y = Math.min(start.y, next.y)
+    setDraft({
+      x,
+      y,
+      width:Math.max(0.01, Math.abs(next.x - start.x)),
+      height:Math.max(0.01, Math.abs(next.y - start.y)),
+    })
+  }
+
+  function end(event:ReactPointerEvent<HTMLDivElement>) {
+    if (!start) return
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    setStart(null)
+  }
+
+  const valid = draft.width >= 0.04 && draft.height >= 0.04
+  return <div className="questionnaire-region-step">
+    <div className="questionnaire-region-copy">
+      <span className="eyebrow">{mode === 'edit' ? 'ОБЛАСТЬ НОВОГО ОБЪЕКТА' : 'ЗАЩИТНАЯ ОБЛАСТЬ'}</span>
+      <h1>{mode === 'edit' ? `Где разместить: ${objectTitle}?` : `Зафиксируйте: ${objectTitle}`}</h1>
+      <p>{mode === 'edit'
+        ? 'Выделите прямоугольником место на принятом кадре. Генератор изменит только эту область, всё остальное compositor сохранит пиксельно.'
+        : 'Выделите область принятого объекта. В следующих генерациях она будет защищена от изменений.'}</p>
+    </div>
+    <div
+      ref={frameRef}
+      className="questionnaire-region-frame"
+      onPointerDown={begin}
+      onPointerMove={move}
+      onPointerUp={end}
+      onPointerCancel={end}
+      role="application"
+      aria-label="Выбор области на изображении"
+    >
+      <img src={imageUrl} alt={mode === 'edit' ? 'Последний принятый кадр' : `Эскиз ${objectTitle}`} draggable={false}/>
+      <div
+        className="questionnaire-region-rect"
+        style={{ left:`${draft.x * 100}%`, top:`${draft.y * 100}%`, width:`${draft.width * 100}%`, height:`${draft.height * 100}%` }}
+      />
+    </div>
+    <p className="questionnaire-region-hint">Потяните по изображению, чтобы перерисовать область. Текущий прямоугольник — только стартовая подсказка и не применяется без подтверждения.</p>
+    <div className="questionnaire-actions">
+      <button className="primary-button" disabled={disabled || !valid} onClick={() => onConfirm(draft)}>
+        {mode === 'edit' ? 'Подтвердить место и создать' : 'Зафиксировать область'}
+      </button>
+    </div>
+  </div>
 }
 
 function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCatalog):DesignSession {
@@ -234,7 +328,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         const completed = await poll(generation)
         if (stopped) return
         setRenderOutput(completed.output_asset)
-        if (!session.current_question_id) {
+        if (!session.current_question_id && !session.region_mode) {
           const review = current.questions.find((q) => q.phase === 'review')
           const next = { ...session, current_question_id:review?.id || null }
           const saved = await saveQuestionnaireSession(project.id, next)
@@ -253,34 +347,6 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     })()
     return () => { stopped = true }
   }, [project.id, current?.key, currentGenerationId])
-
-  useEffect(() => {
-    if (!session || busy || generationInFlight) return
-    if (session.region_mode && session.region_object) {
-      const definition = definitions.get(session.region_object)
-      if (!definition) return
-      if (session.region_mode === 'edit') {
-        const region = session.edit_regions[definition.key] || suggestedRegion(session, definition)
-        const next = { ...session, edit_regions:{ ...session.edit_regions, [definition.key]:region }, region_mode:null, region_object:null }
-        void persist(next).then((saved) => { if (saved) void generate(saved, definition) })
-        return
-      }
-      if (renderOutput) {
-        const region = session.lock_regions[definition.key] || session.edit_regions[definition.key] || (definition.key === 'eskez-doma' ? { x:0.12, y:0.10, width:0.76, height:0.78 } : suggestedRegion(session, definition))
-        void finalizeAccept({ ...session, region_mode:null, region_object:null }, definition, region)
-      }
-      return
-    }
-    if (!session.current_object && sceneAsset) {
-      const missingLock = session.accepted_objects.find((key) => !session.lock_regions[key])
-      if (missingLock) {
-        const definition = definitions.get(missingLock)
-        if (!definition) return
-        const region = session.edit_regions[missingLock] || (missingLock === 'eskez-doma' ? { x:0.12, y:0.10, width:0.76, height:0.78 } : suggestedRegion(session, definition))
-        void persist({ ...session, lock_regions:{ ...session.lock_regions, [missingLock]:region } })
-      }
-    }
-  }, [session?.region_mode, session?.region_object, session?.current_object, renderOutput?.id, sceneAsset?.id])
 
   useEffect(() => {
     if (!active || !current || !session) return
@@ -383,12 +449,16 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }
 
   async function startGenerationOrRegion(next:DesignSession, definition:QuestionnaireDefinition) {
-    let prepared = next
     if (next.accepted_objects.length > 0 && next.scene_asset_id && !next.edit_regions[definition.key]) {
-      prepared = { ...next, edit_regions:{ ...next.edit_regions, [definition.key]:suggestedRegion(next, definition) } }
+      return persist({
+        ...next,
+        current_question_id:null,
+        region_mode:'edit',
+        region_object:definition.key,
+      })
     }
     setGenerationInFlight(true)
-    const staged = await persist({ ...prepared, current_question_id:null, region_mode:null, region_object:null })
+    const staged = await persist({ ...next, current_question_id:null, region_mode:null, region_object:null })
     if (!staged) {
       setGenerationInFlight(false)
       return null
@@ -535,7 +605,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     if (current.key === 'eskez-doma' && question.id === '15а') {
       if (typeof value === 'string' && value.startsWith('Всё')) {
         const first = preQuestions(current, next)[0]
-        return persist({ ...next, current_question_id:first?.id || null, edit_question_ids:[] })
+        const reviewComments = { ...next.review_comments }
+        delete reviewComments[current.key]
+        setReviewComment('')
+        return persist({ ...next, review_comments:reviewComments, current_question_id:first?.id || null, edit_question_ids:[] })
       }
       const q = current.questions.find((item) => item.id === '15б')
       return persist({ ...next, current_question_id:q?.id || null })
@@ -581,12 +654,42 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       setError('Нет готового эскиза для принятия.')
       return
     }
-    const lockRegion = next.lock_regions[definition.key]
-      || next.edit_regions[definition.key]
-      || (definition.key === 'eskez-doma'
-        ? { x:0.12, y:0.10, width:0.76, height:0.78 }
-        : suggestedRegion(next, definition))
-    return finalizeAccept(next, definition, lockRegion)
+    const editRegion = next.edit_regions[definition.key]
+    if (editRegion) return finalizeAccept(next, definition, editRegion)
+    const existingLock = next.lock_regions[definition.key]
+    if (existingLock) return finalizeAccept(next, definition, existingLock)
+    return persist({
+      ...next,
+      current_question_id:null,
+      region_mode:'lock',
+      region_object:definition.key,
+    })
+  }
+
+  async function confirmRegion(region:NormalizedRect) {
+    if (!session?.region_mode || !session.region_object) return
+    const definition = definitions.get(session.region_object)
+    if (!definition) return
+    if (session.region_mode === 'edit') {
+      setGenerationInFlight(true)
+      const staged = await persist({
+        ...session,
+        edit_regions:{ ...session.edit_regions, [definition.key]:region },
+        region_mode:null,
+        region_object:null,
+        current_question_id:null,
+      })
+      if (!staged) {
+        setGenerationInFlight(false)
+        return
+      }
+      return generate(staged, definition)
+    }
+    return finalizeAccept(
+      { ...session, region_mode:null, region_object:null, current_question_id:null },
+      definition,
+      region,
+    )
   }
 
   async function publishLatestIdea() {
@@ -615,12 +718,29 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     <button
       type="button"
       className="secondary-button questionnaire-wide"
-      disabled={ideaPublishing || ideaPublication === undefined || Boolean(ideaPublication && !ideaPublication.is_active)}
+      disabled={ideaPublishing || ideaPublication === undefined}
       onClick={() => void publishLatestIdea()}
     >
-      {ideaPublishing ? 'Сохраняем…' : ideaPublication?.is_active ? 'Убрать из Идей' : ideaPublication ? 'Убрано из Идей' : ideaPublication === undefined ? 'Проверяем публикацию…' : 'Добавить в Идеи'}
+      {ideaPublishing ? 'Сохраняем…' : ideaPublication?.is_active ? 'Убрать из Идей' : ideaPublication ? 'Вернуть в Идеи' : ideaPublication === undefined ? 'Проверяем публикацию…' : 'Добавить в Идеи'}
     </button>
   </div> : null
+
+  if (session?.region_mode && session.region_object) {
+    const definition = definitions.get(session.region_object)
+    const image = session.region_mode === 'edit' ? sceneAsset : renderOutput
+    if (definition && image) {
+      const initialRegion = session.region_mode === 'edit'
+        ? session.edit_regions[definition.key] || suggestedRegion(session, definition)
+        : session.lock_regions[definition.key] || { x:0.12, y:0.10, width:0.76, height:0.78 }
+      return <main className="questionnaire-shell">
+        <header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{definition.title}</span></header>
+        <section className="questionnaire-card questionnaire-region-card">
+          <RegionSelector imageUrl={image.url} value={initialRegion} objectTitle={definition.title} mode={session.region_mode} disabled={busy || generationInFlight} onConfirm={(region) => { void confirmRegion(region) }}/>
+          {error && <div className="banner-error">{error}</div>}
+        </section>
+      </main>
+    }
+  }
 
   if (error && (!catalog || !session)) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>Опросник не открылся</h1><div className="banner-error">{error}</div><button className="secondary-button" onClick={onBack}>Назад</button></section></main>
   if (!catalog || !session) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>Загружаем опросник…</h1></section></main>
