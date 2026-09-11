@@ -4,6 +4,7 @@ import pytest
 
 from app.db.models.questionnaires import QuestionnaireApplication
 from app.questionnaires.catalog import build_catalog
+from app.telegram_bot.links import admin_application_keyboard
 from app.telegram_bot.questionnaire_notifications import (
     _send_to_admins,
     build_application_message,
@@ -41,6 +42,9 @@ def test_questionnaire_application_message_contains_admin_lead_data() -> None:
         application,
         project_name="Дом у озера",
         user_name="Иван Петров",
+        user_email="ivan@example.com",
+        telegram_user_id="900000001",
+        final_generation_id=uuid4(),
         catalog=catalog,
     )
 
@@ -48,7 +52,11 @@ def test_questionnaire_application_message_contains_admin_lead_data() -> None:
     assert "Проект: Дом у озера" in message
     assert "Клиент: Иван Петров" in message
     assert "Принятые объекты: Дом, фасад" in message
-    assert "Контакт: +79990000000" in message
+    assert "Контакт из заявки: +79990000000" in message
+    assert "E-mail аккаунта: ivan@example.com" in message
+    assert "Telegram ID: 900000001" in message
+    assert f"User ID: {application.user_id}" in message
+    assert f"Проект ID: {application.project_id}" in message
     assert "Согласие ПД: Да" in message
     assert "Архитектурный бриф" in message
     assert house_style["text"] in message
@@ -131,3 +139,26 @@ async def test_questionnaire_delivery_resumes_after_partial_failure() -> None:
     sent_texts = [payload["text"] for method, payload in api.calls if method == "sendMessage"]
     assert sent_texts == ["chunk-1", "chunk-2", "chunk-2", "chunk-3"]
     assert session.commits == 4
+
+
+
+def test_admin_application_keyboard_has_exact_admin_and_profile_links() -> None:
+    application_id = uuid4()
+    user_id = uuid4()
+    keyboard = admin_application_keyboard(
+        "https://app.example.test/",
+        application_id=application_id,
+        user_id=user_id,
+        telegram_user_id="900000001",
+    )
+    rows = keyboard["inline_keyboard"]
+    assert rows[0][0]["text"] == "Заявка в админке"
+    assert f"application={application_id}" in rows[0][0]["web_app"]["url"]
+    assert "admin=1" in rows[0][0]["web_app"]["url"]
+    assert rows[1][0]["text"] == "Профиль клиента"
+    assert f"user={user_id}" in rows[1][0]["web_app"]["url"]
+    assert "admin=1" in rows[1][0]["web_app"]["url"]
+    assert rows[2][0] == {
+        "text": "Telegram профиль",
+        "url": "tg://user?id=900000001",
+    }
