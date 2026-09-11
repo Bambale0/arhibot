@@ -86,24 +86,37 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
   const [searchOpen, setSearchOpen] = useState(false)
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set())
   const [startingId, setStartingId] = useState<string | null>(null)
+  const sharedIdeaId = new URLSearchParams(window.location.search).get('idea')
 
   useEffect(() => {
     let cancelled = false
-    api.listIdeas()
-      .then((items) => { if (!cancelled) setIdeas(items) })
-      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Не удалось загрузить работы') })
-      .finally(() => { if (!cancelled) setLoading(false) })
+    void (async () => {
+      try {
+        const [items, shared] = await Promise.all([
+          api.listIdeas(),
+          sharedIdeaId
+            ? api.getIdea(sharedIdeaId).catch((err) => {
+                if (err instanceof api.ApiError && err.status === 404) return null
+                throw err
+              })
+            : Promise.resolve(null),
+        ])
+        if (cancelled) return
+        setIdeas(shared && !items.some((item) => item.id === shared.id) ? [shared, ...items] : items)
+        if (sharedIdeaId && !shared) setError('Эта работа больше не опубликована в Идеях.')
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Не удалось загрузить работы')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
     return () => { cancelled = true }
-  }, [])
+  }, [sharedIdeaId])
 
   useEffect(() => {
-    if (loading || !ideas.length) return
-    const ideaId = new URLSearchParams(window.location.search).get('idea')
-    if (!ideaId) return
-    const target = document.getElementById(`idea-${ideaId}`)
-    if (target) target.scrollIntoView({ block:'start' })
-    else setError('Эта работа больше не опубликована в Идеях.')
-  }, [loading, ideas])
+    if (loading || !sharedIdeaId) return
+    document.getElementById(`idea-${sharedIdeaId}`)?.scrollIntoView({ block:'start' })
+  }, [loading, ideas, sharedIdeaId])
 
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase()
