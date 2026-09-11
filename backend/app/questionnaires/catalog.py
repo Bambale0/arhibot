@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-CATALOG_VERSION = "2026-09-10.1"
+CATALOG_VERSION = "2026-09-11.1"
 
 SECTION_SPECS = [
     ("house", "Дом", ["eskez-doma"]),
@@ -379,6 +379,9 @@ def _application_questions(text: str, *, user_facing: bool = True) -> list[dict[
         by_id[qid]["phase"] = "application"
     by_id["23"]["kind"] = "text"
     by_id["24"]["kind"] = "text"
+    if user_facing:
+        by_id["24"]["text"] = "Оставьте телефон или @username Telegram"
+        by_id["24"]["field_hint"] = "Телефон или @username Telegram"
     by_id["25"]["kind"] = "consent"
     by_id["25"]["options"] = []
     return questions
