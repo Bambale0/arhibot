@@ -138,9 +138,12 @@ export function listGenerations(projectId?: string, limit = 50, cursor?: string 
   return request<GenerationList>(`/generations?${params}`)
 }
 export function listIdeas(limit = 50) { return request<Idea[]>(`/ideas?limit=${limit}`) }
+export function getIdea(ideaId: string) { return request<Idea>(`/ideas/${ideaId}`) }
 export function publishIdea(generationId: string) { return request<AdminIdea>('/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generation_id: generationId }) }) }
 export function getOwnIdeaPublication(generationId: string) { return request<AdminIdea | null>(`/ideas/mine/${generationId}`) }
 export function unpublishIdea(generationId: string) { return request<AdminIdea>(`/ideas/mine/${generationId}`, { method: 'DELETE' }) }
+export function saveIdea(ideaId: string) { return request<{ idea_id:string; is_saved:boolean }>(`/ideas/${ideaId}/save`, { method: 'PUT' }) }
+export function unsaveIdea(ideaId: string) { return request<{ idea_id:string; is_saved:boolean }>(`/ideas/${ideaId}/save`, { method: 'DELETE' }) }
 export function startProjectFromIdea(ideaId: string) { return request<Project>(`/ideas/${ideaId}/project`, { method: 'POST' }) }
 
 export function getBillingSummary() { return request<BillingSummary>('/billing') }

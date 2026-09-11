@@ -5,6 +5,7 @@ from app.db.models.admin import (
     GenerationPromptTemplate,
     GenerationRuntimeSettings,
     IdeaPublication,
+    IdeaSave,
     IdeaTemplate,
 )
 from app.db.models.architecture_renders import ArchitectureRender
@@ -39,6 +40,7 @@ __all__ = [
     "GenerationPromptTemplate",
     "GenerationRuntimeSettings",
     "IdeaPublication",
+    "IdeaSave",
     "IdeaTemplate",
     "OperationalSettings",
     "Project",

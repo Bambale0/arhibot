@@ -8,6 +8,7 @@ from app.core.config import Settings, get_settings
 from app.schemas.admin import (
     IdeaPublicationCreate,
     IdeaPublicationResponse,
+    IdeaSaveResponse,
     PublicIdeaPublicationResponse,
 )
 from app.schemas.projects import ProjectResponse
@@ -18,12 +19,12 @@ router = APIRouter(prefix="/ideas", tags=["Ideas"])
 
 @router.get("", response_model=list[PublicIdeaPublicationResponse], operation_id="listIdeas")
 async def list_ideas(
-    _user: CurrentUser,
+    user: CurrentUser,
     session: DbSession,
     settings: Settings = Depends(get_settings),
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> list[PublicIdeaPublicationResponse]:
-    return await IdeaService(session, settings).list_public(limit=limit)
+    return await IdeaService(session, settings).list_public(user, limit=limit)
 
 
 @router.post(
@@ -67,6 +68,48 @@ async def unpublish_idea(
     settings: Settings = Depends(get_settings),
 ) -> IdeaPublicationResponse:
     return await IdeaService(session, settings).unpublish(user, generation_id)
+
+
+@router.get(
+    "/{idea_id}",
+    response_model=PublicIdeaPublicationResponse,
+    operation_id="getIdea",
+)
+async def get_idea(
+    idea_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> PublicIdeaPublicationResponse:
+    return await IdeaService(session, settings).get_public(user, idea_id)
+
+
+@router.put(
+    "/{idea_id}/save",
+    response_model=IdeaSaveResponse,
+    operation_id="saveIdea",
+)
+async def save_idea(
+    idea_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> IdeaSaveResponse:
+    return await IdeaService(session, settings).save(user, idea_id)
+
+
+@router.delete(
+    "/{idea_id}/save",
+    response_model=IdeaSaveResponse,
+    operation_id="unsaveIdea",
+)
+async def unsave_idea(
+    idea_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> IdeaSaveResponse:
+    return await IdeaService(session, settings).unsave(user, idea_id)
 
 
 @router.post(

@@ -22,7 +22,12 @@ function Loader() {
 function TelegramAuthError({ message }: { message?: string | null }) {
   return <div className="boot-loader"><div className="wordmark"><span className="wordmark-dot" />AuRoom</div><div className="empty-state"><h2>Не удалось войти через Telegram</h2><p>{message || 'Telegram-сессия не была подтверждена. Повторите вход.'}</p><button className="primary-button" onClick={() => window.location.reload()}>Повторить вход</button></div></div>
 }
-function initialSection(): AppSection { return new URLSearchParams(window.location.search).get('billing') === 'return' ? 'profile' : 'home' }
+function initialSection(): AppSection {
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('billing') === 'return') return 'profile'
+  if (params.get('idea')) return 'ideas'
+  return 'home'
+}
 function initialAdmin() { return new URLSearchParams(window.location.search).get('admin') === '1' }
 
 type HistoryResult = { project: Project; generation: Generation }

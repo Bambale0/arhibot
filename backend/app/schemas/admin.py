@@ -205,13 +205,20 @@ class PublicIdeaPublicationResponse(BaseModel):
     objects: list[IdeaObjectSummary]
     selected_objects: list[str]
     published_at: datetime
+    is_saved: bool = False
 
 
 class IdeaPublicationResponse(PublicIdeaPublicationResponse):
     generation_id: UUID
+    owner_published: bool
     is_active: bool
     sort_order: int
     updated_at: datetime
+
+
+class IdeaSaveResponse(BaseModel):
+    idea_id: UUID
+    is_saved: bool
 
 
 class GenerationRuntimeUpdate(BaseModel):

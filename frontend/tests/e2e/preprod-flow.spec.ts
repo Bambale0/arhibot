@@ -19,8 +19,10 @@ let session:any
 let project:any
 let generationCount=0
 let publication:any=null
+let savedIdea=false
+let hideIdeaFromFeed=false
 function resetState(){
-  generationCount=0; publication=null
+  generationCount=0; publication=null; savedIdea=false; hideIdeaFromFeed=false
   session={session_id:'77777777-7777-4777-8777-777777777777',catalog_version:catalog.version,selected_objects:['lavochka'],current_object:null,current_question_id:null,source_step_completed:false,source_asset_id:null,scene_asset_id:null,answers:{},accepted_objects:[],generation_ids:{},edit_question_ids:[],review_comments:{},edit_regions:{},lock_regions:{},region_mode:null,region_object:null,application_submitted:false}
   project={id:projectId,name:'Лавочка',description:null,status:'active',context:{questionnaire_draft:false,design_session:session},created_at:now,updated_at:now}
 }
@@ -41,9 +43,18 @@ test.beforeEach(async ({page})=>{
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='PUT') {session=JSON.parse(req.postData()||'{}');project={...project,context:{...project.context,design_session:session}};return json(route,{session})}
     if(path.endsWith(`/projects/${projectId}/questionnaire-generation`)&&method==='POST'){const i=generationCount++;return json(route,generation(i,'queued'),202)}
     for(let i=0;i<generationIds.length;i++) if(path.endsWith(`/projects/${projectId}/questionnaire-generation/${generationIds[i]}`)&&method==='GET') return json(route,generation(i))
+    if(path.endsWith('/ideas')&&method==='GET') return json(route,hideIdeaFromFeed?[]:[{id:ideaId,title:'Лавочка',category:'Мебель и площадки',generation_type:'master_plan',image_url:asset(1).url,objects:[],selected_objects:['lavochka'],published_at:now,is_saved:savedIdea}])
+    if(path.endsWith(`/ideas/${ideaId}`)&&method==='GET') return json(route,{id:ideaId,title:'Лавочка',category:'Мебель и площадки',generation_type:'master_plan',image_url:asset(1).url,objects:[],selected_objects:['lavochka'],published_at:now,is_saved:savedIdea})
+    if(path.endsWith(`/ideas/${ideaId}/save`)&&method==='PUT'){savedIdea=true;return json(route,{idea_id:ideaId,is_saved:true})}
+    if(path.endsWith(`/ideas/${ideaId}/save`)&&method==='DELETE'){savedIdea=false;return json(route,{idea_id:ideaId,is_saved:false})}
     if(path.endsWith(`/ideas/mine/${generationIds[1]}`)&&method==='GET') return json(route,publication)
-    if(path.endsWith(`/ideas/mine/${generationIds[1]}`)&&method==='DELETE'){publication={...publication,is_active:false};return json(route,publication)}
-    if(path.endsWith('/ideas')&&method==='POST'){publication={id:ideaId,generation_id:generationIds[1],title:'Лавочка',category:'Мебель и площадки',generation_type:'master_plan',image_url:asset(1).url,objects:[],selected_objects:['lavochka'],published_at:now,is_active:true,sort_order:0,updated_at:now};return json(route,publication,201)}
+    if(path.endsWith(`/ideas/mine/${generationIds[1]}`)&&method==='DELETE'){publication={...publication,owner_published:false};return json(route,publication)}
+    if(path.endsWith('/ideas')&&method==='POST'){
+      publication=publication
+        ? {...publication,owner_published:true}
+        : {id:ideaId,generation_id:generationIds[1],title:'Лавочка',category:'Мебель и площадки',generation_type:'master_plan',image_url:asset(1).url,objects:[],selected_objects:['lavochka'],published_at:now,is_saved:false,owner_published:true,is_active:true,sort_order:0,updated_at:now}
+      return json(route,publication,201)
+    }
     return json(route,{type:'mock_unhandled',detail:`${method} ${path}`},404)
   })
 })
@@ -63,6 +74,48 @@ test('canonical create flow supports refinement and own unpublish without techni
   await page.getByRole('button',{name:'Подходит'}).click(); await expect(page.getByText('Что проектируем дальше?')).toBeVisible()
   await expect(page.getByText(/ПИКСЕЛЬНАЯ|Зафиксируйте:|выделите прямоугольник/)).toHaveCount(0)
   await page.getByRole('button',{name:'Добавить в Идеи'}).click(); await expect(page.getByRole('button',{name:'Убрать из Идей'})).toBeVisible()
-  await page.getByRole('button',{name:'Убрать из Идей'}).click(); await expect(page.getByRole('button',{name:'Убрано из Идей'})).toBeVisible()
+  await page.getByRole('button',{name:'Убрать из Идей'}).click(); await expect(page.getByRole('button',{name:'Вернуть в Идеи'})).toBeVisible()
+  await page.getByRole('button',{name:'Вернуть в Идеи'}).click(); await expect(page.getByRole('button',{name:'Убрать из Идей'})).toBeVisible()
   await expect(page.getByText('AUROOM_RENDER_SPEC_V1')).toHaveCount(0); expect(errors).toEqual([])
+})
+
+
+test('shared idea deep-link opens exact work and saves on the server',async({page})=>{
+  hideIdeaFromFeed=true
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'share', {
+      configurable:true,
+      value: async (data:unknown) => { (window as typeof window & { __shareData?:unknown }).__shareData = data },
+    })
+    const originalScrollIntoView = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function(arg?: boolean | ScrollIntoViewOptions) {
+      const target = window as typeof window & { __ideaScrollCalls?:number }
+      target.__ideaScrollCalls = (target.__ideaScrollCalls || 0) + 1
+      return originalScrollIntoView?.call(this, arg)
+    }
+  })
+  await page.goto(`/?idea=${ideaId}`)
+  const card = page.locator(`[data-idea-id="${ideaId}"]`)
+  await expect(card).toBeVisible()
+  await card.getByRole('button',{name:'Сохранить'}).click()
+  await expect(card.getByRole('button',{name:'Убрать из сохранённых'})).toBeVisible()
+  expect(savedIdea).toBe(true)
+  const scrollCalls = await page.evaluate(() => (window as typeof window & { __ideaScrollCalls?:number }).__ideaScrollCalls || 0)
+  expect(scrollCalls).toBe(1)
+  await card.getByRole('button',{name:'Поделиться'}).click()
+  const shared = await page.evaluate(() => (window as typeof window & { __shareData?:{url?:string} }).__shareData)
+  expect(shared?.url).toContain(`idea=${ideaId}`)
+})
+
+
+test('legacy browser bookmarks migrate to server saves once',async({page})=>{
+  await page.addInitScript((id) => {
+    localStorage.setItem('auroom.saved_ideas', JSON.stringify([id]))
+  }, ideaId)
+  await page.goto('/?idea=' + ideaId)
+  const card = page.locator(`[data-idea-id="${ideaId}"]`)
+  await expect(card.getByRole('button',{name:'Убрать из сохранённых'})).toBeVisible()
+  expect(savedIdea).toBe(true)
+  const legacy = await page.evaluate(() => localStorage.getItem('auroom.saved_ideas'))
+  expect(legacy).toBeNull()
 })
