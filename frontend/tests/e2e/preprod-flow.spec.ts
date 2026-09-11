@@ -128,7 +128,7 @@ test('Telegram project deep-link resumes the exact questionnaire project',async(
   project={...project,context:{...project.context,design_session:session}}
   await page.goto('/?project=' + projectId)
   await expect(page.getByText('Какая лавка?')).toBeVisible()
-  await expect(page.getByText('Лавочка',{exact:true})).toBeVisible()
+  await expect(page.locator('.questionnaire-topbar strong').getByText('Лавочка',{exact:true})).toBeVisible()
 })
 
 test('Telegram generation deep-link opens the exact completed result',async({page})=>{
