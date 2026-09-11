@@ -7,6 +7,9 @@ const iconProps = { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 
 const SearchIcon = (props: IconProps) => <svg {...iconProps} {...props}><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
 const BookmarkIcon = ({ filled, ...props }: IconProps & { filled?: boolean }) => <svg {...iconProps} {...props} fill={filled ? 'currentColor' : 'none'}><path d="M6 4.8A1.8 1.8 0 0 1 7.8 3h8.4A1.8 1.8 0 0 1 18 4.8V21l-6-3.8L6 21V4.8Z"/></svg>
 const ShareIcon = (props: IconProps) => <svg {...iconProps} {...props}><path d="M12 4v11M8 8l4-4 4 4"/><path d="M5 12v7h14v-7"/></svg>
+const LayersIcon = (props: IconProps) => <svg {...iconProps} {...props}><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></svg>
+const ArrowIcon = (props: IconProps) => <svg {...iconProps} {...props}><path d="M5 12h14M14 7l5 5-5 5"/></svg>
+const CloseIcon = (props: IconProps) => <svg {...iconProps} {...props}><path d="m6 6 12 12M18 6 6 18"/></svg>
 
 const LEGACY_SAVED_KEY = 'auroom.saved_ideas'
 
@@ -37,6 +40,29 @@ function ideaShareUrl(ideaId:string) {
   return url.toString()
 }
 
+function WorkDetails({ idea, onClose }: { idea: Idea; onClose: () => void }) {
+  return <div className="idea-details-backdrop" role="dialog" aria-modal="true" aria-label={`Параметры работы ${idea.title}`} onClick={onClose}>
+    <section className="idea-details-sheet" onClick={(event) => event.stopPropagation()}>
+      <header>
+        <div>
+          <span>{idea.category}</span>
+          <h2>{idea.title}</h2>
+        </div>
+        <button type="button" aria-label="Закрыть параметры" onClick={onClose}><CloseIcon /></button>
+      </header>
+      <div className="idea-details-body">
+        {idea.objects.length ? idea.objects.map((object) => <section className="idea-details-object" key={object.key}>
+          <h3>{object.title}</h3>
+          {object.answers.length ? object.answers.map((item, index) => <div className="idea-details-row" key={`${object.key}-${index}`}>
+            <span>{item.question}</span>
+            <strong>{item.answer}</strong>
+          </div>) : <p>Параметры для этого объекта не указаны.</p>}
+        </section>) : <p className="idea-details-empty">Параметры этой работы пока недоступны.</p>}
+      </div>
+    </section>
+  </div>
+}
+
 function WorkCard({
   idea,
   index,
@@ -46,6 +72,7 @@ function WorkCard({
   onSave,
   onShare,
   onStart,
+  onDetails,
 }: {
   idea: Idea
   index: number
@@ -55,38 +82,51 @@ function WorkCard({
   onSave: () => void
   onShare: () => void
   onStart: () => void
+  onDetails: () => void
 }) {
-  const summary = idea.objects.flatMap((object) => object.answers.map((item) => ({ ...item, objectTitle: object.title })))
-  return <article id={`idea-${idea.id}`} className="idea-feed-card idea-work-card" data-idea-id={idea.id}>
+  const answerCount = idea.objects.reduce((totalAnswers, object) => totalAnswers + object.answers.length, 0)
+  const objectLabels = idea.objects.map((object) => object.title).filter(Boolean)
+
+  return <article id={`idea-${idea.id}`} className="idea-feed-card idea-modern-card" data-idea-id={idea.id}>
     <div className="idea-feed-copy">
       <div className="idea-feed-kicker"><span>РАБОТЫ AUROOM</span><b>{index + 1} / {total}</b></div>
       <h1>{idea.title}</h1>
       <p>{idea.category}</p>
     </div>
 
-    <div className="idea-work-stage">
-      {idea.image_url ? <img src={idea.image_url} alt={idea.title} loading={index === 0 ? 'eager' : 'lazy'} /> : <div className="idea-work-empty">Работа временно недоступна</div>}
-      <div className="idea-work-actions">
-        <button type="button" disabled={saving} className={idea.is_saved ? 'active' : ''} aria-label={idea.is_saved ? 'Убрать из сохранённых' : 'Сохранить'} onClick={onSave}><BookmarkIcon filled={idea.is_saved}/></button>
-        <button type="button" aria-label="Поделиться" onClick={onShare}><ShareIcon /></button>
+    <div className="idea-modern-stage">
+      {idea.image_url
+        ? <img src={idea.image_url} alt={idea.title} loading={index === 0 ? 'eager' : 'lazy'} />
+        : <div className="idea-modern-empty">Работа временно недоступна</div>}
+      <div className="idea-modern-shade" aria-hidden />
+      <div className="idea-modern-badge"><span />Принятая работа</div>
+
+      <aside className="idea-modern-rail" aria-label="Действия с работой">
+        <button type="button" className="idea-modern-rail-button" aria-label="Открыть параметры работы" onClick={onDetails}>
+          <LayersIcon />
+          <small>{answerCount || idea.selected_objects.length}</small>
+        </button>
+        <button type="button" disabled={saving} className={`idea-modern-rail-button ${idea.is_saved ? 'active' : ''}`} aria-label={idea.is_saved ? 'Убрать из сохранённых' : 'Сохранить'} onClick={onSave}>
+          <BookmarkIcon filled={idea.is_saved} />
+        </button>
+        <button type="button" className="idea-modern-rail-button" aria-label="Поделиться" onClick={onShare}><ShareIcon /></button>
+      </aside>
+
+      <div className="idea-modern-overlay">
+        <div className="idea-modern-tags">
+          {(objectLabels.length ? objectLabels : idea.selected_objects).slice(0, 3).map((label) => <span key={label}>{label}</span>)}
+          {(objectLabels.length ? objectLabels : idea.selected_objects).length > 3 && <span>+{(objectLabels.length ? objectLabels : idea.selected_objects).length - 3}</span>}
+        </div>
+        <button type="button" className="idea-modern-use" disabled={starting} onClick={onStart}>
+          <span>{starting ? 'Создаём проект…' : 'Создать с такими объектами'}</span>
+          {!starting && <ArrowIcon />}
+        </button>
       </div>
     </div>
 
-    <div className="idea-feed-meta idea-work-meta">
-      <div className="idea-author-row">
-        <span className="idea-author-avatar">A</span>
-        <strong>AuRoom</strong>
-        <button type="button" className="idea-use-button" disabled={starting} onClick={onStart}>{starting ? 'Создаём проект…' : 'Создать с такими объектами'}</button>
-      </div>
-      {summary.length > 0 && <details className="idea-work-summary">
-        <summary>Параметры работы · {summary.length}</summary>
-        <div>
-          {summary.map((item, itemIndex) => <section key={`${item.objectTitle}-${item.question}-${itemIndex}`}>
-            <strong>{item.question}</strong>
-            <span>{item.answer}</span>
-          </section>)}
-        </div>
-      </details>}
+    <div className="idea-modern-meta">
+      <div><span className="idea-author-avatar">A</span><strong>AuRoom</strong></div>
+      <button type="button" onClick={onDetails}>Параметры · {answerCount}</button>
     </div>
   </article>
 }
@@ -99,6 +139,7 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
   const [searchOpen, setSearchOpen] = useState(false)
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set())
   const [startingId, setStartingId] = useState<string | null>(null)
+  const [detailsIdea, setDetailsIdea] = useState<Idea | null>(null)
   const sharedIdeaId = new URLSearchParams(window.location.search).get('idea')
   const sharedScrollDone = useRef(false)
 
@@ -150,6 +191,13 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
     sharedScrollDone.current = true
   }, [loading, sharedIdeaId])
 
+  useEffect(() => {
+    if (!detailsIdea) return
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setDetailsIdea(null) }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [detailsIdea])
+
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     if (!normalized) return ideas
@@ -200,7 +248,7 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
     }
   }
 
-  return <section className="ideas-page-concept">
+  return <section className="ideas-page-concept ideas-modern-page">
     <header className="ideas-concept-topbar">
       <span className="wordmark"><span className="wordmark-dot" />AuRoom</span>
       <div className={`ideas-search ${searchOpen ? 'open' : ''}`}>
@@ -222,9 +270,12 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
             onSave={() => void toggleSaved(idea)}
             onShare={() => void shareIdea(idea)}
             onStart={() => void startFromIdea(idea)}
+            onDetails={() => setDetailsIdea(idea)}
           />
         </div>)}
       </div>
     ) : <div className="ideas-feed-status"><div className="empty-inline"><p>{query ? 'По этому запросу ничего не найдено.' : 'Пока нет опубликованных работ.'}</p></div></div>}
+
+    {detailsIdea && <WorkDetails idea={detailsIdea} onClose={() => setDetailsIdea(null)} />}
   </section>
 }
