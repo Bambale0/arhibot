@@ -102,6 +102,10 @@ export type QuestionnaireApplication = {
   project_name:string|null
   user_name:string|null
   scene_asset_url:string|null
+  final_generation_id:string|null
+  application_contact:string|null
+  user_email:string|null
+  telegram_user_id:string|null
   brief:QuestionnaireBriefObject[]
 }
 export type QuestionnaireApplicationSubmitResponse = { session:DesignSession; application:QuestionnaireApplication }

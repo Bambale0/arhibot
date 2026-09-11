@@ -37,6 +37,8 @@ test.beforeEach(async ({page})=>{
     const req=route.request(), path=new URL(req.url()).pathname, method=req.method()
     if(path.endsWith('/me')&&method==='GET') return json(route,user)
     if(path.endsWith('/projects')&&method==='GET') return json(route,{items:[],next_cursor:null,has_more:false})
+    if(path.endsWith(`/projects/${projectId}`)&&method==='GET') return json(route,project)
+    for(let i=0;i<generationIds.length;i++) if(path.endsWith(`/generations/${generationIds[i]}`)&&method==='GET') return json(route,generation(i))
     if(path.endsWith('/questionnaires')&&method==='GET') return json(route,catalog)
     if(path.endsWith('/questionnaire-projects')&&method==='POST') return json(route,project,201)
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='GET') return json(route,{session})
@@ -118,4 +120,19 @@ test('legacy browser bookmarks migrate to server saves once',async({page})=>{
   expect(savedIdea).toBe(true)
   const legacy = await page.evaluate(() => localStorage.getItem('auroom.saved_ideas'))
   expect(legacy).toBeNull()
+})
+
+
+test('Telegram project deep-link resumes the exact questionnaire project',async({page})=>{
+  session={...session,source_step_completed:true,current_object:'lavochka',current_question_id:'1'}
+  project={...project,context:{...project.context,design_session:session}}
+  await page.goto('/?project=' + projectId)
+  await expect(page.getByText('Какая лавка?')).toBeVisible()
+  await expect(page.locator('.questionnaire-topbar strong').getByText('Лавочка',{exact:true})).toBeVisible()
+})
+
+test('Telegram generation deep-link opens the exact completed result',async({page})=>{
+  await page.goto('/?generation=' + generationIds[0])
+  await expect(page.getByText('Готовая работа')).toBeVisible()
+  await expect(page.getByAltText('Сгенерированная работа AuRoom')).toBeVisible()
 })

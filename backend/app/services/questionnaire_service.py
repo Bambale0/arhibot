@@ -355,7 +355,7 @@ class QuestionnaireService:
         storage = LocalMediaStorage(get_settings())
 
         catalog_row = await self.repository.get_catalog()
-        versions = {item.catalog_version for item, _, _, _ in rows}
+        versions = {row[0].catalog_version for row in rows}
         missing_versions = {
             version
             for version in versions
@@ -374,13 +374,24 @@ class QuestionnaireService:
         }
 
         result: list[QuestionnaireApplicationResponse] = []
-        for item, project_name, user_name, scene_storage_path in rows:
+        for (
+            item,
+            project_name,
+            user_name,
+            scene_storage_path,
+            final_generation_id,
+            telegram_user_id,
+            user_email,
+        ) in rows:
             scene_asset_url = (
                 storage.signed_url(scene_storage_path, ttl_seconds=3600)
                 if scene_storage_path
                 else None
             )
             response = QuestionnaireApplicationResponse.model_validate(item)
+            application_contact = str(
+                item.answers.get("zayavka", {}).get("24") or ""
+            ).strip() or None
             result.append(
                 QuestionnaireApplicationResponse.model_validate(
                     {
@@ -388,6 +399,10 @@ class QuestionnaireService:
                         "project_name": project_name,
                         "user_name": user_name,
                         "scene_asset_url": scene_asset_url,
+                        "final_generation_id": final_generation_id,
+                        "application_contact": application_contact,
+                        "user_email": user_email,
+                        "telegram_user_id": telegram_user_id,
                         "brief": build_application_brief(
                             selected_objects=item.selected_objects,
                             accepted_objects=item.accepted_objects,

@@ -168,6 +168,10 @@ class QuestionnaireApplicationResponse(BaseModel):
     project_name: str | None = None
     user_name: str | None = None
     scene_asset_url: str | None = None
+    final_generation_id: UUID | None = None
+    application_contact: str | None = None
+    user_email: str | None = None
+    telegram_user_id: str | None = None
     brief: list[QuestionnaireBriefObject] = Field(default_factory=list)
 
 

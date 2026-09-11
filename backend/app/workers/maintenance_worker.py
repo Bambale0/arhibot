@@ -17,6 +17,7 @@ from app.db.session import dispose_engine, get_session_factory
 from app.repositories.operations import OperationalSettingsRepository
 from app.services.asset_service import LocalMediaStorage
 from app.services.questionnaire_project_service import QuestionnaireProjectService
+from app.telegram_bot.generation_notifications import deliver_pending_generations_once
 from app.telegram_bot.questionnaire_notifications import deliver_pending_applications_once
 from app.workers.heartbeat import worker_heartbeat
 
@@ -94,10 +95,18 @@ async def run_worker() -> None:
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    logger.info("AuRoom maintenance worker started; retention and application delivery enabled")
+    logger.info("AuRoom maintenance worker started; retention and Telegram delivery enabled")
     next_cleanup_at = 0.0
     while True:
         try:
+            generation_delivered, generation_failed = await deliver_pending_generations_once()
+            if generation_delivered or generation_failed:
+                logger.info(
+                    "Generation Telegram delivery: sent=%s pending_failed=%s",
+                    generation_delivered,
+                    generation_failed,
+                )
+
             delivered, failed = await deliver_pending_applications_once()
             if delivered or failed:
                 logger.info(

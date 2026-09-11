@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import * as api from './api'
 import { useAuth } from './auth'
 import { discardQuestionnaireDraft } from './questionnaireApi'
@@ -26,6 +26,7 @@ function initialSection(): AppSection {
   const params = new URLSearchParams(window.location.search)
   if (params.get('billing') === 'return') return 'profile'
   if (params.get('idea')) return 'ideas'
+  if (params.get('generation')) return 'history'
   return 'home'
 }
 function initialAdmin() { return new URLSearchParams(window.location.search).get('admin') === '1' }
@@ -39,6 +40,34 @@ export default function App() {
   const [questionnaireObjects, setQuestionnaireObjects] = useState<string[]>([])
   const [historyResult, setHistoryResult] = useState<HistoryResult | null>(null)
   const [adminOpen, setAdminOpen] = useState(initialAdmin)
+  const deepLinkHandled = useRef(false)
+
+  useEffect(() => {
+    if (loading || !user || adminOpen || deepLinkHandled.current) return
+    const params = new URLSearchParams(window.location.search)
+    const generationId = params.get('generation')
+    const projectId = params.get('project')
+    if (!generationId && !projectId) return
+
+    deepLinkHandled.current = true
+    void (async () => {
+      try {
+        if (generationId) {
+          const generation = await api.getGeneration(generationId)
+          const project = await api.getProject(generation.project_id)
+          setHistoryResult({ project, generation })
+          setSection('history')
+          return
+        }
+        if (projectId) {
+          const project = await api.getProject(projectId)
+          openProject(project)
+        }
+      } catch {
+        setSection(generationId ? 'history' : 'home')
+      }
+    })()
+  }, [adminOpen, loading, user])
 
   if (loading) return <Loader />
   if (!user) { if (window.Telegram?.WebApp?.initData) return <TelegramAuthError message={error} />; return <AuthScreen /> }

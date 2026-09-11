@@ -5,6 +5,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.generations import Generation
+from app.domain.generations.enums import GenerationStatus
 
 
 class GenerationRepository:
@@ -31,6 +32,26 @@ class GenerationRepository:
             select(Generation).where(Generation.id == generation_id).with_for_update()
         )
         return result.scalar_one_or_none()
+
+
+    async def list_pending_telegram_deliveries(
+        self, *, limit: int = 20
+    ) -> list[Generation]:
+        result = await self.session.execute(
+            select(Generation)
+            .where(
+                Generation.status == GenerationStatus.COMPLETED,
+                Generation.output_asset_id.is_not(None),
+                Generation.telegram_delivery_status == "pending",
+            )
+            .order_by(
+                Generation.telegram_delivery_attempts.asc(),
+                Generation.completed_at.asc(),
+                Generation.created_at.asc(),
+            )
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 
     async def list_owned(
         self,
