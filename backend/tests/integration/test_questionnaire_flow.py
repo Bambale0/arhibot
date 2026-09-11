@@ -501,6 +501,17 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
             and payload["chat_id"]
             for method, payload in fake_telegram.calls
         )
+        assert any(
+            method == "sendMessage"
+            and "Архитектурный бриф" in payload["text"]
+            for method, payload in fake_telegram.calls
+        )
+        assert any(
+            method == "sendPhoto"
+            and payload["photo"]
+            and application_id in payload["caption"]
+            for method, payload in fake_telegram.calls
+        )
 
         applications = await client.get(
             "/api/v1/admin/questionnaire-applications",
@@ -512,6 +523,13 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
         )
         assert stored_application["telegram_delivery_status"] == "sent"
         assert stored_application["telegram_notified_at"] is not None
+        assert stored_application["project_name"]
+        assert stored_application["scene_asset_url"]
+        house_brief = next(
+            item for item in stored_application["brief"] if item["key"] == "eskez-doma"
+        )
+        assert house_brief["accepted"] is True
+        assert house_brief["answers"]
 
 
 @pytest.mark.asyncio

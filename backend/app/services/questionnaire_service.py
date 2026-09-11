@@ -6,7 +6,9 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.errors import AppError
+from app.db.models.assets import Asset
 from app.db.models.projects import Project
 from app.db.models.questionnaires import (
     QuestionnaireApplication,
@@ -15,6 +17,7 @@ from app.db.models.questionnaires import (
 )
 from app.db.models.users import User
 from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.questionnaires.application_brief import build_application_brief
 from app.questionnaires.generation_prompt import (
     build_questionnaire_generation_prompt,
 )
@@ -34,6 +37,7 @@ from app.schemas.questionnaires import (
     QuestionnaireCatalogAdminUpdate,
     QuestionnaireCatalogResponse,
 )
+from app.services.asset_service import LocalMediaStorage
 from app.services.project_service import ProjectService
 
 
@@ -347,10 +351,53 @@ class QuestionnaireService:
         return await self.admin_catalog()
 
     async def list_applications(self, *, limit: int = 200) -> list[QuestionnaireApplicationResponse]:
-        return [
-            QuestionnaireApplicationResponse.model_validate(item)
-            for item in await self.repository.list_applications(limit=limit)
-        ]
+        rows = await self.repository.list_applications_with_context(limit=limit)
+        storage = LocalMediaStorage(get_settings())
+
+        catalog_row = await self.repository.get_catalog()
+        versions = {item.catalog_version for item, _, _, _ in rows}
+        missing_versions = {
+            version
+            for version in versions
+            if catalog_row is None or version != catalog_row.version
+        }
+        revisions = await self.repository.get_catalog_revisions(missing_versions)
+        catalogs: dict[str, dict | None] = {
+            version: (
+                catalog_row.catalog
+                if catalog_row is not None and version == catalog_row.version
+                else revisions.get(version).catalog
+                if revisions.get(version) is not None
+                else None
+            )
+            for version in versions
+        }
+
+        result: list[QuestionnaireApplicationResponse] = []
+        for item, project_name, user_name, scene_storage_path in rows:
+            scene_asset_url = (
+                storage.signed_url(scene_storage_path, ttl_seconds=3600)
+                if scene_storage_path
+                else None
+            )
+            response = QuestionnaireApplicationResponse.model_validate(item)
+            result.append(
+                QuestionnaireApplicationResponse.model_validate(
+                    {
+                        **response.model_dump(mode="python"),
+                        "project_name": project_name,
+                        "user_name": user_name,
+                        "scene_asset_url": scene_asset_url,
+                        "brief": build_application_brief(
+                            selected_objects=item.selected_objects,
+                            accepted_objects=item.accepted_objects,
+                            answers=item.answers,
+                            catalog=catalogs[item.catalog_version],
+                        ),
+                    }
+                )
+            )
+        return result
 
     @staticmethod
     def _stored_session(context: dict | None) -> DesignSession | None:

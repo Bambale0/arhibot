@@ -137,6 +137,13 @@ def build_questionnaire_generation_prompt(
         key for key in accepted_before if session.lock_regions.get(key) is not None
     ]
     refinement = session.review_comments.get(object_key, "").strip() or None
+    full_rerender = (
+        object_key == "eskez-doma"
+        and isinstance(answers.get("15а"), str)
+        and str(answers["15а"]).startswith("Всё")
+    )
+    if full_rerender:
+        refinement = None
 
     prohibitions = [
         "Не показывать на изображении текст, подписи, размеры, UI или технические аннотации.",
@@ -149,12 +156,19 @@ def build_questionnaire_generation_prompt(
             "внутренних помещений не придумывать."
         )
 
+    style_inherited = answers.get("1") == "Как у дома"
     inheritance_rule = (
         "Не применяется к основному дому."
         if object_key == "eskez-doma"
         else (
-            "Если в ответах выбрано «Как у дома», точно наследовать стиль, "
-            "материалы и кровлю принятого дома."
+            "Вариант «Как у дома» не выбран; наследование от принятого дома не применять."
+            if not style_inherited
+            else (
+                "Наследовать визуальный стиль принятого дома. Материалы, кровлю и другие "
+                "свойства наследовать только когда они не заданы отдельным активным ответом "
+                "текущего объекта. Любой явный questionnaire_constraint текущего объекта "
+                "имеет безусловный приоритет над наследованием."
+            )
         )
     )
 
@@ -185,6 +199,7 @@ def build_questionnaire_generation_prompt(
             "number": "Считать указанное число целевым параметром, а не приблизительной подсказкой.",
             "multi_select": "Использовать выбранный набор без самовольного добавления невыбранных вариантов.",
             "custom_text": "Следовать пользовательской формулировке буквально, если она не конфликтует с более высоким приоритетом.",
+            "explicit_selection_overrides_inheritance": True,
         },
         "questionnaire_constraints": questionnaire_constraints,
         "inheritance": inheritance_rule,

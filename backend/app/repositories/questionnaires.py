@@ -3,11 +3,14 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models.assets import Asset
+from app.db.models.projects import Project
 from app.db.models.questionnaires import (
     QuestionnaireApplication,
     QuestionnaireCatalogConfig,
     QuestionnaireCatalogRevision,
 )
+from app.db.models.users import User
 
 
 class QuestionnaireRepository:
@@ -39,13 +42,35 @@ class QuestionnaireRepository:
     def add_application(self, row: QuestionnaireApplication) -> None:
         self.session.add(row)
 
-    async def list_applications(self, *, limit: int = 200) -> list[QuestionnaireApplication]:
+    async def list_applications_with_context(
+        self, *, limit: int = 200
+    ) -> list[tuple[QuestionnaireApplication, str | None, str | None, str | None]]:
         result = await self.session.execute(
-            select(QuestionnaireApplication)
+            select(
+                QuestionnaireApplication,
+                Project.name,
+                User.display_name,
+                Asset.storage_path,
+            )
+            .outerjoin(Project, Project.id == QuestionnaireApplication.project_id)
+            .outerjoin(User, User.id == QuestionnaireApplication.user_id)
+            .outerjoin(Asset, Asset.id == QuestionnaireApplication.scene_asset_id)
             .order_by(QuestionnaireApplication.created_at.desc())
             .limit(limit)
         )
-        return list(result.scalars().all())
+        return list(result.tuples().all())
+
+    async def get_catalog_revisions(
+        self, versions: set[str]
+    ) -> dict[str, QuestionnaireCatalogRevision]:
+        if not versions:
+            return {}
+        result = await self.session.execute(
+            select(QuestionnaireCatalogRevision).where(
+                QuestionnaireCatalogRevision.version.in_(versions)
+            )
+        )
+        return {row.version: row for row in result.scalars().all()}
 
     async def list_pending_telegram_applications(
         self, *, limit: int = 20
