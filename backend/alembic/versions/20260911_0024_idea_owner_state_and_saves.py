@@ -21,7 +21,31 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.add_column(
         "idea_publications",
-        sa.Column("owner_published", sa.Boolean(), nullable=False, server_default=sa.true()),
+        sa.Column("owner_published", sa.Boolean(), nullable=True),
+    )
+    op.execute(
+        """
+        UPDATE idea_publications AS publication
+        SET owner_published = CASE
+            WHEN publication.is_active THEN TRUE
+            WHEN EXISTS (
+                SELECT 1
+                FROM admin_audit_log AS audit
+                WHERE audit.action = 'idea.moderate'
+                  AND audit.entity_type = 'idea_publication'
+                  AND audit.entity_id = publication.id::text
+                  AND COALESCE(audit.details->'fields', '[]'::jsonb) @> '["is_active"]'::jsonb
+            ) THEN TRUE
+            ELSE FALSE
+        END
+        """
+    )
+    op.alter_column(
+        "idea_publications",
+        "owner_published",
+        existing_type=sa.Boolean(),
+        nullable=False,
+        server_default=sa.true(),
     )
     op.create_table(
         "idea_saves",
