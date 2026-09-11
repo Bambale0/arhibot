@@ -165,3 +165,33 @@ def test_explicit_carport_roof_overrides_house_style_inheritance() -> None:
     assert spec["questionnaire_semantics"]["explicit_selection_overrides_inheritance"] is True
     assert "безусловный приоритет" in spec["inheritance"]
     assert "точно наследовать стиль, материалы и кровлю" not in spec["inheritance"]
+
+
+def test_full_house_rerender_ignores_stale_refinement_comment() -> None:
+    definition = _definition("eskez-doma")
+    session = DesignSession(
+        catalog_version=build_catalog()["version"],
+        selected_objects=["eskez-doma"],
+        source_step_completed=True,
+        answers={
+            "eskez-doma": {
+                "1": "Современный минимализм",
+                "15": "Нет, хочу изменить",
+                "15а": "Всё полностью, сделать заново",
+            }
+        },
+        review_comments={
+            "eskez-doma": "Старое точечное уточнение, которое не должно попасть в полный ререндер."
+        },
+    )
+
+    spec = _spec(
+        build_questionnaire_generation_prompt(
+            definition,
+            session,
+            accepted_before=[],
+            input_asset_present=False,
+        )
+    )
+
+    assert spec["refinement_comment"] is None
