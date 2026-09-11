@@ -153,6 +153,24 @@ class QuestionnaireApplicationResponse(BaseModel):
     created_at: datetime
 
 
+class QuestionnaireBriefAnswer(BaseModel):
+    question: str
+    answer: str
+
+
+class QuestionnaireObjectBrief(BaseModel):
+    key: str
+    title: str
+    answers: list[QuestionnaireBriefAnswer] = Field(default_factory=list)
+
+
+class QuestionnaireApplicationAdminResponse(QuestionnaireApplicationResponse):
+    project_name: str
+    user_name: str
+    scene_image_url: str | None = None
+    brief: list[QuestionnaireObjectBrief] = Field(default_factory=list)
+
+
 class QuestionnaireApplicationSubmitResponse(BaseModel):
     session: DesignSession
     application: QuestionnaireApplicationResponse
