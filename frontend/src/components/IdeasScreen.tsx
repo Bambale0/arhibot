@@ -88,15 +88,23 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
   const [searchOpen, setSearchOpen] = useState(false)
   const [saved, setSaved] = useState<Set<string>>(new Set())
   const [startingId, setStartingId] = useState<string | null>(null)
+  const deepLinkIdeaId = new URLSearchParams(window.location.search).get('idea')
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
-        const [items, savedIds] = await Promise.all([api.listIdeas(), api.listSavedIdeas()])
+        const [items, savedIds, focusedIdea] = await Promise.all([
+          api.listIdeas(),
+          api.listSavedIdeas(),
+          deepLinkIdeaId ? api.getIdea(deepLinkIdeaId).catch(() => null) : Promise.resolve(null),
+        ])
         if (cancelled) return
-        setIdeas(items)
-        const availableIds = new Set(items.map((item) => item.id))
+        const mergedItems = focusedIdea && !items.some((item) => item.id === focusedIdea.id)
+          ? [focusedIdea, ...items]
+          : items
+        setIdeas(mergedItems)
+        const availableIds = new Set(mergedItems.map((item) => item.id))
         const legacy = readSaved()
         const merged = new Set(savedIds)
         const legacyToSync = [...legacy].filter((id) => availableIds.has(id) && !merged.has(id))
@@ -117,9 +125,8 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
       }
     })()
     return () => { cancelled = true }
-  }, [])
+  }, [deepLinkIdeaId])
 
-  const deepLinkIdeaId = new URLSearchParams(window.location.search).get('idea')
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     const visible = normalized
