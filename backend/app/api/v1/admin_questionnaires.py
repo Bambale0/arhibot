@@ -1,10 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.api.dependencies.auth import AdminUser, DbSession
+from app.core.config import Settings, get_settings
 from app.schemas.questionnaires import (
-    QuestionnaireApplicationResponse,
+    QuestionnaireApplicationAdminResponse,
     QuestionnaireCatalogAdminResponse,
     QuestionnaireCatalogAdminUpdate,
 )
@@ -40,11 +41,12 @@ async def admin_update_questionnaire_catalog(
 @router.get(
     "/questionnaire-applications",
     operation_id="adminListQuestionnaireApplications",
-    response_model=list[QuestionnaireApplicationResponse],
+    response_model=list[QuestionnaireApplicationAdminResponse],
 )
 async def admin_list_questionnaire_applications(
     _admin: AdminUser,
     session: DbSession,
     limit: Annotated[int, Query(ge=1, le=500)] = 200,
-) -> list[QuestionnaireApplicationResponse]:
-    return await QuestionnaireService(session).list_applications(limit=limit)
+    settings: Settings = Depends(get_settings),
+) -> list[QuestionnaireApplicationAdminResponse]:
+    return await QuestionnaireService(session).list_applications(settings=settings, limit=limit)
