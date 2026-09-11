@@ -42,8 +42,13 @@ test.beforeEach(async ({page})=>{
     if(path.endsWith(`/projects/${projectId}/questionnaire-generation`)&&method==='POST'){const i=generationCount++;return json(route,generation(i,'queued'),202)}
     for(let i=0;i<generationIds.length;i++) if(path.endsWith(`/projects/${projectId}/questionnaire-generation/${generationIds[i]}`)&&method==='GET') return json(route,generation(i))
     if(path.endsWith(`/ideas/mine/${generationIds[1]}`)&&method==='GET') return json(route,publication)
-    if(path.endsWith(`/ideas/mine/${generationIds[1]}`)&&method==='DELETE'){publication={...publication,is_active:false};return json(route,publication)}
-    if(path.endsWith('/ideas')&&method==='POST'){publication={id:ideaId,generation_id:generationIds[1],title:'Лавочка',category:'Мебель и площадки',generation_type:'master_plan',image_url:asset(1).url,objects:[],selected_objects:['lavochka'],published_at:now,is_active:true,sort_order:0,updated_at:now};return json(route,publication,201)}
+    if(path.endsWith(`/ideas/mine/${generationIds[1]}`)&&method==='DELETE'){publication={...publication,owner_published:false};return json(route,publication)}
+    if(path.endsWith('/ideas')&&method==='POST'){
+      publication=publication
+        ? {...publication,owner_published:true}
+        : {id:ideaId,generation_id:generationIds[1],title:'Лавочка',category:'Мебель и площадки',generation_type:'master_plan',image_url:asset(1).url,objects:[],selected_objects:['lavochka'],published_at:now,is_saved:false,owner_published:true,is_active:true,sort_order:0,updated_at:now}
+      return json(route,publication,201)
+    }
     return json(route,{type:'mock_unhandled',detail:`${method} ${path}`},404)
   })
 })
@@ -63,6 +68,7 @@ test('canonical create flow supports refinement and own unpublish without techni
   await page.getByRole('button',{name:'Подходит'}).click(); await expect(page.getByText('Что проектируем дальше?')).toBeVisible()
   await expect(page.getByText(/ПИКСЕЛЬНАЯ|Зафиксируйте:|выделите прямоугольник/)).toHaveCount(0)
   await page.getByRole('button',{name:'Добавить в Идеи'}).click(); await expect(page.getByRole('button',{name:'Убрать из Идей'})).toBeVisible()
-  await page.getByRole('button',{name:'Убрать из Идей'}).click(); await expect(page.getByRole('button',{name:'Убрано из Идей'})).toBeVisible()
+  await page.getByRole('button',{name:'Убрать из Идей'}).click(); await expect(page.getByRole('button',{name:'Вернуть в Идеи'})).toBeVisible()
+  await page.getByRole('button',{name:'Вернуть в Идеи'}).click(); await expect(page.getByRole('button',{name:'Убрать из Идей'})).toBeVisible()
   await expect(page.getByText('AUROOM_RENDER_SPEC_V1')).toHaveCount(0); expect(errors).toEqual([])
 })
