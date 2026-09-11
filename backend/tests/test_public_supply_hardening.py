@@ -50,7 +50,8 @@ def test_supply_chain_dependencies_are_immutable_or_monitored() -> None:
 
 def test_ci_has_dependency_and_container_build_gates() -> None:
     ci = (REPO_ROOT / '.github' / 'workflows' / 'ci.yml').read_text()
-    assert 'pip-audit . --progress-spinner off --strict' in ci
+    assert 'pip-audit -r requirements.lock --require-hashes --progress-spinner off --strict' in ci
+    assert 'pip-audit -r requirements-build.lock --require-hashes --progress-spinner off --strict' in ci
     assert 'npm audit --omit=dev --audit-level=high' in ci
     assert 'docker compose --project-directory backend -f backend/docker-compose.yml build api frontend' in ci
     deploy = (REPO_ROOT / 'ops' / 'deploy_docker.sh').read_text()

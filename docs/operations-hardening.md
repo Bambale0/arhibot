@@ -60,7 +60,9 @@ Compose applies environment-overridable CPU, memory, PID and json-file log-rotat
 
 Production disables FastAPI Swagger/ReDoc/OpenAPI HTTP routes and the public host Nginx explicitly returns 404 for docs, OpenAPI and metrics. The HTTPS ingress sets HSTS, nosniff, a strict referrer policy, a conservative permissions policy and a Telegram-compatible CSP; Nginx version disclosure is disabled. Deploy applies the canonical host Nginx config with backup, syntax validation, reload verification and rollback on failure.
 
-CI audits Python runtime dependencies with pip-audit and frontend production dependencies with npm audit, builds backend/frontend Docker images, and pins GitHub Actions plus runtime base images to immutable commit/digest identities. Dependabot watches Python, npm, Actions and Docker sources weekly. Python runtime dependencies are still declared as compatible ranges rather than a hash-locked transitive set; producing and maintaining a reproducible lock remains a further supply-chain improvement.
+CI audits the hash-locked Python runtime dependency set with pip-audit and frontend production dependencies with npm audit, builds backend/frontend Docker images, and pins GitHub Actions plus runtime base images to immutable commit/digest identities. Dependabot watches Python, npm, Actions and Docker sources weekly. `backend/requirements.lock` and `backend/requirements-build.lock` are generated deterministically with pip-tools from `pyproject.toml`; CI regenerates both and fails on drift. The wheel builder installs only the hash-locked build graph and runs with `--no-build-isolation`; production runtime stages install only the hash-locked runtime graph, then install the already-built AuRoom wheel with `--no-deps`. A Docker build therefore cannot silently resolve a different runtime or Python build dependency graph.
+
+To update the Python locks after an intentional dependency change, install backend dev dependencies and run `./scripts/dependency_locks.sh UPDATE` from `backend/`. Use `CHECK` for a read-only freshness verification; CI runs exactly that mode.
 
 ## Still required before a production-grade promotion
 
