@@ -223,6 +223,14 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
         public_without_asset = await client.get("/api/v1/ideas", headers=user_headers)
         assert all(item["id"] != publication["id"] for item in public_without_asset.json())
 
+        async with get_session_factory()() as session:
+            generation = await session.get(Generation, generation_id)
+            assert generation is not None and generation.output_asset_id is not None
+            asset = await session.get(Asset, generation.output_asset_id)
+            assert asset is not None
+            asset.deleted_at = None
+            await session.commit()
+
         hidden = await client.delete(
             f"/api/v1/admin/ideas/{idea['id']}", headers=admin_headers
         )
