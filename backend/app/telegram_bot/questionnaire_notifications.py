@@ -269,7 +269,7 @@ async def deliver_pending_applications_once(
                 else None
             )
             photo_url = (
-                LocalMediaStorage(get_settings()).signed_url(
+                LocalMediaStorage(get_settings()).signed_telegram_photo_url(
                     scene_asset.storage_path,
                     ttl_seconds=3600,
                 )
