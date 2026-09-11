@@ -244,6 +244,15 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
         )
         assert own_after_moderation.status_code == 200
         assert own_after_moderation.json()["is_active"] is False
+        owner_cannot_override_moderation = await client.post(
+            "/api/v1/ideas",
+            headers=user_headers,
+            json={"generation_id": str(generation_id)},
+        )
+        assert owner_cannot_override_moderation.status_code == 409
+        assert owner_cannot_override_moderation.json()["type"].endswith(
+            "idea_hidden_by_moderator"
+        )
 
         restored = await client.patch(
             f"/api/v1/admin/ideas/{idea['id']}",
