@@ -112,6 +112,29 @@ class IdeaService:
             )
         return result
 
+    async def get_public(self, idea_id: UUID) -> PublicIdeaPublicationResponse:
+        publication = await self.repository.get(idea_id)
+        if publication is None or not publication.is_active:
+            raise AppError(
+                type="idea_not_found",
+                title="Idea not found",
+                status=404,
+                detail="The published work does not exist or is no longer available.",
+            )
+        response = await self._publication_response(publication, require_public_ready=True)
+        if response is None:
+            raise AppError(
+                type="idea_not_found",
+                title="Idea not found",
+                status=404,
+                detail="The published work does not exist or is no longer available.",
+            )
+        return PublicIdeaPublicationResponse(
+            **response.model_dump(
+                exclude={"generation_id", "is_active", "sort_order", "updated_at"}
+            )
+        )
+
     async def _owned_generation(self, user: User, generation_id: UUID) -> Generation:
         generation = await self.session.get(Generation, generation_id)
         if generation is None or generation.user_id != user.id:
