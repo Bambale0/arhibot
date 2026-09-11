@@ -143,6 +143,7 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
         assert published.status_code == 201, published.text
         publication = published.json()
         assert publication["generation_id"] == str(generation_id)
+        assert publication["owner_published"] is True
         assert publication["is_active"] is True
         assert publication["sort_order"] == 0
         assert urlsplit(publication["image_url"]).path.endswith(".png")
@@ -172,6 +173,21 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
         assert "text" not in idea
         assert "model_url" not in idea
         assert "media" not in idea
+        assert idea["is_saved"] is False
+
+        saved_idea = await client.put(
+            f"/api/v1/ideas/{idea['id']}/save", headers=user_headers
+        )
+        assert saved_idea.status_code == 200, saved_idea.text
+        assert saved_idea.json() == {"idea_id": idea["id"], "is_saved": True}
+        public_saved = await client.get("/api/v1/ideas", headers=user_headers)
+        saved_row = next(item for item in public_saved.json() if item["id"] == idea["id"])
+        assert saved_row["is_saved"] is True
+        unsaved_idea = await client.delete(
+            f"/api/v1/ideas/{idea['id']}/save", headers=user_headers
+        )
+        assert unsaved_idea.status_code == 200, unsaved_idea.text
+        assert unsaved_idea.json() == {"idea_id": idea["id"], "is_saved": False}
 
         started = await client.post(
             f"/api/v1/ideas/{idea['id']}/project", headers=user_headers
@@ -225,9 +241,22 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
             f"/api/v1/ideas/mine/{generation_id}", headers=user_headers
         )
         assert unpublished.status_code == 200, unpublished.text
-        assert unpublished.json()["is_active"] is False
+        assert unpublished.json()["owner_published"] is False
+        assert unpublished.json()["is_active"] is True
         public_after_owner_unpublish = await client.get("/api/v1/ideas", headers=user_headers)
         assert all(item["id"] != idea["id"] for item in public_after_owner_unpublish.json())
+
+        republished = await client.post(
+            "/api/v1/ideas",
+            headers=user_headers,
+            json={"generation_id": str(generation_id)},
+        )
+        assert republished.status_code == 201, republished.text
+        assert republished.json()["id"] == idea["id"]
+        assert republished.json()["owner_published"] is True
+        assert republished.json()["is_active"] is True
+        public_after_republish = await client.get("/api/v1/ideas", headers=user_headers)
+        assert any(item["id"] == idea["id"] for item in public_after_republish.json())
 
 
 @pytest.mark.asyncio
