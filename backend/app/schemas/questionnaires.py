@@ -35,6 +35,7 @@ class QuestionnaireQuestion(BaseModel):
     skip_condition: dict[str, Any] | None = None
     help: str | None = None
     field_hint: str | None = None
+    placeholder: str | None = None
     max_selections: int | None = None
     min_value: float | None = None
     max_value: float | None = None
