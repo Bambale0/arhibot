@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import * as api from '../api'
+import type { QuestionnaireApplicationAdmin } from '../questionnaireTypes'
 import type {
   AdminAudit,
   AdminBillingSettings,
@@ -27,7 +28,7 @@ const modes: { id: GenerationMode; label: string }[] = [
   { id: 'interior', label: 'Интерьер' },
 ]
 
-type Tab = 'tariffs' | 'ideas' | 'generation' | 'users' | 'payments' | 'broadcasts' | 'telegram' | 'system' | 'audit'
+type Tab = 'tariffs' | 'applications' | 'ideas' | 'generation' | 'users' | 'payments' | 'broadcasts' | 'telegram' | 'system' | 'audit'
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : 'Не удалось выполнить операцию'
@@ -52,6 +53,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   const [tariffs, setTariffs] = useState<AdminTariff[]>([])
   const [billingSettings, setBillingSettings] = useState<AdminBillingSettings | null>(null)
   const [ideas, setIdeas] = useState<AdminIdea[]>([])
+  const [applications, setApplications] = useState<QuestionnaireApplicationAdmin[]>([])
   const [generation, setGeneration] = useState<AdminGenerationSettings | null>(null)
   const [prices, setPrices] = useState<AdminGenerationPrice[]>([])
   const [prompts, setPrompts] = useState<AdminPrompt[]>([])
@@ -68,10 +70,11 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   async function reload() {
     setError(null)
     try {
-      const [o, t, bs, i, g, gp, p, u, tx, pay, b, tg, ops, a] = await Promise.all([
+      const [o, t, bs, apps, i, g, gp, p, u, tx, pay, b, tg, ops, a] = await Promise.all([
         api.adminOverview(),
         api.adminListTariffs(),
         api.adminGetBillingSettings(),
+        api.adminListQuestionnaireApplications(),
         api.adminListIdeas(),
         api.adminGetGenerationSettings(),
         api.adminListGenerationPrices(),
@@ -87,6 +90,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       setOverview(o)
       setTariffs(t)
       setBillingSettings(bs)
+      setApplications(apps)
       setIdeas(i)
       setGeneration(g)
       setPrices(gp)
@@ -117,13 +121,14 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       {error && <div className="banner-error">{error}<button onClick={() => setError(null)}>Закрыть</button></div>}
       <nav className="admin-tabs">
         {([
-          ['tariffs','Тарифы и касса'], ['ideas','Идеи'], ['generation','AI и стоимость'], ['users','Пользователи и кредиты'],
+          ['tariffs','Тарифы и касса'], ['applications','Заявки'], ['ideas','Идеи'], ['generation','AI и стоимость'], ['users','Пользователи и кредиты'],
           ['payments','Платежи'], ['broadcasts','Рассылки'], ['telegram','Telegram'], ['system','Система'], ['audit','Аудит'],
         ] as [Tab,string][]).map(([id,label]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>)}
       </nav>
       {loading ? <div className="admin-loading">Загружаем настройки…</div> : (
         <div className="admin-content">
           {tab === 'tariffs' && billingSettings && <TariffsPanel items={tariffs} onItems={setTariffs} billingSettings={billingSettings} onBillingSettings={setBillingSettings} onError={setError} />}
+          {tab === 'applications' && <ApplicationsPanel items={applications} />}
           {tab === 'ideas' && <IdeasPanel items={ideas} onItems={setIdeas} onError={setError} />}
           {tab === 'generation' && generation && <GenerationPanel settings={generation} prices={prices} prompts={prompts} onSettings={setGeneration} onPrices={setPrices} onPrompts={setPrompts} onError={setError} />}
           {tab === 'users' && <UsersPanel items={users} transactions={transactions} onItems={setUsers} onTransactions={setTransactions} onError={setError} />}
@@ -205,6 +210,40 @@ function BillingSettingsEditor({ settings, onSaved, onError }: { settings: Admin
     finally { setBusy(false) }
   }
   return <div className="admin-subpanel"><div className="admin-panel-title"><div><h3>Фискальные чеки YooKassa</h3><p>При включении клиент указывает email, а чек передаётся в платёж.</p></div></div><div className="admin-form-grid compact"><label className="admin-checkbox"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)}/> Передавать receipt</label><label>Код НДС<input type="number" min="1" max="12" disabled={!enabled} value={vat} onChange={(e) => setVat(e.target.value)}/></label><label>Предмет расчёта<input disabled={!enabled} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="service"/></label><label>Способ расчёта<input disabled={!enabled} value={mode} onChange={(e) => setMode(e.target.value)} placeholder="full_payment"/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={() => void save()}>Сохранить кассу</button></div></div></div>
+}
+
+function ApplicationsPanel({ items }: { items: QuestionnaireApplicationAdmin[] }) {
+  return <section className="admin-panel">
+    <div className="admin-panel-title"><div><h2>Заявки</h2><p>Полный проектный бриф, контакт и финальный принятый эскиз. Данные соответствуют версии опросника, по которой клиент оформил заявку.</p></div></div>
+    <div className="admin-card-list">
+      {items.length ? items.map((item) => {
+        const application = item.answers.zayavka || {}
+        return <article className="admin-list-card admin-application-card" key={item.id}>
+          {item.scene_image_url
+            ? <img src={item.scene_image_url} alt={`Финальный эскиз · ${item.project_name}`}/>
+            : <div className="admin-application-image-empty">Эскиз недоступен</div>}
+          <div className="admin-application-main">
+            <strong>{item.project_name}</strong>
+            <span>{item.user_name} · {formatDate(item.created_at)}</span>
+            <p>Контакт: {String(application['24'] || '—')} · Бюджет: {String(application['21'] || '—')} · Срок: {String(application['22'] || '—')}</p>
+            <details className="admin-application-brief">
+              <summary>Архитектурный бриф · {item.brief.reduce((count, object) => count + object.answers.length, 0)} параметров</summary>
+              <div>
+                {item.brief.map((object) => <section key={object.key}>
+                  <h4>{object.title}</h4>
+                  {object.answers.map((answer, index) => <p key={`${object.key}-${index}`}><b>{answer.question}</b><span>{answer.answer}</span></p>)}
+                </section>)}
+              </div>
+            </details>
+          </div>
+          <div>
+            <span className={`status-pill ${item.telegram_delivery_status === 'sent' ? '' : 'muted'}`}>Telegram: {item.telegram_delivery_status}</span>
+            <small>ID: {item.id}</small>
+          </div>
+        </article>
+      }) : <div className="empty-inline"><p>Заявок пока нет.</p></div>}
+    </div>
+  </section>
 }
 
 function IdeasPanel({ items, onItems, onError }: {
