@@ -243,13 +243,35 @@ class IdeaService:
                 status=422,
                 detail="Only a completed generated work can be added to Ideas.",
             )
-        if await self.repository.get_by_generation(generation.id) is not None:
-            raise AppError(
-                type="idea_already_published",
-                title="Work already published",
-                status=409,
-                detail="This generated work already has an Ideas publication record.",
-            )
+        existing = await self.repository.get_by_generation(generation.id)
+        if existing is not None:
+            if existing.published_by_user_id != user.id:
+                raise AppError(
+                    type="idea_already_published",
+                    title="Work already published",
+                    status=409,
+                    detail="This generated work already has an Ideas publication record.",
+                )
+            if await self._image_url(generation) is None:
+                raise AppError(
+                    type="idea_image_not_found",
+                    title="Generated image not found",
+                    status=404,
+                    detail="The generated result image is no longer available.",
+                )
+            if not existing.is_active:
+                existing.is_active = True
+                await self.session.commit()
+                await self.session.refresh(existing)
+            response = await self._publication_response(existing)
+            if response is None:
+                raise AppError(
+                    type="idea_publication_invalid",
+                    title="Publication is invalid",
+                    status=409,
+                    detail="The publication source is no longer available.",
+                )
+            return response
 
         project = await self.session.get(Project, generation.project_id)
         if project is None or project.deleted_at is not None or project.user_id != user.id:
