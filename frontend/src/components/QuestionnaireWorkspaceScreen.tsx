@@ -664,9 +664,11 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       || next.edit_regions[definition.key]
       || (definition.key === 'eskez-doma'
         ? { x:0.12, y:0.10, width:0.76, height:0.78 }
-        : null)
+        : next.accepted_objects.length === 0
+          ? suggestedRegion(next, definition)
+          : null)
     if (!lockRegion) {
-      setError('Перед принятием объекта нужно выбрать его точную область на сцене.')
+      setError('Перед принятием следующего объекта нужно выбрать его точную область на сцене.')
       return
     }
     return finalizeAccept(next, definition, lockRegion)
