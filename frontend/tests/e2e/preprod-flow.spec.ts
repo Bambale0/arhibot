@@ -87,6 +87,12 @@ test('shared idea deep-link opens exact work and saves on the server',async({pag
       configurable:true,
       value: async (data:unknown) => { (window as typeof window & { __shareData?:unknown }).__shareData = data },
     })
+    const originalScrollIntoView = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function(...args) {
+      const target = window as typeof window & { __ideaScrollCalls?:number }
+      target.__ideaScrollCalls = (target.__ideaScrollCalls || 0) + 1
+      return originalScrollIntoView?.apply(this, args as [boolean | ScrollIntoViewOptions | undefined])
+    }
   })
   await page.goto(`/?idea=${ideaId}`)
   const card = page.locator(`[data-idea-id="${ideaId}"]`)
@@ -94,7 +100,22 @@ test('shared idea deep-link opens exact work and saves on the server',async({pag
   await card.getByRole('button',{name:'Сохранить'}).click()
   await expect(card.getByRole('button',{name:'Убрать из сохранённых'})).toBeVisible()
   expect(savedIdea).toBe(true)
+  const scrollCalls = await page.evaluate(() => (window as typeof window & { __ideaScrollCalls?:number }).__ideaScrollCalls || 0)
+  expect(scrollCalls).toBe(1)
   await card.getByRole('button',{name:'Поделиться'}).click()
   const shared = await page.evaluate(() => (window as typeof window & { __shareData?:{url?:string} }).__shareData)
   expect(shared?.url).toContain(`idea=${ideaId}`)
+})
+
+
+test('legacy browser bookmarks migrate to server saves once',async({page})=>{
+  await page.addInitScript((id) => {
+    localStorage.setItem('auroom.saved_ideas', JSON.stringify([id]))
+  }, ideaId)
+  await page.goto('/?idea=' + ideaId)
+  const card = page.locator(`[data-idea-id="${ideaId}"]`)
+  await expect(card.getByRole('button',{name:'Убрать из сохранённых'})).toBeVisible()
+  expect(savedIdea).toBe(true)
+  const legacy = await page.evaluate(() => localStorage.getItem('auroom.saved_ideas'))
+  expect(legacy).toBeNull()
 })
