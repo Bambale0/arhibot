@@ -317,20 +317,24 @@ async def deliver_pending_applications_once(
                 photo_url=photo_url,
                 photo_reply_markup=photo_reply_markup,
             )
-            if sent > 0:
+            if sent == len(recipients):
                 application.telegram_delivery_status = "sent"
                 application.telegram_delivery_error = None
                 application.telegram_notified_at = datetime.now(UTC)
                 delivered += 1
-                if errors:
-                    logger.warning(
-                        "Questionnaire application %s reached an admin, but %s recipient(s) failed",
-                        application.id,
-                        len(errors),
-                    )
             else:
-                application.telegram_delivery_error = ("; ".join(errors) or "Telegram delivery failed")[:500]
+                application.telegram_delivery_status = "pending"
+                application.telegram_delivery_error = (
+                    "; ".join(errors)
+                    or f"Telegram delivery incomplete: {sent}/{len(recipients)} admins reached"
+                )[:500]
                 failed += 1
+                logger.warning(
+                    "Questionnaire application %s reached %s/%s admin recipient(s); retry remains pending",
+                    application.id,
+                    sent,
+                    len(recipients),
+                )
             await session.commit()
 
     return delivered, failed
