@@ -460,6 +460,7 @@ class QuestionnaireService:
             key: generation.id for key in current.selected_objects
         }
         accepted.scene_asset_id = generation.output_asset_id
+        accepted.scene_generation_id = generation.id
         accepted.current_object = None
         accepted.current_question_id = None
         accepted.region_mode = None
@@ -922,9 +923,17 @@ class QuestionnaireService:
                         raise self._invalid(
                             "The accepted scene must be the refinement output."
                         )
+                    if payload.scene_generation_id != generation.id:
+                        raise self._invalid(
+                            "The accepted scene generation must match the refinement output."
+                        )
                 elif payload.scene_asset_id != initial_generation.output_asset_id:
                     raise self._invalid(
                         "The accepted initial scene must be the initial generation output."
+                    )
+                elif payload.scene_generation_id not in (None, initial_generation.id):
+                    raise self._invalid(
+                        "The initial scene generation must reference the initial generation."
                     )
             return
 
