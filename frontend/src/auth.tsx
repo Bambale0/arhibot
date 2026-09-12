@@ -33,7 +33,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const telegram = window.Telegram?.WebApp
-    try { telegram?.ready?.() } catch { /* old Telegram clients may reject bridge calls */ }
+    try {
+      telegram?.ready?.()
+      telegram?.expand?.()
+    } catch { /* old Telegram clients may reject bridge calls */ }
 
     let cancelled = false
     async function bootstrap() {
