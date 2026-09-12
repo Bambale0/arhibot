@@ -439,6 +439,11 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     }
   }
 
+  async function editInitialQuestion(key:string, questionId:string) {
+    if (!session || session.initial_concept_accepted || session.initial_generation_id) return
+    await persist({ ...session, current_object:key, current_question_id:questionId })
+  }
+
   async function chooseObject(key:string) {
     if (!session || !session.selected_objects.includes(key)) return
     if (session.accepted_objects.includes(key) && !(session.initial_concept_mode && !session.initial_concept_accepted)) return
@@ -925,6 +930,17 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         <p>{initialGenerationId ? 'В одной визуализации собраны все объекты, выбранные до старта проекта.' : 'AuRoom сначала соберёт полное ТЗ по всем выбранным объектам и только потом сделает одну общую визуализацию участка.'}</p>
         {renderOutput && <div className="questionnaire-result"><img src={renderOutput.url} alt="Общая концепция участка"/></div>}
         {!initialGenerationId && <div className="questionnaire-options">{session.selected_objects.map((key) => <button key={key} className={`questionnaire-option ${session.survey_completed_objects.includes(key) ? 'selected' : ''}`} disabled={busy} onClick={() => void chooseObject(key)}><span>{session.survey_completed_objects.includes(key) ? '✓ ' : ''}{definitions.get(key)?.title || key}</span><i/></button>)}</div>}
+        {ready && !initialGenerationId && <div className="questionnaire-answer-review">{session.selected_objects.map((key) => {
+          const definition = definitions.get(key)
+          const answers = session.answers[key] || {}
+          if (!definition) return null
+          const answered = definition.questions.filter((question) =>
+            question.phase === 'pre_render'
+            && answers[question.id] !== undefined
+            && conditionOk(question.condition, answers, houseAccepted)
+          )
+          return <details key={key}><summary>{definition.title}</summary>{answered.map((question) => <button type="button" key={question.id} disabled={busy} onClick={() => void editInitialQuestion(key, question.id)}><span>{question.text}</span><strong>{text(answers[question.id])}</strong></button>)}</details>
+        })}</div>}
         {ready && !initialGenerationId && <><p className="region-hint">Одна общая генерация · {generationCostLabel()}</p><div className="questionnaire-actions"><button className="primary-button" disabled={busy || generationCost?.is_available === false} onClick={() => void generateInitial(session)}>Создать общую концепцию</button></div></>}
         {initialGenerationId && renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void acceptInitial()}>Принять концепцию</button><button className="secondary-button" disabled={busy} onClick={() => void reopenInitialAnswers()}>Изменить ТЗ · новая генерация</button></div>}
         {(busy || generationInFlight) && initialGenerationId && !renderOutput && <div className="empty-inline">Создаём весь участок одной генерацией…</div>}
