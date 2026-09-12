@@ -176,20 +176,29 @@ def _initial_site_scale(session: DesignSession) -> dict[str, object]:
         if estimated_footprint_m2 is not None and plot_m2
         else None
     )
+    scale_known = plot_sotkas is not None
+    directive = (
+        "Соблюдай правдоподобный относительный масштаб. Размер участка является "
+        "жёстким ориентиром композиции: 1 сотка = 100 м². Площадь дома — общая "
+        "площадь по этажам; estimated_house_footprint_m2 используется только как "
+        "ориентир пятна застройки. Не увеличивай дом так, чтобы он визуально занимал "
+        "несоразмерную долю участка."
+        if scale_known
+        else (
+            "Точный размер участка отсутствует у исторического/внутреннего проекта. "
+            "Не придумывай числовую площадь; сохраняй только правдоподобный визуальный "
+            "масштаб объектов относительно доступной сцены."
+        )
+    )
     return {
+        "plot_area_known": scale_known,
         "plot_area_sotkas": plot_sotkas,
         "plot_area_m2": plot_m2,
         "house_total_area_m2": house_area_m2,
         "house_floor_count_reference": floor_count,
         "estimated_house_footprint_m2": estimated_footprint_m2,
         "estimated_house_footprint_share_of_plot": estimated_footprint_share,
-        "directive": (
-            "Соблюдай правдоподобный относительный масштаб. Размер участка является "
-            "жёстким ориентиром композиции: 1 сотка = 100 м². Площадь дома — общая "
-            "площадь по этажам; estimated_house_footprint_m2 используется только как "
-            "ориентир пятна застройки. Не увеличивай дом так, чтобы он визуально занимал "
-            "несоразмерную долю участка."
-        ),
+        "directive": directive,
     }
 
 
