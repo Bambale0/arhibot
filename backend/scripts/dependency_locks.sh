@@ -52,11 +52,6 @@ tmp_dir=$(mktemp -d)
 trap 'rm -rf "${tmp_dir}"' EXIT
 compile_runtime "${tmp_dir}/requirements.lock"
 compile_build "${tmp_dir}/requirements-build.lock"
-lock_status=0
-diff -u requirements.lock "${tmp_dir}/requirements.lock" || lock_status=1
-diff -u requirements-build.lock "${tmp_dir}/requirements-build.lock" || lock_status=1
-if [[ "${lock_status}" -ne 0 ]]; then
-  echo "Python dependency locks are stale; run ./scripts/dependency_locks.sh UPDATE" >&2
-  exit 1
-fi
+cmp requirements.lock "${tmp_dir}/requirements.lock"
+cmp requirements-build.lock "${tmp_dir}/requirements-build.lock"
 echo "Python dependency locks are current"
