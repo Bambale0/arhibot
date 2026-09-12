@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from json import dumps
+from json import JSONDecodeError, dumps, loads
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -21,6 +21,7 @@ from app.repositories.billing import BillingRepository
 from app.repositories.generations import GenerationRepository
 from app.repositories.projects import ProjectRepository
 from app.schemas.admin import (
+    AdminAiHistoryItem,
     AdminAiOrbitCreate,
     AdminAiSandboxCreate,
     AdminOverviewResponse,
@@ -48,6 +49,33 @@ from app.services.billing_service import BillingService
 from app.services.generation_service import build_generation_service
 from app.telegram_bot.broadcast import send_broadcast
 from app.telegram_bot.main import TelegramBotApi
+
+
+ADMIN_SANDBOX_PROMPT_PREFIX = "AUROOM_ADMIN_SANDBOX_V1\n"
+ADMIN_ORBIT_PROMPT_PREFIX = "AUROOM_ADMIN_ORBIT_V1\n"
+
+
+def _parse_admin_ai_envelope(
+    prompt: str,
+    prefix: str,
+) -> tuple[str, dict[str, object], int | None, int | None]:
+    try:
+        payload = loads(prompt.removeprefix(prefix))
+    except (JSONDecodeError, TypeError):
+        return "", {}, None, None
+    if not isinstance(payload, dict):
+        return "", {}, None, None
+
+    operator_prompt = payload.get("prompt")
+    params = payload.get("params")
+    frame_count = payload.get("frame_count")
+    frame_duration_ms = payload.get("frame_duration_ms")
+    return (
+        operator_prompt if isinstance(operator_prompt, str) else "",
+        params if isinstance(params, dict) else {},
+        frame_count if isinstance(frame_count, int) else None,
+        frame_duration_ms if isinstance(frame_duration_ms, int) else None,
+    )
 
 
 class AdminService:
@@ -288,7 +316,7 @@ class AdminService:
             await self.session.commit()
             await self.session.refresh(project)
 
-        envelope = "AUROOM_ADMIN_SANDBOX_V1\n" + dumps(
+        envelope = ADMIN_SANDBOX_PROMPT_PREFIX + dumps(
             {"prompt": payload.prompt, "params": payload.params},
             ensure_ascii=False,
             separators=(",", ":"),
@@ -350,7 +378,7 @@ class AdminService:
                 status=409,
                 detail="Complete an AI Sandbox image before building an orbit loop.",
             )
-        if not source.prompt.startswith("AUROOM_ADMIN_SANDBOX_V1\n"):
+        if not source.prompt.startswith(ADMIN_SANDBOX_PROMPT_PREFIX):
             raise AppError(
                 type="orbit_source_not_sandbox",
                 title="Orbit source must be an AI Sandbox image",
@@ -367,7 +395,7 @@ class AdminService:
                 detail="Use a completed result from the admin AI Sandbox.",
             )
 
-        envelope = "AUROOM_ADMIN_ORBIT_V1\n" + dumps(
+        envelope = ADMIN_ORBIT_PROMPT_PREFIX + dumps(
             {
                 "prompt": payload.prompt,
                 "params": payload.params,
@@ -415,6 +443,54 @@ class AdminService:
         )
         await self.session.commit()
         return generated
+
+    async def list_ai_sandbox_history(
+        self,
+        actor: User,
+        *,
+        limit: int = 30,
+    ) -> list[AdminAiHistoryItem]:
+        project = await self.projects.get_admin_ai_sandbox(actor.id)
+        if project is None:
+            return []
+
+        rows = await GenerationRepository(self.session).list_owned(
+            actor.id,
+            project_id=project.id,
+            limit=limit,
+        )
+        generation_service = build_generation_service(self.session, self.settings)
+        history: list[AdminAiHistoryItem] = []
+        for row in rows:
+            if row.prompt.startswith(ADMIN_SANDBOX_PROMPT_PREFIX):
+                kind = "sandbox"
+                prefix = ADMIN_SANDBOX_PROMPT_PREFIX
+            elif row.prompt.startswith(ADMIN_ORBIT_PROMPT_PREFIX):
+                kind = "orbit"
+                prefix = ADMIN_ORBIT_PROMPT_PREFIX
+            else:
+                continue
+
+            prompt, params, frame_count, frame_duration_ms = _parse_admin_ai_envelope(
+                row.prompt,
+                prefix,
+            )
+            generation = await generation_service.to_response(row)
+            generation = generation.model_copy(update={"prompt": prompt})
+            history.append(
+                AdminAiHistoryItem(
+                    kind=kind,
+                    generation=generation,
+                    prompt=prompt,
+                    params=params,
+                    frame_count=frame_count if kind == "orbit" else None,
+                    frame_duration_ms=(
+                        frame_duration_ms if kind == "orbit" else None
+                    ),
+                )
+            )
+        return history
+
 
     async def list_prompts(self) -> list[PromptTemplateResponse]:
         rows = await self.repository.list_prompt_templates()
