@@ -133,7 +133,9 @@ class DesignSession(BaseModel):
 
     @model_validator(mode="after")
     def require_accepted_house_for_inherited_style(self) -> DesignSession:
-        if "eskez-doma" in self.accepted_objects:
+        if "eskez-doma" in self.accepted_objects or (
+            self.initial_concept_mode and "eskez-doma" in self.selected_objects
+        ):
             return self
         for object_key in HOUSE_STYLE_INHERITANCE_OBJECTS:
             if self.answers.get(object_key, {}).get("1") == "Как у дома":
