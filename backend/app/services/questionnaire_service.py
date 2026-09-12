@@ -31,7 +31,7 @@ from app.repositories.credits import CreditRepository
 from app.repositories.generations import GenerationRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.questionnaires import QuestionnaireRepository
-from app.schemas.generations import GenerationCreate, QuestionnaireGenerationCreate
+from app.schemas.generations import QuestionnaireGenerationCreate
 from app.schemas.questionnaires import (
     DesignSession,
     QuestionnaireGenerationCostResponse,
