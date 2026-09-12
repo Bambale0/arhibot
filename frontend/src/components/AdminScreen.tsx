@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import * as api from '../api'
 import type { QuestionnaireApplication } from '../questionnaireTypes'
 import type {
+  AdminAiHistoryItem,
   AdminAudit,
   AdminBillingSettings,
   AdminBroadcast,
@@ -376,13 +377,45 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   const [orbitDuration,setOrbitDuration]=useState('180')
   const [orbitBusy,setOrbitBusy]=useState(false)
   const [orbitGeneration,setOrbitGeneration]=useState<Generation|null>(null)
+  const [sandboxHistory,setSandboxHistory]=useState<AdminAiHistoryItem[]>([])
+  const [historyLoading,setHistoryLoading]=useState(true)
 
+  async function refreshSandboxHistory() {
+    try {
+      const items=await api.adminListGenerationSandboxHistory()
+      setSandboxHistory(items)
+      setSandboxGeneration(current => current ?? items.find(item =>
+        item.kind==='sandbox'
+        && item.generation.status==='completed'
+        && Boolean(item.generation.output_asset)
+      )?.generation ?? null)
+    } catch(err) {
+      onError(errorText(err))
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  useEffect(() => { void refreshSandboxHistory() }, [])
+
+  const historyHasActive=sandboxHistory.some(item =>
+    ['queued','processing'].includes(item.generation.status)
+  )
+  useEffect(() => {
+    if (!historyHasActive) return
+    const timer=window.setInterval(() => { void refreshSandboxHistory() },2500)
+    return () => window.clearInterval(timer)
+  },[historyHasActive])
   useEffect(() => {
     if (!sandboxGeneration || !['queued','processing'].includes(sandboxGeneration.status)) return
     let cancelled = false
     const timer = window.setInterval(() => {
       void api.getGeneration(sandboxGeneration.id)
-        .then((generation) => { if (!cancelled) setSandboxGeneration(generation) })
+        .then((generation) => {
+          if (cancelled) return
+          setSandboxGeneration(generation)
+          if (!['queued','processing'].includes(generation.status)) void refreshSandboxHistory()
+        })
         .catch((err) => { if (!cancelled) onError(errorText(err)) })
     }, 1500)
     return () => { cancelled = true; window.clearInterval(timer) }
@@ -393,7 +426,11 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
     let cancelled = false
     const timer = window.setInterval(() => {
       void api.getGeneration(orbitGeneration.id)
-        .then((generation) => { if (!cancelled) setOrbitGeneration(generation) })
+        .then((generation) => {
+          if (cancelled) return
+          setOrbitGeneration(generation)
+          if (!['queued','processing'].includes(generation.status)) void refreshSandboxHistory()
+        })
         .catch((err) => { if (!cancelled) onError(errorText(err)) })
     }, 1500)
     return () => { cancelled = true; window.clearInterval(timer) }
@@ -409,6 +446,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
         params:parseSandboxParams(sandboxParams),
       })
       setSandboxGeneration(created)
+      void refreshSandboxHistory()
     }catch(err){onError(errorText(err))}
     finally{setSandboxBusy(false)}
   }
@@ -430,6 +468,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
         frame_duration_ms:frameDuration,
       })
       setOrbitGeneration(created)
+      void refreshSandboxHistory()
     }catch(err){onError(errorText(err))}
     finally{setOrbitBusy(false)}
   }
