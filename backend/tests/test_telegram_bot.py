@@ -1,5 +1,6 @@
 import pytest
 
+from app.services.telegram_user_summary_service import available_generation_count
 from app.telegram_bot.main import (
     TelegramBotContent,
     TelegramUserSummary,
@@ -172,6 +173,7 @@ def test_personalized_start_keyboard_routes_to_product_sections() -> None:
     summary = TelegramUserSummary(
         display_name="Игорь",
         credits_balance=7,
+        available_generations=7,
         active_projects=2,
         active_generations=1,
     )
@@ -195,6 +197,7 @@ def test_send_start_includes_safe_personal_summary_when_available() -> None:
     summary = TelegramUserSummary(
         display_name="Игорь",
         credits_balance=9,
+        available_generations=4,
         active_projects=3,
         active_generations=2,
     )
@@ -204,9 +207,17 @@ def test_send_start_includes_safe_personal_summary_when_available() -> None:
 
     method, payload = sent[0]
     assert method == "sendMessage"
+    assert "Генераций доступно: 4" in payload["text"]
     assert "Кредиты: 9" in payload["text"]
     assert "Проектов: 3" in payload["text"]
     assert "Генераций в работе: 2" in payload["text"]
+
+
+def test_available_generation_count_uses_live_master_plan_price() -> None:
+    assert available_generation_count(9, price_credits=2, price_active=True) == 4
+    assert available_generation_count(1, price_credits=2, price_active=True) == 0
+    assert available_generation_count(9, price_credits=None, price_active=True) is None
+    assert available_generation_count(9, price_credits=2, price_active=False) is None
 
 
 def test_user_summary_parser_rejects_incomplete_payloads() -> None:
@@ -214,12 +225,25 @@ def test_user_summary_parser_rejects_incomplete_payloads() -> None:
         {
             "display_name": "Игорь",
             "credits_balance": 5,
+            "available_generations": 2,
             "active_projects": 1,
             "active_generations": 0,
         }
     )
     assert parsed is not None
     assert parsed.credits_balance == 5
+    assert parsed.available_generations == 2
+
+    legacy = parse_user_summary(
+        {
+            "display_name": "Игорь",
+            "credits_balance": 5,
+            "active_projects": 1,
+            "active_generations": 0,
+        }
+    )
+    assert legacy is not None
+    assert legacy.available_generations is None
     assert parse_user_summary({"display_name": "Игорь"}) is None
 
 

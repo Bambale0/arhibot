@@ -17,6 +17,7 @@ CONTENT_REFRESH_SECONDS = 30
 class TelegramUserSummary:
     display_name: str
     credits_balance: int
+    available_generations: int | None
     active_projects: int
     active_generations: int
 
@@ -76,15 +77,23 @@ def parse_user_summary(payload: object) -> TelegramUserSummary | None:
     try:
         display_name = str(payload["display_name"]).strip()
         credits_balance = int(payload["credits_balance"])
+        raw_available_generations = payload.get("available_generations")
+        available_generations = (
+            None if raw_available_generations is None else int(raw_available_generations)
+        )
         active_projects = int(payload["active_projects"])
         active_generations = int(payload["active_generations"])
     except (KeyError, TypeError, ValueError):
         return None
-    if not display_name or min(credits_balance, active_projects, active_generations) < 0:
+    numeric_values = [credits_balance, active_projects, active_generations]
+    if available_generations is not None:
+        numeric_values.append(available_generations)
+    if not display_name or min(numeric_values) < 0:
         return None
     return TelegramUserSummary(
         display_name=display_name,
         credits_balance=credits_balance,
+        available_generations=available_generations,
         active_projects=active_projects,
         active_generations=active_generations,
     )
@@ -260,8 +269,14 @@ def send_start(
 ) -> None:
     text = content.start_text
     if summary is not None:
+        generation_line = (
+            f"Генераций доступно: {summary.available_generations}\n"
+            if summary.available_generations is not None
+            else ""
+        )
         text = (
             f"{content.start_text}\n\n"
+            f"{generation_line}"
             f"Кредиты: {summary.credits_balance}\n"
             f"Проектов: {summary.active_projects}\n"
             f"Генераций в работе: {summary.active_generations}"
