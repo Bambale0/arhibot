@@ -120,6 +120,8 @@ class DesignSession(BaseModel):
     scene_generation_id: UUID | None = None
     answers: dict[str, dict[str, QuestionAnswer]] = Field(default_factory=dict)
     accepted_objects: list[str] = Field(default_factory=list)
+    removed_objects: list[str] = Field(default_factory=list)
+    pending_removal_object: str | None = None
     generation_ids: dict[str, UUID] = Field(default_factory=dict)
     edit_question_ids: list[str] = Field(default_factory=list)
     review_comments: dict[str, str] = Field(default_factory=dict)
@@ -141,6 +143,17 @@ class DesignSession(BaseModel):
             raise ValueError("Completed questionnaire objects must be selected.")
         if self.initial_concept_accepted and not self.initial_generation_id:
             raise ValueError("Accepted initial concept must reference its generation.")
+        if len(self.removed_objects) != len(set(self.removed_objects)):
+            raise ValueError("Removed questionnaire objects must be unique.")
+        if any(key not in self.selected_objects for key in self.removed_objects):
+            raise ValueError("Removed questionnaire objects must be selected.")
+        if set(self.removed_objects) & set(self.accepted_objects):
+            raise ValueError("A questionnaire object cannot be accepted and removed at once.")
+        if (
+            self.pending_removal_object is not None
+            and self.pending_removal_object not in self.accepted_objects
+        ):
+            raise ValueError("Pending removal object must currently be accepted.")
         return self
 
     @model_validator(mode="after")
