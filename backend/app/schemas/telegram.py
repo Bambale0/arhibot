@@ -38,5 +38,6 @@ class TelegramContentResponse(BaseModel):
 class TelegramUserSummaryResponse(BaseModel):
     display_name: str
     credits_balance: int
+    available_generations: int | None
     active_projects: int
     active_generations: int
