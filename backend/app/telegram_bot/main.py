@@ -4,13 +4,21 @@ import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 CONTENT_REFRESH_SECONDS = 30
+
+
+@dataclass(frozen=True, slots=True)
+class TelegramUserSummary:
+    display_name: str
+    credits_balance: int
+    active_projects: int
+    active_generations: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +70,45 @@ def load_bot_content(url: str) -> TelegramBotContent | None:
     return parse_bot_content(payload)
 
 
+def parse_user_summary(payload: object) -> TelegramUserSummary | None:
+    if not isinstance(payload, dict):
+        return None
+    try:
+        display_name = str(payload["display_name"]).strip()
+        credits_balance = int(payload["credits_balance"])
+        active_projects = int(payload["active_projects"])
+        active_generations = int(payload["active_generations"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not display_name or min(credits_balance, active_projects, active_generations) < 0:
+        return None
+    return TelegramUserSummary(
+        display_name=display_name,
+        credits_balance=credits_balance,
+        active_projects=active_projects,
+        active_generations=active_generations,
+    )
+
+
+def load_user_summary(
+    url: str, *, telegram_user_id: int | str, bot_token: str
+) -> TelegramUserSummary | None:
+    request = Request(
+        f"{url.rstrip('/')}/{telegram_user_id}",
+        headers={
+            "Accept": "application/json",
+            "X-Telegram-Bot-Token": bot_token,
+        },
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=5) as response:  # noqa: S310 - configured AuRoom API URL
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, ValueError, OSError):
+        return None
+    return parse_user_summary(payload)
+
+
 def canonicalize_webapp_url(raw: str) -> str:
     """Return a Telegram-safe HTTPS URL with an ASCII/IDNA hostname.
 
@@ -88,16 +135,53 @@ def canonicalize_webapp_url(raw: str) -> str:
     return urlunsplit(("https", netloc, path, parsed.query, parsed.fragment))
 
 
-def mini_app_keyboard(webapp_url: str, content: TelegramBotContent) -> dict[str, Any]:
+def webapp_section_url(webapp_url: str, section: str) -> str:
     safe_url = canonicalize_webapp_url(webapp_url)
+    parsed = urlsplit(safe_url)
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key not in {"section", "billing", "project", "generation", "idea", "admin"}
+    ]
+    query.append(("section", section))
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment)
+    )
+
+
+def mini_app_keyboard(
+    webapp_url: str,
+    content: TelegramBotContent,
+    summary: TelegramUserSummary | None = None,
+) -> dict[str, Any]:
+    safe_url = canonicalize_webapp_url(webapp_url)
+    if summary is None:
+        return {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": content.open_button_text,
+                        "web_app": {"url": safe_url},
+                    }
+                ]
+            ]
+        }
     return {
         "inline_keyboard": [
+            [
+                {"text": "Создать проект", "web_app": {"url": webapp_section_url(safe_url, "create")}},
+                {"text": "Мои проекты", "web_app": {"url": webapp_section_url(safe_url, "home")}},
+            ],
+            [
+                {"text": "История", "web_app": {"url": webapp_section_url(safe_url, "history")}},
+                {"text": "Баланс", "web_app": {"url": webapp_section_url(safe_url, "profile")}},
+            ],
             [
                 {
                     "text": content.open_button_text,
                     "web_app": {"url": safe_url},
                 }
-            ]
+            ],
         ]
     }
 
@@ -172,13 +256,22 @@ def send_start(
     chat_id: int | str,
     webapp_url: str,
     content: TelegramBotContent,
+    summary: TelegramUserSummary | None = None,
 ) -> None:
+    text = content.start_text
+    if summary is not None:
+        text = (
+            f"{content.start_text}\n\n"
+            f"Кредиты: {summary.credits_balance}\n"
+            f"Проектов: {summary.active_projects}\n"
+            f"Генераций в работе: {summary.active_generations}"
+        )
     api.call(
         "sendMessage",
         {
             "chat_id": chat_id,
-            "text": content.start_text,
-            "reply_markup": mini_app_keyboard(webapp_url, content),
+            "text": text,
+            "reply_markup": mini_app_keyboard(webapp_url, content, summary),
         },
     )
 
@@ -270,6 +363,10 @@ def run_polling() -> None:
         f"{settings.bot_internal_api_base_url.rstrip('/')}"
         f"{settings.api_v1_prefix}/telegram/content"
     )
+    summary_url = (
+        f"{settings.bot_internal_api_base_url.rstrip('/')}"
+        f"{settings.api_v1_prefix}/telegram/summary"
+    )
     content = load_bot_content(content_url)
     api.call("deleteWebhook", {"drop_pending_updates": False})
     if content is not None:
@@ -317,7 +414,12 @@ def run_polling() -> None:
                         if content is not None:
                             apply_bot_content(api, webapp_url, content)
                     if content is not None:
-                        send_start(api, chat_id, webapp_url, content)
+                        summary = load_user_summary(
+                            summary_url,
+                            telegram_user_id=chat_id,
+                            bot_token=token,
+                        )
+                        send_start(api, chat_id, webapp_url, content, summary)
                     else:
                         logger.warning("Cannot answer Telegram command until content is configured")
         except TelegramApiError as exc:
