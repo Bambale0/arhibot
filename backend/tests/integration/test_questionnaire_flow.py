@@ -14,6 +14,7 @@ if os.getenv("RUN_INTEGRATION_TESTS") != "1":
 from app.core.redis import redis_client  # noqa: E402
 from app.db.models.assets import Asset  # noqa: E402
 from app.db.models.generations import Generation  # noqa: E402
+from app.db.models.questionnaires import QuestionnaireApplication  # noqa: E402
 from app.db.models.users import AuthIdentity, User  # noqa: E402
 from app.db.session import get_session_factory  # noqa: E402
 from app.domain.assets.enums import AssetPurpose, AssetType  # noqa: E402
@@ -139,6 +140,70 @@ def _valid_object_answers(definition: dict, *, house_accepted: bool) -> dict:
     )
     answers[review["id"]] = review["options"][0]
     return answers
+
+
+@pytest.mark.asyncio
+async def test_admin_can_retry_terminal_questionnaire_telegram_delivery_without_duplicates() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        tokens, headers = await _register_admin(client)
+        user_id = UUID(tokens["user"]["id"])
+        project_response = await client.post(
+            "/api/v1/projects",
+            headers=headers,
+            json={"name": "Telegram retry integration", "context": {}},
+        )
+        assert project_response.status_code == 201, project_response.text
+        project_id = UUID(project_response.json()["id"])
+
+        application = QuestionnaireApplication(
+            session_id=uuid4(),
+            project_id=project_id,
+            user_id=user_id,
+            catalog_version="2026-09-12.1",
+            selected_objects=["lavochka"],
+            accepted_objects=["lavochka"],
+            answers={},
+            scene_asset_id=None,
+            status="new",
+            telegram_delivery_status="partial",
+            telegram_delivery_attempts=17,
+            telegram_delivery_error="recipient 999: chat not found",
+            telegram_delivery_progress={
+                "111": {"photo_sent": True, "chunks_sent": 2},
+                "222": {"photo_sent": True, "chunks_sent": 2},
+            },
+        )
+        async with get_session_factory()() as session:
+            session.add(application)
+            await session.commit()
+            await session.refresh(application)
+            application_id = application.id
+
+        retried = await client.post(
+            f"/api/v1/admin/questionnaire-applications/{application_id}/telegram-retry",
+            headers=headers,
+        )
+        assert retried.status_code == 204, retried.text
+
+        async with get_session_factory()() as session:
+            stored = await session.get(QuestionnaireApplication, application_id)
+            assert stored is not None
+            assert stored.telegram_delivery_status == "pending"
+            assert stored.telegram_delivery_attempts == 0
+            assert stored.telegram_delivery_error is None
+            assert stored.telegram_notified_at is None
+            assert stored.telegram_delivery_progress == {
+                "111": {"photo_sent": True, "chunks_sent": 2},
+                "222": {"photo_sent": True, "chunks_sent": 2},
+            }
+
+        duplicate = await client.post(
+            f"/api/v1/admin/questionnaire-applications/{application_id}/telegram-retry",
+            headers=headers,
+        )
+        assert duplicate.status_code == 409, duplicate.text
+        assert duplicate.json()["type"] == "questionnaire_application_delivery_not_retryable"
 
 
 @pytest.mark.asyncio
