@@ -241,6 +241,10 @@ class QuestionnaireService:
             raise self._invalid("Finish the pending object removal first.")
         if object_key not in current.accepted_objects:
             raise self._invalid("Only an object currently present in the accepted scene can be removed.")
+        if len(current.accepted_objects) <= 1:
+            raise self._invalid(
+                "The last accepted object cannot be removed; add another object or delete the project."
+            )
 
         next_session = current.model_copy(deep=True)
         next_session.current_object = object_key
