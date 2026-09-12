@@ -19,6 +19,7 @@ from app.db.models.users import User
 from app.domain.generations.enums import GenerationStatus, GenerationType
 from app.questionnaires.application_brief import build_application_brief
 from app.questionnaires.generation_prompt import (
+    build_initial_concept_prompt,
     build_questionnaire_generation_prompt,
 )
 from app.questionnaires.generation_prompt import (
@@ -151,25 +152,14 @@ class QuestionnaireService:
     async def build_generation_request(
         self, user: User, project_id: UUID
     ) -> tuple[GenerationCreate, DesignSession, str]:
-        """Build the internal generation request from the persisted questionnaire state.
+        """Build either the one-shot initial concept or one paid refinement."""
 
-        The client never supplies or receives the questionnaire prompt. The server owns
-        questionnaire-to-prompt translation so generation provenance cannot drift from
-        saved answers or be altered in the browser.
-        """
         project = await ProjectService(self.projects).get_owned_model(user, project_id)
         session = self._stored_session(project.context)
         if session is None or not session.source_step_completed:
             raise self._invalid("Start the questionnaire before requesting a generation.")
         if session.application_submitted:
             raise self._invalid("A submitted questionnaire cannot create another sketch.")
-        object_key = session.current_object
-        if not object_key or object_key == "zayavka":
-            raise self._invalid("Choose a questionnaire object before requesting a generation.")
-        if object_key in session.accepted_objects:
-            raise self._invalid("An accepted questionnaire object cannot be regenerated.")
-        if object_key in session.generation_ids:
-            raise self._invalid("This questionnaire object already has a generation task.")
 
         catalog = await self.catalog_for_version(session.catalog_version)
         if catalog is None:
@@ -180,10 +170,69 @@ class QuestionnaireService:
                 detail="The questionnaire revision for this project is unavailable.",
             )
         definitions = {item["key"]: item for item in catalog["questionnaires"]}
+
+        if session.initial_concept_mode and not session.initial_concept_accepted:
+            if session.initial_generation_id is not None:
+                raise self._invalid("The initial concept already has a generation task.")
+            if set(session.survey_completed_objects) != set(session.selected_objects):
+                raise self._invalid(
+                    "Complete every selected questionnaire before creating the initial concept."
+                )
+            for object_key in session.selected_objects:
+                definition = definitions.get(object_key)
+                if definition is None:
+                    raise self._invalid(
+                        f"Questionnaire object {object_key} is not in the catalog."
+                    )
+                answers = session.answers.get(object_key, {})
+                active = [
+                    question
+                    for question in definition["questions"]
+                    if question["phase"] == "pre_render"
+                    and self._condition_ok(question.get("condition"), answers, False)
+                ]
+                missing = [
+                    question["id"] for question in active if question["id"] not in answers
+                ]
+                if missing:
+                    raise self._invalid(
+                        f"Answer every active question for {object_key}: {', '.join(missing)}."
+                    )
+            prompt = build_initial_concept_prompt(
+                catalog,
+                session,
+                input_asset_present=session.source_asset_id is not None,
+            )
+            return (
+                GenerationCreate(
+                    project_id=project_id,
+                    input_asset_id=session.source_asset_id,
+                    type=GenerationType.MASTER_PLAN,
+                    prompt=prompt,
+                    composition_mode="replace",
+                    edit_region=None,
+                    protected_regions=[],
+                ),
+                session,
+                "__initial__",
+            )
+
+        object_key = session.current_object
+        if not object_key or object_key == "zayavka":
+            raise self._invalid("Choose a questionnaire object before requesting a generation.")
+        refinement = bool(
+            session.initial_concept_mode
+            and session.initial_concept_accepted
+            and object_key in session.accepted_objects
+        )
+        if object_key in session.accepted_objects and not refinement:
+            raise self._invalid("An accepted questionnaire object cannot be regenerated.")
+        if object_key in session.generation_ids and not refinement:
+            raise self._invalid("This questionnaire object already has a generation task.")
+
         definition = definitions.get(object_key)
         if definition is None:
             raise self._invalid("The current questionnaire object is not in the catalog.")
-
         answers = session.answers.get(object_key, {})
         house_accepted = "eskez-doma" in session.accepted_objects
         active_pre_render = [
@@ -192,7 +241,9 @@ class QuestionnaireService:
             if question["phase"] == "pre_render"
             and self._condition_ok(question.get("condition"), answers, house_accepted)
         ]
-        missing = [question["id"] for question in active_pre_render if question["id"] not in answers]
+        missing = [
+            question["id"] for question in active_pre_render if question["id"] not in answers
+        ]
         if missing:
             raise self._invalid(
                 f"Answer every active question before generation: {', '.join(missing)}."
@@ -200,24 +251,34 @@ class QuestionnaireService:
 
         input_asset_id = session.scene_asset_id or session.source_asset_id
         generation_type = (
-            GenerationType.FACADE
+            GenerationType.MASTER_PLAN
+            if refinement
+            else GenerationType.FACADE
             if object_key == "eskez-doma" and input_asset_id is not None
             else GenerationType.MASTER_PLAN
         )
-        accepted_before = list(session.accepted_objects)
+        accepted_before = [
+            key for key in session.accepted_objects if not refinement or key != object_key
+        ]
         edit_region = session.edit_regions.get(object_key)
-        masked = bool(accepted_before and input_asset_id is not None)
+        masked = bool(input_asset_id is not None and (accepted_before or refinement))
         if masked and edit_region is None:
-            raise self._invalid("Choose the edit region before adding an object to the accepted scene.")
-        protected_regions = []
-        if masked:
-            for accepted_key in accepted_before:
-                lock = session.lock_regions.get(accepted_key)
-                if lock is None:
-                    raise self._invalid(
-                        f"Accepted object {accepted_key} must have a locked visual region."
-                    )
-                protected_regions.append(lock)
+            raise self._invalid(
+                "Choose the edit region before changing the accepted scene."
+            )
+        protected_regions = [
+            session.lock_regions[key]
+            for key in accepted_before
+            if session.lock_regions.get(key) is not None
+        ]
+        if masked and not session.initial_concept_mode:
+            missing_locks = [
+                key for key in accepted_before if session.lock_regions.get(key) is None
+            ]
+            if missing_locks:
+                raise self._invalid(
+                    "Every previously accepted object must have a locked visual region."
+                )
 
         prompt = build_questionnaire_generation_prompt(
             definition,
@@ -225,16 +286,19 @@ class QuestionnaireService:
             accepted_before=accepted_before,
             input_asset_present=input_asset_id is not None,
         )
-        payload = GenerationCreate(
-            project_id=project_id,
-            input_asset_id=input_asset_id,
-            type=generation_type,
-            prompt=prompt,
-            composition_mode="masked_edit" if masked else "replace",
-            edit_region=edit_region if masked else None,
-            protected_regions=protected_regions,
+        return (
+            GenerationCreate(
+                project_id=project_id,
+                input_asset_id=input_asset_id,
+                type=generation_type,
+                prompt=prompt,
+                composition_mode="masked_edit" if masked else "replace",
+                edit_region=edit_region if masked else None,
+                protected_regions=protected_regions,
+            ),
+            session,
+            object_key,
         )
-        return payload, session, object_key
 
     @classmethod
     def bind_generation_before_commit(
@@ -256,19 +320,82 @@ class QuestionnaireService:
                     "Reload the project before retrying."
                 ),
             )
-        if object_key in current.generation_ids:
-            raise AppError(
-                type="questionnaire_generation_exists",
-                title="Questionnaire generation already exists",
-                status=409,
-                detail="This questionnaire object already has a generation task.",
-            )
         bound = current.model_copy(deep=True)
-        bound.generation_ids[object_key] = generation_id
+        if object_key == "__initial__":
+            if current.initial_generation_id is not None:
+                raise AppError(
+                    type="questionnaire_generation_exists",
+                    title="Initial concept already exists",
+                    status=409,
+                    detail="The initial concept already has a generation task.",
+                )
+            bound.initial_generation_id = generation_id
+        else:
+            refinement = bool(
+                current.initial_concept_mode
+                and current.initial_concept_accepted
+                and object_key in current.accepted_objects
+            )
+            if object_key in current.generation_ids and not refinement:
+                raise AppError(
+                    type="questionnaire_generation_exists",
+                    title="Questionnaire generation already exists",
+                    status=409,
+                    detail="This questionnaire object already has a generation task.",
+                )
+            bound.generation_ids[object_key] = generation_id
         project.context = {
             **(project.context or {}),
             "design_session": bound.model_dump(mode="json"),
         }
+
+    async def accept_initial_concept(
+        self, user: User, project_id: UUID
+    ) -> DesignSession:
+        project = await ProjectService(self.projects).get_owned_model(user, project_id)
+        current = self._stored_session(project.context)
+        if (
+            current is None
+            or not current.initial_concept_mode
+            or current.initial_concept_accepted
+            or current.initial_generation_id is None
+        ):
+            raise self._invalid("There is no pending initial concept to accept.")
+        generation = await self.generations.get_owned(current.initial_generation_id, user.id)
+        if (
+            generation is None
+            or generation.project_id != project.id
+            or generation.status != GenerationStatus.COMPLETED
+            or generation.output_asset_id is None
+        ):
+            raise self._invalid("The initial concept generation is not completed.")
+        if generation.type != GenerationType.MASTER_PLAN:
+            raise self._invalid("The initial concept must use master_plan generation.")
+        if generation.input_asset_id != current.source_asset_id:
+            raise self._invalid("The initial concept source does not match the project source.")
+        if generation.composition_mode != "replace":
+            raise self._invalid("The initial concept must use replace composition.")
+        if not generation.prompt.startswith("AUROOM_INITIAL_CONCEPT_V1"):
+            raise self._invalid("The initial concept generation prompt is not canonical.")
+
+        accepted = current.model_copy(deep=True)
+        accepted.initial_concept_accepted = True
+        accepted.accepted_objects = list(current.selected_objects)
+        accepted.generation_ids = {
+            key: generation.id for key in current.selected_objects
+        }
+        accepted.scene_asset_id = generation.output_asset_id
+        accepted.current_object = None
+        accepted.current_question_id = None
+        accepted.region_mode = None
+        accepted.region_object = None
+        project.context = {
+            **(project.context or {}),
+            "design_session": accepted.model_dump(mode="json"),
+        }
+        await self.session.commit()
+        await self.session.refresh(project)
+        return accepted
 
     async def admin_catalog(self) -> QuestionnaireCatalogAdminResponse:
         row = await self.repository.get_catalog()
@@ -432,6 +559,10 @@ class QuestionnaireService:
 
         if cls._session_started(previous) and payload.selected_objects != previous.selected_objects:
             raise cls._invalid("Selected questionnaire objects are fixed after the session starts.")
+        if payload.initial_concept_mode != previous.initial_concept_mode:
+            raise cls._invalid("The questionnaire flow mode cannot change after project creation.")
+        if payload.initial_concept_accepted != previous.initial_concept_accepted:
+            raise cls._invalid("Accept the initial concept through its dedicated endpoint.")
 
         if previous.source_step_completed:
             if not payload.source_step_completed or payload.source_asset_id != previous.source_asset_id:
@@ -446,12 +577,23 @@ class QuestionnaireService:
             raise cls._invalid("Accept objects one at a time.")
 
         for object_key in locked:
-            if payload.generation_ids.get(object_key) != previous.generation_ids.get(object_key):
+            refining_object = bool(
+                previous.initial_concept_mode
+                and previous.initial_concept_accepted
+                and previous.current_object == object_key
+            )
+            if (
+                payload.generation_ids.get(object_key)
+                != previous.generation_ids.get(object_key)
+                and not refining_object
+            ):
                 raise cls._invalid(f"Accepted object {object_key} cannot change generation.")
             if payload.answers.get(object_key, {}) != previous.answers.get(object_key, {}):
                 raise cls._invalid(f"Accepted object {object_key} cannot change answers.")
-            if payload.review_comments.get(object_key, "") != previous.review_comments.get(
-                object_key, ""
+            if (
+                payload.review_comments.get(object_key, "")
+                != previous.review_comments.get(object_key, "")
+                and not refining_object
             ):
                 raise cls._invalid(f"Accepted object {object_key} cannot change review comments.")
             previous_lock = previous.lock_regions.get(object_key)
@@ -460,7 +602,7 @@ class QuestionnaireService:
                 raise cls._invalid(f"Accepted object {object_key} cannot change its lock region.")
             previous_edit = previous.edit_regions.get(object_key)
             payload_edit = payload.edit_regions.get(object_key)
-            if previous_edit is not None and payload_edit != previous_edit:
+            if previous_edit is not None and payload_edit != previous_edit and not refining_object:
                 raise cls._invalid(f"Accepted object {object_key} cannot change its edit region.")
 
         if len(payload.accepted_objects) == len(locked) + 1:
@@ -481,15 +623,25 @@ class QuestionnaireService:
                     )
 
         if locked == payload.accepted_objects and locked:
-            if payload.scene_asset_id != previous.scene_asset_id:
+            if (
+                payload.scene_asset_id != previous.scene_asset_id
+                and not (
+                    previous.initial_concept_mode
+                    and previous.initial_concept_accepted
+                    and previous.current_object in previous.accepted_objects
+                )
+            ):
                 raise cls._invalid(
-                    "The accepted scene can change only when a new object is accepted."
+                    "The accepted scene can change only through an accepted refinement."
                 )
 
     @staticmethod
     def _session_started(session: DesignSession) -> bool:
         return bool(
             session.source_step_completed
+            or session.survey_completed_objects
+            or session.initial_generation_id
+            or session.initial_concept_accepted
             or session.current_question_id
             or session.answers
             or session.accepted_objects
@@ -508,6 +660,8 @@ class QuestionnaireService:
         payload: DesignSession,
         catalog: dict,
     ) -> None:
+        if payload.initial_concept_mode:
+            return
         previous_accepted: list[str] = []
         if previous is not None and previous.session_id == payload.session_id:
             previous_accepted = previous.accepted_objects
@@ -592,6 +746,65 @@ class QuestionnaireService:
                 raise self._invalid(
                     f"Accepted object {object_key} must reference a completed generation with output."
                 )
+
+        if payload.initial_concept_mode:
+            if payload.initial_concept_accepted:
+                if set(payload.accepted_objects) != set(payload.selected_objects):
+                    raise self._invalid(
+                        "The accepted initial concept must cover every selected object."
+                    )
+                if payload.initial_generation_id is None:
+                    raise self._invalid("The accepted initial concept has no generation.")
+                initial_generation = await self.generations.get_owned(
+                    payload.initial_generation_id, user.id
+                )
+                if (
+                    initial_generation is None
+                    or initial_generation.project_id != project_id
+                    or initial_generation.status != GenerationStatus.COMPLETED
+                    or initial_generation.output_asset_id is None
+                ):
+                    raise self._invalid("The initial concept generation is unavailable.")
+                if (
+                    previous is not None
+                    and previous.initial_concept_accepted
+                    and payload.scene_asset_id != previous.scene_asset_id
+                ):
+                    refinement_key = previous.current_object
+                    if not refinement_key or refinement_key not in payload.accepted_objects:
+                        raise self._invalid(
+                            "A changed accepted scene must identify the refined object."
+                        )
+                    generation = resolved.get(refinement_key)
+                    if generation is None:
+                        raise self._invalid("The refinement generation is unavailable.")
+                    if generation.type != GenerationType.MASTER_PLAN:
+                        raise self._invalid("Initial-concept refinements must use master_plan.")
+                    if generation.input_asset_id != previous.scene_asset_id:
+                        raise self._invalid(
+                            "A refinement must use the previously accepted scene."
+                        )
+                    if generation.composition_mode != "masked_edit":
+                        raise self._invalid(
+                            "A refinement must use deterministic masked composition."
+                        )
+                    edit_region = payload.edit_regions.get(refinement_key)
+                    if (
+                        edit_region is None
+                        or generation.edit_region != edit_region.model_dump(mode="json")
+                    ):
+                        raise self._invalid(
+                            "The refinement generation must match the selected edit region."
+                        )
+                    if payload.scene_asset_id != generation.output_asset_id:
+                        raise self._invalid(
+                            "The accepted scene must be the refinement output."
+                        )
+                elif payload.scene_asset_id != initial_generation.output_asset_id:
+                    raise self._invalid(
+                        "The accepted initial scene must be the initial generation output."
+                    )
+            return
 
         previous_accepted = (
             previous.accepted_objects
@@ -740,7 +953,10 @@ class QuestionnaireService:
             set(payload.selected_objects) | {"zayavka"}
         ):
             raise self._invalid("The current questionnaire is not part of this session.")
-        if payload.current_object in set(payload.accepted_objects):
+        if (
+            payload.current_object in set(payload.accepted_objects)
+            and not (payload.initial_concept_mode and payload.initial_concept_accepted)
+        ):
             raise self._invalid("An accepted object cannot be reopened for editing.")
         if any(key not in payload.selected_objects for key in payload.accepted_objects):
             raise self._invalid("Only selected objects can be accepted.")
