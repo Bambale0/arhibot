@@ -306,7 +306,7 @@ def build_questionnaire_generation_prompt(
         "Не заменять явно выбранные параметры собственными предположениями.",
         "Не менять ранее принятую сцену вне разрешённой области изменения.",
     ]
-    if object_key == "eskez-doma":
+    if object_key == "eskez-doma" and not removing_object:
         prohibitions.append(
             "Визуализировать только внешний вид дома. Планировок, комнат и "
             "внутренних помещений не придумывать."
@@ -406,6 +406,16 @@ def build_questionnaire_generation_prompt(
         "конфликтуют с сохранением исходного кадра.\n"
         "4. Фотореализм и эстетика только после выполнения пунктов 1–3."
     )
+    final_check = (
+        "FINAL_CHECK: удаляемый объект полностью отсутствует внутри edit_region, фон "
+        "восстановлен естественно, а всё за пределами edit_region сохранено без изменений."
+        if removing_object
+        else (
+            "FINAL_CHECK: перед выдачей изображения мысленно сверь объект, геометрию, этажность, "
+            "габариты, материалы, цвета, кровлю, остекление, расположение и свет со всеми "
+            "questionnaire_constraints и не нарушай spatial_constraints."
+        )
+    )
     return (
         "AUROOM_RENDER_SPEC_V1\n"
         "СЧИТАЙ STRUCTURED_SPEC единственным источником параметров проектирования. "
@@ -413,7 +423,5 @@ def build_questionnaire_generation_prompt(
         f"{priorities}\n"
         "STRUCTURED_SPEC:\n"
         f"{dumps(spec, ensure_ascii=False, separators=(',', ':'))}\n"
-        "FINAL_CHECK: перед выдачей изображения мысленно сверь объект, геометрию, этажность, "
-        "габариты, материалы, цвета, кровлю, остекление, расположение и свет со всеми "
-        "questionnaire_constraints и не нарушай spatial_constraints."
+        f"{final_check}"
     )
