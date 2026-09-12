@@ -25,8 +25,12 @@ from app.services.generation_service import GENERATION_QUEUE_KEY  # noqa: E402
 from app.workers import generation_worker  # noqa: E402
 
 
-def _png() -> bytes:
-    image = Image.new("RGB", (96, 64), (120, 130, 140))
+def _png(index: int = 0) -> bytes:
+    image = Image.new(
+        "RGB",
+        (96, 64),
+        (120 + index * 10, 130 + index * 8, 140 + index * 6),
+    )
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
@@ -175,3 +179,111 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
         ]
         assert len(sandbox_entries) == 1
         assert sandbox_entries[0]["details"]["model_name"] == "nexus/experimental-image"
+
+
+        orbit_denied = await client.post(
+            "/api/v1/admin/generation/orbit",
+            headers=user_headers,
+            json={
+                "source_generation_id": str(generation_id),
+                "model_name": "nexus/orbit-model",
+                "prompt": "",
+                "params": {},
+                "frame_count": 6,
+                "frame_duration_ms": 160,
+            },
+        )
+        assert orbit_denied.status_code == 403, orbit_denied.text
+
+        orbit_created = await client.post(
+            "/api/v1/admin/generation/orbit",
+            headers=admin_headers,
+            json={
+                "source_generation_id": str(generation_id),
+                "model_name": "nexus/orbit-model",
+                "prompt": "Keep the warm sunset mood",
+                "params": {"guidance": 4},
+                "frame_count": 6,
+                "frame_duration_ms": 160,
+            },
+        )
+        assert orbit_created.status_code == 202, orbit_created.text
+        orbit_body = orbit_created.json()
+        orbit_id = UUID(orbit_body["id"])
+        assert orbit_body["credits_charged"] == 0
+        assert orbit_body["model_name"] == "nexus/orbit-model"
+
+        provider_calls.clear()
+
+        async def fake_orbit_generate(self, **kwargs):  # noqa: ANN001, ARG001
+            provider_calls.append(kwargs)
+            index = len(provider_calls)
+            return NexusImageResult(
+                task_id=f"orbit-task-{index}",
+                image_url=f"https://cdn.example.test/orbit-{index}.png",
+            )
+
+        async def fake_orbit_download(url, settings):  # noqa: ANN001, ARG001
+            index = int(url.rsplit("-", 1)[1].split(".", 1)[0])
+            return _png(index)
+
+        monkeypatch.setattr(NexusImageProvider, "generate", fake_orbit_generate)
+        monkeypatch.setattr(generation_worker, "_download_image", fake_orbit_download)
+
+        await generation_worker.process_generation(orbit_id, get_settings())
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(orbit_id))
+
+        assert len(provider_calls) == 5
+        assert {call["model_name"] for call in provider_calls} == {"nexus/orbit-model"}
+        assert {call["model_params"]["guidance"] for call in provider_calls} == {4}
+        assert all(call["image_url"] for call in provider_calls)
+        assert "frame is 2 of 6" in provider_calls[0]["prompt"]
+        assert "60 degrees clockwise" in provider_calls[0]["prompt"]
+        assert "Keep the warm sunset mood" in provider_calls[0]["prompt"]
+        assert "frame is 6 of 6" in provider_calls[-1]["prompt"]
+        assert "300 degrees clockwise" in provider_calls[-1]["prompt"]
+
+        orbit_completed = await client.get(
+            f"/api/v1/generations/{orbit_id}",
+            headers=admin_headers,
+        )
+        assert orbit_completed.status_code == 200, orbit_completed.text
+        orbit_completed_body = orbit_completed.json()
+        assert orbit_completed_body["status"] == "completed"
+        assert orbit_completed_body["model_name"] == "nexus/orbit-model"
+        assert orbit_completed_body["fallback_used"] is False
+        assert orbit_completed_body["credits_charged"] == 0
+        assert orbit_completed_body["output_asset"]["mime_type"] == "image/webp"
+
+        orbit_media = await client.get(orbit_completed_body["output_asset"]["url"])
+        assert orbit_media.status_code == 200, orbit_media.text
+        with Image.open(BytesIO(orbit_media.content)) as animation:
+            assert animation.format == "WEBP"
+            assert animation.is_animated is True
+            assert animation.n_frames == 6
+            assert animation.info["loop"] == 0
+            assert animation.info["duration"] == 160
+
+        final_me = await client.get("/api/v1/me", headers=admin_headers)
+        assert final_me.status_code == 200, final_me.text
+        assert final_me.json()["credits_balance"] == before_balance
+
+        final_runtime = await client.get(
+            "/api/v1/admin/generation",
+            headers=admin_headers,
+        )
+        assert final_runtime.status_code == 200, final_runtime.text
+        assert final_runtime.json()["primary_model"] == "production-primary"
+        assert final_runtime.json()["fallback_model"] == "production-fallback"
+
+        final_audit = await client.get("/api/v1/admin/audit", headers=admin_headers)
+        assert final_audit.status_code == 200, final_audit.text
+        orbit_entries = [
+            item
+            for item in final_audit.json()
+            if item["action"] == "generation.orbit.create"
+            and item["entity_id"] == str(orbit_id)
+        ]
+        assert len(orbit_entries) == 1
+        assert orbit_entries[0]["details"]["source_generation_id"] == str(generation_id)
+        assert orbit_entries[0]["details"]["frame_count"] == 6
