@@ -283,7 +283,7 @@ class QuestionnaireService:
         prompt = build_questionnaire_generation_prompt(
             definition,
             session,
-            accepted_before=accepted_before,
+            accepted_before=list(session.accepted_objects) if refinement else accepted_before,
             input_asset_present=input_asset_id is not None,
         )
         return (
