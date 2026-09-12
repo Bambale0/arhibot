@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from json import dumps
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -11,12 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.db.models.admin import BillingPlan, BroadcastCampaign, GenerationPromptTemplate, GenerationRuntimeSettings, IdeaTemplate
+from app.db.models.projects import Project
 from app.db.models.users import User
 from app.domain.generations.enums import GenerationType
 from app.domain.users.enums import UserRole
 from app.repositories.admin import AdminRepository
 from app.repositories.billing import BillingRepository
+from app.repositories.projects import ProjectRepository
 from app.schemas.admin import (
+    AdminAiSandboxCreate,
     AdminOverviewResponse,
     AdminPaymentResponse,
     AdminUserResponse,
@@ -37,7 +41,9 @@ from app.schemas.admin import (
     PublicIdeaResponse,
     UserStateUpdate,
 )
+from app.schemas.generations import AdminSandboxGenerationCreate, GenerationResponse
 from app.services.billing_service import BillingService
+from app.services.generation_service import build_generation_service
 from app.telegram_bot.broadcast import send_broadcast
 from app.telegram_bot.main import TelegramBotApi
 
@@ -48,6 +54,7 @@ class AdminService:
         self.settings = settings
         self.repository = AdminRepository(session)
         self.billing_repository = BillingRepository(session)
+        self.projects = ProjectRepository(session)
 
     def overview(self) -> AdminOverviewResponse:
         return AdminOverviewResponse(
@@ -263,6 +270,54 @@ class AdminService:
         await self.session.commit()
         await self.session.refresh(row)
         return await self.get_generation_settings()
+
+    async def create_ai_sandbox_generation(
+        self, actor: User, payload: AdminAiSandboxCreate
+    ) -> GenerationResponse:
+        project = await self.projects.get_admin_ai_sandbox(actor.id)
+        if project is None:
+            project = Project(
+                user_id=actor.id,
+                name="AI Sandbox",
+                description="Служебный проект для админских тестов AI-моделей.",
+                context={"admin_ai_sandbox": True},
+            )
+            self.projects.add(project)
+            await self.session.commit()
+            await self.session.refresh(project)
+
+        envelope = "AUROOM_ADMIN_SANDBOX_V1\n" + dumps(
+            {"prompt": payload.prompt, "params": payload.params},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+        def bind_sandbox(generation, _project) -> None:  # noqa: ANN001
+            generation.model_name = payload.model_name
+            generation.telegram_delivery_status = "skipped"
+
+        generated = await build_generation_service(self.session, self.settings).create(
+            actor,
+            AdminSandboxGenerationCreate(
+                project_id=project.id,
+                type=GenerationType.MASTER_PLAN,
+                prompt=envelope,
+            ),
+            before_commit=bind_sandbox,
+        )
+        self.repository.add_audit(
+            actor_user_id=actor.id,
+            action="generation.sandbox.create",
+            entity_type="generation",
+            entity_id=str(generated.id),
+            details={
+                "model_name": payload.model_name,
+                "prompt_length": len(payload.prompt),
+                "param_keys": sorted(payload.params),
+            },
+        )
+        await self.session.commit()
+        return generated
 
     async def list_prompts(self) -> list[PromptTemplateResponse]:
         rows = await self.repository.list_prompt_templates()
