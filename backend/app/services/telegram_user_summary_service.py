@@ -12,6 +12,17 @@ from app.repositories.users import UserRepository
 from app.schemas.telegram import TelegramUserSummaryResponse
 
 
+def available_generation_count(
+    credits_balance: int,
+    *,
+    price_credits: int | None,
+    price_active: bool,
+) -> int | None:
+    if not price_active or price_credits is None or price_credits <= 0:
+        return None
+    return max(credits_balance, 0) // price_credits
+
+
 class TelegramUserSummaryService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -41,14 +52,12 @@ class TelegramUserSummaryService:
             )
         )
         master_plan_price = await self.credits.get_price(GenerationType.MASTER_PLAN.value)
-        available_generations = (
-            user.credits_balance // master_plan_price.credits
-            if (
-                master_plan_price is not None
-                and master_plan_price.is_active
-                and master_plan_price.credits > 0
-            )
-            else None
+        available_generations = available_generation_count(
+            user.credits_balance,
+            price_credits=(
+                master_plan_price.credits if master_plan_price is not None else None
+            ),
+            price_active=bool(master_plan_price and master_plan_price.is_active),
         )
         return TelegramUserSummaryResponse(
             display_name=user.display_name,
