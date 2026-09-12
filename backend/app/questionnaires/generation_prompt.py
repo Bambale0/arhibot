@@ -105,6 +105,7 @@ def build_initial_concept_prompt(
         if item["key"] != catalog.get("application_key")
     }
     objects: list[dict[str, object]] = []
+    house_reference_available = "eskez-doma" in session.selected_objects
     for object_key in session.selected_objects:
         definition = definitions[object_key]
         answers = session.answers.get(object_key, {})
@@ -112,7 +113,9 @@ def build_initial_concept_prompt(
         for question in definition["questions"]:
             if question.get("phase") != "pre_render":
                 continue
-            if not condition_ok(question.get("condition"), answers, False):
+            if not condition_ok(
+                question.get("condition"), answers, house_reference_available
+            ):
                 continue
             if question["id"] not in answers:
                 continue
