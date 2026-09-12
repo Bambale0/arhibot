@@ -612,6 +612,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       setError('Опишите, что именно нужно изменить в выделенной области.')
       return
     }
+    setGenerationInFlight(true)
     const saved = await persist({
       ...session,
       edit_regions:{ ...session.edit_regions, [definition.key]:regionDraft },
@@ -620,6 +621,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       region_object:null,
     })
     if (saved) await generate(saved, definition)
+    else setGenerationInFlight(false)
   }
 
   async function cancelEditRegion() {
