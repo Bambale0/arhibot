@@ -100,6 +100,7 @@ class QuestionnaireObjectAddRequest(BaseModel):
 
 class QuestionnaireGenerationCostResponse(BaseModel):
     generation_type: Literal["master_plan"] = "master_plan"
+    initial_credits: int = 0
     credits: int | None = None
     is_available: bool
 
