@@ -88,7 +88,7 @@ class QuestionnaireService:
         previous = self._stored_session(project.context)
         catalog = await self.catalog()
         self._validate(payload, catalog, allow_submitted=False, previous=previous)
-        self._validate_accepted_object_locks(previous, payload)
+        self._validate_accepted_object_locks(previous, payload, catalog)
         self._validate_acceptance_completion(previous, payload, catalog)
         await self._validate_assets(user, project.id, payload)
         await self._validate_generations(
@@ -109,7 +109,7 @@ class QuestionnaireService:
         previous = self._stored_session(project.context)
         catalog = await self.catalog()
         self._validate(payload, catalog, allow_submitted=True, previous=previous)
-        self._validate_accepted_object_locks(previous, payload)
+        self._validate_accepted_object_locks(previous, payload, catalog)
         self._validate_acceptance_completion(previous, payload, catalog)
         if not payload.application_submitted:
             raise self._invalid("The application must be marked submitted.")
@@ -624,7 +624,10 @@ class QuestionnaireService:
 
     @classmethod
     def _validate_accepted_object_locks(
-        cls, previous: DesignSession | None, payload: DesignSession
+        cls,
+        previous: DesignSession | None,
+        payload: DesignSession,
+        catalog: dict | None = None,
     ) -> None:
         if previous is None:
             return
@@ -674,8 +677,33 @@ class QuestionnaireService:
                 and not refining_object
             ):
                 raise cls._invalid(f"Accepted object {object_key} cannot change generation.")
-            if payload.answers.get(object_key, {}) != previous.answers.get(object_key, {}):
-                raise cls._invalid(f"Accepted object {object_key} cannot change answers.")
+            previous_answers = previous.answers.get(object_key, {})
+            payload_answers = payload.answers.get(object_key, {})
+            if payload_answers != previous_answers:
+                if not refining_object or catalog is None:
+                    raise cls._invalid(f"Accepted object {object_key} cannot change answers.")
+                definition = next(
+                    (
+                        item
+                        for item in catalog["questionnaires"]
+                        if item["key"] == object_key
+                    ),
+                    None,
+                )
+                review_ids = {
+                    question["id"]
+                    for question in (definition or {}).get("questions", [])
+                    if question.get("phase") == "review"
+                }
+                changed_ids = {
+                    key
+                    for key in set(previous_answers) | set(payload_answers)
+                    if previous_answers.get(key) != payload_answers.get(key)
+                }
+                if not changed_ids or not changed_ids.issubset(review_ids):
+                    raise cls._invalid(
+                        f"Accepted object {object_key} can change only review answers during refinement."
+                    )
             if (
                 payload.review_comments.get(object_key, "")
                 != previous.review_comments.get(object_key, "")
