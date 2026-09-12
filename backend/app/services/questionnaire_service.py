@@ -927,6 +927,25 @@ class QuestionnaireService:
                         raise self._invalid(
                             "The accepted scene generation must match the refinement output."
                         )
+                elif previous is not None and previous.initial_concept_accepted:
+                    if payload.scene_generation_id != previous.scene_generation_id:
+                        raise self._invalid(
+                            "The accepted scene generation cannot change without a new refinement."
+                        )
+                    if payload.scene_generation_id is None:
+                        raise self._invalid("The accepted scene has no generation reference.")
+                    current_scene_generation = await self.generations.get_owned(
+                        payload.scene_generation_id, user.id
+                    )
+                    if (
+                        current_scene_generation is None
+                        or current_scene_generation.project_id != project_id
+                        or current_scene_generation.status != GenerationStatus.COMPLETED
+                        or current_scene_generation.output_asset_id != payload.scene_asset_id
+                    ):
+                        raise self._invalid(
+                            "The accepted scene must match its completed generation output."
+                        )
                 elif payload.scene_asset_id != initial_generation.output_asset_id:
                     raise self._invalid(
                         "The accepted initial scene must be the initial generation output."
