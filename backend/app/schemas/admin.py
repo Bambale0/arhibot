@@ -242,6 +242,35 @@ class AdminAiSandboxCreate(BaseModel):
         return self
 
 
+class AdminAiOrbitCreate(BaseModel):
+    source_generation_id: UUID
+    model_name: str = Field(min_length=1, max_length=120)
+    prompt: str = Field(default="", max_length=2000)
+    params: dict[str, Any] = Field(default_factory=dict)
+    frame_count: int = Field(default=8, ge=6, le=12)
+    frame_duration_ms: int = Field(default=180, ge=80, le=1000)
+
+    @field_validator("model_name")
+    @classmethod
+    def strip_orbit_model(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("prompt")
+    @classmethod
+    def strip_orbit_prompt(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def protect_provider_fields(self) -> "AdminAiOrbitCreate":
+        reserved = {"model_name", "prompt", "image_url", "image_urls"}
+        conflict = reserved.intersection(self.params)
+        if conflict:
+            raise ValueError(
+                f"Orbit params cannot override provider fields: {', '.join(sorted(conflict))}"
+            )
+        return self
+
+
 class GenerationRuntimeUpdate(BaseModel):
     primary_model: str = Field(min_length=1, max_length=120)
     fallback_model: str | None = Field(default=None, max_length=120)
