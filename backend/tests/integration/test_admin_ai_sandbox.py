@@ -301,3 +301,50 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
         assert len(orbit_entries) == 1
         assert orbit_entries[0]["details"]["source_generation_id"] == str(generation_id)
         assert orbit_entries[0]["details"]["frame_count"] == 6
+
+
+        history_denied = await client.get(
+            "/api/v1/admin/generation/sandbox/history",
+            headers=user_headers,
+        )
+        assert history_denied.status_code == 403, history_denied.text
+
+        history_response = await client.get(
+            "/api/v1/admin/generation/sandbox/history?limit=10",
+            headers=admin_headers,
+        )
+        assert history_response.status_code == 200, history_response.text
+        history = history_response.json()
+        assert [item["kind"] for item in history] == ["orbit", "sandbox"]
+
+        orbit_history = history[0]
+        assert orbit_history["generation"]["id"] == str(orbit_id)
+        assert orbit_history["generation"]["prompt"] == "Keep the warm sunset mood"
+        assert orbit_history["prompt"] == "Keep the warm sunset mood"
+        assert orbit_history["params"] == {"guidance": 4}
+        assert orbit_history["frame_count"] == 6
+        assert orbit_history["frame_duration_ms"] == 160
+
+        sandbox_history = history[1]
+        assert sandbox_history["generation"]["id"] == str(generation_id)
+        assert sandbox_history["generation"]["prompt"] == (
+            "Photorealistic compact house on a landscaped plot"
+        )
+        assert sandbox_history["prompt"] == (
+            "Photorealistic compact house on a landscaped plot"
+        )
+        assert sandbox_history["params"] == {
+            "aspect_ratio": "16:9",
+            "steps": 7,
+        }
+        assert sandbox_history["frame_count"] is None
+        assert sandbox_history["frame_duration_ms"] is None
+
+        limited_history = await client.get(
+            "/api/v1/admin/generation/sandbox/history?limit=1",
+            headers=admin_headers,
+        )
+        assert limited_history.status_code == 200, limited_history.text
+        assert len(limited_history.json()) == 1
+        assert limited_history.json()[0]["generation"]["id"] == str(orbit_id)
+        assert "AUROOM_ADMIN_" not in limited_history.json()[0]["generation"]["prompt"]
