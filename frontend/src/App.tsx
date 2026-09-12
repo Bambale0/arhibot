@@ -6,6 +6,7 @@ import type { Generation, Project } from './types'
 import { AppFrame, type AppSection } from './components/AppFrame'
 import { AuthScreen } from './components/AuthScreen'
 import { ProjectsScreen } from './components/ProjectsScreen'
+import { TelegramFullscreenButton } from './components/TelegramFullscreenButton'
 
 const AdminScreen = lazy(() => import('./components/AdminScreen').then((module) => ({ default: module.AdminScreen })))
 const CreateScreen = lazy(() => import('./components/CreateScreen').then((module) => ({ default: module.CreateScreen })))
@@ -74,9 +75,9 @@ export default function App() {
   if (loading) return <Loader />
   if (!user) { if (window.Telegram?.WebApp?.initData) return <TelegramAuthError message={error} />; return <AuthScreen /> }
   const isAdmin = user.role === 'admin' || user.role === 'superadmin'
-  if (adminOpen && isAdmin) return <Suspense fallback={<Loader />}><AdminScreen onClose={() => setAdminOpen(false)} /></Suspense>
-  if (questionnaireProject) return <Suspense fallback={<Loader />}><QuestionnaireWorkspaceScreen project={questionnaireProject} selectedObjects={questionnaireObjects} onBack={() => { void closeQuestionnaire() }} onProjectChange={setQuestionnaireProject} /></Suspense>
-  if (historyResult) return <Suspense fallback={<Loader />}><HistoryGenerationScreen project={historyResult.project} generation={historyResult.generation} onBack={() => setHistoryResult(null)} /></Suspense>
+  if (adminOpen && isAdmin) return <><TelegramFullscreenButton/><Suspense fallback={<Loader />}><AdminScreen onClose={() => setAdminOpen(false)} /></Suspense></>
+  if (questionnaireProject) return <><TelegramFullscreenButton/><Suspense fallback={<Loader />}><QuestionnaireWorkspaceScreen project={questionnaireProject} selectedObjects={questionnaireObjects} onBack={() => { void closeQuestionnaire() }} onProjectChange={setQuestionnaireProject} /></Suspense></>
+  if (historyResult) return <><TelegramFullscreenButton/><Suspense fallback={<Loader />}><HistoryGenerationScreen project={historyResult.project} generation={historyResult.generation} onBack={() => setHistoryResult(null)} /></Suspense></>
 
   function openQuestionnaire(project: Project, selectedObjects: string[]) { setQuestionnaireObjects(selectedObjects); setQuestionnaireProject(project) }
   function openQuestionnaireProject(project: Project): boolean {
@@ -103,13 +104,16 @@ export default function App() {
   }
   function navigate(next: AppSection) { setSection(next) }
 
-  return <AppFrame active={section} onNavigate={navigate}>
-    {section === 'home' && <ProjectsScreen onOpenProject={openProject} onCreate={() => setSection('create')} />}
-    {section !== 'home' && <Suspense fallback={<Loader />}>
-      {section === 'ideas' && <IdeasScreen onOpenQuestionnaire={openQuestionnaire} />}
-      {section === 'create' && <CreateScreen onOpenQuestionnaire={openQuestionnaire} />}
-      {section === 'history' && <HistoryScreen onOpenGeneration={(generation) => { void openHistoryGeneration(generation) }} />}
-      {section === 'profile' && <ProfileScreen onOpenAdmin={isAdmin ? () => setAdminOpen(true) : undefined} />}
-    </Suspense>}
-  </AppFrame>
+  return <>
+    <TelegramFullscreenButton/>
+    <AppFrame active={section} onNavigate={navigate}>
+      {section === 'home' && <ProjectsScreen onOpenProject={openProject} onCreate={() => setSection('create')} />}
+      {section !== 'home' && <Suspense fallback={<Loader />}>
+        {section === 'ideas' && <IdeasScreen onOpenQuestionnaire={openQuestionnaire} />}
+        {section === 'create' && <CreateScreen onOpenQuestionnaire={openQuestionnaire} />}
+        {section === 'history' && <HistoryScreen onOpenGeneration={(generation) => { void openHistoryGeneration(generation) }} />}
+        {section === 'profile' && <ProfileScreen onOpenAdmin={isAdmin ? () => setAdminOpen(true) : undefined} />}
+      </Suspense>}
+    </AppFrame>
+  </>
 }

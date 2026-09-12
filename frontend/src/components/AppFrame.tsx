@@ -14,13 +14,6 @@ const items: { id: AppSection; label: string; icon: typeof HomeIcon }[] = [
 
 export function AppFrame({ active, onNavigate, children }: { active: AppSection; onNavigate: (section: AppSection) => void; children: ReactNode }) {
   const { user, signOut } = useAuth()
-  const telegram = window.Telegram?.WebApp
-  function requestFullscreen() {
-    try {
-      telegram?.expand?.()
-      telegram?.requestFullscreen?.()
-    } catch { /* graceful fallback to expanded Mini App */ }
-  }
   return (
     <main className={`app-shell with-bottom-nav ${active === 'ideas' ? 'ideas-shell' : ''}`}>
       {active !== 'ideas' && <header className="topbar">
@@ -30,7 +23,6 @@ export function AppFrame({ active, onNavigate, children }: { active: AppSection;
         <div className="topbar-user">
           <div className="avatar">{user?.display_name?.slice(0, 1).toUpperCase() || 'A'}</div>
           <span className="desktop-user-name">{user?.display_name}</span>
-          {telegram && <button className="icon-button subtle" type="button" title="На весь экран" aria-label="Открыть на весь экран" onClick={requestFullscreen}>⛶</button>}
           <button className="icon-button subtle" title="Выйти" onClick={() => void signOut()}><LogOutIcon /></button>
         </div>
       </header>}
