@@ -267,6 +267,13 @@ class QuestionnaireService:
         current = self._stored_session(project.context)
         if current is None or current.pending_removal_object is None:
             raise self._invalid("There is no pending object removal.")
+        generation_id = current.generation_ids.get(current.pending_removal_object)
+        if generation_id is not None:
+            generation = await self.generations.get_owned(generation_id, user.id)
+            if generation is not None and '"operation":"remove_object"' in generation.prompt:
+                raise self._invalid(
+                    "A started removal generation cannot be cancelled; review or retry the iteration."
+                )
         next_session = current.model_copy(deep=True)
         next_session.current_object = None
         next_session.current_question_id = None
