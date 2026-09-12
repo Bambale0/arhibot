@@ -438,6 +438,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     return generationCost.credits === 0 ? 'Бесплатно' : `${generationCost.credits} кр.`
   }
 
+  function initialGenerationCostLabel() {
+    if (!generationCost) return 'Стоимость уточняется'
+    if (!generationCost.is_available) return 'Генерация временно недоступна'
+    return generationCost.initial_credits === 0 ? 'Бесплатно' : `${generationCost.initial_credits} кр.`
+  }
+
   async function addObject(key:string) {
     if (!session || busy) return
     setBusy(true)
@@ -1017,7 +1023,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
           )
           return <details key={key}><summary>{definition.title}</summary>{answered.map((question) => <button type="button" key={question.id} disabled={busy} onClick={() => void editInitialQuestion(key, question.id)}><span>{question.text}</span><strong>{text(answers[question.id])}</strong></button>)}</details>
         })}</div>}
-        {ready && !initialGenerationId && <><p className="region-hint">Одна общая генерация · {generationCostLabel()}</p><div className="questionnaire-actions"><button className="primary-button" disabled={busy || generationCost?.is_available === false} onClick={() => void generateInitial(session)}>Создать общую концепцию</button></div></>}
+        {ready && !initialGenerationId && <><p className="region-hint">Одна общая генерация · {initialGenerationCostLabel()}</p><div className="questionnaire-actions"><button className="primary-button" disabled={busy || generationCost?.is_available === false} onClick={() => void generateInitial(session)}>Создать общую концепцию</button></div></>}
         {initialGenerationId && renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void acceptInitial()}>Принять концепцию</button><button className="secondary-button" disabled={busy} onClick={() => void reopenInitialAnswers()}>Изменить ТЗ · новая генерация</button></div>}
         {(busy || generationInFlight) && initialGenerationId && !renderOutput && <div className="empty-inline">Создаём весь участок одной генерацией…</div>}
         {error && <div className="banner-error">{error}</div>}
