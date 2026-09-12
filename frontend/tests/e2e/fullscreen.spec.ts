@@ -67,15 +67,7 @@ async function prepare(page:Page) {
   await page.addInitScript(() => {
     localStorage.setItem('auroom.access_token','fullscreen-e2e')
     localStorage.setItem('auroom.refresh_token','fullscreen-e2e-refresh')
-    ;(window as unknown as { __fullscreenCalls:number }).__fullscreenCalls = 0
-    ;(window as unknown as { __expandCalls:number }).__expandCalls = 0
-    window.Telegram = {
-      WebApp: {
-        initData:'',
-        expand:() => { (window as unknown as { __expandCalls:number }).__expandCalls += 1 },
-        requestFullscreen:() => { (window as unknown as { __fullscreenCalls:number }).__fullscreenCalls += 1 },
-      },
-    }
+    window.Telegram = { WebApp: { initData:'' } }
   })
   await page.route('**/api/v1/**',async route => {
     const request=route.request(), path=new URL(request.url()).pathname, method=request.method()
@@ -90,11 +82,23 @@ async function prepare(page:Page) {
   })
 }
 
+async function installFullscreenCounters(page:Page) {
+  await page.evaluate(() => {
+    const telegram=window.Telegram?.WebApp
+    if (!telegram) throw new Error('Telegram WebApp is unavailable')
+    ;(window as unknown as { __fullscreenCalls:number }).__fullscreenCalls = 0
+    ;(window as unknown as { __expandCalls:number }).__expandCalls = 0
+    telegram.expand=() => { (window as unknown as { __expandCalls:number }).__expandCalls += 1 }
+    telegram.requestFullscreen=() => { (window as unknown as { __fullscreenCalls:number }).__fullscreenCalls += 1 }
+  })
+}
+
 test('fullscreen control stays visible on Ideas where AppFrame topbar is hidden',async({page})=>{
   await prepare(page)
   await page.goto('/?section=ideas')
   const button=page.getByRole('button',{name:'Открыть на весь экран'})
   await expect(button).toBeVisible()
+  await installFullscreenCounters(page)
   await button.click()
   await expect.poll(() => page.evaluate(() => (window as unknown as { __expandCalls:number }).__expandCalls)).toBe(1)
   await expect.poll(() => page.evaluate(() => (window as unknown as { __fullscreenCalls:number }).__fullscreenCalls)).toBe(1)
@@ -106,6 +110,7 @@ test('fullscreen control stays visible inside standalone questionnaire flow',asy
   await expect(page.getByText('Заполните параметры всех объектов')).toBeVisible()
   const button=page.getByRole('button',{name:'Открыть на весь экран'})
   await expect(button).toBeVisible()
+  await installFullscreenCounters(page)
   await button.click()
   await expect.poll(() => page.evaluate(() => (window as unknown as { __fullscreenCalls:number }).__fullscreenCalls)).toBe(1)
 })
