@@ -27,6 +27,7 @@ class TelegramUserSummaryService:
             select(func.count(Project.id)).where(
                 Project.user_id == user.id,
                 Project.deleted_at.is_(None),
+                Project.context["questionnaire_draft"].as_boolean().is_not(True),
             )
         )
         generation_count = await self.session.scalar(
