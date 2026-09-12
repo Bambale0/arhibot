@@ -27,12 +27,14 @@ from app.questionnaires.generation_prompt import (
 )
 from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
+from app.repositories.credits import CreditRepository
 from app.repositories.generations import GenerationRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.questionnaires import QuestionnaireRepository
 from app.schemas.generations import GenerationCreate
 from app.schemas.questionnaires import (
     DesignSession,
+    QuestionnaireGenerationCostResponse,
     QuestionnaireApplicationResponse,
     QuestionnaireCatalogAdminResponse,
     QuestionnaireCatalogAdminUpdate,
@@ -47,6 +49,7 @@ class QuestionnaireService:
         self.session = session
         self.projects = ProjectRepository(session)
         self.assets = AssetRepository(session)
+        self.credits = CreditRepository(session)
         self.generations = GenerationRepository(session)
         self.repository = QuestionnaireRepository(session)
         self.admin_repository = AdminRepository(session)
@@ -148,6 +151,75 @@ class QuestionnaireService:
         await self.session.refresh(application)
         await self.session.refresh(project)
         return payload, QuestionnaireApplicationResponse.model_validate(application)
+
+    async def generation_cost(self, user: User) -> QuestionnaireGenerationCostResponse:
+        price = await self.credits.get_price(GenerationType.MASTER_PLAN.value)
+        if price is None or not price.is_active:
+            return QuestionnaireGenerationCostResponse(
+                credits=None,
+                is_available=False,
+            )
+        credits = 0 if user.role.value in {"admin", "superadmin"} else price.credits
+        return QuestionnaireGenerationCostResponse(
+            credits=credits,
+            is_available=True,
+        )
+
+    async def add_refinement_object(
+        self, user: User, project_id: UUID, object_key: str
+    ) -> DesignSession:
+        project = await ProjectService(self.projects).get_owned_model(user, project_id)
+        current = self._stored_session(project.context)
+        if (
+            current is None
+            or not current.initial_concept_mode
+            or not current.initial_concept_accepted
+            or current.application_submitted
+        ):
+            raise self._invalid(
+                "Objects can be added only after accepting an initial concept."
+            )
+        if current.current_object is not None or current.region_mode is not None:
+            raise self._invalid("Finish the current refinement before adding another object.")
+        if object_key in current.selected_objects:
+            raise self._invalid("This object is already part of the project.")
+
+        catalog = await self.catalog_for_version(current.catalog_version)
+        if catalog is None:
+            raise self._invalid("The project questionnaire catalog is unavailable.")
+        definitions = {
+            item["key"]: item
+            for item in catalog["questionnaires"]
+            if item["key"] != catalog.get("application_key")
+        }
+        definition = definitions.get(object_key)
+        if definition is None:
+            raise self._invalid("The requested questionnaire object is unknown.")
+
+        next_session = current.model_copy(deep=True)
+        next_session.selected_objects.append(object_key)
+        next_session.current_object = object_key
+        answers: dict[str, object] = {}
+        house_reference_available = "eskez-doma" in next_session.accepted_objects
+        first = next(
+            (
+                question
+                for question in definition["questions"]
+                if question["phase"] == "pre_render"
+                and self._condition_ok(
+                    question.get("condition"), answers, house_reference_available
+                )
+            ),
+            None,
+        )
+        next_session.current_question_id = first["id"] if first else None
+        project.context = {
+            **(project.context or {}),
+            "design_session": next_session.model_dump(mode="json"),
+        }
+        await self.session.commit()
+        await self.session.refresh(project)
+        return next_session
 
     async def build_generation_request(
         self, user: User, project_id: UUID
@@ -562,6 +634,16 @@ class QuestionnaireService:
 
         if cls._session_started(previous) and payload.selected_objects != previous.selected_objects:
             raise cls._invalid("Selected questionnaire objects are fixed after the session starts.")
+        if (
+            previous.initial_concept_accepted
+            and payload.survey_completed_objects != previous.survey_completed_objects
+        ):
+            raise cls._invalid("The initial object snapshot is immutable after acceptance.")
+        if (
+            previous.initial_concept_accepted
+            and payload.initial_generation_id != previous.initial_generation_id
+        ):
+            raise cls._invalid("The accepted initial generation cannot change.")
         if payload.initial_concept_mode != previous.initial_concept_mode:
             raise cls._invalid("The questionnaire flow mode cannot change after project creation.")
         if payload.initial_concept_accepted != previous.initial_concept_accepted:
@@ -613,7 +695,10 @@ class QuestionnaireService:
             new_lock = payload.lock_regions.get(new_key)
             if new_lock is None:
                 raise cls._invalid("A newly accepted object must have a visual lock region.")
-            if any(payload.lock_regions.get(object_key) is None for object_key in locked):
+            if (
+                not previous.initial_concept_mode
+                and any(payload.lock_regions.get(object_key) is None for object_key in locked)
+            ):
                 raise cls._invalid(
                     "Every previously accepted object must have a visual lock "
                     "before adding another object."
@@ -752,9 +837,16 @@ class QuestionnaireService:
 
         if payload.initial_concept_mode:
             if payload.initial_concept_accepted:
-                if set(payload.accepted_objects) != set(payload.selected_objects):
+                initial_objects = set(payload.survey_completed_objects)
+                if not initial_objects or not initial_objects.issubset(
+                    set(payload.selected_objects)
+                ):
                     raise self._invalid(
-                        "The accepted initial concept must cover every selected object."
+                        "The initial concept object snapshot is invalid."
+                    )
+                if not initial_objects.issubset(set(payload.accepted_objects)):
+                    raise self._invalid(
+                        "Every initial concept object must remain accepted."
                     )
                 if payload.initial_generation_id is None:
                     raise self._invalid("The accepted initial concept has no generation.")
@@ -777,6 +869,33 @@ class QuestionnaireService:
                     if not refinement_key or refinement_key not in payload.accepted_objects:
                         raise self._invalid(
                             "A changed accepted scene must identify the refined object."
+                        )
+                    definition = next(
+                        item
+                        for item in catalog["questionnaires"]
+                        if item["key"] == refinement_key
+                    )
+                    review_question = next(
+                        (
+                            question
+                            for question in definition["questions"]
+                            if question["phase"] == "review"
+                            and question.get("options")
+                            and str(question["options"][0]).startswith("Да")
+                        ),
+                        None,
+                    )
+                    review_answer = (
+                        payload.answers.get(refinement_key, {}).get(review_question["id"])
+                        if review_question
+                        else None
+                    )
+                    if (
+                        not isinstance(review_answer, str)
+                        or not review_answer.startswith("Да")
+                    ):
+                        raise self._invalid(
+                            "A refinement can update the accepted scene only after a positive review."
                         )
                     generation = resolved.get(refinement_key)
                     if generation is None:
