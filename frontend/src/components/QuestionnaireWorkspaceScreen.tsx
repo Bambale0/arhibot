@@ -250,7 +250,8 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   const definitions = useMemo(() => new Map((catalog?.questionnaires || []).map((item) => [item.key, item])), [catalog])
   const current = session?.current_object ? definitions.get(session.current_object) || null : null
-  const houseAccepted = session?.accepted_objects.includes('eskez-doma') || false
+  const houseAccepted = session?.accepted_objects.includes('eskez-doma')
+    || Boolean(session?.initial_concept_mode && session.selected_objects.includes('eskez-doma'))
   const objectAnswers = current && session ? session.answers[current.key] || {} : {}
   const visible = current ? current.questions.filter((q) => conditionOk(q.condition, objectAnswers, houseAccepted)) : []
   const active = current && session ? visible.find((q) => q.id === session.current_question_id) || null : null
