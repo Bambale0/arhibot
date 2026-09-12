@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
+from json import JSONDecodeError, loads
 from uuid import UUID, uuid4
 
 import httpx
@@ -32,11 +33,47 @@ logger = logging.getLogger(__name__)
 GENERATION_PROCESSING_KEY = "auroom:generation_processing"
 QUESTIONNAIRE_PROMPT_PREFIX = "AUROOM_RENDER_SPEC_V1"
 INITIAL_CONCEPT_PROMPT_PREFIX = "AUROOM_INITIAL_CONCEPT_V1"
+ADMIN_SANDBOX_PROMPT_PREFIX = "AUROOM_ADMIN_SANDBOX_V1\n"
 QUESTIONNAIRE_PROMPT_PREFIXES = (
     QUESTIONNAIRE_PROMPT_PREFIX,
     INITIAL_CONCEPT_PROMPT_PREFIX,
 )
 QUESTIONNAIRE_ASPECT_RATIOS = {"1:1": 1.0, "4:3": 4 / 3, "3:4": 3 / 4, "16:9": 16 / 9, "9:16": 9 / 16}
+RESERVED_PROVIDER_PARAMS = {"model_name", "prompt", "image_url", "image_urls"}
+
+
+def _admin_sandbox_request(
+    generation: Generation,
+    project: Project,
+) -> tuple[str, str, dict[str, object]] | None:
+    if not generation.prompt.startswith(ADMIN_SANDBOX_PROMPT_PREFIX):
+        return None
+    if not bool((project.context or {}).get("admin_ai_sandbox")):
+        raise ValueError("Admin sandbox envelope is outside the sandbox project.")
+    model_name = (generation.model_name or "").strip()
+    if not model_name:
+        raise ValueError("Admin sandbox model is missing.")
+
+    raw_payload = generation.prompt.removeprefix(ADMIN_SANDBOX_PROMPT_PREFIX)
+    try:
+        payload = loads(raw_payload)
+    except JSONDecodeError as exc:
+        raise ValueError("Admin sandbox envelope is invalid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Admin sandbox envelope must be an object.")
+
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("Admin sandbox prompt is missing.")
+    params = payload.get("params", {})
+    if not isinstance(params, dict):
+        raise ValueError("Admin sandbox params must be an object.")
+    conflict = RESERVED_PROVIDER_PARAMS.intersection(params)
+    if conflict:
+        raise ValueError(
+            f"Admin sandbox params cannot override provider fields: {', '.join(sorted(conflict))}"
+        )
+    return model_name, prompt.strip(), params
 
 
 def _questionnaire_aspect_ratio(asset: Asset | None) -> str:
@@ -117,20 +154,31 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             await _mark_failed_and_refund(generation_id, "Generation input is no longer available.")
             return
 
+        try:
+            sandbox_request = _admin_sandbox_request(generation, project)
+        except ValueError as exc:
+            await session.rollback()
+            await _mark_failed_and_refund(generation_id, exc)
+            return
+
         admin_repository = AdminRepository(session)
-        runtime = await admin_repository.get_generation_settings()
         initial_concept_generation = generation.prompt.startswith(
             INITIAL_CONCEPT_PROMPT_PREFIX
         )
         questionnaire_generation = generation.prompt.startswith(
             QUESTIONNAIRE_PROMPT_PREFIXES
         )
+        runtime = (
+            None
+            if sandbox_request is not None
+            else await admin_repository.get_generation_settings()
+        )
         prompt_template = (
             None
-            if questionnaire_generation
+            if questionnaire_generation or sandbox_request is not None
             else await admin_repository.get_prompt_template(generation.type.value)
         )
-        if (
+        if sandbox_request is None and (
             runtime is None
             or not runtime.primary_model.strip()
             or (
@@ -163,24 +211,34 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             if input_asset is not None
             else None
         )
-        prompt = (
-            generation.prompt
-            if questionnaire_generation
-            else build_generation_prompt(prompt_template.template, generation.prompt, project)
-        )
-        mode_params = dict((runtime.mode_params or {}).get(generation.type.value) or {})
-        if questionnaire_generation:
-            # Questionnaire renders are all exterior scene images. Legacy generation types are
-            # an internal billing/provider detail and must not force a conflicting aspect ratio.
-            mode_params["aspect_ratio"] = (
-                "16:9"
-                if initial_concept_generation
-                else _questionnaire_aspect_ratio(input_asset)
+        if sandbox_request is not None:
+            primary_model, prompt, primary_params = sandbox_request
+            fallback_model = None
+            fallback_params: dict[str, object] = {}
+        else:
+            assert runtime is not None
+            prompt = (
+                generation.prompt
+                if questionnaire_generation
+                else build_generation_prompt(
+                    prompt_template.template,
+                    generation.prompt,
+                    project,
+                )
             )
-        primary_params = {**dict(runtime.primary_params or {}), **mode_params}
-        fallback_params = {**dict(runtime.fallback_params or {}), **mode_params}
-        primary_model = runtime.primary_model
-        fallback_model = runtime.fallback_model
+            mode_params = dict((runtime.mode_params or {}).get(generation.type.value) or {})
+            if questionnaire_generation:
+                # Questionnaire renders are all exterior scene images. Legacy generation types are
+                # an internal billing/provider detail and must not force a conflicting aspect ratio.
+                mode_params["aspect_ratio"] = (
+                    "16:9"
+                    if initial_concept_generation
+                    else _questionnaire_aspect_ratio(input_asset)
+                )
+            primary_params = {**dict(runtime.primary_params or {}), **mode_params}
+            fallback_params = {**dict(runtime.fallback_params or {}), **mode_params}
+            primary_model = runtime.primary_model
+            fallback_model = runtime.fallback_model
         composition_mode = generation.composition_mode
         edit_region = dict(generation.edit_region) if generation.edit_region else None
         protected_regions = list(generation.protected_regions or [])

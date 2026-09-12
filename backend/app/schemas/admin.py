@@ -221,6 +221,27 @@ class IdeaSaveResponse(BaseModel):
     is_saved: bool
 
 
+class AdminAiSandboxCreate(BaseModel):
+    model_name: str = Field(min_length=1, max_length=120)
+    prompt: str = Field(min_length=1, max_length=8000)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("model_name", "prompt")
+    @classmethod
+    def strip_sandbox_text(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def protect_provider_fields(self) -> "AdminAiSandboxCreate":
+        reserved = {"model_name", "prompt", "image_url", "image_urls"}
+        conflict = reserved.intersection(self.params)
+        if conflict:
+            raise ValueError(
+                f"Sandbox params cannot override provider fields: {', '.join(sorted(conflict))}"
+            )
+        return self
+
+
 class GenerationRuntimeUpdate(BaseModel):
     primary_model: str = Field(min_length=1, max_length=120)
     fallback_model: str | None = Field(default=None, max_length=120)

@@ -44,6 +44,7 @@ class GenerationService:
         payload: GenerationCreate,
         *,
         before_commit: Callable[[Generation, Project], None] | None = None,
+        skip_pricing: bool = False,
     ) -> GenerationResponse:
         await RateLimitService(self.session).enforce("generation", str(user.id))
         if not (self.settings.nexus_api_key or "").strip():
@@ -83,16 +84,17 @@ class GenerationService:
                 detail="Facade and interior generation require a reference image.",
             )
 
-        price = await self.credit_repository.get_price(payload.type.value)
-        if price is None or not price.is_active:
-            raise AppError(
-                type="generation_price_not_configured",
-                title="Generation price not configured",
-                status=503,
-                detail="The credit price for this generation scenario is not configured.",
-            )
-
-        credits_charged = 0 if user.role in FREE_GENERATION_ROLES else price.credits
+        credits_charged = 0
+        if not skip_pricing:
+            price = await self.credit_repository.get_price(payload.type.value)
+            if price is None or not price.is_active:
+                raise AppError(
+                    type="generation_price_not_configured",
+                    title="Generation price not configured",
+                    status=503,
+                    detail="The credit price for this generation scenario is not configured.",
+                )
+            credits_charged = 0 if user.role in FREE_GENERATION_ROLES else price.credits
 
         generation = Generation(
             id=uuid4(),

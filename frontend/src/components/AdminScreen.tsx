@@ -17,6 +17,7 @@ import type {
   AdminTelegramContent,
   AdminUser,
   BroadcastSegment,
+  Generation,
   GenerationMode,
   UserRole,
 } from '../types'
@@ -349,6 +350,14 @@ function IdeasPanel({ items, onItems, onError }: {
   </section>
 }
 
+function parseSandboxParams(value: string): Record<string, unknown> {
+  const parsed = JSON.parse(value || '{}') as unknown
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+    throw new Error('Sandbox params должны быть JSON-объектом')
+  }
+  return parsed as Record<string, unknown>
+}
+
 function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPrompts, onError }: { settings: AdminGenerationSettings; prices: AdminGenerationPrice[]; prompts: AdminPrompt[]; onSettings:(v:AdminGenerationSettings)=>void; onPrices:(v:AdminGenerationPrice[])=>void; onPrompts:(v:AdminPrompt[])=>void; onError:(v:string|null)=>void }) {
   const [primary,setPrimary]=useState(settings.primary_model || '')
   const [fallback,setFallback]=useState(settings.fallback_model||'')
@@ -356,10 +365,53 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   const [fallbackParams,setFallbackParams]=useState(JSON.stringify(settings.fallback_params,null,2))
   const [modeParams,setModeParams]=useState(JSON.stringify(settings.mode_params,null,2))
   const [busy,setBusy]=useState(false)
+  const [sandboxModel,setSandboxModel]=useState('')
+  const [sandboxPrompt,setSandboxPrompt]=useState('')
+  const [sandboxParams,setSandboxParams]=useState('{}')
+  const [sandboxBusy,setSandboxBusy]=useState(false)
+  const [sandboxGeneration,setSandboxGeneration]=useState<Generation|null>(null)
+
+  useEffect(() => {
+    if (!sandboxGeneration || !['queued','processing'].includes(sandboxGeneration.status)) return
+    let cancelled = false
+    const timer = window.setInterval(() => {
+      void api.getGeneration(sandboxGeneration.id)
+        .then((generation) => { if (!cancelled) setSandboxGeneration(generation) })
+        .catch((err) => { if (!cancelled) onError(errorText(err)) })
+    }, 1500)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [sandboxGeneration?.id, sandboxGeneration?.status, onError])
+
   async function saveSettings(){setBusy(true);onError(null);try{const saved=await api.adminUpdateGenerationSettings({primary_model:primary.trim(),fallback_model:fallback.trim()||null,primary_params:JSON.parse(primaryParams||'{}') as Record<string,unknown>,fallback_params:JSON.parse(fallbackParams||'{}') as Record<string,unknown>,mode_params:JSON.parse(modeParams||'{}') as Record<string,Record<string,unknown>>});onSettings(saved)}catch(err){onError(errorText(err))}finally{setBusy(false)}}
+  async function runSandbox(){
+    setSandboxBusy(true);onError(null)
+    try{
+      const created=await api.adminCreateGenerationSandbox({
+        model_name:sandboxModel.trim(),
+        prompt:sandboxPrompt.trim(),
+        params:parseSandboxParams(sandboxParams),
+      })
+      setSandboxGeneration(created)
+    }catch(err){onError(errorText(err))}
+    finally{setSandboxBusy(false)}
+  }
   async function savePrice(mode: GenerationMode, value: number, active: boolean){try{const saved=await api.adminUpdateGenerationPrice(mode,value,active);onPrices([...prices.filter(x=>x.generation_type!==mode),saved])}catch(err){onError(errorText(err))}}
   return <section className="admin-panel"><div className="admin-panel-title"><div><h2>AI, стоимость и промпты</h2><p>Модели, параметры, стоимость кредитов и prompt templates управляются из БД.</p></div></div>
     <div className="admin-form-grid"><label>Primary model<input value={primary} onChange={e=>setPrimary(e.target.value)}/></label><label>Fallback model<input value={fallback} onChange={e=>setFallback(e.target.value)}/></label><label className="admin-span-2">Primary params<textarea className="admin-code" value={primaryParams} onChange={e=>setPrimaryParams(e.target.value)}/></label><label className="admin-span-2">Fallback params<textarea className="admin-code" value={fallbackParams} onChange={e=>setFallbackParams(e.target.value)}/></label><label className="admin-span-2">Параметры по сценариям<textarea className="admin-code" value={modeParams} onChange={e=>setModeParams(e.target.value)}/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={()=>void saveSettings()}>Сохранить AI</button></div></div>
+    <div className="admin-subpanel">
+      <div className="admin-panel-title"><div><h3>AI Sandbox</h3><p>Одноразовый админский тест Nexus. Model ID, prompt и params применяются только к этому запуску: primary/fallback клиентов не меняются, кредиты не списываются.</p></div></div>
+      <div className="admin-form-grid">
+        <label className="admin-span-2">Nexus model ID<input value={sandboxModel} onChange={e=>setSandboxModel(e.target.value)} placeholder="provider/model-id"/></label>
+        <label className="admin-span-2">Prompt<textarea value={sandboxPrompt} onChange={e=>setSandboxPrompt(e.target.value)} placeholder="Опишите тестовый рендер"/></label>
+        <label className="admin-span-2">Model params (JSON)<textarea className="admin-code" value={sandboxParams} onChange={e=>setSandboxParams(e.target.value)}/></label>
+        <div className="admin-form-actions"><button type="button" className="primary-button" disabled={sandboxBusy||!sandboxModel.trim()||!sandboxPrompt.trim()} onClick={()=>void runSandbox()}>{sandboxBusy?'Ставим в очередь…':'Запустить тест'}</button></div>
+      </div>
+      {sandboxGeneration && <div className="admin-card-list"><article className="admin-list-card admin-idea-card">
+        {sandboxGeneration.output_asset && <img src={sandboxGeneration.output_asset.url} alt="AI Sandbox result"/>}
+        <div><strong>{sandboxGeneration.model_name||sandboxModel}</strong><span>Статус: {sandboxGeneration.status}</span><p>Списано кредитов: {sandboxGeneration.credits_charged}{sandboxGeneration.fallback_used?' · использован fallback':''}</p>{sandboxGeneration.error && <p>{sandboxGeneration.error}</p>}</div>
+        <div><small>{formatDate(sandboxGeneration.completed_at||sandboxGeneration.started_at||sandboxGeneration.created_at)}</small></div>
+      </article></div>}
+    </div>
     <div className="admin-subpanel"><h3>Стоимость генераций</h3><div className="admin-price-grid">{modes.map((m)=>{const row=prices.find(p=>p.generation_type===m.id);return <PriceEditor key={m.id} mode={m.id} label={m.label} initial={row} onSave={savePrice}/>})}</div></div>
     <div className="admin-prompts"><h3>Системные промпты</h3>{modes.map((m)=><PromptEditor key={m.id} mode={m.id} label={m.label} item={prompts.find(p=>p.generation_type===m.id)} onSaved={(saved)=>onPrompts([...prompts.filter(p=>p.generation_type!==m.id),saved])} onError={onError}/>)}</div>
   </section>
