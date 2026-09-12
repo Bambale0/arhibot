@@ -22,8 +22,17 @@ from app.telegram_bot.main import TelegramBotApi
 
 logger = logging.getLogger(__name__)
 DELIVERY_BATCH_SIZE = 20
+MAX_DELIVERY_ATTEMPTS = 5
 MAX_FIELD_LENGTH = 500
 TELEGRAM_MESSAGE_LIMIT = 3900
+
+
+def _delivery_status(*, sent: int, recipients: int, attempts: int) -> str:
+    if recipients > 0 and sent >= recipients:
+        return "sent"
+    if attempts < MAX_DELIVERY_ATTEMPTS:
+        return "pending"
+    return "partial" if sent > 0 else "failed"
 
 
 def _display(value: object) -> str:
@@ -321,24 +330,40 @@ async def deliver_pending_applications_once(
                 photo_url=photo_url,
                 photo_reply_markup=photo_reply_markup,
             )
-            if sent == len(recipients):
-                application.telegram_delivery_status = "sent"
+            delivery_status = _delivery_status(
+                sent=sent,
+                recipients=len(recipients),
+                attempts=application.telegram_delivery_attempts,
+            )
+            application.telegram_delivery_status = delivery_status
+            if delivery_status == "sent":
                 application.telegram_delivery_error = None
                 application.telegram_notified_at = datetime.now(UTC)
                 delivered += 1
             else:
-                application.telegram_delivery_status = "pending"
                 application.telegram_delivery_error = (
                     "; ".join(errors)
                     or f"Telegram delivery incomplete: {sent}/{len(recipients)} admins reached"
                 )[:500]
+                if delivery_status == "partial":
+                    application.telegram_notified_at = datetime.now(UTC)
                 failed += 1
-                logger.warning(
-                    "Questionnaire application %s reached %s/%s admin recipient(s); retry remains pending",
-                    application.id,
-                    sent,
-                    len(recipients),
-                )
+                if delivery_status == "pending":
+                    logger.warning(
+                        "Questionnaire application %s reached %s/%s admin recipient(s); retry remains pending",
+                        application.id,
+                        sent,
+                        len(recipients),
+                    )
+                else:
+                    logger.error(
+                        "Questionnaire application %s Telegram delivery stopped as %s after %s attempt(s): %s/%s admin recipient(s) reached",
+                        application.id,
+                        delivery_status,
+                        application.telegram_delivery_attempts,
+                        sent,
+                        len(recipients),
+                    )
             await session.commit()
 
     return delivered, failed
