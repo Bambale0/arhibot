@@ -33,3 +33,10 @@ class TelegramContentResponse(BaseModel):
     start_command_description: str | None = None
     app_command_description: str | None = None
     updated_at: datetime | None = None
+
+
+class TelegramUserSummaryResponse(BaseModel):
+    display_name: str
+    credits_balance: int
+    active_projects: int
+    active_generations: int
