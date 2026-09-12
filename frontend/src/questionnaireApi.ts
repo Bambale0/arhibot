@@ -44,6 +44,10 @@ export function createQuestionnaireGeneration(projectId:string):Promise<Generati
   return apiRequest<Generation>(`/projects/${projectId}/questionnaire-generation`, { method:'POST' })
 }
 
+export function acceptQuestionnaireInitialConcept(projectId:string):Promise<{session:DesignSession}> {
+  return apiRequest<{session:DesignSession}>(`/projects/${projectId}/questionnaire-initial-accept`, { method:'POST' })
+}
+
 export function getQuestionnaireGeneration(projectId:string, generationId:string):Promise<Generation> {
   return apiRequest<Generation>(`/projects/${projectId}/questionnaire-generation/${generationId}`)
 }
