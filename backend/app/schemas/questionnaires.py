@@ -97,6 +97,10 @@ class DesignSession(BaseModel):
     session_id: UUID = Field(default_factory=uuid4)
     catalog_version: str
     selected_objects: list[str] = Field(default_factory=list, max_length=26)
+    initial_concept_mode: bool = False
+    survey_completed_objects: list[str] = Field(default_factory=list)
+    initial_generation_id: UUID | None = None
+    initial_concept_accepted: bool = False
     current_object: str | None = None
     current_question_id: str | None = None
     source_step_completed: bool = False
@@ -119,6 +123,12 @@ class DesignSession(BaseModel):
             raise ValueError("Region mode and region object must be set together.")
         if self.region_object is not None and self.region_object not in self.selected_objects:
             raise ValueError("Region object must belong to the selected questionnaire objects.")
+        if len(self.survey_completed_objects) != len(set(self.survey_completed_objects)):
+            raise ValueError("Completed questionnaire objects must be unique.")
+        if any(key not in self.selected_objects for key in self.survey_completed_objects):
+            raise ValueError("Completed questionnaire objects must be selected.")
+        if self.initial_concept_accepted and not self.initial_generation_id:
+            raise ValueError("Accepted initial concept must reference its generation.")
         return self
 
     @model_validator(mode="after")
