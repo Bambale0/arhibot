@@ -12,6 +12,8 @@ from app.schemas.questionnaires import (
     DesignSessionResponse,
     QuestionnaireApplicationSubmitResponse,
     QuestionnaireCatalogResponse,
+    QuestionnaireGenerationCostResponse,
+    QuestionnaireObjectAddRequest,
     QuestionnaireProjectStartRequest,
 )
 from app.services.generation_service import build_generation_service
@@ -84,6 +86,36 @@ async def save_questionnaire_session(
     if saved is None:
         saved = await QuestionnaireService(session).save_session(user, project_id, payload)
     return DesignSessionResponse(session=saved)
+
+
+@router.get(
+    "/questionnaire-generation-cost",
+    operation_id="getQuestionnaireGenerationCost",
+    response_model=QuestionnaireGenerationCostResponse,
+)
+async def get_questionnaire_generation_cost(
+    user: CurrentUser,
+    session: DbSession,
+) -> QuestionnaireGenerationCostResponse:
+    return await QuestionnaireService(session).generation_cost(user)
+
+
+@router.post(
+    "/projects/{project_id}/questionnaire-objects",
+    operation_id="addProjectQuestionnaireObject",
+    response_model=DesignSessionResponse,
+)
+async def add_questionnaire_object(
+    project_id: UUID,
+    payload: QuestionnaireObjectAddRequest,
+    user: CurrentUser,
+    session: DbSession,
+) -> DesignSessionResponse:
+    return DesignSessionResponse(
+        session=await QuestionnaireService(session).add_refinement_object(
+            user, project_id, payload.object_key
+        )
+    )
 
 
 @router.post(
