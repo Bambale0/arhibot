@@ -14,12 +14,14 @@ from app.core.errors import AppError
 from app.db.models.admin import BillingPlan, BroadcastCampaign, GenerationPromptTemplate, GenerationRuntimeSettings, IdeaTemplate
 from app.db.models.projects import Project
 from app.db.models.users import User
-from app.domain.generations.enums import GenerationType
+from app.domain.generations.enums import GenerationStatus, GenerationType
 from app.domain.users.enums import UserRole
 from app.repositories.admin import AdminRepository
 from app.repositories.billing import BillingRepository
+from app.repositories.generations import GenerationRepository
 from app.repositories.projects import ProjectRepository
 from app.schemas.admin import (
+    AdminAiOrbitCreate,
     AdminAiSandboxCreate,
     AdminOverviewResponse,
     AdminPaymentResponse,
@@ -321,6 +323,93 @@ class AdminService:
             details={
                 "model_name": payload.model_name,
                 "prompt_length": len(payload.prompt),
+                "param_keys": sorted(payload.params),
+            },
+        )
+        await self.session.commit()
+        return generated
+
+    async def create_ai_orbit_generation(
+        self, actor: User, payload: AdminAiOrbitCreate
+    ) -> GenerationResponse:
+        source = await GenerationRepository(self.session).get_owned(
+            payload.source_generation_id,
+            actor.id,
+        )
+        if source is None:
+            raise AppError(
+                type="orbit_source_not_found",
+                title="Orbit source not found",
+                status=404,
+                detail="The source generation does not exist or is not available.",
+            )
+        if source.status != GenerationStatus.COMPLETED or source.output_asset_id is None:
+            raise AppError(
+                type="orbit_source_not_ready",
+                title="Orbit source is not ready",
+                status=409,
+                detail="Complete an AI Sandbox image before building an orbit loop.",
+            )
+        if not source.prompt.startswith("AUROOM_ADMIN_SANDBOX_V1\n"):
+            raise AppError(
+                type="orbit_source_not_sandbox",
+                title="Orbit source must be an AI Sandbox image",
+                status=422,
+                detail="Use the completed still image from the admin AI Sandbox.",
+            )
+
+        project = await self.session.get(Project, source.project_id)
+        if project is None or not bool((project.context or {}).get("admin_ai_sandbox")):
+            raise AppError(
+                type="orbit_source_not_sandbox",
+                title="Orbit source must be an AI Sandbox result",
+                status=422,
+                detail="Use a completed result from the admin AI Sandbox.",
+            )
+
+        envelope = "AUROOM_ADMIN_ORBIT_V1\n" + dumps(
+            {
+                "prompt": payload.prompt,
+                "params": payload.params,
+                "frame_count": payload.frame_count,
+                "frame_duration_ms": payload.frame_duration_ms,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if len(envelope) > 12_000:
+            raise AppError(
+                type="orbit_payload_too_large",
+                title="Orbit payload is too large",
+                status=422,
+                detail="Shorten the prompt or reduce orbit parameters.",
+            )
+
+        def bind_orbit(generation, _project) -> None:  # noqa: ANN001
+            generation.model_name = payload.model_name
+            generation.telegram_delivery_status = "skipped"
+
+        generated = await build_generation_service(self.session, self.settings).create(
+            actor,
+            AdminSandboxGenerationCreate(
+                project_id=project.id,
+                input_asset_id=source.output_asset_id,
+                type=GenerationType.MASTER_PLAN,
+                prompt=envelope,
+            ),
+            before_commit=bind_orbit,
+            skip_pricing=True,
+        )
+        self.repository.add_audit(
+            actor_user_id=actor.id,
+            action="generation.orbit.create",
+            entity_type="generation",
+            entity_id=str(generated.id),
+            details={
+                "source_generation_id": str(source.id),
+                "model_name": payload.model_name,
+                "frame_count": payload.frame_count,
+                "frame_duration_ms": payload.frame_duration_ms,
                 "param_keys": sorted(payload.params),
             },
         )

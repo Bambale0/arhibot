@@ -18,6 +18,7 @@ from app.db.session import dispose_engine, get_session_factory
 from app.domain.assets.enums import AssetPurpose, AssetType
 from app.domain.generations.enums import GenerationStatus
 from app.image_compositor import compose_masked_edit
+from app.image_orbit import build_orbit_animation
 from app.prompt_builders.generation import build_generation_prompt
 from app.providers.nexus import NexusImageProvider, NexusProviderError
 from app.repositories.admin import AdminRepository
@@ -34,6 +35,7 @@ GENERATION_PROCESSING_KEY = "auroom:generation_processing"
 QUESTIONNAIRE_PROMPT_PREFIX = "AUROOM_RENDER_SPEC_V1"
 INITIAL_CONCEPT_PROMPT_PREFIX = "AUROOM_INITIAL_CONCEPT_V1"
 ADMIN_SANDBOX_PROMPT_PREFIX = "AUROOM_ADMIN_SANDBOX_V1\n"
+ADMIN_ORBIT_PROMPT_PREFIX = "AUROOM_ADMIN_ORBIT_V1\n"
 QUESTIONNAIRE_PROMPT_PREFIXES = (
     QUESTIONNAIRE_PROMPT_PREFIX,
     INITIAL_CONCEPT_PROMPT_PREFIX,
@@ -74,6 +76,68 @@ def _admin_sandbox_request(
             f"Admin sandbox params cannot override provider fields: {', '.join(sorted(conflict))}"
         )
     return model_name, prompt.strip(), params
+
+
+def _admin_orbit_request(
+    generation: Generation,
+    project: Project,
+) -> tuple[str, str, dict[str, object], int, int] | None:
+    if not generation.prompt.startswith(ADMIN_ORBIT_PROMPT_PREFIX):
+        return None
+    if not bool((project.context or {}).get("admin_ai_sandbox")):
+        raise ValueError("Admin orbit envelope is outside the sandbox project.")
+    if generation.input_asset_id is None:
+        raise ValueError("Admin orbit source image is missing.")
+
+    model_name = (generation.model_name or "").strip()
+    if not model_name:
+        raise ValueError("Admin orbit model is missing.")
+
+    raw_payload = generation.prompt.removeprefix(ADMIN_ORBIT_PROMPT_PREFIX)
+    try:
+        payload = loads(raw_payload)
+    except JSONDecodeError as exc:
+        raise ValueError("Admin orbit envelope is invalid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Admin orbit envelope must be an object.")
+
+    prompt = payload.get("prompt", "")
+    if not isinstance(prompt, str):
+        raise ValueError("Admin orbit prompt must be a string.")
+    params = payload.get("params", {})
+    if not isinstance(params, dict):
+        raise ValueError("Admin orbit params must be an object.")
+    conflict = RESERVED_PROVIDER_PARAMS.intersection(params)
+    if conflict:
+        raise ValueError(
+            f"Admin orbit params cannot override provider fields: {', '.join(sorted(conflict))}"
+        )
+
+    frame_count = payload.get("frame_count")
+    frame_duration_ms = payload.get("frame_duration_ms")
+    if not isinstance(frame_count, int) or not 6 <= frame_count <= 12:
+        raise ValueError("Admin orbit frame count must be between 6 and 12.")
+    if not isinstance(frame_duration_ms, int) or not 80 <= frame_duration_ms <= 1000:
+        raise ValueError("Admin orbit frame duration is invalid.")
+    return model_name, prompt.strip(), params, frame_count, frame_duration_ms
+
+
+def _orbit_frame_prompt(extra_prompt: str, *, index: int, frame_count: int) -> str:
+    azimuth = round((360 * index) / frame_count)
+    prompt = (
+        "Create one frame of a seamless clockwise 360-degree architectural drone orbit "
+        "around the exact same scene shown in the reference image. "
+        "Preserve the exact house and site geometry, object count, dimensions, roof, windows, "
+        "materials, landscaping, lighting, weather, season and all design details. "
+        "Move only the camera. Keep a consistent elevated drone height, focal length, horizon "
+        "and subject scale across every frame. "
+        f"This frame is {index + 1} of {frame_count}; camera azimuth is approximately "
+        f"{azimuth} degrees clockwise from the reference view. "
+        "Do not add, remove, redesign or relocate anything. No text, labels or borders."
+    )
+    if extra_prompt:
+        prompt += f" Additional operator instruction: {extra_prompt}"
+    return prompt
 
 
 def _questionnaire_aspect_ratio(asset: Asset | None) -> str:
@@ -156,11 +220,15 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
 
         try:
             sandbox_request = _admin_sandbox_request(generation, project)
+            orbit_request = _admin_orbit_request(generation, project)
         except ValueError as exc:
             await session.rollback()
             await _mark_failed_and_refund(generation_id, exc)
             return
 
+        admin_internal_generation = (
+            sandbox_request is not None or orbit_request is not None
+        )
         admin_repository = AdminRepository(session)
         initial_concept_generation = generation.prompt.startswith(
             INITIAL_CONCEPT_PROMPT_PREFIX
@@ -170,15 +238,15 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         )
         runtime = (
             None
-            if sandbox_request is not None
+            if admin_internal_generation
             else await admin_repository.get_generation_settings()
         )
         prompt_template = (
             None
-            if questionnaire_generation or sandbox_request is not None
+            if questionnaire_generation or admin_internal_generation
             else await admin_repository.get_prompt_template(generation.type.value)
         )
-        if sandbox_request is None and (
+        if not admin_internal_generation and (
             runtime is None
             or not runtime.primary_model.strip()
             or (
@@ -215,6 +283,16 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             primary_model, prompt, primary_params = sandbox_request
             fallback_model = None
             fallback_params: dict[str, object] = {}
+        elif orbit_request is not None:
+            (
+                primary_model,
+                prompt,
+                primary_params,
+                _orbit_frame_count,
+                _orbit_frame_duration_ms,
+            ) = orbit_request
+            fallback_model = None
+            fallback_params = {}
         else:
             assert runtime is not None
             prompt = (
@@ -247,34 +325,63 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
     provider = NexusImageProvider(settings)
     model_name = primary_model
     fallback_used = False
+    provider_task_id: str | None = None
     try:
-        try:
-            result = await provider.generate(
-                model_name=model_name,
-                prompt=prompt,
-                image_url=source_url,
-                model_params=primary_params,
-                idempotency_key=f"auroom-{generation_id}-primary",
+        if orbit_request is not None:
+            if source_url is None or input_storage_path is None:
+                raise RuntimeError("Orbit generation requires a source image.")
+            _, orbit_prompt, orbit_params, frame_count, frame_duration_ms = orbit_request
+            base_path = LocalMediaStorage(settings).absolute_path(input_storage_path)
+            base_data = await asyncio.to_thread(base_path.read_bytes)
+            frames = [base_data]
+            for index in range(1, frame_count):
+                result = await provider.generate(
+                    model_name=model_name,
+                    prompt=_orbit_frame_prompt(
+                        orbit_prompt,
+                        index=index,
+                        frame_count=frame_count,
+                    ),
+                    image_url=source_url,
+                    model_params=orbit_params,
+                    idempotency_key=f"auroom-{generation_id}-orbit-{index}",
+                )
+                provider_task_id = result.task_id
+                frames.append(await _download_image(result.image_url, settings))
+            data = await asyncio.to_thread(
+                build_orbit_animation,
+                frames,
+                duration_ms=frame_duration_ms,
+                max_pixels=settings.max_image_pixels,
             )
-        except NexusProviderError as primary_error:
-            if not primary_error.retryable or not fallback_model:
-                raise
-            logger.warning(
-                "Primary Nexus model failed for %s; using admin-configured fallback: %s",
-                generation_id,
-                primary_error,
-            )
-            model_name = fallback_model
-            fallback_used = True
-            result = await provider.generate(
-                model_name=model_name,
-                prompt=prompt,
-                image_url=source_url,
-                model_params=fallback_params,
-                idempotency_key=f"auroom-{generation_id}-fallback",
-            )
-
-        data = await _download_image(result.image_url, settings)
+        else:
+            try:
+                result = await provider.generate(
+                    model_name=model_name,
+                    prompt=prompt,
+                    image_url=source_url,
+                    model_params=primary_params,
+                    idempotency_key=f"auroom-{generation_id}-primary",
+                )
+            except NexusProviderError as primary_error:
+                if not primary_error.retryable or not fallback_model:
+                    raise
+                logger.warning(
+                    "Primary Nexus model failed for %s; using admin-configured fallback: %s",
+                    generation_id,
+                    primary_error,
+                )
+                model_name = fallback_model
+                fallback_used = True
+                result = await provider.generate(
+                    model_name=model_name,
+                    prompt=prompt,
+                    image_url=source_url,
+                    model_params=fallback_params,
+                    idempotency_key=f"auroom-{generation_id}-fallback",
+                )
+            provider_task_id = result.task_id
+            data = await _download_image(result.image_url, settings)
         if composition_mode == "masked_edit":
             if input_storage_path is None or edit_region is None:
                 raise RuntimeError(
@@ -313,7 +420,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 project_id=generation.project_id,
                 type=AssetType.IMAGE,
                 purpose=AssetPurpose.GENERATION_OUTPUT,
-                original_filename=f"auroom-{generation.type.value}.{image.extension}",
+                original_filename=(
+                    f"auroom-orbit.{image.extension}"
+                    if orbit_request is not None
+                    else f"auroom-{generation.type.value}.{image.extension}"
+                ),
                 mime_type=image.mime_type,
                 size_bytes=len(image.data),
                 width=image.width,
@@ -324,17 +435,18 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             generation.output_asset_id = output.id
             generation.model_name = model_name
             generation.fallback_used = fallback_used
-            generation.provider_task_id = result.task_id
+            generation.provider_task_id = provider_task_id
             generation.status = GenerationStatus.COMPLETED
             generation.error = None
             generation.completed_at = datetime.now(UTC)
             await session.commit()
             logger.info(
-                "Generation %s completed with %s%s%s",
+                "Generation %s completed with %s%s%s%s",
                 generation_id,
                 model_name,
                 " (fallback)" if fallback_used else "",
                 " (masked composite)" if composition_mode == "masked_edit" else "",
+                " (orbit loop)" if orbit_request is not None else "",
             )
     except Exception as exc:
         logger.exception("Generation %s failed", generation_id)

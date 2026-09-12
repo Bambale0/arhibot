@@ -7,6 +7,7 @@ from app.api.dependencies.auth import AdminUser, DbSession
 from app.core.config import Settings, get_settings
 from app.domain.generations.enums import GenerationType
 from app.schemas.admin import (
+    AdminAiOrbitCreate,
     AdminAiSandboxCreate,
     AdminOverviewResponse,
     AdminPaymentResponse,
@@ -138,6 +139,20 @@ async def create_generation_sandbox(
     settings: Settings = Depends(get_settings),
 ) -> GenerationResponse:
     return await service(session, settings).create_ai_sandbox_generation(admin, payload)
+
+
+@router.post(
+    "/generation/orbit",
+    response_model=GenerationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_generation_orbit(
+    payload: AdminAiOrbitCreate,
+    admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> GenerationResponse:
+    return await service(session, settings).create_ai_orbit_generation(admin, payload)
 
 
 @router.get("/generation-prices", response_model=list[GenerationPriceResponse])

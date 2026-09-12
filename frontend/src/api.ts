@@ -180,6 +180,9 @@ export function adminUpdateGenerationSettings(payload: { primary_model: string; 
 export function adminCreateGenerationSandbox(payload: { model_name: string; prompt: string; params: Record<string, unknown> }) {
   return request<Generation>('/admin/generation/sandbox', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 }
+export function adminCreateGenerationOrbit(payload: { source_generation_id: string; model_name: string; prompt: string; params: Record<string, unknown>; frame_count: number; frame_duration_ms: number }) {
+  return request<Generation>('/admin/generation/orbit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+}
 export function adminListGenerationPrices() { return request<AdminGenerationPrice[]>('/admin/generation-prices') }
 export function adminUpdateGenerationPrice(mode: GenerationMode, credits: number, isActive: boolean) { return request<AdminGenerationPrice>(`/admin/generation-prices/${mode}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credits, is_active: isActive }) }) }
 export function adminListPrompts() { return request<AdminPrompt[]>('/admin/prompts') }
