@@ -1,3 +1,5 @@
+import '../telegram-fullscreen.css'
+
 export function TelegramFullscreenButton() {
   const telegram = window.Telegram?.WebApp
   if (!telegram) return null
