@@ -916,7 +916,10 @@ class QuestionnaireService:
         definitions = {item["key"]: item for item in catalog["questionnaires"]}
         object_keys = {item for section in catalog["sections"] for item in section["object_keys"]}
         progress_started = bool(
-            payload.current_question_id
+            payload.survey_completed_objects
+            or payload.initial_generation_id
+            or payload.initial_concept_accepted
+            or payload.current_question_id
             or payload.answers
             or payload.accepted_objects
             or payload.generation_ids
@@ -969,7 +972,10 @@ class QuestionnaireService:
         if payload.region_mode == "edit":
             if payload.region_object != payload.current_object:
                 raise self._invalid("Edit-region selection must target the current object.")
-            if payload.region_object in payload.accepted_objects:
+            if (
+                payload.region_object in payload.accepted_objects
+                and not (payload.initial_concept_mode and payload.initial_concept_accepted)
+            ):
                 raise self._invalid("An accepted object cannot request a new edit region.")
         if payload.region_mode == "lock":
             targets_current = payload.region_object == payload.current_object
