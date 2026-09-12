@@ -192,6 +192,19 @@ class IdeaService:
                 detail="The source project has an invalid questionnaire session.",
             ) from exc
 
+        if (
+            design_session.initial_concept_mode
+            and design_session.initial_concept_accepted
+            and design_session.scene_generation_id is not None
+            and generation.id != design_session.scene_generation_id
+        ):
+            raise AppError(
+                type="idea_source_not_accepted",
+                title="Current accepted work required",
+                status=422,
+                detail="Only the current accepted scene can be added to Ideas.",
+            )
+
         object_key = self._accepted_object_key(design_session, generation.id)
         if object_key is None:
             raise AppError(
