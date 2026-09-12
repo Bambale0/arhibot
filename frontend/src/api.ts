@@ -165,6 +165,7 @@ export function adminGetBillingSettings() { return request<AdminBillingSettings>
 export function adminUpdateBillingSettings(payload: Omit<AdminBillingSettings, 'updated_at'>) { return request<AdminBillingSettings>('/admin/billing-settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
 
 export function adminListQuestionnaireApplications() { return request<QuestionnaireApplication[]>('/admin/questionnaire-applications') }
+export function adminRetryQuestionnaireApplicationTelegram(applicationId: string) { return request<void>(`/admin/questionnaire-applications/${applicationId}/telegram-retry`, { method: 'POST' }) }
 
 export function adminListIdeas() { return request<AdminIdea[]>('/admin/ideas') }
 export function adminUpdateIdea(id: string, payload: Partial<{ is_active: boolean; sort_order: number }>) {
