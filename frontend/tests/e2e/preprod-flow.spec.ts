@@ -8,12 +8,37 @@ const assetIds=['55555555-5555-4555-8555-555555555551','55555555-5555-4555-8555-
 const ideaId='66666666-6666-4666-8666-666666666666'
 const catalog = {
   version:'e2e-v1',
-  sections:[{key:'furniture',title:'Мебель и площадки',object_keys:['lavochka']}],
-  questionnaires:[{key:'lavochka',title:'Лавочка',source_file:'fixture',order:0,scene_policy:{},questions:[
-    {id:'1',text:'Какая лавка?',kind:'single',options:['Деревянная со спинкой','Металл + дерево'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
-    {id:'2',text:'Где на участке относительно дома?',kind:'single',options:['Слева от дома','Справа от дома'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
-    {id:'3',text:'Эскиз лавочки вам подходит?',kind:'single',options:['Да, идём дальше','Нет, хочу уточнить и сделать заново'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'review',condition:null,option_rules:{},edit_targets:{}},
-  ]}],
+  sections:[
+    {key:'house',title:'Дом',object_keys:['eskez-doma']},
+    {key:'furniture',title:'Мебель и площадки',object_keys:['lavochka']},
+    {key:'landscape',title:'Участок',object_keys:['gazon','prud']},
+  ],
+  questionnaires:[
+    {key:'lavochka',title:'Лавочка',source_file:'fixture',order:0,scene_policy:{},questions:[
+      {id:'1',text:'Какая лавка?',kind:'single',options:['Деревянная со спинкой','Металл + дерево'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
+      {id:'2',text:'Где на участке относительно дома?',kind:'single',options:['Слева от дома','Справа от дома'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
+      {id:'3',text:'Эскиз лавочки вам подходит?',kind:'single',options:['Да, идём дальше','Нет, хочу уточнить и сделать заново'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'review',condition:null,option_rules:{},edit_targets:{}},
+    ]},
+    {key:'gazon',title:'Газон и посадки',source_file:'fixture',order:1,scene_policy:{},questions:[
+      {id:'1',text:'Какой характер двора?',kind:'single',options:['Минимализм, газон и гравий','Лесной, хвойные'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
+      {id:'2',text:'Эскиз посадок вам подходит?',kind:'single',options:['Да, идём дальше','Нет, хочу уточнить и сделать заново'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'review',condition:null,option_rules:{},edit_targets:{}},
+    ]},
+    {key:'prud',title:'Пруд или ручей',source_file:'fixture',order:2,scene_policy:{},questions:[
+      {id:'1',text:'Что делаем?',kind:'single',options:['Пруд','Ручей'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
+      {id:'2',text:'Эскиз воды вам подходит?',kind:'single',options:['Да, идём дальше','Нет, хочу уточнить и сделать заново'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'review',condition:null,option_rules:{},edit_targets:{}},
+    ]},
+    {key:'eskez-doma',title:'Дом, фасад',source_file:'fixture',order:3,scene_policy:{},questions:[
+      {id:'4',text:'Сколько этажей?',kind:'single',options:['1 этаж','2 этажа','2 этажа + мансарда','3 этажа'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
+      {id:'12',text:'Нужна терраса?',kind:'single',options:['Терраса','Нет'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
+      {id:'12б',text:'На каких этажах терраса?',kind:'multi',options:['Первый этаж','Второй этаж','Третий этаж','Мансарда'],required:true,skip_default:null,help:null,field_hint:null,max_selections:4,phase:'pre_render',condition:{question_id:'12',operator:'neq',value:'Нет'},option_rules:{
+        'Первый этаж':{question_id:'4',operator:'floor_option',value:'Первый этаж'},
+        'Второй этаж':{question_id:'4',operator:'floor_option',value:'Второй этаж'},
+        'Третий этаж':{question_id:'4',operator:'floor_option',value:'Третий этаж'},
+        'Мансарда':{question_id:'4',operator:'floor_option',value:'Мансарда'},
+      },edit_targets:{}},
+      {id:'15',text:'Эскиз дома вам подходит?',kind:'single',options:['Да, идём дальше','Нет, хочу уточнить и сделать заново'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'review',condition:null,option_rules:{},edit_targets:{}},
+    ]},
+  ],
 }
 let session:any
 let project:any
@@ -119,6 +144,99 @@ test('initial concept collects all answers before one generation and supports pr
   await page.getByRole('button',{name:'Принять концепцию'}).click()
   await expect(page.getByText('Что делаем дальше?')).toBeVisible()
   await expect(page.getByText('Следующая генерация · 1 кр.')).toBeVisible()
+})
+
+
+
+test('multi-object initial concept waits for every questionnaire, allows answer editing, then generates once',async({page})=>{
+  session={...session,selected_objects:['lavochka','gazon','prud'],initial_concept_mode:true,current_object:null}
+  project={...project,name:'Участок целиком',context:{...project.context,design_session:session}}
+
+  await page.goto('/')
+  await page.getByRole('button',{name:'Создать проект'}).click()
+  await page.getByText('Мебель и площадки',{exact:true}).click()
+  await page.getByText('Лавочка',{exact:true}).click()
+  await page.getByText('Участок',{exact:true}).click()
+  await page.getByText('Газон и посадки',{exact:true}).click()
+  await page.getByText('Пруд или ручей',{exact:true}).click()
+  await page.getByRole('button',{name:'Начать проект'}).click()
+  await page.getByRole('button',{name:'Продолжить без фото'}).click()
+
+  await page.getByRole('button',{name:'Лавочка',exact:true}).click()
+  await page.getByText('Деревянная со спинкой',{exact:true}).click()
+  await page.getByText('Справа от дома',{exact:true}).click()
+  expect(generationCount).toBe(0)
+
+  await page.getByRole('button',{name:'Газон и посадки',exact:true}).click()
+  await page.getByText('Минимализм, газон и гравий',{exact:true}).click()
+  expect(generationCount).toBe(0)
+
+  await page.getByRole('button',{name:'Пруд или ручей',exact:true}).click()
+  await page.getByText('Пруд',{exact:true}).click()
+  await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
+  expect(generationCount).toBe(0)
+
+  await page.getByText('Лавочка',{exact:true}).click()
+  await page.getByRole('button',{name:/Какая лавка\?/}).click()
+  await page.getByText('Металл + дерево',{exact:true}).click()
+  await page.getByText('Справа от дома',{exact:true}).click()
+  await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
+  expect(generationCount).toBe(0)
+
+  await page.getByText('Лавочка',{exact:true}).click()
+  await expect(page.getByRole('button',{name:/Какая лавка\?/})).toContainText('Металл + дерево')
+  await page.getByRole('button',{name:'Создать общую концепцию'}).click()
+  await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
+  expect(generationCount).toBe(1)
+})
+
+
+test('house terrace floor options follow selected storeys in the UI',async({page})=>{
+  session={...session,selected_objects:['eskez-doma'],initial_concept_mode:true,current_object:null}
+  project={...project,name:'Дом',context:{...project.context,design_session:session}}
+
+  await page.goto('/')
+  await page.getByRole('button',{name:'Создать проект'}).click()
+  await page.getByText('Дом',{exact:true}).click()
+  await page.getByText('Дом, фасад',{exact:true}).click()
+  await page.getByRole('button',{name:'Начать проект'}).click()
+  await page.getByRole('button',{name:'Продолжить без фото'}).click()
+  await page.getByRole('button',{name:'Дом, фасад',exact:true}).click()
+
+  await page.getByText('1 этаж',{exact:true}).click()
+  await page.getByText('Терраса',{exact:true}).click()
+  await expect(page.getByText('На каких этажах терраса?')).toBeVisible()
+  await expect(page.getByText('Первый этаж',{exact:true})).toBeVisible()
+  await expect(page.getByText('Второй этаж',{exact:true})).toHaveCount(0)
+  await expect(page.getByText('Третий этаж',{exact:true})).toHaveCount(0)
+  await expect(page.getByText('Мансарда',{exact:true})).toHaveCount(0)
+
+  await page.getByRole('button',{name:'Назад'}).click()
+  await page.getByRole('button',{name:'Назад'}).click()
+  await page.getByText('2 этажа + мансарда',{exact:true}).click()
+  await page.getByText('Терраса',{exact:true}).click()
+  await expect(page.getByText('Второй этаж',{exact:true})).toBeVisible()
+  await expect(page.getByText('Мансарда',{exact:true})).toBeVisible()
+  await expect(page.getByText('Третий этаж',{exact:true})).toHaveCount(0)
+})
+
+
+test('fullscreen control calls Telegram expand and requestFullscreen',async({page})=>{
+  await page.addInitScript(()=>{
+    const target=window as typeof window & { __expandCalls?:number; __fullscreenCalls?:number }
+    window.Telegram={
+      WebApp:{
+        expand:()=>{target.__expandCalls=(target.__expandCalls||0)+1},
+        requestFullscreen:()=>{target.__fullscreenCalls=(target.__fullscreenCalls||0)+1},
+      },
+    }
+  })
+  await page.goto('/')
+  await page.getByRole('button',{name:'Открыть на весь экран'}).click()
+  await expect.poll(()=>page.evaluate(()=>({
+    expand:(window as typeof window & {__expandCalls?:number}).__expandCalls||0,
+    fullscreen:(window as typeof window & {__fullscreenCalls?:number}).__fullscreenCalls||0,
+  }))).toEqual({expand:1,fullscreen:1})
 })
 
 
