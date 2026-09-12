@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.domain.generations.enums import GenerationType
-from app.schemas.generations import GenerationCreate
+from app.schemas.generations import GenerationCreate, QuestionnaireGenerationCreate
 
 
 def test_masked_generation_requires_input_and_edit_region() -> None:
