@@ -250,7 +250,11 @@ def build_questionnaire_generation_prompt(
                 }
             )
 
-    if accepted_before:
+    if accepted_before or (
+        session.initial_concept_mode
+        and session.initial_concept_accepted
+        and input_asset_present
+    ):
         source_kind = "accepted_scene"
         source_directive = (
             "Используй входное изображение как уже принятую сцену. Сохрани без изменений "
@@ -294,7 +298,7 @@ def build_questionnaire_generation_prompt(
         and isinstance(answers.get("15а"), str)
         and str(answers["15а"]).startswith("Всё")
     )
-    if full_rerender:
+    if full_rerender and not removing_object:
         refinement = None
 
     prohibitions = [
@@ -309,23 +313,21 @@ def build_questionnaire_generation_prompt(
         )
 
     style_inherited = answers.get("1") == "Как у дома"
-    inheritance_rule = (
-        "Не применяется при удалении объекта."
-        if removing_object
-        else
-        "Не применяется к основному дому."
-        if object_key == "eskez-doma"
-        else (
+    if removing_object:
+        inheritance_rule = "Не применяется при удалении объекта."
+    elif object_key == "eskez-doma":
+        inheritance_rule = "Не применяется к основному дому."
+    elif not style_inherited:
+        inheritance_rule = (
             "Вариант «Как у дома» не выбран; наследование от принятого дома не применять."
-            if not style_inherited
-            else (
-                "Наследовать визуальный стиль принятого дома. Материалы, кровлю и другие "
-                "свойства наследовать только когда они не заданы отдельным активным ответом "
-                "текущего объекта. Любой явный questionnaire_constraint текущего объекта "
-                "имеет безусловный приоритет над наследованием."
-            )
         )
-    )
+    else:
+        inheritance_rule = (
+            "Наследовать визуальный стиль принятого дома. Материалы, кровлю и другие "
+            "свойства наследовать только когда они не заданы отдельным активным ответом "
+            "текущего объекта. Любой явный questionnaire_constraint текущего объекта "
+            "имеет безусловный приоритет над наследованием."
+        )
 
     if removing_object:
         prohibitions.extend(
