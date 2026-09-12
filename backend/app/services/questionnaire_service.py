@@ -31,7 +31,7 @@ from app.repositories.credits import CreditRepository
 from app.repositories.generations import GenerationRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.questionnaires import QuestionnaireRepository
-from app.schemas.generations import GenerationCreate
+from app.schemas.generations import GenerationCreate, QuestionnaireGenerationCreate
 from app.schemas.questionnaires import (
     DesignSession,
     QuestionnaireGenerationCostResponse,
@@ -372,7 +372,7 @@ class QuestionnaireService:
 
     async def build_generation_request(
         self, user: User, project_id: UUID
-    ) -> tuple[GenerationCreate, DesignSession, str]:
+    ) -> tuple[QuestionnaireGenerationCreate, DesignSession, str]:
         """Build either the one-shot initial concept or one paid refinement."""
 
         project = await ProjectService(self.projects).get_owned_model(user, project_id)
@@ -428,7 +428,7 @@ class QuestionnaireService:
                 input_asset_present=session.source_asset_id is not None,
             )
             return (
-                GenerationCreate(
+                QuestionnaireGenerationCreate(
                     project_id=project_id,
                     input_asset_id=session.source_asset_id,
                     type=GenerationType.MASTER_PLAN,
@@ -511,7 +511,7 @@ class QuestionnaireService:
             input_asset_present=input_asset_id is not None,
         )
         return (
-            GenerationCreate(
+            QuestionnaireGenerationCreate(
                 project_id=project_id,
                 input_asset_id=input_asset_id,
                 type=generation_type,
