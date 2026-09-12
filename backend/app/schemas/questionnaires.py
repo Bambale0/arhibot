@@ -92,6 +92,17 @@ class QuestionnaireProjectStartRequest(BaseModel):
     selected_objects: list[str] = Field(min_length=1, max_length=26)
 
 
+class QuestionnaireObjectAddRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    object_key: str = Field(min_length=1, max_length=80)
+
+
+class QuestionnaireGenerationCostResponse(BaseModel):
+    generation_type: Literal["master_plan"] = "master_plan"
+    credits: int | None = None
+    is_available: bool
+
+
 class DesignSession(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: UUID = Field(default_factory=uuid4)
