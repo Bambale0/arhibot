@@ -6,6 +6,8 @@ from app.db.models.questionnaires import QuestionnaireApplication
 from app.questionnaires.catalog import build_catalog
 from app.telegram_bot.links import admin_application_keyboard
 from app.telegram_bot.questionnaire_notifications import (
+    MAX_DELIVERY_ATTEMPTS,
+    _delivery_status,
     _send_to_admins,
     build_application_message,
 )
@@ -64,6 +66,16 @@ def test_questionnaire_application_message_contains_admin_lead_data() -> None:
     assert "Финальный эскиз asset:" in message
     assert str(application.id) in message
 
+
+
+
+
+
+def test_questionnaire_delivery_status_stops_retry_storm_after_limit() -> None:
+    assert _delivery_status(sent=3, recipients=3, attempts=1) == "sent"
+    assert _delivery_status(sent=2, recipients=3, attempts=MAX_DELIVERY_ATTEMPTS - 1) == "pending"
+    assert _delivery_status(sent=2, recipients=3, attempts=MAX_DELIVERY_ATTEMPTS) == "partial"
+    assert _delivery_status(sent=0, recipients=3, attempts=MAX_DELIVERY_ATTEMPTS) == "failed"
 
 
 class _FakeSession:

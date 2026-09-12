@@ -702,6 +702,46 @@ class QuestionnaireService:
         await self.session.refresh(row)
         return await self.admin_catalog()
 
+    async def retry_application_telegram_delivery(
+        self, actor: User, application_id: UUID
+    ) -> None:
+        application = await self.session.get(QuestionnaireApplication, application_id)
+        if application is None:
+            raise AppError(
+                type="questionnaire_application_not_found",
+                title="Questionnaire application not found",
+                status=404,
+                detail="The questionnaire application does not exist.",
+            )
+        if application.telegram_delivery_status not in {"partial", "failed"}:
+            raise AppError(
+                type="questionnaire_application_delivery_not_retryable",
+                title="Telegram delivery is not retryable",
+                status=409,
+                detail=(
+                    "Only a terminal partial or failed Telegram delivery can be retried."
+                ),
+            )
+
+        previous_status = application.telegram_delivery_status
+        application.telegram_delivery_status = "pending"
+        application.telegram_delivery_attempts = 0
+        application.telegram_delivery_error = None
+        application.telegram_notified_at = None
+        self.admin_repository.add_audit(
+            actor_user_id=actor.id,
+            action="questionnaires.application.telegram_retry",
+            entity_type="questionnaire_application",
+            entity_id=str(application.id),
+            details={
+                "previous_status": previous_status,
+                "preserved_recipient_progress": bool(
+                    application.telegram_delivery_progress
+                ),
+            },
+        )
+        await self.session.commit()
+
     async def list_applications(self, *, limit: int = 200) -> list[QuestionnaireApplicationResponse]:
         rows = await self.repository.list_applications_with_context(limit=limit)
         storage = LocalMediaStorage(get_settings())
