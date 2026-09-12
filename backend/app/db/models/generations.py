@@ -54,7 +54,7 @@ class Generation(Base):
     )
     prompt: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     credits_charged: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
-    model_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     fallback_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     composition_mode: Mapped[str] = mapped_column(
         String(32), nullable=False, default="replace", server_default="replace"
