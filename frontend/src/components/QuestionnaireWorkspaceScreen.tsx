@@ -105,6 +105,8 @@ function newSession(version:string, selected:string[]):DesignSession {
     scene_generation_id:null,
     answers:{},
     accepted_objects:[],
+    removed_objects:[],
+    pending_removal_object:null,
     generation_ids:{},
     edit_question_ids:[],
     review_comments:{},
@@ -231,6 +233,8 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
           || Boolean(stored.initial_generation_id)
           || stored.initial_concept_accepted
           || stored.accepted_objects.length
+          || stored.removed_objects.length
+          || Boolean(stored.pending_removal_object)
           || Object.keys(stored.answers).length
           || Object.keys(stored.generation_ids).length
           || stored.application_submitted
