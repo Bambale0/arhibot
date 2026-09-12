@@ -1,5 +1,6 @@
 import pytest
 
+from app.services.telegram_user_summary_service import available_generation_count
 from app.telegram_bot.main import (
     TelegramBotContent,
     TelegramUserSummary,
@@ -210,6 +211,13 @@ def test_send_start_includes_safe_personal_summary_when_available() -> None:
     assert "Кредиты: 9" in payload["text"]
     assert "Проектов: 3" in payload["text"]
     assert "Генераций в работе: 2" in payload["text"]
+
+
+def test_available_generation_count_uses_live_master_plan_price() -> None:
+    assert available_generation_count(9, price_credits=2, price_active=True) == 4
+    assert available_generation_count(1, price_credits=2, price_active=True) == 0
+    assert available_generation_count(9, price_credits=None, price_active=True) is None
+    assert available_generation_count(9, price_credits=2, price_active=False) is None
 
 
 def test_user_summary_parser_rejects_incomplete_payloads() -> None:
