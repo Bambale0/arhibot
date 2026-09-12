@@ -11,6 +11,7 @@ _NAVIGATION_KEYS = {
     "generation",
     "idea",
     "project",
+    "section",
     "user",
 }
 
