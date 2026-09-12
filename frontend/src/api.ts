@@ -177,6 +177,9 @@ export function adminGetGenerationSettings() { return request<AdminGenerationSet
 export function adminUpdateGenerationSettings(payload: { primary_model: string; fallback_model: string | null; primary_params: Record<string, unknown>; fallback_params: Record<string, unknown>; mode_params: Record<string, Record<string, unknown>> }) {
   return request<AdminGenerationSettings>('/admin/generation', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 }
+export function adminCreateGenerationSandbox(payload: { model_name: string; prompt: string; params: Record<string, unknown> }) {
+  return request<Generation>('/admin/generation/sandbox', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+}
 export function adminListGenerationPrices() { return request<AdminGenerationPrice[]>('/admin/generation-prices') }
 export function adminUpdateGenerationPrice(mode: GenerationMode, credits: number, isActive: boolean) { return request<AdminGenerationPrice>(`/admin/generation-prices/${mode}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credits, is_active: isActive }) }) }
 export function adminListPrompts() { return request<AdminPrompt[]>('/admin/prompts') }
