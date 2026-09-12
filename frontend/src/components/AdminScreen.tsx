@@ -136,7 +136,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
         <div className="admin-content">
           {tab === 'tariffs' && billingSettings && <TariffsPanel items={tariffs} onItems={setTariffs} billingSettings={billingSettings} onBillingSettings={setBillingSettings} onError={setError} />}
           {tab === 'ideas' && <IdeasPanel items={ideas} onItems={setIdeas} onError={setError} />}
-          {tab === 'applications' && <ApplicationsPanel items={applications} focusId={new URLSearchParams(window.location.search).get('application')} />}
+          {tab === 'applications' && <ApplicationsPanel items={applications} focusId={new URLSearchParams(window.location.search).get('application')} onItems={setApplications} onError={setError} />}
           {tab === 'generation' && generation && <GenerationPanel settings={generation} prices={prices} prompts={prompts} onSettings={setGeneration} onPrices={setPrices} onPrompts={setPrompts} onError={setError} />}
           {tab === 'users' && <UsersPanel items={users} transactions={transactions} onItems={setUsers} onTransactions={setTransactions} onError={setError} focusUserId={new URLSearchParams(window.location.search).get('user')} />}
           {tab === 'payments' && <PaymentsPanel items={payments} onItems={setPayments} onError={setError} />}
@@ -158,8 +158,31 @@ function applicationAnswer(value: unknown) {
   return String(value)
 }
 
-function ApplicationsPanel({ items, focusId }: { items: QuestionnaireApplication[]; focusId:string|null }) {
+function ApplicationsPanel({ items, focusId, onItems, onError }: { items: QuestionnaireApplication[]; focusId:string|null; onItems:(items:QuestionnaireApplication[])=>void; onError:(value:string|null)=>void }) {
   const [expanded, setExpanded] = useState<string | null>(focusId || items[0]?.id || null)
+  const [retrying, setRetrying] = useState<string | null>(null)
+
+  function deliveryLabel(status:string) {
+    if (status === 'sent') return 'Telegram: отправлено'
+    if (status === 'partial') return 'Telegram: частично'
+    if (status === 'failed') return 'Telegram: ошибка'
+    return 'Telegram: ожидает'
+  }
+
+  async function retryTelegram(applicationId:string) {
+    setRetrying(applicationId)
+    onError(null)
+    try {
+      await api.adminRetryQuestionnaireApplicationTelegram(applicationId)
+      onItems(items.map((item) => item.id === applicationId
+        ? { ...item, telegram_delivery_status:'pending', telegram_notified_at:null }
+        : item))
+    } catch (err) {
+      onError(errorText(err))
+    } finally {
+      setRetrying(null)
+    }
+  }
 
   useEffect(() => {
     if (!focusId) return
@@ -178,7 +201,7 @@ function ApplicationsPanel({ items, focusId }: { items: QuestionnaireApplication
               <h3>{item.project_name || 'Проект без названия'}</h3>
               <p>{applicationAnswer(lead['23'])} · {applicationAnswer(lead['24'])} · {formatDate(item.created_at)}</p>
             </div>
-            <span>{item.telegram_delivery_status === 'sent' ? 'Telegram: отправлено' : 'Telegram: ожидает'}</span>
+            <span>{deliveryLabel(item.telegram_delivery_status)}</span>
           </div>
           {item.scene_asset_url && <img className="admin-application-image" src={item.scene_asset_url} alt="Финальный эскиз заявки"/>}
           <div className="admin-table-wrap"><table className="admin-table"><tbody>
@@ -198,6 +221,7 @@ function ApplicationsPanel({ items, focusId }: { items: QuestionnaireApplication
             <a className="secondary-button" href={`/?admin=1&application=${item.id}`}>Ссылка на заявку</a>
             <a className="secondary-button" href={`/?admin=1&user=${item.user_id}`}>Профиль клиента</a>
             {item.telegram_user_id && /^\d+$/.test(item.telegram_user_id) && <a className="secondary-button" href={`tg://user?id=${item.telegram_user_id}`}>Telegram профиль</a>}
+            {['partial','failed'].includes(item.telegram_delivery_status) && <button type="button" className="secondary-button" disabled={retrying !== null} onClick={() => void retryTelegram(item.id)}>{retrying === item.id ? 'Повторяем…' : 'Повторить Telegram'}</button>}
             <button type="button" className="secondary-button" onClick={() => setExpanded(isOpen ? null : item.id)}>{isOpen ? 'Скрыть подробный brief' : 'Открыть подробный brief'}</button>
           </div>
           {isOpen && <div className="admin-subpanel">
