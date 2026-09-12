@@ -2,7 +2,10 @@ from json import loads
 from uuid import uuid4
 
 from app.questionnaires.catalog import build_catalog
-from app.questionnaires.generation_prompt import build_questionnaire_generation_prompt
+from app.questionnaires.generation_prompt import (
+    build_initial_concept_prompt,
+    build_questionnaire_generation_prompt,
+)
 from app.schemas.questionnaires import DesignSession
 
 
@@ -195,3 +198,39 @@ def test_full_house_rerender_ignores_stale_refinement_comment() -> None:
     )
 
     assert spec["refinement_comment"] is None
+
+
+def test_initial_concept_prompt_contains_every_selected_object_and_aerial_camera() -> None:
+    catalog = build_catalog()
+    session = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma", "banya"],
+        initial_concept_mode=True,
+        survey_completed_objects=["eskez-doma", "banya"],
+        source_step_completed=True,
+        source_asset_id=uuid4(),
+        answers={
+            "eskez-doma": {"1": "Современный минимализм"},
+            "banya": {"1": "Барнхаус"},
+        },
+    )
+
+    prompt = build_initial_concept_prompt(
+        catalog,
+        session,
+        input_asset_present=True,
+    )
+    spec = _spec(prompt)
+
+    assert prompt.startswith("AUROOM_INITIAL_CONCEPT_V1")
+    assert spec["schema"] == "auroom.initial_concept.v1"
+    assert spec["task"]["selected_objects_count"] == 2
+    assert [item["object_key"] for item in spec["task"]["objects"]] == [
+        "eskez-doma",
+        "banya",
+    ]
+    assert spec["camera"]["altitude_m"] == {"min": 50, "max": 70}
+    assert spec["camera"]["entire_plot_visible"] is True
+    assert spec["camera"]["all_selected_objects_visible"] is True
+    assert spec["camera"]["source_photo_camera_lock"] is False
+    assert spec["source_scene"]["kind"] == "site_photo"
