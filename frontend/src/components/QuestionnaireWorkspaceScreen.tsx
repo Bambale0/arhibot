@@ -88,11 +88,12 @@ function sanitizeObjectAnswers(definition:QuestionnaireDefinition, answers:Recor
   return next
 }
 
-function newSession(version:string, selected:string[]):DesignSession {
+function newSession(version:string, selected:string[], plotAreaSotkas:number|null):DesignSession {
   return {
     session_id:crypto.randomUUID(),
     catalog_version:version,
     selected_objects:selected,
+    plot_area_sotkas:plotAreaSotkas,
     initial_concept_mode:true,
     survey_completed_objects:[],
     initial_generation_id:null,
@@ -245,7 +246,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
             && stored.catalog_version === loaded.version
             && JSON.stringify(stored.selected_objects) === JSON.stringify(selected)
             ? stored
-            : newSession(loaded.version, selected)
+            : newSession(loaded.version, selected, project.context.plot_area_m2 ? Math.round(project.context.plot_area_m2 / 100) : null)
         setSession(initial)
         if (initial.source_asset_id) {
           try { setSourceAsset(await api.getAsset(initial.source_asset_id)) } catch { /* deleted source */ }
