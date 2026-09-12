@@ -1,3 +1,4 @@
+import asyncio
 import os
 from io import BytesIO
 from uuid import UUID, uuid4
@@ -214,10 +215,19 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
         assert orbit_body["model_name"] == "nexus/orbit-model"
 
         provider_calls.clear()
+        active_orbit_calls = 0
+        max_active_orbit_calls = 0
 
         async def fake_orbit_generate(self, **kwargs):  # noqa: ANN001, ARG001
+            nonlocal active_orbit_calls, max_active_orbit_calls
             provider_calls.append(kwargs)
-            index = len(provider_calls)
+            index = int(kwargs["idempotency_key"].rsplit("-", 1)[1])
+            active_orbit_calls += 1
+            max_active_orbit_calls = max(max_active_orbit_calls, active_orbit_calls)
+            try:
+                await asyncio.sleep(0.02)
+            finally:
+                active_orbit_calls -= 1
             return NexusImageResult(
                 task_id=f"orbit-task-{index}",
                 image_url=f"https://cdn.example.test/orbit-{index}.png",
@@ -234,14 +244,19 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(orbit_id))
 
         assert len(provider_calls) == 5
+        assert max_active_orbit_calls == generation_worker.ADMIN_ORBIT_MAX_CONCURRENCY
         assert {call["model_name"] for call in provider_calls} == {"nexus/orbit-model"}
         assert {call["model_params"]["guidance"] for call in provider_calls} == {4}
         assert all(call["image_url"] for call in provider_calls)
-        assert "frame is 2 of 6" in provider_calls[0]["prompt"]
-        assert "60 degrees clockwise" in provider_calls[0]["prompt"]
-        assert "Keep the warm sunset mood" in provider_calls[0]["prompt"]
-        assert "frame is 6 of 6" in provider_calls[-1]["prompt"]
-        assert "300 degrees clockwise" in provider_calls[-1]["prompt"]
+        ordered_calls = sorted(
+            provider_calls,
+            key=lambda call: int(call["idempotency_key"].rsplit("-", 1)[1]),
+        )
+        assert "frame is 2 of 6" in ordered_calls[0]["prompt"]
+        assert "60 degrees clockwise" in ordered_calls[0]["prompt"]
+        assert "Keep the warm sunset mood" in ordered_calls[0]["prompt"]
+        assert "frame is 6 of 6" in ordered_calls[-1]["prompt"]
+        assert "300 degrees clockwise" in ordered_calls[-1]["prompt"]
 
         orbit_completed = await client.get(
             f"/api/v1/generations/{orbit_id}",
