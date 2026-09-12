@@ -806,7 +806,7 @@
 .questionnaire-idea-share p{margin:0;font-size:12px;line-height:1.45;opacity:.72}
 
 .questionnaire-answer-review{display:grid;gap:10px;margin-top:18px}
-.questionnaire-answer-review details{border:1px solid var(--q-line);border-radius:14px;padding:12px 14px;background:var(--q-surface)}
+.questionnaire-answer-review details{border:1px solid var(--q-line);border-radius:14px;padding:12px 14px;background:var(--q-sheet)}
 .questionnaire-answer-review summary{cursor:pointer;font-weight:700}
 .questionnaire-answer-review button{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;text-align:left;padding:12px 0;border:0;border-bottom:1px solid var(--q-line);background:transparent;color:inherit;cursor:pointer}
 .questionnaire-answer-review button:last-child{border-bottom:0}
