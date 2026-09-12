@@ -370,6 +370,12 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   const [sandboxParams,setSandboxParams]=useState('{}')
   const [sandboxBusy,setSandboxBusy]=useState(false)
   const [sandboxGeneration,setSandboxGeneration]=useState<Generation|null>(null)
+  const [orbitPrompt,setOrbitPrompt]=useState('')
+  const [orbitParams,setOrbitParams]=useState('{}')
+  const [orbitFrames,setOrbitFrames]=useState('8')
+  const [orbitDuration,setOrbitDuration]=useState('180')
+  const [orbitBusy,setOrbitBusy]=useState(false)
+  const [orbitGeneration,setOrbitGeneration]=useState<Generation|null>(null)
 
   useEffect(() => {
     if (!sandboxGeneration || !['queued','processing'].includes(sandboxGeneration.status)) return
@@ -381,6 +387,17 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
     }, 1500)
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [sandboxGeneration?.id, sandboxGeneration?.status, onError])
+
+  useEffect(() => {
+    if (!orbitGeneration || !['queued','processing'].includes(orbitGeneration.status)) return
+    let cancelled = false
+    const timer = window.setInterval(() => {
+      void api.getGeneration(orbitGeneration.id)
+        .then((generation) => { if (!cancelled) setOrbitGeneration(generation) })
+        .catch((err) => { if (!cancelled) onError(errorText(err)) })
+    }, 1500)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [orbitGeneration?.id, orbitGeneration?.status, onError])
 
   async function saveSettings(){setBusy(true);onError(null);try{const saved=await api.adminUpdateGenerationSettings({primary_model:primary.trim(),fallback_model:fallback.trim()||null,primary_params:JSON.parse(primaryParams||'{}') as Record<string,unknown>,fallback_params:JSON.parse(fallbackParams||'{}') as Record<string,unknown>,mode_params:JSON.parse(modeParams||'{}') as Record<string,Record<string,unknown>>});onSettings(saved)}catch(err){onError(errorText(err))}finally{setBusy(false)}}
   async function runSandbox(){
@@ -394,6 +411,27 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
       setSandboxGeneration(created)
     }catch(err){onError(errorText(err))}
     finally{setSandboxBusy(false)}
+  }
+  async function runOrbit(){
+    if (!sandboxGeneration?.output_asset || sandboxGeneration.status !== 'completed') return
+    const frameCount=Number(orbitFrames)
+    const frameDuration=Number(orbitDuration)
+    if (!Number.isInteger(frameCount)||frameCount<6||frameCount>12||!Number.isInteger(frameDuration)||frameDuration<80||frameDuration>1000) return
+    setOrbitBusy(true);onError(null)
+    try{
+      const modelName=sandboxGeneration.model_name||sandboxModel.trim()
+      if(!modelName) throw new Error('У исходного Sandbox результата нет model ID')
+      const created=await api.adminCreateGenerationOrbit({
+        source_generation_id:sandboxGeneration.id,
+        model_name:modelName,
+        prompt:orbitPrompt.trim(),
+        params:parseSandboxParams(orbitParams),
+        frame_count:frameCount,
+        frame_duration_ms:frameDuration,
+      })
+      setOrbitGeneration(created)
+    }catch(err){onError(errorText(err))}
+    finally{setOrbitBusy(false)}
   }
   async function savePrice(mode: GenerationMode, value: number, active: boolean){try{const saved=await api.adminUpdateGenerationPrice(mode,value,active);onPrices([...prices.filter(x=>x.generation_type!==mode),saved])}catch(err){onError(errorText(err))}}
   return <section className="admin-panel"><div className="admin-panel-title"><div><h2>AI, стоимость и промпты</h2><p>Модели, параметры, стоимость кредитов и prompt templates управляются из БД.</p></div></div>
@@ -411,6 +449,22 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
         <div><strong>{sandboxGeneration.model_name||sandboxModel}</strong><span>Статус: {sandboxGeneration.status}</span><p>Списано кредитов: {sandboxGeneration.credits_charged}{sandboxGeneration.fallback_used?' · использован fallback':''}</p>{sandboxGeneration.error && <p>{sandboxGeneration.error}</p>}</div>
         <div><small>{formatDate(sandboxGeneration.completed_at||sandboxGeneration.started_at||sandboxGeneration.created_at)}</small></div>
       </article></div>}
+      {sandboxGeneration?.status==='completed'&&sandboxGeneration.output_asset&&<div className="admin-subpanel">
+        <div className="admin-panel-title"><div><h3>360° drone-orbit experiment</h3><p>Берём этот Sandbox render как первый кадр, генерируем остальные ракурсы image-to-image и локально собираем зацикленный animated WebP. Видео-модель не вызывается.</p></div></div>
+        <div className="admin-form-grid">
+          <label>Кадров<input type="number" min="6" max="12" value={orbitFrames} onChange={e=>setOrbitFrames(e.target.value)}/></label>
+          <label>мс / кадр<input type="number" min="80" max="1000" value={orbitDuration} onChange={e=>setOrbitDuration(e.target.value)}/></label>
+          <label className="admin-span-2">Доп. инструкция<textarea value={orbitPrompt} onChange={e=>setOrbitPrompt(e.target.value)} placeholder="Например: сохраняй мягкий вечерний свет"/></label>
+          <label className="admin-span-2">Orbit model params (JSON)<textarea className="admin-code" value={orbitParams} onChange={e=>setOrbitParams(e.target.value)}/></label>
+          <div className="admin-span-2"><small>{Math.max(0,Number(orbitFrames)||0)-1} новых image-вызовов + исходный кадр · 0 video-вызовов · 0 кредитов AuRoom</small></div>
+          <div className="admin-form-actions"><button type="button" className="secondary-button" disabled={orbitBusy} onClick={()=>void runOrbit()}>{orbitBusy?'Собираем…':'Собрать 360° loop'}</button></div>
+        </div>
+        {orbitGeneration&&<div className="admin-card-list"><article className="admin-list-card admin-idea-card">
+          {orbitGeneration.output_asset&&<img src={orbitGeneration.output_asset.url} alt="360 degree drone orbit loop"/>}
+          <div><strong>360° loop · {orbitGeneration.model_name||sandboxGeneration.model_name}</strong><span>Статус: {orbitGeneration.status}</span><p>Формат результата: animated WebP · списано кредитов: {orbitGeneration.credits_charged}</p>{orbitGeneration.error&&<p>{orbitGeneration.error}</p>}</div>
+          <div><small>{formatDate(orbitGeneration.completed_at||orbitGeneration.started_at||orbitGeneration.created_at)}</small></div>
+        </article></div>}
+      </div>}
     </div>
     <div className="admin-subpanel"><h3>Стоимость генераций</h3><div className="admin-price-grid">{modes.map((m)=>{const row=prices.find(p=>p.generation_type===m.id);return <PriceEditor key={m.id} mode={m.id} label={m.label} initial={row} onSave={savePrice}/>})}</div></div>
     <div className="admin-prompts"><h3>Системные промпты</h3>{modes.map((m)=><PromptEditor key={m.id} mode={m.id} label={m.label} item={prompts.find(p=>p.generation_type===m.id)} onSaved={(saved)=>onPrompts([...prompts.filter(p=>p.generation_type!==m.id),saved])} onError={onError}/>)}</div>
