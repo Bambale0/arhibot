@@ -44,6 +44,7 @@ class QuestionnaireProjectService:
             session.source_step_completed
             or session.source_asset_id
             or session.scene_asset_id
+            or session.scene_generation_id
             or session.current_question_id
             or session.answers
             or session.survey_completed_objects
