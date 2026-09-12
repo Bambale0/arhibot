@@ -609,6 +609,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     }
   }
 
+  async function reopenInitialAnswers() {
+    if (!session) return
+    const saved = await persist({ ...session, initial_generation_id:null })
+    if (saved) setRenderOutput(null)
+  }
+
   async function acceptInitial() {
     setBusy(true)
     setError(null)
@@ -886,7 +892,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         {renderOutput && <div className="questionnaire-result"><img src={renderOutput.url} alt="Общая концепция участка"/></div>}
         {!initialGenerationId && <div className="questionnaire-options">{session.selected_objects.map((key) => <button key={key} className={`questionnaire-option ${session.survey_completed_objects.includes(key) ? 'selected' : ''}`} disabled={busy} onClick={() => void chooseObject(key)}><span>{session.survey_completed_objects.includes(key) ? '✓ ' : ''}{definitions.get(key)?.title || key}</span><i/></button>)}</div>}
         {ready && !initialGenerationId && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void generateInitial(session)}>Создать общую концепцию</button></div>}
-        {initialGenerationId && renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void acceptInitial()}>Принять концепцию</button><button className="secondary-button" disabled={busy} onClick={() => void persist({ ...session, initial_generation_id:null })}>Изменить ответы</button></div>}
+        {initialGenerationId && renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void acceptInitial()}>Принять концепцию</button><button className="secondary-button" disabled={busy} onClick={() => void reopenInitialAnswers()}>Изменить ТЗ · новая генерация</button></div>}
         {(busy || generationInFlight) && initialGenerationId && !renderOutput && <div className="empty-inline">Создаём весь участок одной генерацией…</div>}
         {error && <div className="banner-error">{error}</div>}
       </section></main>
