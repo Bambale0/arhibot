@@ -32,6 +32,7 @@ export type DesignSession = {
   session_id:string
   catalog_version:string
   selected_objects:string[]
+  plot_area_sotkas:number|null
   initial_concept_mode:boolean
   survey_completed_objects:string[]
   initial_generation_id:string|null
@@ -61,6 +62,7 @@ export function createDesignSession(catalogVersion:string, selectedObjects:strin
     session_id:crypto.randomUUID(),
     catalog_version:catalogVersion,
     selected_objects:[...selectedObjects],
+    plot_area_sotkas:null,
     initial_concept_mode:true,
     survey_completed_objects:[],
     initial_generation_id:null,
