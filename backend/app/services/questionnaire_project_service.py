@@ -102,6 +102,7 @@ class QuestionnaireProjectService:
         design_session = DesignSession(
             catalog_version=catalog["version"],
             selected_objects=selected,
+            plot_area_sotkas=payload.plot_area_sotkas,
             initial_concept_mode=True,
             current_object=selected[0] if len(selected) == 1 else None,
         )
@@ -111,6 +112,7 @@ class QuestionnaireProjectService:
             description="Проект создан через опросник AuRoom.",
             context={
                 "questionnaire_draft": True,
+                "plot_area_m2": payload.plot_area_sotkas * 100,
                 "design_session": design_session.model_dump(mode="json"),
             },
         )
