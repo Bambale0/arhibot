@@ -77,7 +77,7 @@ def parse_user_summary(payload: object) -> TelegramUserSummary | None:
     try:
         display_name = str(payload["display_name"]).strip()
         credits_balance = int(payload["credits_balance"])
-        raw_available_generations = payload["available_generations"]
+        raw_available_generations = payload.get("available_generations")
         available_generations = (
             None if raw_available_generations is None else int(raw_available_generations)
         )
