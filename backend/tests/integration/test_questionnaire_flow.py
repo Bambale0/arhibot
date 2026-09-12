@@ -226,7 +226,7 @@ async def test_questionnaire_generation_prompt_is_built_only_on_server_and_hidde
         started = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["eskez-doma"]},
+            json={"selected_objects": ["eskez-doma"], "plot_area_sotkas": 8},
         )
         assert started.status_code == 201, started.text
         project = started.json()
@@ -347,7 +347,7 @@ async def test_questionnaire_generation_is_atomic_under_concurrent_requests(
         started = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["eskez-doma"]},
+            json={"selected_objects": ["eskez-doma"], "plot_area_sotkas": 8},
         )
         project_id = started.json()["id"]
         design_session = started.json()["context"]["design_session"]
@@ -443,7 +443,7 @@ async def test_initial_concept_refinement_updates_scene_generation_chain() -> No
         started = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["lavochka"]},
+            json={"selected_objects": ["lavochka"], "plot_area_sotkas": 8},
         )
         assert started.status_code == 201, started.text
         project_id = started.json()["id"]
@@ -636,7 +636,7 @@ async def test_accepted_object_removal_is_a_paid_masked_iteration() -> None:
         started = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": object_keys},
+            json={"selected_objects": object_keys, "plot_area_sotkas": 8},
         )
         assert started.status_code == 201, started.text
         project_id = started.json()["id"]
