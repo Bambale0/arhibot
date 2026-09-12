@@ -128,6 +128,7 @@ export type QuestionnaireApplicationSubmitResponse = { session:DesignSession; ap
 
 export type QuestionnaireGenerationCost = {
   generation_type:'master_plan'
+  initial_credits:number
   credits:number|null
   is_available:boolean
 }
