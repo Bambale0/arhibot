@@ -52,6 +52,26 @@ export function addQuestionnaireObject(projectId:string, objectKey:string):Promi
   })
 }
 
+export function startQuestionnaireObjectRemoval(projectId:string, objectKey:string):Promise<{session:DesignSession}> {
+  return apiRequest<{session:DesignSession}>(`/projects/${projectId}/questionnaire-object-removal`, {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json' },
+    body:JSON.stringify({ object_key:objectKey }),
+  })
+}
+
+export function cancelQuestionnaireObjectRemoval(projectId:string):Promise<{session:DesignSession}> {
+  return apiRequest<{session:DesignSession}>(`/projects/${projectId}/questionnaire-object-removal`, {
+    method:'DELETE',
+  })
+}
+
+export function acceptQuestionnaireObjectRemoval(projectId:string):Promise<{session:DesignSession}> {
+  return apiRequest<{session:DesignSession}>(`/projects/${projectId}/questionnaire-object-removal/accept`, {
+    method:'POST',
+  })
+}
+
 export function createQuestionnaireGeneration(projectId:string):Promise<Generation> {
   return apiRequest<Generation>(`/projects/${projectId}/questionnaire-generation`, { method:'POST' })
 }
