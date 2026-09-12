@@ -156,6 +156,7 @@ test('multi-object initial concept waits for every questionnaire, allows answer 
   await page.getByRole('button',{name:'Создать проект'}).click()
   await page.getByText('Мебель и площадки',{exact:true}).click()
   await page.getByText('Лавочка',{exact:true}).click()
+  await page.getByRole('button',{name:'Добавить из другого раздела'}).click()
   await page.getByText('Участок',{exact:true}).click()
   await page.getByText('Газон и посадки',{exact:true}).click()
   await page.getByText('Пруд или ручей',{exact:true}).click()
@@ -176,14 +177,14 @@ test('multi-object initial concept waits for every questionnaire, allows answer 
   await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
   expect(generationCount).toBe(0)
 
-  await page.getByText('Лавочка',{exact:true}).click()
+  await page.locator('details').filter({hasText:'Лавочка'}).locator('summary').click()
   await page.getByRole('button',{name:/Какая лавка\?/}).click()
   await page.getByText('Металл + дерево',{exact:true}).click()
   await page.getByText('Справа от дома',{exact:true}).click()
   await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
   expect(generationCount).toBe(0)
 
-  await page.getByText('Лавочка',{exact:true}).click()
+  await page.locator('details').filter({hasText:'Лавочка'}).locator('summary').click()
   await expect(page.getByRole('button',{name:/Какая лавка\?/})).toContainText('Металл + дерево')
   await page.getByRole('button',{name:'Создать общую концепцию'}).click()
   await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
@@ -222,16 +223,13 @@ test('house terrace floor options follow selected storeys in the UI',async({page
 
 
 test('fullscreen control calls Telegram expand and requestFullscreen',async({page})=>{
-  await page.addInitScript(()=>{
-    const target=window as typeof window & { __expandCalls?:number; __fullscreenCalls?:number }
-    window.Telegram={
-      WebApp:{
-        expand:()=>{target.__expandCalls=(target.__expandCalls||0)+1},
-        requestFullscreen:()=>{target.__fullscreenCalls=(target.__fullscreenCalls||0)+1},
-      },
-    }
-  })
   await page.goto('/')
+  await page.evaluate(()=>{
+    const target=window as typeof window & { __expandCalls?:number; __fullscreenCalls?:number }
+    if (!window.Telegram?.WebApp) throw new Error('Telegram WebApp SDK is unavailable')
+    window.Telegram.WebApp.expand=()=>{target.__expandCalls=(target.__expandCalls||0)+1}
+    window.Telegram.WebApp.requestFullscreen=()=>{target.__fullscreenCalls=(target.__fullscreenCalls||0)+1}
+  })
   await page.getByRole('button',{name:'Открыть на весь экран'}).click()
   await expect.poll(()=>page.evaluate(()=>({
     expand:(window as typeof window & {__expandCalls?:number}).__expandCalls||0,
