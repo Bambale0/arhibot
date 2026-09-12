@@ -178,6 +178,7 @@ class QuestionnaireService:
                 raise self._invalid(
                     "Complete every selected questionnaire before creating the initial concept."
                 )
+            house_reference_available = "eskez-doma" in session.selected_objects
             for object_key in session.selected_objects:
                 definition = definitions.get(object_key)
                 if definition is None:
@@ -189,7 +190,9 @@ class QuestionnaireService:
                     question
                     for question in definition["questions"]
                     if question["phase"] == "pre_render"
-                    and self._condition_ok(question.get("condition"), answers, False)
+                    and self._condition_ok(
+                        question.get("condition"), answers, house_reference_available
+                    )
                 ]
                 missing = [
                     question["id"] for question in active if question["id"] not in answers
