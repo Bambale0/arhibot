@@ -200,17 +200,22 @@ def test_full_house_rerender_ignores_stale_refinement_comment() -> None:
     assert spec["refinement_comment"] is None
 
 
-def test_initial_concept_prompt_contains_every_selected_object_and_aerial_camera() -> None:
+def test_initial_concept_prompt_uses_paired_camera_and_real_plot_scale_for_two_objects() -> None:
     catalog = build_catalog()
     session = DesignSession(
         catalog_version=catalog["version"],
         selected_objects=["eskez-doma", "banya"],
+        plot_area_sotkas=15,
         initial_concept_mode=True,
         survey_completed_objects=["eskez-doma", "banya"],
         source_step_completed=True,
         source_asset_id=uuid4(),
         answers={
-            "eskez-doma": {"1": "Современный минимализм"},
+            "eskez-doma": {
+                "1": "Современный минимализм",
+                "3": 200,
+                "4": "2 этажа",
+            },
             "banya": {"1": "Барнхаус"},
         },
     )
@@ -229,11 +234,54 @@ def test_initial_concept_prompt_contains_every_selected_object_and_aerial_camera
         "eskez-doma",
         "banya",
     ]
-    assert spec["camera"]["altitude_m"] == {"min": 50, "max": 70}
-    assert spec["camera"]["entire_plot_visible"] is True
+    assert spec["camera"]["mode"] == "paired_object_context"
+    assert spec["camera"]["altitude_m"] == {"min": 20, "max": 35}
+    assert spec["camera"]["entire_plot_visible"] is False
     assert spec["camera"]["all_selected_objects_visible"] is True
     assert spec["camera"]["source_photo_camera_lock"] is False
     assert spec["source_scene"]["kind"] == "site_photo"
+    assert spec["site_scale"]["plot_area_sotkas"] == 15
+    assert spec["site_scale"]["plot_area_m2"] == 1500
+    assert spec["site_scale"]["house_total_area_m2"] == 200.0
+    assert spec["site_scale"]["estimated_house_footprint_m2"] == 100.0
+    assert spec["site_scale"]["estimated_house_footprint_share_of_plot"] == 0.0667
+
+
+def test_initial_concept_camera_is_hero_for_one_object_and_aerial_for_three_plus() -> None:
+    catalog = build_catalog()
+    single = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma"],
+        plot_area_sotkas=8,
+        initial_concept_mode=True,
+        source_step_completed=True,
+        answers={"eskez-doma": {"1": "Современный минимализм"}},
+    )
+    single_spec = _spec(
+        build_initial_concept_prompt(catalog, single, input_asset_present=False)
+    )
+    assert single_spec["camera"]["mode"] == "single_object_hero"
+    assert single_spec["camera"]["altitude_m"] == {"min": 8, "max": 20}
+    assert single_spec["camera"]["entire_plot_visible"] is False
+
+    multi = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma", "banya", "besedka"],
+        plot_area_sotkas=8,
+        initial_concept_mode=True,
+        source_step_completed=True,
+        answers={
+            "eskez-doma": {"1": "Современный минимализм"},
+            "banya": {"1": "Барнхаус"},
+            "besedka": {"1": "Современный минимализм"},
+        },
+    )
+    multi_spec = _spec(
+        build_initial_concept_prompt(catalog, multi, input_asset_present=False)
+    )
+    assert multi_spec["camera"]["mode"] == "whole_site_aerial"
+    assert multi_spec["camera"]["altitude_m"] == {"min": 50, "max": 70}
+    assert multi_spec["camera"]["entire_plot_visible"] is True
 
 
 def test_object_removal_prompt_is_explicit_and_drops_design_constraints() -> None:
