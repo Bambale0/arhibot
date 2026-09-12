@@ -229,7 +229,10 @@ class AdminAiSandboxCreate(BaseModel):
     @field_validator("model_name", "prompt")
     @classmethod
     def strip_sandbox_text(cls, value: str) -> str:
-        return value.strip()
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
 
     @model_validator(mode="after")
     def protect_provider_fields(self) -> "AdminAiSandboxCreate":
@@ -253,7 +256,10 @@ class AdminAiOrbitCreate(BaseModel):
     @field_validator("model_name")
     @classmethod
     def strip_orbit_model(cls, value: str) -> str:
-        return value.strip()
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
 
     @field_validator("prompt")
     @classmethod
