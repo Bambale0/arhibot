@@ -456,7 +456,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
           <label>мс / кадр<input type="number" min="80" max="1000" value={orbitDuration} onChange={e=>setOrbitDuration(e.target.value)}/></label>
           <label className="admin-span-2">Доп. инструкция<textarea value={orbitPrompt} onChange={e=>setOrbitPrompt(e.target.value)} placeholder="Например: сохраняй мягкий вечерний свет"/></label>
           <label className="admin-span-2">Orbit model params (JSON)<textarea className="admin-code" value={orbitParams} onChange={e=>setOrbitParams(e.target.value)}/></label>
-          <div className="admin-span-2"><small>{Math.max(0,Number(orbitFrames)||0)-1} новых image-вызовов + исходный кадр · 0 video-вызовов · 0 кредитов AuRoom</small></div>
+          <div className="admin-span-2"><small>{Math.max(0,(Number(orbitFrames)||0)-1)} новых image-вызовов + исходный кадр · 0 video-вызовов · 0 кредитов AuRoom</small></div>
           <div className="admin-form-actions"><button type="button" className="secondary-button" disabled={orbitBusy} onClick={()=>void runOrbit()}>{orbitBusy?'Собираем…':'Собрать 360° loop'}</button></div>
         </div>
         {orbitGeneration&&<div className="admin-card-list"><article className="admin-list-card admin-idea-card">
