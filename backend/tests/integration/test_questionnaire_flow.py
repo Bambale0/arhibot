@@ -86,6 +86,19 @@ def _condition_ok(condition: dict | None, answers: dict, house_accepted: bool) -
         return not isinstance(answer, list) or not isinstance(value, list) or not any(
             item in answer for item in value
         )
+    if operator == "floor_option":
+        if not isinstance(answer, str) or not isinstance(value, str):
+            return False
+        floor_answer = answer.lower()
+        if value == "Первый этаж":
+            return True
+        if value == "Второй этаж":
+            return not floor_answer.startswith("1 ")
+        if value == "Третий этаж":
+            return "3" in floor_answer
+        if value == "Мансарда":
+            return "мансард" in floor_answer
+        return False
     return True
 
 
@@ -174,6 +187,8 @@ async def test_questionnaire_generation_prompt_is_built_only_on_server_and_hidde
         )
         answers.pop(review_id)
         design_session["answers"] = {"eskez-doma": answers}
+        design_session["survey_completed_objects"] = ["eskez-doma"]
+        design_session["current_object"] = None
         design_session["current_question_id"] = None
         answers_saved = await client.put(
             f"/api/v1/projects/{project_id}/questionnaire-session",
@@ -196,16 +211,17 @@ async def test_questionnaire_generation_prompt_is_built_only_on_server_and_hidde
         async with get_session_factory()() as session:
             generation = await session.get(Generation, generation_id)
             assert generation is not None
-            assert generation.prompt.startswith("AUROOM_RENDER_SPEC_V1")
+            assert generation.prompt.startswith("AUROOM_INITIAL_CONCEPT_V1")
             spec_payload = generation.prompt.split("STRUCTURED_SPEC:\n", 1)[1].split(
                 "\nFINAL_CHECK:", 1
             )[0]
             spec = loads(spec_payload)
-            assert spec["schema"] == "auroom.questionnaire_render.v1"
-            assert spec["task"]["object_key"] == "eskez-doma"
+            assert spec["schema"] == "auroom.initial_concept.v1"
+            assert spec["task"]["selected_objects_count"] == 1
+            assert spec["task"]["objects"][0]["object_key"] == "eskez-doma"
             constraints = {
                 item["question"]: item["answer"]
-                for item in spec["questionnaire_constraints"]
+                for item in spec["task"]["objects"][0]["questionnaire_constraints"]
             }
             for question in house_definition["questions"]:
                 if (
@@ -222,7 +238,7 @@ async def test_questionnaire_generation_prompt_is_built_only_on_server_and_hidde
         )
         assert stored_after_queue.status_code == 200, stored_after_queue.text
         assert (
-            stored_after_queue.json()["session"]["generation_ids"]["eskez-doma"]
+            stored_after_queue.json()["session"]["initial_generation_id"]
             == str(generation_id)
         )
 
@@ -289,6 +305,8 @@ async def test_questionnaire_generation_is_atomic_under_concurrent_requests(
         )
         answers.pop(review_id)
         design_session["answers"] = {"eskez-doma": answers}
+        design_session["survey_completed_objects"] = ["eskez-doma"]
+        design_session["current_object"] = None
         design_session["current_question_id"] = None
         saved = await client.put(
             f"/api/v1/projects/{project_id}/questionnaire-session",
@@ -330,7 +348,7 @@ async def test_questionnaire_generation_is_atomic_under_concurrent_requests(
         stored = await client.get(
             f"/api/v1/projects/{project_id}/questionnaire-session", headers=headers
         )
-        assert stored.json()["session"]["generation_ids"]["eskez-doma"] == generation_id
+        assert stored.json()["session"]["initial_generation_id"] == generation_id
         listed = await client.get(
             f"/api/v1/generations?project_id={project_id}", headers=headers
         )
