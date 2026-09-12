@@ -2,7 +2,10 @@ from json import loads
 from uuid import uuid4
 
 from app.questionnaires.catalog import build_catalog
-from app.questionnaires.generation_prompt import build_questionnaire_generation_prompt
+from app.questionnaires.generation_prompt import (
+    build_initial_concept_prompt,
+    build_questionnaire_generation_prompt,
+)
 from app.schemas.questionnaires import DesignSession
 
 
@@ -195,3 +198,87 @@ def test_full_house_rerender_ignores_stale_refinement_comment() -> None:
     )
 
     assert spec["refinement_comment"] is None
+
+
+def test_initial_concept_prompt_contains_every_selected_object_and_aerial_camera() -> None:
+    catalog = build_catalog()
+    session = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma", "banya"],
+        initial_concept_mode=True,
+        survey_completed_objects=["eskez-doma", "banya"],
+        source_step_completed=True,
+        source_asset_id=uuid4(),
+        answers={
+            "eskez-doma": {"1": "Современный минимализм"},
+            "banya": {"1": "Барнхаус"},
+        },
+    )
+
+    prompt = build_initial_concept_prompt(
+        catalog,
+        session,
+        input_asset_present=True,
+    )
+    spec = _spec(prompt)
+
+    assert prompt.startswith("AUROOM_INITIAL_CONCEPT_V1")
+    assert spec["schema"] == "auroom.initial_concept.v1"
+    assert spec["task"]["selected_objects_count"] == 2
+    assert [item["object_key"] for item in spec["task"]["objects"]] == [
+        "eskez-doma",
+        "banya",
+    ]
+    assert spec["camera"]["altitude_m"] == {"min": 50, "max": 70}
+    assert spec["camera"]["entire_plot_visible"] is True
+    assert spec["camera"]["all_selected_objects_visible"] is True
+    assert spec["camera"]["source_photo_camera_lock"] is False
+    assert spec["source_scene"]["kind"] == "site_photo"
+
+
+def test_object_removal_prompt_is_explicit_and_drops_design_constraints() -> None:
+    definition = _definition("banya")
+    session = DesignSession(
+        catalog_version=build_catalog()["version"],
+        selected_objects=["eskez-doma", "banya"],
+        initial_concept_mode=True,
+        survey_completed_objects=["eskez-doma", "banya"],
+        initial_generation_id=uuid4(),
+        initial_concept_accepted=True,
+        source_step_completed=True,
+        scene_asset_id=uuid4(),
+        scene_generation_id=uuid4(),
+        accepted_objects=["eskez-doma", "banya"],
+        pending_removal_object="banya",
+        answers={"banya": {"1": "Как у дома"}},
+        edit_regions={
+            "banya": {"x": 0.55, "y": 0.18, "width": 0.42, "height": 0.66}
+        },
+        lock_regions={
+            "eskez-doma": {"x": 0.1, "y": 0.1, "width": 0.4, "height": 0.5},
+            "banya": {"x": 0.55, "y": 0.18, "width": 0.42, "height": 0.66},
+        },
+    )
+
+    spec = _spec(
+        build_questionnaire_generation_prompt(
+            definition,
+            session,
+            accepted_before=["eskez-doma"],
+            input_asset_present=True,
+        )
+    )
+
+    assert spec["source_scene"]["kind"] == "accepted_scene"
+    assert spec["task"]["operation"] == "remove_object"
+    assert spec["removal"]["enabled"] is True
+    assert spec["removal"]["restore_background_naturally"] is True
+    assert spec["questionnaire_constraints"] == []
+    assert spec["spatial_constraints"]["edit_region_percent"] == {
+        "left": 55,
+        "top": 18,
+        "width": 42,
+        "height": 66,
+    }
+    assert "Полностью удалить" in spec["refinement_comment"]
+    assert "Не применяется при удалении" in spec["inheritance"]

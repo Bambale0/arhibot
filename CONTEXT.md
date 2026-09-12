@@ -80,22 +80,25 @@ The public non-secret bot copy managed through the Control Plane: bot name, desc
 
 ## Questionnaire Project Flow
 
-The approved questionnaire flow is a cumulative visual project rather than a set of unrelated generations.
+The approved `Создать` flow has two explicit phases: one initial whole-site concept, then isolated paid refinements.
 
-- The normal `Создать` questionnaire path does not ask the user to choose an existing project. The user selects one or more design objects and presses `Начать проект`; AuRoom creates a new Project automatically with the current questionnaire catalog version and selected-object session, then opens the one-time site source step. Existing-project selection is not part of this flow.
-- A Project created by `Начать проект` stays a server-owned hidden questionnaire draft until the one-time site source choice is successfully saved. Hidden drafts never appear in the normal project list. Backing out before that source choice discards the pristine draft immediately; abandoned pristine drafts are automatically soft-deleted after 24 hours, including any project assets uploaded before the source-step save completed. The generic project API cannot set or clear the draft marker.
-- Once a generated object is accepted by the user, it is fixed. Adding or regenerating another object must not silently change previously accepted objects. The questionnaire runtime enforces this visually with deterministic masked composition: the user marks the allowed edit rectangle on the accepted scene, accepted lock rectangles have priority, and the worker copies every pixel outside the allowed region (and every protected pixel) from the previous accepted scene into a lossless PNG result.
-- The first accepted object (or a legacy accepted object without a lock) must receive a visual lock rectangle before another object can be accepted. Later accepted objects inherit their edit rectangle as a lock, so future generations cannot overwrite those pixels.
-- After an object is accepted, the user chooses which object to work on next; the system must not force an automatic next-object order.
-- The questionnaire option `Как у дома` is inheritance from the accepted main house. It is hidden and invalid until the main house (`eskez-doma`) has been accepted. Once available, it means the new object should inherit the accepted house's architectural language, including compatible style, materials and roof where the questionnaire supports roof inheritance.
-- The existing garage/canopy questionnaire branching remains as approved; do not rewrite it into a new garage-vs-canopy entry question without a separate product decision.
-- A completed questionnaire application must be delivered to the administrator in Telegram in addition to being persisted for operator access.
+- The user selects one or more design objects before project launch. `Начать проект` creates a new questionnaire Project with that exact ordered selection and the current catalog revision; existing-project selection is not part of the normal flow.
+- A new Project remains a server-owned hidden draft until the one-time site source choice is saved. Backing out before that choice discards the pristine draft; abandoned pristine drafts are soft-deleted by maintenance.
+- **Initial concept:** AuRoom collects every active pre-render answer for every object selected before launch. No AI generation is started while those questionnaires are being filled. When all selected questionnaires are complete, one server-built `AUROOM_INITIAL_CONCEPT_V1` request creates one Generation and therefore one credit reservation according to the admin-managed `master_plan` price.
+- The initial render is a single coherent site composition. All selected objects must be visible simultaneously. Its camera is a high-angle oblique aerial view at 50–70 m with the whole plot readable. A user-uploaded site photo supplies site geometry, boundaries and environmental context; its original camera angle does not lock the initial render.
+- Before the initial Generation is accepted, questionnaire answers remain editable. Changing an upstream answer must remove dependent answers that became inactive or invalid before another Generation can be requested.
+- Accepting the initial concept atomically snapshots the selected object set onto the accepted scene. Historical questionnaire projects created before `initial_concept_mode` keep the previous per-object lifecycle for compatibility.
+- **Refinement:** after the initial concept is accepted, changing, adding, or removing an object is a new Generation. The user selects the object/action and marks the exact edit rectangle. Changes include a requested edit description; removal uses an explicit remove-object prompt that reconstructs only the selected background area. Every iteration uses the last accepted scene, preserves its camera, and uses deterministic masked composition; every pixel outside the allowed edit rectangle is restored from the accepted input scene.
+- Removing an accepted object is never a metadata-only delete. The object remains accepted until the masked removal Generation completes and the user accepts that visual result. Only then is it moved to the session's removed-object history and the new output becomes the accepted scene. The final remaining accepted object cannot be removed from this flow.
+- A completed questionnaire application is available only after an accepted scene and is persisted plus delivered to configured administrators in Telegram.
+- The existing garage/canopy questionnaire branching remains source-authored. Do not replace it with a new entry question without a separate product decision.
 
 ### Questionnaire source-contract invariants
 
-- The site source step is exactly once per questionnaire session: upload a plot photo or explicitly continue without one before any questionnaire answer is accepted. The selected object set and this source choice become immutable once the session starts.
-- `Пропустить` is a source-authored action, never a generic optional-question shortcut. It is exposed only when the source defines a default and any source condition for that skip is satisfied.
-- `Свой вариант` is an input path, not a literal answer. The client must collect the user's actual value; numeric source bounds are enforced in both client UX and server validation.
-- A design object can become accepted only after every active pre-render question has an answer or explicit source-defined skip and the sketch review is positive.
-- Accepted object answers are immutable snapshots of the catalog version in which the object was approved. Catalog upgrades must not rewrite or invalidate an already accepted object; unfinished answers are re-evaluated against the new catalog before the next generation/acceptance.
-- The application questionnaire is inaccessible until at least one sketch is accepted. A submitted application is persisted and queued for Telegram delivery; deployed runtime readiness requires at least one active admin/superadmin Telegram recipient.
+- The site source step occurs exactly once before any questionnaire answer is accepted.
+- The object set selected before the initial concept is the complete input to that one whole-site Generation.
+- `Пропустить` is source-authored and appears only when its explicit default and condition allow it.
+- `Свой вариант` is an input path, never a literal stored answer. Numeric bounds are enforced in client and server validation.
+- Active option dependencies are authoritative in both client and server. For example, floor-specific terrace/balcony options cannot refer to a storey the selected house configuration does not have.
+- Until the initial concept is accepted, users can navigate backward and revise answers. Dependent answers invalidated by a revision are discarded rather than silently retained.
+- After acceptance, the accepted scene is immutable except through an explicit paid masked refinement. A submitted application is persisted and queued for Telegram delivery.

@@ -25,6 +25,8 @@ function TelegramAuthError({ message }: { message?: string | null }) {
 function initialSection(): AppSection {
   const params = new URLSearchParams(window.location.search)
   if (params.get('billing') === 'return') return 'profile'
+  const direct = params.get('section')
+  if (direct === 'home' || direct === 'ideas' || direct === 'create' || direct === 'history' || direct === 'profile') return direct
   if (params.get('idea')) return 'ideas'
   if (params.get('generation')) return 'history'
   return 'home'

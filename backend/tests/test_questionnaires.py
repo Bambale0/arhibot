@@ -20,7 +20,7 @@ def _question(key: str, question_id: str) -> dict:
 def test_questionnaire_catalog_matches_source_bundle() -> None:
     catalog = QuestionnaireCatalogResponse.model_validate(build_catalog())
     sources = _load_sources()
-    assert catalog.version == "2026-09-10.1"
+    assert catalog.version == "2026-09-12.1"
     assert CATALOG_VERSION == catalog.version
     assert len(catalog.sections) == 6
     assert len(catalog.questionnaires) == 27
@@ -247,6 +247,46 @@ def test_server_rejects_options_hidden_by_questionnaire_rules() -> None:
         extras,
         ["Балкон"],
         {"4": "2 этажа", "12б": ["Первый этаж"]},
+        False,
+    )
+
+
+def test_house_floor_dependent_options_follow_selected_storeys() -> None:
+    service = QuestionnaireService(None)
+    terrace_floors = _question("eskez-doma", "12б")
+
+    service._validate_answer(
+        terrace_floors,
+        ["Первый этаж"],
+        {"4": "1 этаж", "12": "Терраса"},
+        False,
+    )
+    with pytest.raises(AppError) as exc:
+        service._validate_answer(
+            terrace_floors,
+            ["Второй этаж"],
+            {"4": "1 этаж", "12": "Терраса"},
+            False,
+        )
+    assert "inactive" in exc.value.detail
+
+    service._validate_answer(
+        terrace_floors,
+        ["Первый этаж", "Второй этаж"],
+        {"4": "2 этажа", "12": "Терраса"},
+        False,
+    )
+    with pytest.raises(AppError):
+        service._validate_answer(
+            terrace_floors,
+            ["Третий этаж"],
+            {"4": "2 этажа", "12": "Терраса"},
+            False,
+        )
+    service._validate_answer(
+        terrace_floors,
+        ["Мансарда"],
+        {"4": "2 этажа + мансарда", "12": "Терраса"},
         False,
     )
 

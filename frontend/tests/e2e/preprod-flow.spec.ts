@@ -23,7 +23,7 @@ let savedIdea=false
 let hideIdeaFromFeed=false
 function resetState(){
   generationCount=0; publication=null; savedIdea=false; hideIdeaFromFeed=false
-  session={session_id:'77777777-7777-4777-8777-777777777777',catalog_version:catalog.version,selected_objects:['lavochka'],current_object:null,current_question_id:null,source_step_completed:false,source_asset_id:null,scene_asset_id:null,answers:{},accepted_objects:[],generation_ids:{},edit_question_ids:[],review_comments:{},edit_regions:{},lock_regions:{},region_mode:null,region_object:null,application_submitted:false}
+  session={session_id:'77777777-7777-4777-8777-777777777777',catalog_version:catalog.version,selected_objects:['lavochka'],initial_concept_mode:false,survey_completed_objects:[],initial_generation_id:null,initial_concept_accepted:false,current_object:null,current_question_id:null,source_step_completed:false,source_asset_id:null,scene_asset_id:null,answers:{},accepted_objects:[],removed_objects:[],pending_removal_object:null,generation_ids:{},edit_question_ids:[],review_comments:{},edit_regions:{},lock_regions:{},region_mode:null,region_object:null,application_submitted:false}
   project={id:projectId,name:'Лавочка',description:null,status:'active',context:{questionnaire_draft:false,design_session:session},created_at:now,updated_at:now}
 }
 function asset(i:number){return {id:assetIds[i],project_id:projectId,type:'image',purpose:'generation_output',original_filename:'result.png',mime_type:'image/png',size_bytes:1234,width:640,height:480,url:`data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"></svg>`,created_at:now}}
@@ -40,10 +40,17 @@ test.beforeEach(async ({page})=>{
     if(path.endsWith(`/projects/${projectId}`)&&method==='GET') return json(route,project)
     for(let i=0;i<generationIds.length;i++) if(path.endsWith(`/generations/${generationIds[i]}`)&&method==='GET') return json(route,generation(i))
     if(path.endsWith('/questionnaires')&&method==='GET') return json(route,catalog)
+    if(path.endsWith('/questionnaire-generation-cost')&&method==='GET') return json(route,{generation_type:'master_plan',credits:1,is_available:true})
     if(path.endsWith('/questionnaire-projects')&&method==='POST') return json(route,project,201)
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='GET') return json(route,{session})
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='PUT') {session=JSON.parse(req.postData()||'{}');project={...project,context:{...project.context,design_session:session}};return json(route,{session})}
     if(path.endsWith(`/projects/${projectId}/questionnaire-generation`)&&method==='POST'){const i=generationCount++;return json(route,generation(i,'queued'),202)}
+    if(path.endsWith(`/projects/${projectId}/questionnaire-initial-accept`)&&method==='POST'){
+      const completed=generation(0)
+      session={...session,initial_concept_accepted:true,accepted_objects:[...session.selected_objects],generation_ids:Object.fromEntries(session.selected_objects.map((key:string)=>[key,generationIds[0]])),scene_asset_id:completed.output_asset.id,current_object:null,current_question_id:null}
+      project={...project,context:{...project.context,design_session:session}}
+      return json(route,{session})
+    }
     for(let i=0;i<generationIds.length;i++) if(path.endsWith(`/projects/${projectId}/questionnaire-generation/${generationIds[i]}`)&&method==='GET') return json(route,generation(i))
     if(path.endsWith('/ideas')&&method==='GET') return json(route,hideIdeaFromFeed?[]:[{id:ideaId,title:'Лавочка',category:'Мебель и площадки',generation_type:'master_plan',image_url:asset(1).url,objects:[],selected_objects:['lavochka'],published_at:now,is_saved:savedIdea}])
     if(path.endsWith(`/ideas/${ideaId}`)&&method==='GET') return json(route,{id:ideaId,title:'Лавочка',category:'Мебель и площадки',generation_type:'master_plan',image_url:asset(1).url,objects:[],selected_objects:['lavochka'],published_at:now,is_saved:savedIdea})
@@ -79,6 +86,39 @@ test('canonical create flow supports refinement and own unpublish without techni
   await page.getByRole('button',{name:'Убрать из Идей'}).click(); await expect(page.getByRole('button',{name:'Вернуть в Идеи'})).toBeVisible()
   await page.getByRole('button',{name:'Вернуть в Идеи'}).click(); await expect(page.getByRole('button',{name:'Убрать из Идей'})).toBeVisible()
   await expect(page.getByText('AUROOM_RENDER_SPEC_V1')).toHaveCount(0); expect(errors).toEqual([])
+})
+
+
+test('initial concept collects all answers before one generation and supports previous question',async({page})=>{
+  session={...session,initial_concept_mode:true,current_object:null}
+  project={...project,context:{...project.context,design_session:session}}
+  await page.goto('/')
+  await page.getByRole('button',{name:'Создать проект'}).click()
+  await page.getByText('Мебель и площадки',{exact:true}).click()
+  await page.getByText('Лавочка',{exact:true}).click()
+  await page.getByRole('button',{name:'Начать проект'}).click()
+  await page.getByRole('button',{name:'Продолжить без фото'}).click()
+  await page.getByRole('button',{name:'Лавочка',exact:true}).click()
+
+  await page.getByText('Деревянная со спинкой',{exact:true}).click()
+  await expect(page.getByText('Где на участке относительно дома?')).toBeVisible()
+  expect(generationCount).toBe(0)
+
+  await page.getByRole('button',{name:'Назад'}).click()
+  await expect(page.getByText('Какая лавка?')).toBeVisible()
+  await page.getByText('Металл + дерево',{exact:true}).click()
+  await page.getByText('Справа от дома',{exact:true}).click()
+
+  await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
+  expect(generationCount).toBe(0)
+  await expect(page.getByText('Одна общая генерация · 1 кр.')).toBeVisible()
+  await page.getByRole('button',{name:'Создать общую концепцию'}).click()
+  await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
+  expect(generationCount).toBe(1)
+
+  await page.getByRole('button',{name:'Принять концепцию'}).click()
+  await expect(page.getByText('Что делаем дальше?')).toBeVisible()
+  await expect(page.getByText('Следующая генерация · 1 кр.')).toBeVisible()
 })
 
 

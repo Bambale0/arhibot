@@ -44,8 +44,12 @@ class QuestionnaireProjectService:
             session.source_step_completed
             or session.source_asset_id
             or session.scene_asset_id
+            or session.scene_generation_id
             or session.current_question_id
             or session.answers
+            or session.survey_completed_objects
+            or session.initial_generation_id
+            or session.initial_concept_accepted
             or session.accepted_objects
             or session.generation_ids
             or session.edit_question_ids
@@ -98,6 +102,7 @@ class QuestionnaireProjectService:
         design_session = DesignSession(
             catalog_version=catalog["version"],
             selected_objects=selected,
+            initial_concept_mode=True,
             current_object=selected[0] if len(selected) == 1 else None,
         )
         project = Project(

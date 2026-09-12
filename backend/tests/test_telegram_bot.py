@@ -2,12 +2,16 @@ import pytest
 
 from app.telegram_bot.main import (
     TelegramBotContent,
+    TelegramUserSummary,
     canonicalize_webapp_url,
     configure_bot,
     menu_button,
     mini_app_keyboard,
     normalize_command,
     parse_bot_content,
+    parse_user_summary,
+    send_start,
+    webapp_section_url,
 )
 
 
@@ -162,3 +166,68 @@ def test_configure_bot_updates_only_changed_branding_field() -> None:
 
     setter_calls = [(method, payload) for method, payload in calls if method.startswith("set")]
     assert setter_calls == [("setMyName", {"name": expected.bot_name})]
+
+
+def test_personalized_start_keyboard_routes_to_product_sections() -> None:
+    summary = TelegramUserSummary(
+        display_name="Игорь",
+        credits_balance=7,
+        active_projects=2,
+        active_generations=1,
+    )
+    keyboard = mini_app_keyboard("https://archi.example.com", content(), summary)
+
+    assert keyboard["inline_keyboard"][0][0]["text"] == "Создать проект"
+    assert keyboard["inline_keyboard"][0][0]["web_app"]["url"].endswith("?section=create")
+    assert keyboard["inline_keyboard"][0][1]["web_app"]["url"].endswith("?section=home")
+    assert keyboard["inline_keyboard"][1][0]["web_app"]["url"].endswith("?section=history")
+    assert keyboard["inline_keyboard"][1][1]["web_app"]["url"].endswith("?section=profile")
+
+
+def test_send_start_includes_safe_personal_summary_when_available() -> None:
+    sent: list[tuple[str, object]] = []
+
+    class FakeApi:
+        def call(self, method: str, payload=None, *, timeout: int = 15):
+            sent.append((method, payload))
+            return True
+
+    summary = TelegramUserSummary(
+        display_name="Игорь",
+        credits_balance=9,
+        active_projects=3,
+        active_generations=2,
+    )
+    send_start(
+        FakeApi(), 123, "https://archi.example.com", content(), summary  # type: ignore[arg-type]
+    )
+
+    method, payload = sent[0]
+    assert method == "sendMessage"
+    assert "Кредиты: 9" in payload["text"]
+    assert "Проектов: 3" in payload["text"]
+    assert "Генераций в работе: 2" in payload["text"]
+
+
+def test_user_summary_parser_rejects_incomplete_payloads() -> None:
+    parsed = parse_user_summary(
+        {
+            "display_name": "Игорь",
+            "credits_balance": 5,
+            "active_projects": 1,
+            "active_generations": 0,
+        }
+    )
+    assert parsed is not None
+    assert parsed.credits_balance == 5
+    assert parse_user_summary({"display_name": "Игорь"}) is None
+
+
+def test_webapp_section_url_replaces_stale_navigation() -> None:
+    url = webapp_section_url(
+        "https://archi.example.com/app?generation=old&section=history&keep=1",
+        "create",
+    )
+    assert "generation=" not in url
+    assert "section=create" in url
+    assert "keep=1" in url

@@ -1,6 +1,6 @@
 import { request as apiRequest } from './api'
 import type { Generation, Project } from './types'
-import type { DesignSession, QuestionnaireApplicationSubmitResponse, QuestionnaireCatalog } from './questionnaireTypes'
+import type { DesignSession, QuestionnaireApplicationSubmitResponse, QuestionnaireCatalog, QuestionnaireGenerationCost } from './questionnaireTypes'
 
 export function getQuestionnaireCatalog():Promise<QuestionnaireCatalog> {
   return apiRequest<QuestionnaireCatalog>('/questionnaires')
@@ -40,8 +40,44 @@ export function submitQuestionnaireApplication(projectId:string, session:DesignS
   })
 }
 
+export function getQuestionnaireGenerationCost():Promise<QuestionnaireGenerationCost> {
+  return apiRequest<QuestionnaireGenerationCost>('/questionnaire-generation-cost')
+}
+
+export function addQuestionnaireObject(projectId:string, objectKey:string):Promise<{session:DesignSession}> {
+  return apiRequest<{session:DesignSession}>(`/projects/${projectId}/questionnaire-objects`, {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json' },
+    body:JSON.stringify({ object_key:objectKey }),
+  })
+}
+
+export function startQuestionnaireObjectRemoval(projectId:string, objectKey:string):Promise<{session:DesignSession}> {
+  return apiRequest<{session:DesignSession}>(`/projects/${projectId}/questionnaire-object-removal`, {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json' },
+    body:JSON.stringify({ object_key:objectKey }),
+  })
+}
+
+export function cancelQuestionnaireObjectRemoval(projectId:string):Promise<{session:DesignSession}> {
+  return apiRequest<{session:DesignSession}>(`/projects/${projectId}/questionnaire-object-removal`, {
+    method:'DELETE',
+  })
+}
+
+export function acceptQuestionnaireObjectRemoval(projectId:string):Promise<{session:DesignSession}> {
+  return apiRequest<{session:DesignSession}>(`/projects/${projectId}/questionnaire-object-removal/accept`, {
+    method:'POST',
+  })
+}
+
 export function createQuestionnaireGeneration(projectId:string):Promise<Generation> {
   return apiRequest<Generation>(`/projects/${projectId}/questionnaire-generation`, { method:'POST' })
+}
+
+export function acceptQuestionnaireInitialConcept(projectId:string):Promise<{session:DesignSession}> {
+  return apiRequest<{session:DesignSession}>(`/projects/${projectId}/questionnaire-initial-accept`, { method:'POST' })
 }
 
 export function getQuestionnaireGeneration(projectId:string, generationId:string):Promise<Generation> {

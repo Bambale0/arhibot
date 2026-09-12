@@ -192,13 +192,33 @@ class IdeaService:
                 detail="The source project has an invalid questionnaire session.",
             ) from exc
 
+        if (
+            design_session.initial_concept_mode
+            and design_session.initial_concept_accepted
+            and design_session.scene_generation_id is not None
+            and generation.id != design_session.scene_generation_id
+        ):
+            raise AppError(
+                type="idea_source_not_accepted",
+                title="Current accepted work required",
+                status=422,
+                detail="Only the current accepted scene can be added to Ideas.",
+            )
+
+        whole_site_scene = bool(
+            design_session.initial_concept_mode
+            and design_session.initial_concept_accepted
+            and design_session.scene_generation_id == generation.id
+        )
         object_key = self._accepted_object_key(design_session, generation.id)
+        if object_key is None and whole_site_scene and design_session.accepted_objects:
+            object_key = design_session.accepted_objects[-1]
         if object_key is None:
             raise AppError(
                 type="idea_source_not_accepted",
                 title="Accepted work required",
                 status=422,
-                detail="Only an accepted result from Create can be added to Ideas.",
+                detail="Only the current accepted result from Create can be added to Ideas.",
             )
 
         catalog = await QuestionnaireService(self.session).catalog_for_version(
@@ -216,7 +236,12 @@ class IdeaService:
 
         definitions = {item["key"]: item for item in catalog["questionnaires"]}
         accepted_index = design_session.accepted_objects.index(object_key)
-        selected_objects = design_session.accepted_objects[: accepted_index + 1]
+        selected_objects = (
+            list(design_session.accepted_objects)
+            if design_session.initial_concept_mode
+            and design_session.initial_concept_accepted
+            else design_session.accepted_objects[: accepted_index + 1]
+        )
         section_by_object = {
             key: section["title"]
             for section in catalog["sections"]
@@ -229,7 +254,10 @@ class IdeaService:
             if definition is None:
                 continue
             answers = design_session.answers.get(key, {})
-            house_accepted = "eskez-doma" in accepted_before
+            house_accepted = "eskez-doma" in accepted_before or (
+                design_session.initial_concept_mode
+                and "eskez-doma" in selected_objects
+            )
             summary: list[dict] = []
             for question in definition["questions"]:
                 if question.get("phase") != "pre_render":
@@ -254,10 +282,14 @@ class IdeaService:
             accepted_before.append(key)
 
         definition = definitions[object_key]
+        whole_site = (
+            design_session.initial_concept_mode
+            and design_session.initial_concept_accepted
+        )
         return {
             "catalog_version": design_session.catalog_version,
-            "title": definition["title"],
-            "category": section_by_object.get(object_key, "Проект"),
+            "title": project.name if whole_site else definition["title"],
+            "category": "Проект участка" if whole_site else section_by_object.get(object_key, "Проект"),
             "selected_objects": selected_objects,
             "object_key": object_key,
             "objects": objects,

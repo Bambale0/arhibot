@@ -2,7 +2,7 @@ export type NormalizedRect = { x:number; y:number; width:number; height:number }
 export type QuestionnaireAnswer = string | number | boolean | string[]
 export type QuestionnaireCondition = {
   question_id?: string
-  operator: 'eq'|'neq'|'in'|'contains'|'starts_with'|'all'|'any'|'house_accepted'|'not_contains_any'
+  operator: 'eq'|'neq'|'in'|'contains'|'starts_with'|'all'|'any'|'house_accepted'|'not_contains_any'|'floor_option'
   value?: string|string[]
   conditions?: QuestionnaireCondition[]
 }
@@ -32,13 +32,20 @@ export type DesignSession = {
   session_id:string
   catalog_version:string
   selected_objects:string[]
+  initial_concept_mode:boolean
+  survey_completed_objects:string[]
+  initial_generation_id:string|null
+  initial_concept_accepted:boolean
   current_object:string|null
   current_question_id:string|null
   source_step_completed:boolean
   source_asset_id:string|null
   scene_asset_id:string|null
+  scene_generation_id:string|null
   answers:Record<string,Record<string,QuestionnaireAnswer>>
   accepted_objects:string[]
+  removed_objects:string[]
+  pending_removal_object:string|null
   generation_ids:Record<string,string>
   edit_question_ids:string[]
   review_comments:Record<string,string>
@@ -54,13 +61,20 @@ export function createDesignSession(catalogVersion:string, selectedObjects:strin
     session_id:crypto.randomUUID(),
     catalog_version:catalogVersion,
     selected_objects:[...selectedObjects],
+    initial_concept_mode:true,
+    survey_completed_objects:[],
+    initial_generation_id:null,
+    initial_concept_accepted:false,
     current_object:selectedObjects.length === 1 ? selectedObjects[0] : null,
     current_question_id:null,
     source_step_completed:false,
     source_asset_id:null,
     scene_asset_id:null,
+    scene_generation_id:null,
     answers:{},
     accepted_objects:[],
+    removed_objects:[],
+    pending_removal_object:null,
     generation_ids:{},
     edit_question_ids:[],
     review_comments:{},
@@ -109,3 +123,9 @@ export type QuestionnaireApplication = {
   brief:QuestionnaireBriefObject[]
 }
 export type QuestionnaireApplicationSubmitResponse = { session:DesignSession; application:QuestionnaireApplication }
+
+export type QuestionnaireGenerationCost = {
+  generation_type:'master_plan'
+  credits:number|null
+  is_available:boolean
+}
