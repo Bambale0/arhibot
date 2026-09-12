@@ -117,3 +117,9 @@ export type QuestionnaireApplication = {
   brief:QuestionnaireBriefObject[]
 }
 export type QuestionnaireApplicationSubmitResponse = { session:DesignSession; application:QuestionnaireApplication }
+
+export type QuestionnaireGenerationCost = {
+  generation_type:'master_plan'
+  credits:number|null
+  is_available:boolean
+}
