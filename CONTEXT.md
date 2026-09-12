@@ -52,7 +52,7 @@ Append-only operational trace of admin changes such as tariff edits, AI configur
 
 ## Generation Price
 
-The admin-managed number of Credits reserved when a user starts one Generation of a specific mode. A disabled or missing price makes that mode unavailable for paid generation until an operator configures it.
+The admin-managed number of Credits reserved when a user starts one paid Generation of a specific mode. A disabled or missing price makes that mode unavailable for paid generation until an operator configures it. The questionnaire's first whole-site concept is the explicit product exception: it is one free Generation and reserves zero Credits; later add/change/remove refinements use the configured paid price.
 
 ## Credit Transaction
 
@@ -84,11 +84,11 @@ The approved `Создать` flow has two explicit phases: one initial whole-si
 
 - The user selects one or more design objects before project launch. `Начать проект` creates a new questionnaire Project with that exact ordered selection and the current catalog revision; existing-project selection is not part of the normal flow.
 - A new Project remains a server-owned hidden draft until the one-time site source choice is saved. Backing out before that choice discards the pristine draft; abandoned pristine drafts are soft-deleted by maintenance.
-- **Initial concept:** AuRoom collects every active pre-render answer for every object selected before launch. No AI generation is started while those questionnaires are being filled. When all selected questionnaires are complete, one server-built `AUROOM_INITIAL_CONCEPT_V1` request creates one Generation and therefore one credit reservation according to the admin-managed `master_plan` price.
+- **Initial concept:** AuRoom collects every active pre-render answer for every object selected before launch. No AI generation is started while those questionnaires are being filled. When all selected questionnaires are complete, one server-built `AUROOM_INITIAL_CONCEPT_V1` request creates exactly one free Generation with `credits_charged = 0`, regardless of how many objects were selected before launch.
 - The initial render is a single coherent site composition. All selected objects must be visible simultaneously. Its camera is a high-angle oblique aerial view at 50–70 m with the whole plot readable. A user-uploaded site photo supplies site geometry, boundaries and environmental context; its original camera angle does not lock the initial render.
 - Before the initial Generation is accepted, questionnaire answers remain editable. Changing an upstream answer must remove dependent answers that became inactive or invalid before another Generation can be requested.
 - Accepting the initial concept atomically snapshots the selected object set onto the accepted scene. Historical questionnaire projects created before `initial_concept_mode` keep the previous per-object lifecycle for compatibility.
-- **Refinement:** after the initial concept is accepted, changing, adding, or removing an object is a new Generation. The user selects the object/action and marks the exact edit rectangle. Changes include a requested edit description; removal uses an explicit remove-object prompt that reconstructs only the selected background area. Every iteration uses the last accepted scene, preserves its camera, and uses deterministic masked composition; every pixel outside the allowed edit rectangle is restored from the accepted input scene.
+- **Refinement:** after the initial concept is accepted, changing, adding, or removing an object is a new paid Generation. The user selects the object/action and marks the exact edit rectangle. Changes include a requested edit description; removal uses an explicit remove-object prompt that reconstructs only the selected background area. Every iteration uses the last accepted scene, preserves its camera, and uses deterministic masked composition; every pixel outside the allowed edit rectangle is restored from the accepted input scene.
 - Removing an accepted object is never a metadata-only delete. The object remains accepted until the masked removal Generation completes and the user accepts that visual result. Only then is it moved to the session's removed-object history and the new output becomes the accepted scene. The final remaining accepted object cannot be removed from this flow.
 - A completed questionnaire application is available only after an accepted scene and is persisted plus delivered to configured administrators in Telegram.
 - Telegram application delivery is resumable per recipient and bounded. Successful recipients are checkpointed and never receive duplicate chunks on retries. After the bounded retry budget is exhausted, delivery becomes `partial` if at least one configured admin received the application, or `failed` if none did; operators can explicitly retry a terminal delivery after fixing the recipient without clearing successful recipient checkpoints.
@@ -97,7 +97,7 @@ The approved `Создать` flow has two explicit phases: one initial whole-si
 ### Questionnaire source-contract invariants
 
 - The site source step occurs exactly once before any questionnaire answer is accepted.
-- The object set selected before the initial concept is the complete input to that one whole-site Generation.
+- The object set selected before the initial concept is the complete input to that one free whole-site Generation.
 - `Пропустить` is source-authored and appears only when its explicit default and condition allow it.
 - `Свой вариант` is an input path, never a literal stored answer. Numeric bounds are enforced in client and server validation.
 - Active option dependencies are authoritative in both client and server. For example, floor-specific terrace/balcony options cannot refer to a storey the selected house configuration does not have.
