@@ -229,6 +229,7 @@ def build_questionnaire_generation_prompt(
     object_key = str(definition["key"])
     answers = session.answers.get(object_key, {})
     house_accepted = "eskez-doma" in accepted_before
+    removing_object = session.pending_removal_object == object_key
 
     questionnaire_constraints: list[dict[str, object]] = []
     for question in definition["questions"]:
@@ -241,19 +242,26 @@ def build_questionnaire_generation_prompt(
         value = _answer_value(answers[question["id"]])
         if value in (None, "", []):
             continue
-        questionnaire_constraints.append(
-            {
-                "question": str(question["text"]).strip(),
-                "answer": value,
-            }
-        )
+        if not removing_object:
+            questionnaire_constraints.append(
+                {
+                    "question": str(question["text"]).strip(),
+                    "answer": value,
+                }
+            )
 
     if accepted_before:
         source_kind = "accepted_scene"
         source_directive = (
             "Используй входное изображение как уже принятую сцену. Сохрани без изменений "
             "существующий дом, ранее принятые объекты, их геометрию и пропорции, участок, "
-            "перспективу, ракурс и свет. Создавай или изменяй только текущий объект."
+            "перспективу, ракурс и свет. "
+            + (
+                "Полностью удали только текущий объект внутри edit_region и естественно "
+                "восстанови фон/ландшафт на его месте."
+                if removing_object
+                else "Создавай или изменяй только текущий объект."
+            )
         )
     elif input_asset_present:
         source_kind = "site_photo"
@@ -272,7 +280,15 @@ def build_questionnaire_generation_prompt(
     locked_objects = [
         key for key in accepted_before if session.lock_regions.get(key) is not None
     ]
-    refinement = session.review_comments.get(object_key, "").strip() or None
+    refinement = (
+        (
+            "Полностью удалить текущий объект из выделенной области. Не оставлять его "
+            "фрагменты, фундамент, крышу, тени или артефакты; естественно продолжить "
+            "ландшафт и фон принятой сцены."
+        )
+        if removing_object
+        else session.review_comments.get(object_key, "").strip() or None
+    )
     full_rerender = (
         object_key == "eskez-doma"
         and isinstance(answers.get("15а"), str)
@@ -294,6 +310,9 @@ def build_questionnaire_generation_prompt(
 
     style_inherited = answers.get("1") == "Как у дома"
     inheritance_rule = (
+        "Не применяется при удалении объекта."
+        if removing_object
+        else
         "Не применяется к основному дому."
         if object_key == "eskez-doma"
         else (
@@ -308,12 +327,26 @@ def build_questionnaire_generation_prompt(
         )
     )
 
+    if removing_object:
+        prohibitions.extend(
+            [
+                "Не оставлять видимые части удаляемого объекта.",
+                "Не добавлять вместо удаляемого объекта новое строение или предмет.",
+                "Не менять другие принятые объекты и не сдвигать ракурс.",
+            ]
+        )
+
     spec = {
         "schema": "auroom.questionnaire_render.v1",
         "task": {
             "object_key": object_key,
             "object_name": str(definition["title"]).strip(),
-            "goal": "Создать одну точную фотореалистичную внешнюю архитектурную визуализацию.",
+            "operation": "remove_object" if removing_object else "render_or_refine",
+            "goal": (
+                "Полностью удалить текущий объект из принятой сцены внутри edit_region."
+                if removing_object
+                else "Создать одну точную фотореалистичную внешнюю архитектурную визуализацию."
+            ),
         },
         "source_scene": {
             "kind": source_kind,
@@ -338,6 +371,11 @@ def build_questionnaire_generation_prompt(
             "explicit_selection_overrides_inheritance": True,
         },
         "questionnaire_constraints": questionnaire_constraints,
+        "removal": {
+            "enabled": removing_object,
+            "restore_background_naturally": removing_object,
+            "preserve_everything_outside_edit_region": removing_object,
+        },
         "inheritance": inheritance_rule,
         "refinement_comment": refinement,
         "prohibitions": prohibitions,
@@ -350,7 +388,12 @@ def build_questionnaire_generation_prompt(
     priorities = (
         "ПРИОРИТЕТЫ ВЫПОЛНЕНИЯ:\n"
         "1. Сохранение исходной/принятой сцены и пространственных блокировок.\n"
-        "2. Точное выполнение каждого активного ответа опросника как обязательного ограничения.\n"
+        "2. "
+        + (
+            "Полное удаление текущего объекта и естественное восстановление его области.\n"
+            if removing_object
+            else "Точное выполнение каждого активного ответа опросника как обязательного ограничения.\n"
+        )
         "3. Правила камеры, света и размещения из scene_policy, если они не "
         "конфликтуют с сохранением исходного кадра.\n"
         "4. Фотореализм и эстетика только после выполнения пунктов 1–3."
