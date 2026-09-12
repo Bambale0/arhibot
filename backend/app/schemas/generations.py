@@ -89,6 +89,12 @@ class GenerationCreate(BaseModel):
         return self
 
 
+class AdminSandboxGenerationCreate(GenerationCreate):
+    """Server-built admin sandbox prompt envelope; never accepted by public generation API."""
+
+    prompt: str = Field(default="", max_length=12000)
+
+
 class QuestionnaireGenerationCreate(GenerationCreate):
     """Server-built questionnaire prompt; never accepted from the public generation API."""
 
