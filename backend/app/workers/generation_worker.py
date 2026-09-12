@@ -31,6 +31,11 @@ from app.workers.heartbeat import worker_heartbeat
 logger = logging.getLogger(__name__)
 GENERATION_PROCESSING_KEY = "auroom:generation_processing"
 QUESTIONNAIRE_PROMPT_PREFIX = "AUROOM_RENDER_SPEC_V1"
+INITIAL_CONCEPT_PROMPT_PREFIX = "AUROOM_INITIAL_CONCEPT_V1"
+QUESTIONNAIRE_PROMPT_PREFIXES = (
+    QUESTIONNAIRE_PROMPT_PREFIX,
+    INITIAL_CONCEPT_PROMPT_PREFIX,
+)
 QUESTIONNAIRE_ASPECT_RATIOS = {"1:1": 1.0, "4:3": 4 / 3, "3:4": 3 / 4, "16:9": 16 / 9, "9:16": 9 / 16}
 
 
@@ -114,7 +119,12 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
 
         admin_repository = AdminRepository(session)
         runtime = await admin_repository.get_generation_settings()
-        questionnaire_generation = generation.prompt.startswith(QUESTIONNAIRE_PROMPT_PREFIX)
+        initial_concept_generation = generation.prompt.startswith(
+            INITIAL_CONCEPT_PROMPT_PREFIX
+        )
+        questionnaire_generation = generation.prompt.startswith(
+            QUESTIONNAIRE_PROMPT_PREFIXES
+        )
         prompt_template = (
             None
             if questionnaire_generation
@@ -162,7 +172,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         if questionnaire_generation:
             # Questionnaire renders are all exterior scene images. Legacy generation types are
             # an internal billing/provider detail and must not force a conflicting aspect ratio.
-            mode_params["aspect_ratio"] = _questionnaire_aspect_ratio(input_asset)
+            mode_params["aspect_ratio"] = (
+                "16:9"
+                if initial_concept_generation
+                else _questionnaire_aspect_ratio(input_asset)
+            )
         primary_params = {**dict(runtime.primary_params or {}), **mode_params}
         fallback_params = {**dict(runtime.fallback_params or {}), **mode_params}
         primary_model = runtime.primary_model
