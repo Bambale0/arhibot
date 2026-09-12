@@ -99,6 +99,7 @@ function newSession(version:string, selected:string[]):DesignSession {
     source_step_completed:false,
     source_asset_id:null,
     scene_asset_id:null,
+    scene_generation_id:null,
     answers:{},
     accepted_objects:[],
     generation_ids:{},
@@ -270,7 +271,8 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const currentGenerationId = current && session && session.region_mode == null ? session.generation_ids[current.key] || null : null
   const initialGenerationId = session?.initial_generation_id || null
   const latestAcceptedKey = session?.accepted_objects.at(-1) || null
-  const latestAcceptedGenerationId = latestAcceptedKey ? session?.generation_ids[latestAcceptedKey] || null : null
+  const latestAcceptedGenerationId = session?.scene_generation_id
+    || (latestAcceptedKey ? session?.generation_ids[latestAcceptedKey] || null : null)
 
   useEffect(() => {
     setIdeaPublication(undefined)
@@ -850,6 +852,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       accepted_objects:accepted,
       lock_regions:{ ...next.lock_regions, [definition.key]:lockRegion },
       scene_asset_id:renderOutput.id,
+      scene_generation_id:next.generation_ids[definition.key] || next.scene_generation_id,
       current_object:null,
       current_question_id:null,
       edit_question_ids:[],
