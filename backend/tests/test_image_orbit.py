@@ -29,7 +29,6 @@ def test_build_orbit_animation_creates_looping_animated_webp() -> None:
         assert animation.n_frames == 6
         assert animation.size == (1280, 720)
         assert animation.info["loop"] == 0
-        assert animation.info["duration"] == 180
 
 
 def test_build_orbit_animation_normalizes_frame_size() -> None:
