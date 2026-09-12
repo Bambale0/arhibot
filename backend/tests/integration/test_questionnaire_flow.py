@@ -358,6 +358,195 @@ async def test_questionnaire_generation_is_atomic_under_concurrent_requests(
 
 
 @pytest.mark.asyncio
+async def test_initial_concept_refinement_updates_scene_generation_chain() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        tokens, headers = await _register_admin(client)
+        user_id = UUID(tokens["user"]["id"])
+        catalog = (await client.get("/api/v1/questionnaires", headers=headers)).json()
+        definition = next(
+            item for item in catalog["questionnaires"] if item["key"] == "lavochka"
+        )
+
+        price = await client.put(
+            "/api/v1/admin/generation-prices/master_plan",
+            headers=headers,
+            json={"credits": 3, "is_active": True},
+        )
+        assert price.status_code == 200, price.text
+
+        started = await client.post(
+            "/api/v1/questionnaire-projects",
+            headers=headers,
+            json={"selected_objects": ["lavochka"]},
+        )
+        assert started.status_code == 201, started.text
+        project_id = started.json()["id"]
+        session = started.json()["context"]["design_session"]
+        session["source_step_completed"] = True
+        saved = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=session,
+        )
+        assert saved.status_code == 200, saved.text
+        session = saved.json()["session"]
+
+        answers = _valid_object_answers(definition, house_accepted=False)
+        review = next(
+            question
+            for question in definition["questions"]
+            if question["phase"] == "review"
+            and question.get("options")
+            and question["options"][0].startswith("Да")
+        )
+        answers.pop(review["id"])
+        session["answers"] = {"lavochka": answers}
+        session["survey_completed_objects"] = ["lavochka"]
+        session["current_object"] = None
+        session["current_question_id"] = None
+        saved = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=session,
+        )
+        assert saved.status_code == 200, saved.text
+
+        initial = await client.post(
+            f"/api/v1/projects/{project_id}/questionnaire-generation",
+            headers=headers,
+        )
+        assert initial.status_code == 202, initial.text
+        initial_id = UUID(initial.json()["id"])
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(initial_id))
+
+        initial_asset = Asset(
+            user_id=user_id,
+            project_id=UUID(project_id),
+            type=AssetType.IMAGE,
+            purpose=AssetPurpose.GENERATION_OUTPUT,
+            original_filename="initial.webp",
+            mime_type="image/webp",
+            size_bytes=128,
+            width=1280,
+            height=720,
+            storage_path=f"integration/questionnaires/{uuid4()}.webp",
+        )
+        async with get_session_factory()() as db:
+            db.add(initial_asset)
+            await db.flush()
+            generation = await db.get(Generation, initial_id)
+            assert generation is not None
+            generation.status = GenerationStatus.COMPLETED
+            generation.output_asset_id = initial_asset.id
+            await db.commit()
+            await db.refresh(initial_asset)
+
+        accepted = await client.post(
+            f"/api/v1/projects/{project_id}/questionnaire-initial-accept",
+            headers=headers,
+        )
+        assert accepted.status_code == 200, accepted.text
+        session = accepted.json()["session"]
+        assert session["scene_generation_id"] == str(initial_id)
+        assert session["scene_asset_id"] == str(initial_asset.id)
+
+        session["current_object"] = "lavochka"
+        session["region_mode"] = "edit"
+        session["region_object"] = "lavochka"
+        started_refinement = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=session,
+        )
+        assert started_refinement.status_code == 200, started_refinement.text
+        session = started_refinement.json()["session"]
+
+        region = {"x": 0.12, "y": 0.18, "width": 0.35, "height": 0.42}
+        session["edit_regions"]["lavochka"] = region
+        session["review_comments"]["lavochka"] = "Перенести лавочку левее."
+        session["region_mode"] = None
+        session["region_object"] = None
+        region_saved = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=session,
+        )
+        assert region_saved.status_code == 200, region_saved.text
+
+        refinement = await client.post(
+            f"/api/v1/projects/{project_id}/questionnaire-generation",
+            headers=headers,
+        )
+        assert refinement.status_code == 202, refinement.text
+        refinement_id = UUID(refinement.json()["id"])
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(refinement_id))
+
+        refined_asset = Asset(
+            user_id=user_id,
+            project_id=UUID(project_id),
+            type=AssetType.IMAGE,
+            purpose=AssetPurpose.GENERATION_OUTPUT,
+            original_filename="refined.webp",
+            mime_type="image/webp",
+            size_bytes=128,
+            width=1280,
+            height=720,
+            storage_path=f"integration/questionnaires/{uuid4()}.webp",
+        )
+        async with get_session_factory()() as db:
+            db.add(refined_asset)
+            await db.flush()
+            generation = await db.get(Generation, refinement_id)
+            assert generation is not None
+            assert generation.composition_mode == "masked_edit"
+            assert generation.input_asset_id == initial_asset.id
+            generation.status = GenerationStatus.COMPLETED
+            generation.output_asset_id = refined_asset.id
+            await db.commit()
+            await db.refresh(refined_asset)
+
+        current = await client.get(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+        )
+        session = current.json()["session"]
+        session["answers"]["lavochka"][review["id"]] = review["options"][0]
+        session["current_question_id"] = review["id"]
+        reviewed = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=session,
+        )
+        assert reviewed.status_code == 200, reviewed.text
+        session = reviewed.json()["session"]
+
+        session["scene_asset_id"] = str(refined_asset.id)
+        session["scene_generation_id"] = str(refinement_id)
+        session["lock_regions"]["lavochka"] = region
+        session["current_object"] = None
+        session["current_question_id"] = None
+        finalized = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=session,
+        )
+        assert finalized.status_code == 200, finalized.text
+        session = finalized.json()["session"]
+        assert session["scene_generation_id"] == str(refinement_id)
+        assert session["scene_asset_id"] == str(refined_asset.id)
+
+        session["current_object"] = "zayavka"
+        session["current_question_id"] = "20"
+        ordinary_save = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=session,
+        )
+        assert ordinary_save.status_code == 200, ordinary_save.text
+
+
+@pytest.mark.asyncio
 async def test_questionnaire_catalog_session_and_application_flow() -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
