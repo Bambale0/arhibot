@@ -40,7 +40,7 @@ async def test_questionnaire_project_is_hidden_until_source_step_and_can_be_disc
         start = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["banya", "eskez-doma"]},
+            json={"selected_objects": ["banya", "eskez-doma"], "plot_area_sotkas": 8},
         )
         assert start.status_code == 201, start.text
         project = start.json()
@@ -49,6 +49,8 @@ async def test_questionnaire_project_is_hidden_until_source_step_and_can_be_disc
         design_session = project["context"]["design_session"]
         assert design_session["catalog_version"] == catalog["version"]
         assert design_session["selected_objects"] == ["eskez-doma", "banya"]
+        assert design_session["plot_area_sotkas"] == 8
+        assert project["context"]["plot_area_m2"] == 800
         assert design_session["initial_concept_mode"] is True
         assert design_session["survey_completed_objects"] == []
         assert design_session["initial_generation_id"] is None
@@ -91,7 +93,7 @@ async def test_questionnaire_project_is_hidden_until_source_step_and_can_be_disc
         draft = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["banya"]},
+            json={"selected_objects": ["banya"], "plot_area_sotkas": 8},
         )
         assert draft.status_code == 201, draft.text
         draft_id = draft.json()["id"]
@@ -115,21 +117,35 @@ async def test_questionnaire_project_start_rejects_unknown_duplicates_and_client
         unknown = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["not-a-real-object"]},
+            json={"selected_objects": ["not-a-real-object"], "plot_area_sotkas": 8},
         )
         assert unknown.status_code == 422, unknown.text
 
         duplicate = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["eskez-doma", "eskez-doma"]},
+            json={"selected_objects": ["eskez-doma", "eskez-doma"], "plot_area_sotkas": 8},
         )
         assert duplicate.status_code == 422, duplicate.text
+
+        too_small_plot = await client.post(
+            "/api/v1/questionnaire-projects",
+            headers=headers,
+            json={"selected_objects": ["eskez-doma"], "plot_area_sotkas": 3},
+        )
+        assert too_small_plot.status_code == 422, too_small_plot.text
+
+        too_large_plot = await client.post(
+            "/api/v1/questionnaire-projects",
+            headers=headers,
+            json={"selected_objects": ["eskez-doma"], "plot_area_sotkas": 16},
+        )
+        assert too_large_plot.status_code == 422, too_large_plot.text
 
         client_version = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["eskez-doma"], "catalog_version": "stale-client-value"},
+            json={"selected_objects": ["eskez-doma"], "plot_area_sotkas": 8, "catalog_version": "stale-client-value"},
         )
         assert client_version.status_code == 422, client_version.text
 
@@ -152,7 +168,7 @@ async def test_abandoned_questionnaire_draft_is_expired_by_cleanup() -> None:
         draft = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["eskez-doma"]},
+            json={"selected_objects": ["eskez-doma"], "plot_area_sotkas": 8},
         )
         assert draft.status_code == 201, draft.text
         project_id = UUID(draft.json()["id"])
