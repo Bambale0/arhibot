@@ -205,13 +205,20 @@ class IdeaService:
                 detail="Only the current accepted scene can be added to Ideas.",
             )
 
+        whole_site_scene = bool(
+            design_session.initial_concept_mode
+            and design_session.initial_concept_accepted
+            and design_session.scene_generation_id == generation.id
+        )
         object_key = self._accepted_object_key(design_session, generation.id)
+        if object_key is None and whole_site_scene and design_session.accepted_objects:
+            object_key = design_session.accepted_objects[-1]
         if object_key is None:
             raise AppError(
                 type="idea_source_not_accepted",
                 title="Accepted work required",
                 status=422,
-                detail="Only an accepted result from Create can be added to Ideas.",
+                detail="Only the current accepted result from Create can be added to Ideas.",
             )
 
         catalog = await QuestionnaireService(self.session).catalog_for_version(
