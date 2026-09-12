@@ -119,6 +119,58 @@ async def add_questionnaire_object(
 
 
 @router.post(
+    "/projects/{project_id}/questionnaire-object-removal",
+    operation_id="startProjectQuestionnaireObjectRemoval",
+    response_model=DesignSessionResponse,
+)
+async def start_questionnaire_object_removal(
+    project_id: UUID,
+    payload: QuestionnaireObjectAddRequest,
+    user: CurrentUser,
+    session: DbSession,
+) -> DesignSessionResponse:
+    return DesignSessionResponse(
+        session=await QuestionnaireService(session).start_object_removal(
+            user, project_id, payload.object_key
+        )
+    )
+
+
+@router.delete(
+    "/projects/{project_id}/questionnaire-object-removal",
+    operation_id="cancelProjectQuestionnaireObjectRemoval",
+    response_model=DesignSessionResponse,
+)
+async def cancel_questionnaire_object_removal(
+    project_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+) -> DesignSessionResponse:
+    return DesignSessionResponse(
+        session=await QuestionnaireService(session).cancel_object_removal(
+            user, project_id
+        )
+    )
+
+
+@router.post(
+    "/projects/{project_id}/questionnaire-object-removal/accept",
+    operation_id="acceptProjectQuestionnaireObjectRemoval",
+    response_model=DesignSessionResponse,
+)
+async def accept_questionnaire_object_removal(
+    project_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+) -> DesignSessionResponse:
+    return DesignSessionResponse(
+        session=await QuestionnaireService(session).accept_object_removal(
+            user, project_id
+        )
+    )
+
+
+@router.post(
     "/projects/{project_id}/questionnaire-generation",
     operation_id="createProjectQuestionnaireGeneration",
     response_model=QuestionnaireGenerationResponse,
