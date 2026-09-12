@@ -44,6 +44,8 @@ export type DesignSession = {
   scene_generation_id:string|null
   answers:Record<string,Record<string,QuestionnaireAnswer>>
   accepted_objects:string[]
+  removed_objects:string[]
+  pending_removal_object:string|null
   generation_ids:Record<string,string>
   edit_question_ids:string[]
   review_comments:Record<string,string>
@@ -71,6 +73,8 @@ export function createDesignSession(catalogVersion:string, selectedObjects:strin
     scene_generation_id:null,
     answers:{},
     accepted_objects:[],
+    removed_objects:[],
+    pending_removal_object:null,
     generation_ids:{},
     edit_question_ids:[],
     review_comments:{},
