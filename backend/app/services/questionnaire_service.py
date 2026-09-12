@@ -331,15 +331,11 @@ class QuestionnaireService:
             ),
             None,
         )
-        review_answer = (
-            current.answers.get(object_key, {}).get(review_question["id"])
-            if review_question
-            else None
-        )
-        if not isinstance(review_answer, str) or not review_answer.startswith("Да"):
-            raise self._invalid("Accept the removal result before updating the scene.")
-
         removed = current.model_copy(deep=True)
+        if review_question is not None:
+            removed.answers.setdefault(object_key, {})[review_question["id"]] = review_question[
+                "options"
+            ][0]
         removed.accepted_objects = [
             key for key in current.accepted_objects if key != object_key
         ]
