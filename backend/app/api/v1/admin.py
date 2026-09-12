@@ -7,6 +7,7 @@ from app.api.dependencies.auth import AdminUser, DbSession
 from app.core.config import Settings, get_settings
 from app.domain.generations.enums import GenerationType
 from app.schemas.admin import (
+    AdminAiSandboxCreate,
     AdminOverviewResponse,
     AdminPaymentResponse,
     AdminUserResponse,
@@ -32,6 +33,7 @@ from app.schemas.admin import (
     PromptTemplateUpdate,
     UserStateUpdate,
 )
+from app.schemas.generations import GenerationResponse
 from app.schemas.telegram import TelegramContentResponse, TelegramContentUpdate
 from app.services.admin_billing_service import AdminBillingService
 from app.services.admin_credit_service import AdminCreditService
@@ -122,6 +124,20 @@ async def get_generation_settings(_admin: AdminUser, session: DbSession, setting
 @router.put("/generation", response_model=GenerationRuntimeResponse)
 async def update_generation_settings(payload: GenerationRuntimeUpdate, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> GenerationRuntimeResponse:
     return await service(session, settings).update_generation_settings(admin, payload)
+
+
+@router.post(
+    "/generation/sandbox",
+    response_model=GenerationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_generation_sandbox(
+    payload: AdminAiSandboxCreate,
+    admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> GenerationResponse:
+    return await service(session, settings).create_ai_sandbox_generation(admin, payload)
 
 
 @router.get("/generation-prices", response_model=list[GenerationPriceResponse])
