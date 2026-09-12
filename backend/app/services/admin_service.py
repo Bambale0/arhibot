@@ -291,6 +291,13 @@ class AdminService:
             ensure_ascii=False,
             separators=(",", ":"),
         )
+        if len(envelope) > 12_000:
+            raise AppError(
+                type="sandbox_payload_too_large",
+                title="AI sandbox payload is too large",
+                status=422,
+                detail="Shorten the prompt or reduce sandbox parameters.",
+            )
 
         def bind_sandbox(generation, _project) -> None:  # noqa: ANN001
             generation.model_name = payload.model_name
@@ -304,6 +311,7 @@ class AdminService:
                 prompt=envelope,
             ),
             before_commit=bind_sandbox,
+            skip_pricing=True,
         )
         self.repository.add_audit(
             actor_user_id=actor.id,
