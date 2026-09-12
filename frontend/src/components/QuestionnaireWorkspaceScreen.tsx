@@ -2,13 +2,16 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEve
 import * as api from '../api'
 import {
   acceptQuestionnaireInitialConcept,
+  acceptQuestionnaireObjectRemoval,
   addQuestionnaireObject,
+  cancelQuestionnaireObjectRemoval,
   createQuestionnaireGeneration,
   getQuestionnaireCatalog,
   getQuestionnaireGeneration,
   getQuestionnaireGenerationCost,
   getQuestionnaireSession,
   saveQuestionnaireSession,
+  startQuestionnaireObjectRemoval,
   submitQuestionnaireApplication,
 } from '../questionnaireApi'
 import type {
@@ -456,6 +459,23 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     await persist({ ...next, current_question_id:first?.id || null })
   }
 
+  async function startRemoval(key:string) {
+    if (!session?.initial_concept_accepted || !session.accepted_objects.includes(key) || busy) return
+    setBusy(true)
+    setError(null)
+    setRegionDraft(null)
+    setReviewComment('')
+    try {
+      const result = await startQuestionnaireObjectRemoval(project.id, key)
+      setSession(result.session)
+      syncProject(result.session)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось начать удаление объекта')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function startRefinement(key:string) {
     if (!session?.initial_concept_accepted || !session.accepted_objects.includes(key)) return
     setReviewComment('')
@@ -579,14 +599,15 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     const definition = definitions.get(session.region_object)
     if (!definition) return
     const refinement = session.initial_concept_mode && session.initial_concept_accepted && session.accepted_objects.includes(definition.key)
-    if (refinement && !reviewComment.trim()) {
+    const removal = session.pending_removal_object === definition.key
+    if (refinement && !removal && !reviewComment.trim()) {
       setError('Опишите, что именно нужно изменить в выделенной области.')
       return
     }
     const saved = await persist({
       ...session,
       edit_regions:{ ...session.edit_regions, [definition.key]:regionDraft },
-      review_comments:refinement ? { ...session.review_comments, [definition.key]:reviewComment.trim() } : session.review_comments,
+      review_comments:refinement && !removal ? { ...session.review_comments, [definition.key]:reviewComment.trim() } : session.review_comments,
       region_mode:null,
       region_object:null,
     })
@@ -595,6 +616,21 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   async function cancelEditRegion() {
     if (!session || session.region_mode !== 'edit' || !session.region_object) return
+    if (session.pending_removal_object === session.region_object) {
+      setBusy(true)
+      setError(null)
+      try {
+        const result = await cancelQuestionnaireObjectRemoval(project.id)
+        setSession(result.session)
+        syncProject(result.session)
+        setRegionDraft(null)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Не удалось отменить удаление объекта')
+      } finally {
+        setBusy(false)
+      }
+      return
+    }
     const definition = definitions.get(session.region_object)
     if (!definition) return
     const lastQuestion = preQuestions(definition, session).at(-1)
@@ -812,6 +848,9 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
     if (question.phase === 'review') {
       if (typeof value === 'string' && value.startsWith('Да')) return accept(next, current)
+      if (next.pending_removal_object === current.key) {
+        return persist({ ...next, current_question_id:null, region_mode:'edit', region_object:current.key })
+      }
       if (next.initial_concept_mode && next.initial_concept_accepted && next.accepted_objects.includes(current.key)) {
         setReviewComment(next.review_comments[current.key] || '')
         return persist({ ...next, current_question_id:null, region_mode:'edit', region_object:current.key })
@@ -862,7 +901,30 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     if (saved) setSceneAsset(renderOutput)
   }
 
+  async function acceptRemoval(next:DesignSession, definition:QuestionnaireDefinition) {
+    if (!renderOutput || next.pending_removal_object !== definition.key) return
+    setBusy(true)
+    setError(null)
+    try {
+      const reviewed = await persist({ ...next, current_question_id:null })
+      if (!reviewed) return
+      const result = await acceptQuestionnaireObjectRemoval(project.id)
+      setSession(result.session)
+      syncProject(result.session)
+      setSceneAsset(renderOutput)
+      setRenderOutput(null)
+      setRegionDraft(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось принять удаление объекта')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function accept(next:DesignSession, definition:QuestionnaireDefinition) {
+    if (next.pending_removal_object === definition.key) {
+      return acceptRemoval(next, definition)
+    }
     if (!renderOutput) {
       setError('Нет готового эскиза для принятия.')
       return
@@ -955,22 +1017,23 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     const availableToAdd = catalog.sections
       .flatMap((section) => section.object_keys)
       .filter((key) => !session.selected_objects.includes(key))
-    return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{hasAccepted ? 'Что дальше?' : 'Выбор объекта'}</span></header><section className="questionnaire-card"><span className="eyebrow">{hasAccepted ? 'КОНЦЕПЦИЯ ПРИНЯТА' : 'НАЧАЛО ОПРОСА'}</span><h1>{hasAccepted ? 'Что делаем дальше?' : 'С чего начнём?'}</h1><p>{hasAccepted ? 'Любое изменение принятой концепции создаёт новую итерацию. Перед запуском вы увидите её стоимость.' : 'Выберите объект.'}</p>{!hasAccepted && remainingLegacy.length > 0 && <div className="questionnaire-options">{remainingLegacy.map((key) => <button key={key} className="questionnaire-option" disabled={busy} onClick={() => void chooseObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && sceneAsset && <div className="questionnaire-result"><img src={sceneAsset.url} alt="Последний принятый эскиз"/></div>}{hasAccepted && session.initial_concept_mode && <p className="region-hint">Следующая генерация · {generationCostLabel()}</p>}{hasAccepted && session.initial_concept_mode && <div className="questionnaire-options">{session.accepted_objects.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void startRefinement(key)}><span>Изменить: {definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && session.initial_concept_mode && availableToAdd.length > 0 && <details className="idea-work-summary"><summary>Добавить новый объект</summary><div className="questionnaire-options">{availableToAdd.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void addObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div></details>}{hasAccepted && ideaPublishControl}{hasAccepted && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void chooseApplication()}>Перейти к заявке</button></div>}{error && <div className="banner-error">{error}</div>}</section></main>
+    return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{hasAccepted ? 'Что дальше?' : 'Выбор объекта'}</span></header><section className="questionnaire-card"><span className="eyebrow">{hasAccepted ? 'КОНЦЕПЦИЯ ПРИНЯТА' : 'НАЧАЛО ОПРОСА'}</span><h1>{hasAccepted ? 'Что делаем дальше?' : 'С чего начнём?'}</h1><p>{hasAccepted ? 'Любое изменение принятой концепции создаёт новую итерацию. Перед запуском вы увидите её стоимость.' : 'Выберите объект.'}</p>{!hasAccepted && remainingLegacy.length > 0 && <div className="questionnaire-options">{remainingLegacy.map((key) => <button key={key} className="questionnaire-option" disabled={busy} onClick={() => void chooseObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && sceneAsset && <div className="questionnaire-result"><img src={sceneAsset.url} alt="Последний принятый эскиз"/></div>}{hasAccepted && session.initial_concept_mode && <p className="region-hint">Следующая генерация · {generationCostLabel()}</p>}{hasAccepted && session.initial_concept_mode && <div className="questionnaire-options">{session.accepted_objects.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void startRefinement(key)}><span>Изменить: {definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && session.initial_concept_mode && <details className="idea-work-summary"><summary>Удалить объект</summary><div className="questionnaire-options">{session.accepted_objects.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void startRemoval(key)}><span>Удалить: {definitions.get(key)?.title || key}</span><i/></button>)}</div></details>}{hasAccepted && session.initial_concept_mode && availableToAdd.length > 0 && <details className="idea-work-summary"><summary>Добавить новый объект</summary><div className="questionnaire-options">{availableToAdd.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void addObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div></details>}{hasAccepted && ideaPublishControl}{hasAccepted && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void chooseApplication()}>Перейти к заявке</button></div>}{error && <div className="banner-error">{error}</div>}</section></main>
   }
 
   if (session.region_mode === 'edit' && session.region_object) {
     const placementDefinition = definitions.get(session.region_object)
     const protectedRegions = session.accepted_objects
+      .filter((key) => key !== session.region_object)
       .map((key) => ({ key, region:session.lock_regions[key] }))
       .filter((item):item is { key:string; region:NormalizedRect } => Boolean(item.region))
     return <main className="questionnaire-shell">
       <header className="questionnaire-topbar"><button className="back-button" disabled={busy} onClick={() => void cancelEditRegion()}><BackIcon/> Назад</button><strong>{project.name}</strong><span>Размещение</span></header>
       <section className="questionnaire-card region-picker-card">
-        <span className="eyebrow">ТОЧНОЕ МЕСТО НА СЦЕНЕ</span>
-        <h1>Где разместить: {placementDefinition?.title || session.region_object}?</h1>
-        <p>Проведите пальцем или мышью по последнему принятому кадру и выделите прямоугольник, внутри которого можно менять или добавлять объект. Всё за пределами этой области compositor сохранит пиксельно.</p>
+        <span className="eyebrow">{session.pending_removal_object === session.region_object ? 'УДАЛЕНИЕ ОБЪЕКТА' : 'ТОЧНОЕ МЕСТО НА СЦЕНЕ'}</span>
+        <h1>{session.pending_removal_object === session.region_object ? `Что удалить: ${placementDefinition?.title || session.region_object}` : `Где разместить: ${placementDefinition?.title || session.region_object}?`}</h1>
+        <p>{session.pending_removal_object === session.region_object ? 'Точно обведите объект, который нужно убрать. Модель удалит его внутри этой области, а compositor пиксельно сохранит всё снаружи.' : 'Проведите пальцем или мышью по последнему принятому кадру и выделите прямоугольник, внутри которого можно менять или добавлять объект. Всё за пределами этой области compositor сохранит пиксельно.'}</p>
         <p className="region-hint">Новая итерация · {generationCostLabel()}</p>
-        {session.initial_concept_accepted && session.accepted_objects.includes(session.region_object) && <div className="questionnaire-field"><label>Что изменить?<input value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="Например: перенести левее, сделать крышу тёмной"/></label></div>}
+        {session.initial_concept_accepted && session.accepted_objects.includes(session.region_object) && session.pending_removal_object !== session.region_object && <div className="questionnaire-field"><label>Что изменить?<input value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="Например: перенести левее, сделать крышу тёмной"/></label></div>}
         {sceneAsset ? <div
           className="region-canvas"
           role="img"
@@ -999,13 +1062,13 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
               width:`${regionDraft.width * 100}%`,
               height:`${regionDraft.height * 100}%`,
             }}
-          ><span>ОБЛАСТЬ НОВОГО ОБЪЕКТА</span></div>}
+          ><span>{session.pending_removal_object === session.region_object ? 'ОБЛАСТЬ УДАЛЕНИЯ' : 'ОБЛАСТЬ ИЗМЕНЕНИЯ'}</span></div>}
         </div> : <div className="banner-error">Последний принятый кадр недоступен. Вернитесь в проект и откройте его заново.</div>}
         <p className="region-hint">Пунктиром показаны уже принятые объекты — их пиксели защищены. Если выделение неточное, просто проведите по изображению ещё раз.</p>
         {error && <div className="banner-error">{error}</div>}
         <div className="questionnaire-actions">
           <button className="secondary-button" disabled={busy} onClick={() => setRegionDraft(null)}>Очистить</button>
-          <button className="primary-button" disabled={busy || !sceneAsset || !regionDraft || regionDraft.width < 0.03 || regionDraft.height < 0.03 || (session.initial_concept_accepted && session.accepted_objects.includes(session.region_object) && !reviewComment.trim())} onClick={() => void confirmEditRegion()}>Подтвердить область и создать новую итерацию</button>
+          <button className="primary-button" disabled={busy || !sceneAsset || !regionDraft || regionDraft.width < 0.03 || regionDraft.height < 0.03 || (session.initial_concept_accepted && session.accepted_objects.includes(session.region_object) && session.pending_removal_object !== session.region_object && !reviewComment.trim())} onClick={() => void confirmEditRegion()}>{session.pending_removal_object === session.region_object ? 'Удалить в новой итерации' : 'Подтвердить область и создать новую итерацию'}</button>
         </div>
       </section>
     </main>
