@@ -117,6 +117,21 @@ async def create_questionnaire_generation(
     return QuestionnaireGenerationResponse.model_validate(created)
 
 
+@router.post(
+    "/projects/{project_id}/questionnaire-initial-accept",
+    operation_id="acceptProjectQuestionnaireInitialConcept",
+    response_model=DesignSessionResponse,
+)
+async def accept_questionnaire_initial_concept(
+    project_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+) -> DesignSessionResponse:
+    return DesignSessionResponse(
+        session=await QuestionnaireService(session).accept_initial_concept(user, project_id)
+    )
+
+
 @router.get(
     "/projects/{project_id}/questionnaire-generation/{generation_id}",
     operation_id="getProjectQuestionnaireGeneration",
