@@ -1,10 +1,11 @@
 import '../telegram-fullscreen.css'
 
 export function TelegramFullscreenButton() {
-  const telegram = window.Telegram?.WebApp
-  if (!telegram) return null
+  if (!window.Telegram?.WebApp) return null
 
   function requestFullscreen() {
+    const telegram = window.Telegram?.WebApp
+    if (!telegram) return
     try {
       telegram.expand?.()
       telegram.requestFullscreen?.()
