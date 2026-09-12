@@ -221,6 +221,148 @@ class QuestionnaireService:
         await self.session.refresh(project)
         return next_session
 
+    async def start_object_removal(
+        self, user: User, project_id: UUID, object_key: str
+    ) -> DesignSession:
+        project = await ProjectService(self.projects).get_owned_model(user, project_id)
+        current = self._stored_session(project.context)
+        if (
+            current is None
+            or not current.initial_concept_mode
+            or not current.initial_concept_accepted
+            or current.application_submitted
+        ):
+            raise self._invalid(
+                "Objects can be removed only from an accepted initial concept."
+            )
+        if current.current_object is not None or current.region_mode is not None:
+            raise self._invalid("Finish the current refinement before removing another object.")
+        if current.pending_removal_object is not None:
+            raise self._invalid("Finish the pending object removal first.")
+        if object_key not in current.accepted_objects:
+            raise self._invalid("Only an object currently present in the accepted scene can be removed.")
+
+        next_session = current.model_copy(deep=True)
+        next_session.current_object = object_key
+        next_session.current_question_id = None
+        next_session.pending_removal_object = object_key
+        next_session.region_mode = "edit"
+        next_session.region_object = object_key
+        project.context = {
+            **(project.context or {}),
+            "design_session": next_session.model_dump(mode="json"),
+        }
+        await self.session.commit()
+        await self.session.refresh(project)
+        return next_session
+
+    async def cancel_object_removal(
+        self, user: User, project_id: UUID
+    ) -> DesignSession:
+        project = await ProjectService(self.projects).get_owned_model(user, project_id)
+        current = self._stored_session(project.context)
+        if current is None or current.pending_removal_object is None:
+            raise self._invalid("There is no pending object removal.")
+        next_session = current.model_copy(deep=True)
+        next_session.current_object = None
+        next_session.current_question_id = None
+        next_session.pending_removal_object = None
+        next_session.region_mode = None
+        next_session.region_object = None
+        project.context = {
+            **(project.context or {}),
+            "design_session": next_session.model_dump(mode="json"),
+        }
+        await self.session.commit()
+        await self.session.refresh(project)
+        return next_session
+
+    async def accept_object_removal(
+        self, user: User, project_id: UUID
+    ) -> DesignSession:
+        project = await ProjectService(self.projects).get_owned_model(user, project_id)
+        current = self._stored_session(project.context)
+        object_key = current.pending_removal_object if current is not None else None
+        if (
+            current is None
+            or not current.initial_concept_mode
+            or not current.initial_concept_accepted
+            or object_key is None
+            or object_key not in current.accepted_objects
+        ):
+            raise self._invalid("There is no pending accepted-object removal.")
+
+        generation_id = current.generation_ids.get(object_key)
+        if generation_id is None:
+            raise self._invalid("The removal has no generation task.")
+        generation = await self.generations.get_owned(generation_id, user.id)
+        if (
+            generation is None
+            or generation.project_id != project.id
+            or generation.status != GenerationStatus.COMPLETED
+            or generation.output_asset_id is None
+        ):
+            raise self._invalid("The object-removal generation is not completed.")
+        if generation.type != GenerationType.MASTER_PLAN:
+            raise self._invalid("Object removal must use master_plan generation.")
+        if generation.input_asset_id != current.scene_asset_id:
+            raise self._invalid("Object removal must use the currently accepted scene.")
+        if generation.composition_mode != "masked_edit":
+            raise self._invalid("Object removal must use deterministic masked composition.")
+        edit_region = current.edit_regions.get(object_key)
+        if edit_region is None or generation.edit_region != edit_region.model_dump(mode="json"):
+            raise self._invalid("Object removal must match the selected edit region.")
+        if '"operation":"remove_object"' not in generation.prompt:
+            raise self._invalid("The object-removal generation prompt is not canonical.")
+
+        catalog = await self.catalog_for_version(current.catalog_version)
+        if catalog is None:
+            raise self._invalid("The project questionnaire catalog is unavailable.")
+        definition = next(
+            item for item in catalog["questionnaires"] if item["key"] == object_key
+        )
+        review_question = next(
+            (
+                question
+                for question in definition["questions"]
+                if question["phase"] == "review"
+                and question.get("options")
+                and str(question["options"][0]).startswith("Да")
+            ),
+            None,
+        )
+        review_answer = (
+            current.answers.get(object_key, {}).get(review_question["id"])
+            if review_question
+            else None
+        )
+        if not isinstance(review_answer, str) or not review_answer.startswith("Да"):
+            raise self._invalid("Accept the removal result before updating the scene.")
+
+        removed = current.model_copy(deep=True)
+        removed.accepted_objects = [
+            key for key in current.accepted_objects if key != object_key
+        ]
+        if object_key not in removed.removed_objects:
+            removed.removed_objects.append(object_key)
+        removed.scene_asset_id = generation.output_asset_id
+        removed.scene_generation_id = generation.id
+        removed.current_object = None
+        removed.current_question_id = None
+        removed.pending_removal_object = None
+        removed.region_mode = None
+        removed.region_object = None
+        removed.lock_regions.pop(object_key, None)
+        removed.edit_regions.pop(object_key, None)
+        removed.review_comments.pop(object_key, None)
+        project.context = {
+            **(project.context or {}),
+            "design_session": removed.model_dump(mode="json"),
+        }
+        await self.session.commit()
+        await self.session.refresh(project)
+        return removed
+
     async def build_generation_request(
         self, user: User, project_id: UUID
     ) -> tuple[GenerationCreate, DesignSession, str]:
@@ -358,7 +500,7 @@ class QuestionnaireService:
         prompt = build_questionnaire_generation_prompt(
             definition,
             session,
-            accepted_before=list(session.accepted_objects) if refinement else accepted_before,
+            accepted_before=accepted_before,
             input_asset_present=input_asset_id is not None,
         )
         return (
@@ -650,6 +792,10 @@ class QuestionnaireService:
             raise cls._invalid("The accepted initial generation cannot change.")
         if payload.initial_concept_mode != previous.initial_concept_mode:
             raise cls._invalid("The questionnaire flow mode cannot change after project creation.")
+        if payload.removed_objects != previous.removed_objects:
+            raise cls._invalid("Removed objects can change only through the removal acceptance endpoint.")
+        if payload.pending_removal_object != previous.pending_removal_object:
+            raise cls._invalid("Object removal must be started or cancelled through its dedicated endpoint.")
         if payload.initial_concept_accepted != previous.initial_concept_accepted:
             raise cls._invalid("Accept the initial concept through its dedicated endpoint.")
 
@@ -762,6 +908,8 @@ class QuestionnaireService:
             or session.current_question_id
             or session.answers
             or session.accepted_objects
+            or session.removed_objects
+            or session.pending_removal_object
             or session.generation_ids
             or session.edit_regions
             or session.lock_regions
@@ -873,9 +1021,10 @@ class QuestionnaireService:
                     raise self._invalid(
                         "The initial concept object snapshot is invalid."
                     )
-                if not initial_objects.issubset(set(payload.accepted_objects)):
+                accounted_objects = set(payload.accepted_objects) | set(payload.removed_objects)
+                if not initial_objects.issubset(accounted_objects):
                     raise self._invalid(
-                        "Every initial concept object must remain accepted."
+                        "Every initial concept object must remain accepted or be explicitly removed."
                     )
                 if payload.initial_generation_id is None:
                     raise self._invalid("The accepted initial concept has no generation.")
@@ -1100,6 +1249,8 @@ class QuestionnaireService:
             or payload.current_question_id
             or payload.answers
             or payload.accepted_objects
+            or payload.removed_objects
+            or payload.pending_removal_object
             or payload.generation_ids
             or payload.edit_regions
             or payload.lock_regions
@@ -1141,6 +1292,15 @@ class QuestionnaireService:
             raise self._invalid("An accepted object cannot be reopened for editing.")
         if any(key not in payload.selected_objects for key in payload.accepted_objects):
             raise self._invalid("Only selected objects can be accepted.")
+        if any(key not in payload.selected_objects for key in payload.removed_objects):
+            raise self._invalid("Only selected objects can be marked removed.")
+        if set(payload.accepted_objects) & set(payload.removed_objects):
+            raise self._invalid("Accepted and removed objects must not overlap.")
+        if (
+            payload.pending_removal_object is not None
+            and payload.pending_removal_object not in payload.accepted_objects
+        ):
+            raise self._invalid("Pending removal must target an accepted object.")
         if any(key not in payload.selected_objects for key in payload.generation_ids):
             raise self._invalid("Generation ids may only reference selected objects.")
         if any(key not in payload.selected_objects for key in payload.edit_regions):
@@ -1174,8 +1334,31 @@ class QuestionnaireService:
             if object_key not in allowed_answer_keys:
                 raise self._invalid(f"Answers contain an unknown object: {object_key}.")
             if object_key in previous_accepted:
-                if answers != previous.answers.get(object_key, {}):
-                    raise self._invalid(f"Accepted object {object_key} cannot change answers.")
+                previous_answers = previous.answers.get(object_key, {})
+                if answers != previous_answers:
+                    refining_object = bool(
+                        previous.initial_concept_mode
+                        and previous.initial_concept_accepted
+                        and previous.current_object == object_key
+                    )
+                    review_ids = {
+                        question["id"]
+                        for question in definitions[object_key]["questions"]
+                        if question.get("phase") == "review"
+                    }
+                    changed_ids = {
+                        key
+                        for key in set(previous_answers) | set(answers)
+                        if previous_answers.get(key) != answers.get(key)
+                    }
+                    if (
+                        not refining_object
+                        or not changed_ids
+                        or not changed_ids.issubset(review_ids)
+                    ):
+                        raise self._invalid(
+                            f"Accepted object {object_key} can change only review answers during refinement."
+                        )
                 # Accepted answers are immutable snapshots of the catalog version under
                 # which they were approved. Do not invalidate them after a catalog bump.
                 continue
