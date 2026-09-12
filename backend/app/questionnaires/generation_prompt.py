@@ -46,6 +46,19 @@ def condition_ok(
             or not isinstance(value, list)
             or not any(item in answer for item in value)
         )
+    if operator == "floor_option":
+        if not isinstance(answer, str) or not isinstance(value, str):
+            return False
+        floor_answer = answer.lower()
+        if value == "Первый этаж":
+            return True
+        if value == "Второй этаж":
+            return not floor_answer.startswith("1 ")
+        if value == "Третий этаж":
+            return "3" in floor_answer
+        if value == "Мансарда":
+            return "мансард" in floor_answer
+        return False
     return True
 
 
@@ -75,6 +88,126 @@ def _region_percent(region: object | None) -> dict[str, int] | None:
         "width": _js_percent(region.width),
         "height": _js_percent(region.height),
     }
+
+
+
+def build_initial_concept_prompt(
+    catalog: dict[str, Any],
+    session: DesignSession,
+    *,
+    input_asset_present: bool,
+) -> str:
+    """Build one generation spec for every object selected before project launch."""
+
+    definitions = {
+        str(item["key"]): item
+        for item in catalog["questionnaires"]
+        if item["key"] != catalog.get("application_key")
+    }
+    objects: list[dict[str, object]] = []
+    for object_key in session.selected_objects:
+        definition = definitions[object_key]
+        answers = session.answers.get(object_key, {})
+        constraints: list[dict[str, object]] = []
+        for question in definition["questions"]:
+            if question.get("phase") != "pre_render":
+                continue
+            if not condition_ok(question.get("condition"), answers, False):
+                continue
+            if question["id"] not in answers:
+                continue
+            value = _answer_value(answers[question["id"]])
+            if value in (None, "", []):
+                continue
+            constraints.append(
+                {
+                    "question": str(question["text"]).strip(),
+                    "answer": value,
+                }
+            )
+        objects.append(
+            {
+                "object_key": object_key,
+                "object_name": str(definition["title"]).strip(),
+                "questionnaire_constraints": constraints,
+            }
+        )
+
+    source = (
+        {
+            "kind": "site_photo",
+            "directive": (
+                "Используй фото только как источник геометрии, границ, окружения и "
+                "контекста участка. Исходный ракурс не фиксирован: построй новую общую "
+                "аэровизуализацию всего участка."
+            ),
+        }
+        if input_asset_present
+        else {
+            "kind": "synthetic_site",
+            "directive": (
+                "Сформируй цельную сцену участка, достаточную для размещения всех "
+                "выбранных объектов одновременно."
+            ),
+        }
+    )
+    spec = {
+        "schema": "auroom.initial_concept.v1",
+        "task": {
+            "goal": (
+                "Создать одну общую фотореалистичную архитектурную концепцию участка "
+                "со всеми объектами, выбранными пользователем до начала проекта."
+            ),
+            "selected_objects_count": len(objects),
+            "objects": objects,
+        },
+        "source_scene": source,
+        "composition": {
+            "rule": (
+                "Сначала спланируй весь участок как единую композицию, затем размести "
+                "каждый выбранный объект. Ни один объект не должен вытеснять остальные."
+            ),
+            "all_selected_objects_must_be_visible": True,
+            "preserve_realistic_scale_and_access": True,
+            "reserve_space_for_every_selected_object": True,
+        },
+        "camera": {
+            "view": "high-angle oblique aerial drone view",
+            "altitude_m": {"min": 50, "max": 70},
+            "entire_plot_visible": True,
+            "property_boundaries_readable": True,
+            "all_selected_objects_visible": True,
+            "source_photo_camera_lock": False,
+        },
+        "questionnaire_semantics": {
+            "strength": "hard_constraints",
+            "explicit_answers_override_model_assumptions": True,
+            "multi_select": "Использовать выбранный набор без добавления невыбранных вариантов.",
+            "number": "Считать число целевым параметром.",
+        },
+        "prohibitions": [
+            "Не создавать отдельные изображения для отдельных объектов.",
+            "Не кадрировать сцену так, чтобы выбранные объекты выпадали из кадра.",
+            "Не занимать домом весь участок, если выбраны другие объекты.",
+            "Не показывать текст, подписи, размеры, UI или технические аннотации.",
+        ],
+        "output": {
+            "type": "single_photorealistic_image",
+            "priority": "whole_site_composition_and_questionnaire_fidelity",
+        },
+    }
+    return (
+        "AUROOM_INITIAL_CONCEPT_V1\n"
+        "Это одна общая генерация проекта, а не последовательность отдельных объектов.\n"
+        "ПРИОРИТЕТЫ:\n"
+        "1. Все selected objects одновременно присутствуют в одной сцене.\n"
+        "2. Весь участок читается с высоты 50–70 м под углом сверху.\n"
+        "3. Каждый ответ questionnaire_constraints является обязательным.\n"
+        "4. Фотореализм и эстетика после выполнения пунктов 1–3.\n"
+        "STRUCTURED_SPEC:\n"
+        f"{dumps(spec, ensure_ascii=False, separators=(',', ':'))}\n"
+        "FINAL_CHECK: убедись, что виден весь участок и каждый выбранный объект."
+    )
 
 
 def build_questionnaire_generation_prompt(
