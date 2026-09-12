@@ -106,15 +106,17 @@ class QuestionnaireProjectService:
             initial_concept_mode=True,
             current_object=selected[0] if len(selected) == 1 else None,
         )
+        project_context: dict[str, object] = {
+            "questionnaire_draft": True,
+            "design_session": design_session.model_dump(mode="json"),
+        }
+        if payload.plot_area_sotkas is not None:
+            project_context["plot_area_m2"] = payload.plot_area_sotkas * 100
         project = Project(
             user_id=user.id,
             name=name,
             description="Проект создан через опросник AuRoom.",
-            context={
-                "questionnaire_draft": True,
-                "plot_area_m2": payload.plot_area_sotkas * 100,
-                "design_session": design_session.model_dump(mode="json"),
-            },
+            context=project_context,
         )
         self.projects.add(project)
         await self.session.commit()
