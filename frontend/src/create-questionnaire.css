@@ -175,6 +175,60 @@
   white-space: nowrap;
 }
 
+.create-plot-size {
+  margin: 0 0 12px;
+  padding: 11px 0;
+  border-top: 1px solid rgba(228, 198, 126, .14);
+  border-bottom: 1px solid rgba(228, 198, 126, .14);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.create-plot-size > span:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.create-plot-size strong {
+  color: var(--brand-ivory);
+  font-size: 12px;
+}
+
+.create-plot-size small {
+  color: var(--brand-muted);
+  font-size: 10px;
+}
+
+.create-plot-input {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--brand-muted);
+  font-size: 11px;
+}
+
+.create-plot-input input {
+  width: 92px;
+  min-height: 42px;
+  box-sizing: border-box;
+  border: 1px solid rgba(228, 198, 126, .28);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, .035);
+  color: var(--brand-ivory);
+  font: inherit;
+  font-size: 15px;
+  text-align: right;
+}
+
+.create-plot-input input:focus {
+  outline: 2px solid rgba(228, 198, 126, .35);
+  outline-offset: 2px;
+  border-color: var(--brand-gold);
+}
+
 .create-selection-dock .banner-error {
   margin: 0 0 10px;
 }
@@ -254,6 +308,14 @@
 
   .create-selection-copy span {
     max-width: 100%;
+  }
+
+  .create-plot-size {
+    align-items: stretch;
+  }
+
+  .create-plot-input input {
+    width: 88px;
   }
 
   .create-selection-actions {
