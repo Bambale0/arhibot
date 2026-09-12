@@ -158,14 +158,21 @@ class DesignSession(BaseModel):
 
     @model_validator(mode="after")
     def require_accepted_house_for_inherited_style(self) -> DesignSession:
-        if "eskez-doma" in self.accepted_objects or (
-            self.initial_concept_mode and "eskez-doma" in self.selected_objects
-        ):
+        house_reference_available = "eskez-doma" in self.accepted_objects or (
+            self.initial_concept_mode
+            and not self.initial_concept_accepted
+            and "eskez-doma" in self.selected_objects
+        )
+        if house_reference_available:
             return self
         for object_key in HOUSE_STYLE_INHERITANCE_OBJECTS:
-            if self.answers.get(object_key, {}).get("1") == "Как у дома":
+            if (
+                self.answers.get(object_key, {}).get("1") == "Как у дома"
+                and object_key not in self.accepted_objects
+                and object_key not in self.removed_objects
+            ):
                 raise ValueError(
-                    "Вариант «Как у дома» доступен только после принятия основного дома."
+                    "Вариант «Как у дома» доступен только при наличии основного дома."
                 )
         return self
 
