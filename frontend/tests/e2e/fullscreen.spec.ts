@@ -76,7 +76,7 @@ async function prepare(page:Page) {
     if(path.endsWith(`/projects/${projectId}`)&&method==='GET') return json(route,project)
     if(path.endsWith('/ideas')&&method==='GET') return json(route,[])
     if(path.endsWith('/questionnaires')&&method==='GET') return json(route,catalog)
-    if(path.endsWith('/questionnaire-generation-cost')&&method==='GET') return json(route,{generation_type:'master_plan',credits:1,is_available:true})
+    if(path.endsWith('/questionnaire-generation-cost')&&method==='GET') return json(route,{generation_type:'master_plan',initial_credits:0,credits:1,is_available:true})
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='GET') return json(route,{session})
     return json(route,{type:'mock_unhandled',detail:`${method} ${path}`},404)
   })

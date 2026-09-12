@@ -6,11 +6,11 @@ export function getQuestionnaireCatalog():Promise<QuestionnaireCatalog> {
   return apiRequest<QuestionnaireCatalog>('/questionnaires')
 }
 
-export function startQuestionnaireProject(selectedObjects:string[]):Promise<Project> {
+export function startQuestionnaireProject(selectedObjects:string[], plotAreaSotkas:number):Promise<Project> {
   return apiRequest<Project>('/questionnaire-projects', {
     method:'POST',
     headers:{ 'Content-Type':'application/json' },
-    body:JSON.stringify({ selected_objects:selectedObjects }),
+    body:JSON.stringify({ selected_objects:selectedObjects, plot_area_sotkas:plotAreaSotkas }),
   })
 }
 

@@ -97,12 +97,9 @@ async def get_questionnaire_generation_cost(
     user: CurrentUser,
     session: DbSession,
 ) -> QuestionnaireGenerationCostResponse:
-    cost = await QuestionnaireService(session).generation_cost(user)
-    if not cost.is_available:
-        return cost
-    # The questionnaire offer includes exactly one free whole-site initial concept.
-    # Paid master-plan pricing still applies to post-accept add/change/remove iterations.
-    return cost.model_copy(update={"credits": 0})
+    # credits is the live paid master-plan price used by refinements.
+    # initial_credits is a separate product offer and remains zero.
+    return await QuestionnaireService(session).generation_cost(user)
 
 
 @router.post(

@@ -10,6 +10,7 @@ export function CreateScreen({ onOpenQuestionnaire }: {
   const [catalog, setCatalog] = useState<QuestionnaireCatalog | null>(null)
   const [activeSection, setActiveSection] = useState<string | null>(null)
   const [selectedObjects, setSelectedObjects] = useState<string[]>([])
+  const [plotAreaSotkas, setPlotAreaSotkas] = useState('')
   const [catalogLoading, setCatalogLoading] = useState(true)
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
@@ -35,13 +36,18 @@ export function CreateScreen({ onOpenQuestionnaire }: {
   }
 
   async function startQuestionnaireProject() {
+    const parsedPlotArea = Number(plotAreaSotkas)
     if (!catalog || selectedObjects.length === 0 || starting) return
+    if (!Number.isInteger(parsedPlotArea) || parsedPlotArea < 4 || parsedPlotArea > 15) {
+      setStartError('Укажите размер участка от 4 до 15 соток.')
+      return
+    }
     setStarting(true)
     setStartError(null)
     try {
       const catalogOrder = catalog.sections.flatMap((item) => item.object_keys)
       const orderedObjects = catalogOrder.filter((key) => selectedObjects.includes(key))
-      const project = await startQuestionnaireProjectApi(orderedObjects)
+      const project = await startQuestionnaireProjectApi(orderedObjects, parsedPlotArea)
       onOpenQuestionnaire(project, orderedObjects)
     } catch (err) {
       setStartError(err instanceof Error ? err.message : 'Не удалось создать проект')
@@ -69,8 +75,10 @@ export function CreateScreen({ onOpenQuestionnaire }: {
 
       <CreateSelectionDock
         selectedTitles={selectedTitles}
+        plotAreaSotkas={plotAreaSotkas}
         starting={starting}
         error={startError}
+        onPlotAreaChange={(value) => { setPlotAreaSotkas(value); setStartError(null) }}
         onAddSection={() => setActiveSection(null)}
         onStart={() => void startQuestionnaireProject()}
       />
@@ -89,28 +97,38 @@ export function CreateScreen({ onOpenQuestionnaire }: {
 
       {selectedObjects.length > 0 && <CreateSelectionDock
         selectedTitles={selectedTitles}
+        plotAreaSotkas={plotAreaSotkas}
         starting={starting}
         error={startError}
+        onPlotAreaChange={(value) => { setPlotAreaSotkas(value); setStartError(null) }}
         onStart={() => void startQuestionnaireProject()}
       />}
     </>}
   </section>
 }
 
-function CreateSelectionDock({ selectedTitles, starting, error, onAddSection, onStart }: {
+function CreateSelectionDock({ selectedTitles, plotAreaSotkas, starting, error, onPlotAreaChange, onAddSection, onStart }: {
   selectedTitles: string[]
+  plotAreaSotkas: string
   starting: boolean
   error: string | null
+  onPlotAreaChange: (value:string) => void
   onAddSection?: () => void
   onStart: () => void
 }) {
   if (!selectedTitles.length) return null
+  const parsedPlotArea = Number(plotAreaSotkas)
+  const plotAreaValid = Number.isInteger(parsedPlotArea) && parsedPlotArea >= 4 && parsedPlotArea <= 15
   return <div className="create-selection-dock" aria-live="polite">
     <div className="create-selection-copy"><strong>Выбрано: {selectedTitles.length}</strong><span>{selectedTitles.join(' · ')}</span></div>
+    <label className="create-plot-size">
+      <span><strong>Размер участка</strong><small>4–15 соток · 1 сотка = 100 м²</small></span>
+      <span className="create-plot-input"><input aria-label="Размер участка, соток" type="number" min={4} max={15} step={1} inputMode="numeric" placeholder="Например, 8" value={plotAreaSotkas} disabled={starting} onChange={(event) => onPlotAreaChange(event.target.value)} /><b>сот.</b></span>
+    </label>
     {error && <div className="banner-error">{error}</div>}
     <div className="create-selection-actions">
       {onAddSection && <button type="button" className="secondary-button" disabled={starting} onClick={onAddSection}>Добавить из другого раздела</button>}
-      <button type="button" className="primary-button" disabled={starting} onClick={onStart}>{starting ? 'Создаём проект…' : 'Начать проект'}</button>
+      <button type="button" className="primary-button" disabled={starting || !plotAreaValid} onClick={onStart}>{starting ? 'Создаём проект…' : 'Начать проект'}</button>
     </div>
   </div>
 }

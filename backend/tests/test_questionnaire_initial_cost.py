@@ -22,7 +22,8 @@ async def test_initial_questionnaire_concept_reports_zero_credits_when_generatio
 
     assert response.generation_type == "master_plan"
     assert response.is_available is True
-    assert response.credits == 0
+    assert response.initial_credits == 0
+    assert response.credits == 7
 
 
 @pytest.mark.asyncio
@@ -41,4 +42,5 @@ async def test_initial_questionnaire_cost_keeps_unavailable_state(
     response = await get_questionnaire_generation_cost(object(), object())  # type: ignore[arg-type]
 
     assert response.is_available is False
+    assert response.initial_credits == 0
     assert response.credits is None

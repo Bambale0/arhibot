@@ -91,6 +91,117 @@ def _region_percent(region: object | None) -> dict[str, int] | None:
 
 
 
+def _initial_concept_camera(selected_count: int) -> dict[str, object]:
+    if selected_count <= 1:
+        return {
+            "mode": "single_object_hero",
+            "view": "architectural three-quarter hero view, slightly elevated",
+            "altitude_m": {"min": 8, "max": 20},
+            "entire_plot_visible": False,
+            "property_boundaries_readable": False,
+            "all_selected_objects_visible": True,
+            "source_photo_camera_lock": False,
+            "directive": (
+                "Один выбранный объект показывай крупно и выразительно, как премиальную "
+                "архитектурную визуализацию. Объект целиком в кадре, с достаточным "
+                "контекстом участка, но без обязательного показа всей территории."
+            ),
+        }
+    if selected_count == 2:
+        return {
+            "mode": "paired_object_context",
+            "view": "elevated oblique architectural site view",
+            "altitude_m": {"min": 20, "max": 35},
+            "entire_plot_visible": False,
+            "property_boundaries_readable": False,
+            "all_selected_objects_visible": True,
+            "source_photo_camera_lock": False,
+            "directive": (
+                "Два выбранных объекта должны одновременно и крупно читаться в одном "
+                "эстетичном кадре. Подними камеру только настолько, насколько нужно, "
+                "чтобы оба объекта и их взаимное расположение были понятны."
+            ),
+        }
+    return {
+        "mode": "whole_site_aerial",
+        "view": "high-angle oblique aerial drone view",
+        "altitude_m": {"min": 50, "max": 70},
+        "entire_plot_visible": True,
+        "property_boundaries_readable": True,
+        "all_selected_objects_visible": True,
+        "source_photo_camera_lock": False,
+        "directive": (
+            "При трёх и более объектах покажи весь участок с высоты 50–70 м под "
+            "углом сверху. Границы участка и все выбранные объекты должны читаться "
+            "одновременно."
+        ),
+    }
+
+
+def _house_floor_count_reference(answer: object) -> float | None:
+    if not isinstance(answer, str):
+        return None
+    normalized = answer.lower()
+    if normalized.startswith("1 "):
+        count = 1.0
+    elif normalized.startswith("2 "):
+        count = 2.0
+    elif normalized.startswith("3 "):
+        count = 3.0
+    else:
+        return None
+    if "мансард" in normalized:
+        count += 0.5
+    return count
+
+
+def _initial_site_scale(session: DesignSession) -> dict[str, object]:
+    plot_sotkas = session.plot_area_sotkas
+    plot_m2 = plot_sotkas * 100 if plot_sotkas is not None else None
+    house_answers = session.answers.get("eskez-doma", {})
+    raw_house_area = house_answers.get("3")
+    house_area_m2 = (
+        float(raw_house_area)
+        if isinstance(raw_house_area, (int, float)) and not isinstance(raw_house_area, bool)
+        else None
+    )
+    floor_count = _house_floor_count_reference(house_answers.get("4"))
+    estimated_footprint_m2 = (
+        round(house_area_m2 / floor_count, 1)
+        if house_area_m2 is not None and floor_count
+        else None
+    )
+    estimated_footprint_share = (
+        round(estimated_footprint_m2 / plot_m2, 4)
+        if estimated_footprint_m2 is not None and plot_m2
+        else None
+    )
+    scale_known = plot_sotkas is not None
+    directive = (
+        "Соблюдай правдоподобный относительный масштаб. Размер участка является "
+        "жёстким ориентиром композиции: 1 сотка = 100 м². Площадь дома — общая "
+        "площадь по этажам; estimated_house_footprint_m2 используется только как "
+        "ориентир пятна застройки. Не увеличивай дом так, чтобы он визуально занимал "
+        "несоразмерную долю участка."
+        if scale_known
+        else (
+            "Точный размер участка отсутствует у исторического/внутреннего проекта. "
+            "Не придумывай числовую площадь; сохраняй только правдоподобный визуальный "
+            "масштаб объектов относительно доступной сцены."
+        )
+    )
+    return {
+        "plot_area_known": scale_known,
+        "plot_area_sotkas": plot_sotkas,
+        "plot_area_m2": plot_m2,
+        "house_total_area_m2": house_area_m2,
+        "house_floor_count_reference": floor_count,
+        "estimated_house_footprint_m2": estimated_footprint_m2,
+        "estimated_house_footprint_share_of_plot": estimated_footprint_share,
+        "directive": directive,
+    }
+
+
 def build_initial_concept_prompt(
     catalog: dict[str, Any],
     session: DesignSession,
@@ -136,13 +247,15 @@ def build_initial_concept_prompt(
             }
         )
 
+    camera = _initial_concept_camera(len(objects))
+    site_scale = _initial_site_scale(session)
     source = (
         {
             "kind": "site_photo",
             "directive": (
                 "Используй фото только как источник геометрии, границ, окружения и "
-                "контекста участка. Исходный ракурс не фиксирован: построй новую общую "
-                "аэровизуализацию всего участка."
+                "контекста участка. Исходный ракурс не фиксирован: перестрой камеру "
+                "строго по camera.mode и camera.directive."
             ),
         }
         if input_asset_present
@@ -167,21 +280,16 @@ def build_initial_concept_prompt(
         "source_scene": source,
         "composition": {
             "rule": (
-                "Сначала спланируй весь участок как единую композицию, затем размести "
-                "каждый выбранный объект. Ни один объект не должен вытеснять остальные."
+                "Сначала спланируй участок как единую композицию и соблюдай реальный "
+                "относительный масштаб, затем размести каждый выбранный объект. Ни один "
+                "объект не должен вытеснять остальные."
             ),
             "all_selected_objects_must_be_visible": True,
             "preserve_realistic_scale_and_access": True,
             "reserve_space_for_every_selected_object": True,
         },
-        "camera": {
-            "view": "high-angle oblique aerial drone view",
-            "altitude_m": {"min": 50, "max": 70},
-            "entire_plot_visible": True,
-            "property_boundaries_readable": True,
-            "all_selected_objects_visible": True,
-            "source_photo_camera_lock": False,
-        },
+        "site_scale": site_scale,
+        "camera": camera,
         "questionnaire_semantics": {
             "strength": "hard_constraints",
             "explicit_answers_override_model_assumptions": True,
@@ -204,12 +312,14 @@ def build_initial_concept_prompt(
         "Это одна общая генерация проекта, а не последовательность отдельных объектов.\n"
         "ПРИОРИТЕТЫ:\n"
         "1. Все selected objects одновременно присутствуют в одной сцене.\n"
-        "2. Весь участок читается с высоты 50–70 м под углом сверху.\n"
-        "3. Каждый ответ questionnaire_constraints является обязательным.\n"
-        "4. Фотореализм и эстетика после выполнения пунктов 1–3.\n"
+        f"2. {camera['directive']}\n"
+        "3. Соблюдай site_scale: размер участка и относительный масштаб объектов.\n"
+        "4. Каждый ответ questionnaire_constraints является обязательным.\n"
+        "5. Фотореализм и эстетика после выполнения пунктов 1–4.\n"
         "STRUCTURED_SPEC:\n"
         f"{dumps(spec, ensure_ascii=False, separators=(',', ':'))}\n"
-        "FINAL_CHECK: убедись, что виден весь участок и каждый выбранный объект."
+        "FINAL_CHECK: проверь, что каждый выбранный объект полностью виден, ракурс "
+        "соответствует camera.mode, а относительный масштаб соответствует site_scale."
     )
 
 

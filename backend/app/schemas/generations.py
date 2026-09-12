@@ -89,6 +89,12 @@ class GenerationCreate(BaseModel):
         return self
 
 
+class QuestionnaireGenerationCreate(GenerationCreate):
+    """Server-built questionnaire prompt; never accepted from the public generation API."""
+
+    prompt: str = Field(default="", max_length=16000)
+
+
 class GenerationResultResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

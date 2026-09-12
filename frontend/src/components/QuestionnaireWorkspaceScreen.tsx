@@ -88,11 +88,12 @@ function sanitizeObjectAnswers(definition:QuestionnaireDefinition, answers:Recor
   return next
 }
 
-function newSession(version:string, selected:string[]):DesignSession {
+function newSession(version:string, selected:string[], plotAreaSotkas:number|null):DesignSession {
   return {
     session_id:crypto.randomUUID(),
     catalog_version:version,
     selected_objects:selected,
+    plot_area_sotkas:plotAreaSotkas,
     initial_concept_mode:true,
     survey_completed_objects:[],
     initial_generation_id:null,
@@ -245,7 +246,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
             && stored.catalog_version === loaded.version
             && JSON.stringify(stored.selected_objects) === JSON.stringify(selected)
             ? stored
-            : newSession(loaded.version, selected)
+            : newSession(loaded.version, selected, project.context.plot_area_m2 ? Math.round(project.context.plot_area_m2 / 100) : null)
         setSession(initial)
         if (initial.source_asset_id) {
           try { setSourceAsset(await api.getAsset(initial.source_asset_id)) } catch { /* deleted source */ }
@@ -435,6 +436,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     if (!generationCost) return 'Стоимость уточняется'
     if (!generationCost.is_available || generationCost.credits == null) return 'Генерация временно недоступна'
     return generationCost.credits === 0 ? 'Бесплатно' : `${generationCost.credits} кр.`
+  }
+
+  function initialGenerationCostLabel() {
+    if (!generationCost) return 'Стоимость уточняется'
+    if (!generationCost.is_available) return 'Генерация временно недоступна'
+    return generationCost.initial_credits === 0 ? 'Бесплатно' : `${generationCost.initial_credits} кр.`
   }
 
   async function addObject(key:string) {
@@ -1016,7 +1023,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
           )
           return <details key={key}><summary>{definition.title}</summary>{answered.map((question) => <button type="button" key={question.id} disabled={busy} onClick={() => void editInitialQuestion(key, question.id)}><span>{question.text}</span><strong>{text(answers[question.id])}</strong></button>)}</details>
         })}</div>}
-        {ready && !initialGenerationId && <><p className="region-hint">Одна общая генерация · {generationCostLabel()}</p><div className="questionnaire-actions"><button className="primary-button" disabled={busy || generationCost?.is_available === false} onClick={() => void generateInitial(session)}>Создать общую концепцию</button></div></>}
+        {ready && !initialGenerationId && <><p className="region-hint">Одна общая генерация · {initialGenerationCostLabel()}</p><div className="questionnaire-actions"><button className="primary-button" disabled={busy || generationCost?.is_available === false} onClick={() => void generateInitial(session)}>Создать общую концепцию</button></div></>}
         {initialGenerationId && renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void acceptInitial()}>Принять концепцию</button><button className="secondary-button" disabled={busy} onClick={() => void reopenInitialAnswers()}>Изменить ТЗ · новая генерация</button></div>}
         {(busy || generationInFlight) && initialGenerationId && !renderOutput && <div className="empty-inline">Создаём весь участок одной генерацией…</div>}
         {error && <div className="banner-error">{error}</div>}

@@ -90,6 +90,7 @@ class QuestionnaireCatalogAdminResponse(QuestionnaireCatalogAdminUpdate):
 class QuestionnaireProjectStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     selected_objects: list[str] = Field(min_length=1, max_length=26)
+    plot_area_sotkas: int | None = Field(default=None, ge=4, le=15)
 
 
 class QuestionnaireObjectAddRequest(BaseModel):
@@ -99,6 +100,7 @@ class QuestionnaireObjectAddRequest(BaseModel):
 
 class QuestionnaireGenerationCostResponse(BaseModel):
     generation_type: Literal["master_plan"] = "master_plan"
+    initial_credits: int = 0
     credits: int | None = None
     is_available: bool
 
@@ -108,6 +110,7 @@ class DesignSession(BaseModel):
     session_id: UUID = Field(default_factory=uuid4)
     catalog_version: str
     selected_objects: list[str] = Field(default_factory=list, max_length=26)
+    plot_area_sotkas: int | None = Field(default=None, ge=4, le=15)
     initial_concept_mode: bool = False
     survey_completed_objects: list[str] = Field(default_factory=list)
     initial_generation_id: UUID | None = None
