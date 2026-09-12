@@ -547,6 +547,195 @@ async def test_initial_concept_refinement_updates_scene_generation_chain() -> No
 
 
 @pytest.mark.asyncio
+async def test_accepted_object_removal_is_a_paid_masked_iteration() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        tokens, headers = await _register_admin(client)
+        user_id = UUID(tokens["user"]["id"])
+        catalog = (await client.get("/api/v1/questionnaires", headers=headers)).json()
+        object_keys = ["lavochka", "kacheli"]
+        definitions = {
+            key: next(
+                item for item in catalog["questionnaires"] if item["key"] == key
+            )
+            for key in object_keys
+        }
+
+        price = await client.put(
+            "/api/v1/admin/generation-prices/master_plan",
+            headers=headers,
+            json={"credits": 3, "is_active": True},
+        )
+        assert price.status_code == 200, price.text
+
+        started = await client.post(
+            "/api/v1/questionnaire-projects",
+            headers=headers,
+            json={"selected_objects": object_keys},
+        )
+        assert started.status_code == 201, started.text
+        project_id = started.json()["id"]
+        session = started.json()["context"]["design_session"]
+        ordered_keys = session["selected_objects"]
+        assert set(ordered_keys) == set(object_keys)
+
+        session["source_step_completed"] = True
+        source_saved = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=session,
+        )
+        assert source_saved.status_code == 200, source_saved.text
+        session = source_saved.json()["session"]
+
+        initial_answers: dict[str, dict] = {}
+        for key in ordered_keys:
+            answers = _valid_object_answers(definitions[key], house_accepted=False)
+            review = next(
+                question
+                for question in definitions[key]["questions"]
+                if question["phase"] == "review"
+                and question.get("options")
+                and question["options"][0].startswith("Да")
+            )
+            answers.pop(review["id"])
+            initial_answers[key] = answers
+        session["answers"] = initial_answers
+        session["survey_completed_objects"] = list(ordered_keys)
+        session["current_object"] = None
+        session["current_question_id"] = None
+
+        answers_saved = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=session,
+        )
+        assert answers_saved.status_code == 200, answers_saved.text
+
+        initial = await client.post(
+            f"/api/v1/projects/{project_id}/questionnaire-generation",
+            headers=headers,
+        )
+        assert initial.status_code == 202, initial.text
+        initial_id = UUID(initial.json()["id"])
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(initial_id))
+
+        initial_asset = Asset(
+            user_id=user_id,
+            project_id=UUID(project_id),
+            type=AssetType.IMAGE,
+            purpose=AssetPurpose.GENERATION_OUTPUT,
+            original_filename="removal-initial.webp",
+            mime_type="image/webp",
+            size_bytes=128,
+            width=1280,
+            height=720,
+            storage_path=f"integration/questionnaires/{uuid4()}.webp",
+        )
+        async with get_session_factory()() as db:
+            db.add(initial_asset)
+            await db.flush()
+            generation = await db.get(Generation, initial_id)
+            assert generation is not None
+            generation.status = GenerationStatus.COMPLETED
+            generation.output_asset_id = initial_asset.id
+            await db.commit()
+            await db.refresh(initial_asset)
+
+        accepted = await client.post(
+            f"/api/v1/projects/{project_id}/questionnaire-initial-accept",
+            headers=headers,
+        )
+        assert accepted.status_code == 200, accepted.text
+        session = accepted.json()["session"]
+        assert set(session["accepted_objects"]) == set(object_keys)
+        assert session["removed_objects"] == []
+
+        remove_key = "lavochka"
+        remaining_key = "kacheli"
+        started_removal = await client.post(
+            f"/api/v1/projects/{project_id}/questionnaire-object-removal",
+            headers=headers,
+            json={"object_key": remove_key},
+        )
+        assert started_removal.status_code == 200, started_removal.text
+        session = started_removal.json()["session"]
+        assert session["pending_removal_object"] == remove_key
+        assert session["current_object"] == remove_key
+        assert session["region_mode"] == "edit"
+
+        region = {"x": 0.08, "y": 0.20, "width": 0.32, "height": 0.46}
+        session["edit_regions"][remove_key] = region
+        session["region_mode"] = None
+        session["region_object"] = None
+        region_saved = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=session,
+        )
+        assert region_saved.status_code == 200, region_saved.text
+
+        removal = await client.post(
+            f"/api/v1/projects/{project_id}/questionnaire-generation",
+            headers=headers,
+        )
+        assert removal.status_code == 202, removal.text
+        removal_id = UUID(removal.json()["id"])
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(removal_id))
+
+        removal_asset = Asset(
+            user_id=user_id,
+            project_id=UUID(project_id),
+            type=AssetType.IMAGE,
+            purpose=AssetPurpose.GENERATION_OUTPUT,
+            original_filename="removal-result.webp",
+            mime_type="image/webp",
+            size_bytes=128,
+            width=1280,
+            height=720,
+            storage_path=f"integration/questionnaires/{uuid4()}.webp",
+        )
+        async with get_session_factory()() as db:
+            db.add(removal_asset)
+            await db.flush()
+            generation = await db.get(Generation, removal_id)
+            assert generation is not None
+            assert generation.type == GenerationType.MASTER_PLAN
+            assert generation.composition_mode == "masked_edit"
+            assert generation.input_asset_id == initial_asset.id
+            assert generation.edit_region == region
+            assert '"operation":"remove_object"' in generation.prompt
+            generation.status = GenerationStatus.COMPLETED
+            generation.output_asset_id = removal_asset.id
+            await db.commit()
+            await db.refresh(removal_asset)
+
+        removed = await client.post(
+            f"/api/v1/projects/{project_id}/questionnaire-object-removal/accept",
+            headers=headers,
+        )
+        assert removed.status_code == 200, removed.text
+        session = removed.json()["session"]
+        assert session["accepted_objects"] == [remaining_key]
+        assert session["removed_objects"] == [remove_key]
+        assert session["pending_removal_object"] is None
+        assert session["scene_asset_id"] == str(removal_asset.id)
+        assert session["scene_generation_id"] == str(removal_id)
+        assert session["current_object"] is None
+        assert remove_key not in session["lock_regions"]
+        assert remove_key not in session["edit_regions"]
+
+        session["current_object"] = "zayavka"
+        session["current_question_id"] = "20"
+        ordinary_save = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=session,
+        )
+        assert ordinary_save.status_code == 200, ordinary_save.text
+
+
+@pytest.mark.asyncio
 async def test_questionnaire_catalog_session_and_application_flow() -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
