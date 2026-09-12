@@ -42,6 +42,7 @@ QUESTIONNAIRE_PROMPT_PREFIXES = (
 )
 QUESTIONNAIRE_ASPECT_RATIOS = {"1:1": 1.0, "4:3": 4 / 3, "3:4": 3 / 4, "16:9": 16 / 9, "9:16": 9 / 16}
 RESERVED_PROVIDER_PARAMS = {"model_name", "prompt", "image_url", "image_urls"}
+ADMIN_ORBIT_MAX_CONCURRENCY = 3
 
 
 def _admin_sandbox_request(
@@ -173,6 +174,42 @@ async def _download_image(url: str, settings: Settings) -> bytes:
                     raise RuntimeError("Generated image exceeds media size limit")
                 chunks.append(chunk)
     return b"".join(chunks)
+
+
+async def _generate_orbit_frames(
+    *,
+    provider: NexusImageProvider,
+    generation_id: UUID,
+    model_name: str,
+    prompt: str,
+    params: dict[str, object],
+    source_url: str,
+    frame_count: int,
+    settings: Settings,
+) -> tuple[list[bytes], str | None]:
+    semaphore = asyncio.Semaphore(ADMIN_ORBIT_MAX_CONCURRENCY)
+
+    async def generate_frame(index: int) -> tuple[int, bytes, str]:
+        async with semaphore:
+            result = await provider.generate(
+                model_name=model_name,
+                prompt=_orbit_frame_prompt(
+                    prompt,
+                    index=index,
+                    frame_count=frame_count,
+                ),
+                image_url=source_url,
+                model_params=params,
+                idempotency_key=f"auroom-{generation_id}-orbit-{index}",
+            )
+            data = await _download_image(result.image_url, settings)
+        return index, data, result.task_id
+
+    generated = await asyncio.gather(
+        *(generate_frame(index) for index in range(1, frame_count))
+    )
+    generated.sort(key=lambda item: item[0])
+    return [item[1] for item in generated], generated[-1][2] if generated else None
 
 
 async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -> None:
@@ -333,24 +370,19 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             _, orbit_prompt, orbit_params, frame_count, frame_duration_ms = orbit_request
             base_path = LocalMediaStorage(settings).absolute_path(input_storage_path)
             base_data = await asyncio.to_thread(base_path.read_bytes)
-            frames = [base_data]
-            for index in range(1, frame_count):
-                result = await provider.generate(
-                    model_name=model_name,
-                    prompt=_orbit_frame_prompt(
-                        orbit_prompt,
-                        index=index,
-                        frame_count=frame_count,
-                    ),
-                    image_url=source_url,
-                    model_params=orbit_params,
-                    idempotency_key=f"auroom-{generation_id}-orbit-{index}",
-                )
-                provider_task_id = result.task_id
-                frames.append(await _download_image(result.image_url, settings))
+            generated_frames, provider_task_id = await _generate_orbit_frames(
+                provider=provider,
+                generation_id=generation_id,
+                model_name=model_name,
+                prompt=orbit_prompt,
+                params=orbit_params,
+                source_url=source_url,
+                frame_count=frame_count,
+                settings=settings,
+            )
             data = await asyncio.to_thread(
                 build_orbit_animation,
-                frames,
+                [base_data, *generated_frames],
                 duration_ms=frame_duration_ms,
                 max_pixels=settings.max_image_pixels,
             )
