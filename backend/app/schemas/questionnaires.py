@@ -90,7 +90,7 @@ class QuestionnaireCatalogAdminResponse(QuestionnaireCatalogAdminUpdate):
 class QuestionnaireProjectStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     selected_objects: list[str] = Field(min_length=1, max_length=26)
-    plot_area_sotkas: int = Field(ge=4, le=15)
+    plot_area_sotkas: int | None = Field(default=None, ge=4, le=15)
 
 
 class QuestionnaireObjectAddRequest(BaseModel):
