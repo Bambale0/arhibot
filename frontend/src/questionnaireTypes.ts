@@ -2,7 +2,7 @@ export type NormalizedRect = { x:number; y:number; width:number; height:number }
 export type QuestionnaireAnswer = string | number | boolean | string[]
 export type QuestionnaireCondition = {
   question_id?: string
-  operator: 'eq'|'neq'|'in'|'contains'|'starts_with'|'all'|'any'|'house_accepted'|'not_contains_any'
+  operator: 'eq'|'neq'|'in'|'contains'|'starts_with'|'all'|'any'|'house_accepted'|'not_contains_any'|'floor_option'
   value?: string|string[]
   conditions?: QuestionnaireCondition[]
 }
@@ -32,6 +32,10 @@ export type DesignSession = {
   session_id:string
   catalog_version:string
   selected_objects:string[]
+  initial_concept_mode:boolean
+  survey_completed_objects:string[]
+  initial_generation_id:string|null
+  initial_concept_accepted:boolean
   current_object:string|null
   current_question_id:string|null
   source_step_completed:boolean
@@ -54,6 +58,10 @@ export function createDesignSession(catalogVersion:string, selectedObjects:strin
     session_id:crypto.randomUUID(),
     catalog_version:catalogVersion,
     selected_objects:[...selectedObjects],
+    initial_concept_mode:true,
+    survey_completed_objects:[],
+    initial_generation_id:null,
+    initial_concept_accepted:false,
     current_object:selectedObjects.length === 1 ? selectedObjects[0] : null,
     current_question_id:null,
     source_step_completed:false,
