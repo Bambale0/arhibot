@@ -117,6 +117,7 @@ class DesignSession(BaseModel):
     source_step_completed: bool = False
     source_asset_id: UUID | None = None
     scene_asset_id: UUID | None = None
+    scene_generation_id: UUID | None = None
     answers: dict[str, dict[str, QuestionAnswer]] = Field(default_factory=dict)
     accepted_objects: list[str] = Field(default_factory=list)
     generation_ids: dict[str, UUID] = Field(default_factory=dict)
