@@ -49,6 +49,10 @@ async def test_questionnaire_project_is_hidden_until_source_step_and_can_be_disc
         design_session = project["context"]["design_session"]
         assert design_session["catalog_version"] == catalog["version"]
         assert design_session["selected_objects"] == ["eskez-doma", "banya"]
+        assert design_session["initial_concept_mode"] is True
+        assert design_session["survey_completed_objects"] == []
+        assert design_session["initial_generation_id"] is None
+        assert design_session["initial_concept_accepted"] is False
         assert design_session["source_step_completed"] is False
 
         hidden_list = await client.get("/api/v1/projects", headers=headers)
