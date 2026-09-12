@@ -41,6 +41,7 @@ export type DesignSession = {
   source_step_completed:boolean
   source_asset_id:string|null
   scene_asset_id:string|null
+  scene_generation_id:string|null
   answers:Record<string,Record<string,QuestionnaireAnswer>>
   accepted_objects:string[]
   generation_ids:Record<string,string>
@@ -67,6 +68,7 @@ export function createDesignSession(catalogVersion:string, selectedObjects:strin
     source_step_completed:false,
     source_asset_id:null,
     scene_asset_id:null,
+    scene_generation_id:null,
     answers:{},
     accepted_objects:[],
     generation_ids:{},
