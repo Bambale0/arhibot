@@ -350,6 +350,13 @@ class AdminService:
                 status=409,
                 detail="Complete an AI Sandbox image before building an orbit loop.",
             )
+        if not source.prompt.startswith("AUROOM_ADMIN_SANDBOX_V1\n"):
+            raise AppError(
+                type="orbit_source_not_sandbox",
+                title="Orbit source must be an AI Sandbox image",
+                status=422,
+                detail="Use the completed still image from the admin AI Sandbox.",
+            )
 
         project = await self.session.get(Project, source.project_id)
         if project is None or not bool((project.context or {}).get("admin_ai_sandbox")):
