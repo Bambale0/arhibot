@@ -30,6 +30,20 @@ from app.telegram_bot.questionnaire_notifications import (  # noqa: E402
 )
 
 
+async def _register_user(client: AsyncClient, *, display_name: str = "Questionnaire User") -> tuple[dict, dict[str, str]]:
+    register = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"questionnaire-user-{uuid4()}@example.com",
+            "password": "correct-horse-battery-staple",
+            "display_name": display_name,
+        },
+    )
+    assert register.status_code == 201, register.text
+    tokens = register.json()
+    return tokens, {"Authorization": f"Bearer {tokens['access_token']}"}
+
+
 async def _register_admin(client: AsyncClient) -> tuple[dict, dict[str, str]]:
     register = await client.post(
         "/api/v1/auth/register",
@@ -204,6 +218,97 @@ async def test_admin_can_retry_terminal_questionnaire_telegram_delivery_without_
         )
         assert duplicate.status_code == 409, duplicate.text
         assert duplicate.json()["type"] == "questionnaire_application_delivery_not_retryable"
+
+
+@pytest.mark.asyncio
+async def test_initial_concept_pricing_uses_control_plane_for_regular_user() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _, admin_headers = await _register_admin(client)
+        configured = await client.put(
+            "/api/v1/admin/operations",
+            headers=admin_headers,
+            json={"starter_credits": 5, "initial_concept_credits": 2},
+        )
+        assert configured.status_code == 200, configured.text
+        assert configured.json()["initial_concept_credits"] == 2
+
+        price = await client.put(
+            "/api/v1/admin/generation-prices/master_plan",
+            headers=admin_headers,
+            json={"credits": 7, "is_active": True},
+        )
+        assert price.status_code == 200, price.text
+
+        tokens, headers = await _register_user(client, display_name="Initial Pricing User")
+        assert tokens["user"]["credits_balance"] == 5
+        catalog = (await client.get("/api/v1/questionnaires", headers=headers)).json()
+        house_definition = next(
+            item for item in catalog["questionnaires"] if item["key"] == "eskez-doma"
+        )
+
+        started = await client.post(
+            "/api/v1/questionnaire-projects",
+            headers=headers,
+            json={"selected_objects": ["eskez-doma"], "plot_area_sotkas": 8},
+        )
+        assert started.status_code == 201, started.text
+        project_id = started.json()["id"]
+        design_session = started.json()["context"]["design_session"]
+        design_session["source_step_completed"] = True
+        saved = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=design_session,
+        )
+        assert saved.status_code == 200, saved.text
+        design_session = saved.json()["session"]
+
+        answers = _valid_object_answers(house_definition, house_accepted=False)
+        review_id = next(
+            question["id"]
+            for question in house_definition["questions"]
+            if question["phase"] == "review"
+            and question.get("options")
+            and question["options"][0].startswith("Да")
+        )
+        answers.pop(review_id)
+        design_session["answers"] = {"eskez-doma": answers}
+        design_session["survey_completed_objects"] = ["eskez-doma"]
+        design_session["current_object"] = None
+        design_session["current_question_id"] = None
+        saved = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=design_session,
+        )
+        assert saved.status_code == 200, saved.text
+
+        cost = await client.get("/api/v1/questionnaire-generation-cost", headers=headers)
+        assert cost.status_code == 200, cost.text
+        assert cost.json()["initial_credits"] == 2
+        assert cost.json()["credits"] == 7
+
+        queued = await client.post(
+            f"/api/v1/projects/{project_id}/questionnaire-generation",
+            headers=headers,
+        )
+        assert queued.status_code == 202, queued.text
+        body = queued.json()
+        assert body["credits_charged"] == 2
+
+        me = await client.get("/api/v1/me", headers=headers)
+        assert me.status_code == 200, me.text
+        assert me.json()["credits_balance"] == 3
+
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, body["id"])
+
+        reset = await client.put(
+            "/api/v1/admin/operations",
+            headers=admin_headers,
+            json={"starter_credits": 0, "initial_concept_credits": 0},
+        )
+        assert reset.status_code == 200, reset.text
 
 
 @pytest.mark.asyncio
