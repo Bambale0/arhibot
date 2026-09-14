@@ -124,24 +124,20 @@ async def deliver_pending_generations_once(
                 await session.commit()
                 continue
 
-            document_url = LocalMediaStorage(settings).signed_url(
-                output.storage_path,
-                ttl_seconds=3600,
+            document_path = LocalMediaStorage(settings).absolute_path(
+                output.storage_path
             )
             try:
                 await asyncio.to_thread(
-                    api.call,
-                    "sendDocument",
-                    {
-                        "chat_id": chat_id,
-                        "document": document_url,
-                        "caption": generation_caption(project.name),
-                        "reply_markup": generation_keyboard(
-                            raw_webapp_url,
-                            project_id=project.id,
-                            generation_id=generation.id,
-                        ),
-                    },
+                    api.send_document_file,
+                    chat_id=chat_id,
+                    path=document_path,
+                    caption=generation_caption(project.name),
+                    reply_markup=generation_keyboard(
+                        raw_webapp_url,
+                        project_id=project.id,
+                        generation_id=generation.id,
+                    ),
                 )
             except Exception as exc:
                 generation.telegram_delivery_error = (
