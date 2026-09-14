@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.architecture.schemas import ArchitecturePackage
 from app.domain.generations.enums import GenerationType
 from app.domain.users.enums import UserRole, UserStatus
+from app.schemas.generations import GenerationResponse
 
 
 class AdminOverviewResponse(BaseModel):
@@ -277,10 +278,18 @@ class AdminAiOrbitCreate(BaseModel):
         return self
 
 
+class AdminAiHistoryItem(BaseModel):
+    kind: Literal["sandbox", "orbit"]
+    generation: GenerationResponse
+    prompt: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    frame_count: int | None = None
+    frame_duration_ms: int | None = None
+
+
 class GenerationRuntimeUpdate(BaseModel):
     primary_model: str = Field(min_length=1, max_length=120)
     fallback_model: str | None = Field(default=None, max_length=120)
-    primary_timeout_seconds: int = Field(default=90, ge=30, le=600)
     primary_params: dict[str, Any] = Field(default_factory=dict)
     fallback_params: dict[str, Any] = Field(default_factory=dict)
     mode_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -325,7 +334,6 @@ class GenerationRuntimeUpdate(BaseModel):
 class GenerationRuntimeResponse(BaseModel):
     primary_model: str | None = None
     fallback_model: str | None = None
-    primary_timeout_seconds: int = 90
     primary_params: dict[str, Any] = Field(default_factory=dict)
     fallback_params: dict[str, Any] = Field(default_factory=dict)
     mode_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
