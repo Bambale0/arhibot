@@ -184,7 +184,11 @@ class QuestionnaireApplicationResponse(BaseModel):
     user_name: str | None = None
     scene_asset_url: str | None = None
     final_generation_id: UUID | None = None
-    application_contact: str | None = None
+    application_plot: QuestionAnswer | None = None
+    application_budget: QuestionAnswer | None = None
+    application_timeline: QuestionAnswer | None = None
+    application_name: QuestionAnswer | None = None
+    application_contact: QuestionAnswer | None = None
     user_email: str | None = None
     telegram_user_id: str | None = None
     brief: list[QuestionnaireBriefObject] = Field(default_factory=list)
