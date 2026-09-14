@@ -73,7 +73,7 @@ class GenerationCreate(BaseModel):
     prompt: str = Field(default="", max_length=4000)
     composition_mode: Literal["replace", "masked_edit"] = "replace"
     edit_region: NormalizedRect | None = None
-    protected_regions: list[NormalizedRect] = Field(default_factory=list, max_length=26)
+    protected_regions: list[NormalizedRect] = Field(default_factory=list, max_length=100)
 
     @model_validator(mode="after")
     def validate_composition(self) -> "GenerationCreate":

@@ -89,8 +89,8 @@ class QuestionnaireCatalogAdminResponse(QuestionnaireCatalogAdminUpdate):
 
 class QuestionnaireProjectStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    selected_objects: list[str] = Field(min_length=1, max_length=26)
-    plot_area_sotkas: int | None = Field(default=None, ge=4, le=15)
+    selected_objects: list[str] = Field(min_length=1, max_length=100)
+    plot_area_sotkas: int = Field(ge=1, le=10_000)
 
 
 class QuestionnaireObjectAddRequest(BaseModel):
@@ -103,14 +103,16 @@ class QuestionnaireGenerationCostResponse(BaseModel):
     initial_credits: int = 0
     credits: int | None = None
     is_available: bool
+    plot_area_min_sotkas: int = 4
+    plot_area_max_sotkas: int = 15
 
 
 class DesignSession(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: UUID = Field(default_factory=uuid4)
     catalog_version: str
-    selected_objects: list[str] = Field(default_factory=list, max_length=26)
-    plot_area_sotkas: int | None = Field(default=None, ge=4, le=15)
+    selected_objects: list[str] = Field(default_factory=list, max_length=100)
+    plot_area_sotkas: int | None = Field(default=None, ge=1, le=10_000)
     initial_concept_mode: bool = False
     survey_completed_objects: list[str] = Field(default_factory=list)
     initial_generation_id: UUID | None = None
@@ -135,7 +137,7 @@ class DesignSession(BaseModel):
     application_submitted: bool = False
 
     @model_validator(mode="after")
-    def validate_region_step(self) -> DesignSession:
+    def validate_region_step(self) -> "DesignSession":
         if (self.region_mode is None) != (self.region_object is None):
             raise ValueError("Region mode and region object must be set together.")
         if self.region_object is not None and self.region_object not in self.selected_objects:
@@ -160,7 +162,7 @@ class DesignSession(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def require_accepted_house_for_inherited_style(self) -> DesignSession:
+    def require_accepted_house_for_inherited_style(self) -> "DesignSession":
         house_reference_available = "eskez-doma" in self.accepted_objects or (
             self.initial_concept_mode
             and not self.initial_concept_accepted

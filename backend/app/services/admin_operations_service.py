@@ -23,6 +23,17 @@ class AdminOperationsService:
             payment_rate_limit_per_minute=row.payment_rate_limit_per_minute if row else None,
             starter_credits=row.starter_credits if row else 0,
             initial_concept_credits=row.initial_concept_credits if row else 0,
+            plot_area_min_sotkas=row.plot_area_min_sotkas if row else 4,
+            plot_area_max_sotkas=row.plot_area_max_sotkas if row else 15,
+            questionnaire_draft_retention_hours=(
+                row.questionnaire_draft_retention_hours if row else 24
+            ),
+            telegram_generation_max_attempts=(
+                row.telegram_generation_max_attempts if row else 5
+            ),
+            telegram_application_max_attempts=(
+                row.telegram_application_max_attempts if row else 5
+            ),
             media_retention_days=row.media_retention_days if row else None,
             backup_interval_hours=row.backup_interval_hours if row else None,
             backup_retention_days=row.backup_retention_days if row else None,
@@ -32,7 +43,9 @@ class AdminOperationsService:
     async def get(self) -> OperationalSettingsResponse:
         return self.response(await self.repository.get())
 
-    async def update(self, actor: User, payload: OperationalSettingsUpdate) -> OperationalSettingsResponse:
+    async def update(
+        self, actor: User, payload: OperationalSettingsUpdate
+    ) -> OperationalSettingsResponse:
         row = await self.repository.get(for_update=True)
         if row is None:
             row = OperationalSettings(id=1)

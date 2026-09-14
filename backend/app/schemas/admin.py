@@ -139,7 +139,7 @@ class IdeaUpdate(BaseModel):
     image_asset_id: UUID | None = None
     architecture_project_id: UUID | None = None
     media: list[IdeaMediaInput] | None = Field(default=None, max_length=24)
-    is_active: bool | None = None
+    is_active: bool = True
     sort_order: int | None = Field(default=None, ge=-100_000, le=100_000)
 
 
@@ -268,7 +268,7 @@ class AdminAiOrbitCreate(BaseModel):
         return value.strip()
 
     @model_validator(mode="after")
-    def protect_provider_fields(self) -> "AdminAiOrbitCreate":
+    def protect_orbit_provider_fields(self) -> "AdminAiOrbitCreate":
         reserved = {"model_name", "prompt", "image_url", "image_urls"}
         conflict = reserved.intersection(self.params)
         if conflict:
@@ -312,7 +312,7 @@ class GenerationRuntimeUpdate(BaseModel):
         return value or None
 
     @model_validator(mode="after")
-    def validate_modes(self) -> GenerationRuntimeUpdate:
+    def validate_modes(self) -> "GenerationRuntimeUpdate":
         allowed = {item.value for item in GenerationType}
         unknown = set(self.mode_params) - allowed
         if unknown:
@@ -461,9 +461,20 @@ class OperationalSettingsUpdate(BaseModel):
     payment_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
     starter_credits: int = Field(default=0, ge=0, le=1_000_000)
     initial_concept_credits: int = Field(default=0, ge=0, le=1_000_000)
+    plot_area_min_sotkas: int = Field(default=4, ge=1, le=10_000)
+    plot_area_max_sotkas: int = Field(default=15, ge=1, le=10_000)
+    questionnaire_draft_retention_hours: int = Field(default=24, ge=1, le=8760)
+    telegram_generation_max_attempts: int = Field(default=5, ge=1, le=100)
+    telegram_application_max_attempts: int = Field(default=5, ge=1, le=100)
     media_retention_days: int | None = Field(default=None, ge=1, le=3650)
     backup_interval_hours: int | None = Field(default=None, ge=1, le=8760)
     backup_retention_days: int | None = Field(default=None, ge=1, le=3650)
+
+    @model_validator(mode="after")
+    def validate_plot_area_range(self) -> "OperationalSettingsUpdate":
+        if self.plot_area_min_sotkas > self.plot_area_max_sotkas:
+            raise ValueError("Minimum plot area must not exceed maximum plot area")
+        return self
 
 
 class OperationalSettingsResponse(OperationalSettingsUpdate):

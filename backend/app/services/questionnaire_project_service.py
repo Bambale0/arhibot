@@ -9,6 +9,7 @@ from app.core.errors import AppError
 from app.db.models.projects import Project
 from app.db.models.users import User
 from app.repositories.assets import AssetRepository
+from app.repositories.operations import OperationalSettingsRepository
 from app.repositories.projects import ProjectRepository
 from app.schemas.projects import ProjectResponse
 from app.schemas.questionnaires import DesignSession, QuestionnaireProjectStartRequest
@@ -28,6 +29,7 @@ class QuestionnaireProjectService:
         self.session = session
         self.projects = ProjectRepository(session)
         self.assets = AssetRepository(session)
+        self.operations = OperationalSettingsRepository(session)
 
     @staticmethod
     def _invalid(detail: str) -> AppError:
@@ -84,8 +86,18 @@ class QuestionnaireProjectService:
         if len(requested) != len(set(requested)):
             raise self._invalid("Selected questionnaire objects must not contain duplicates.")
 
+        operations = await self.operations.get()
+        plot_min = operations.plot_area_min_sotkas if operations else 4
+        plot_max = operations.plot_area_max_sotkas if operations else 15
+        if not plot_min <= payload.plot_area_sotkas <= plot_max:
+            raise self._invalid(
+                f"Plot area must be between {plot_min} and {plot_max} sotkas."
+            )
+
         catalog = await QuestionnaireService(self.session).catalog()
-        ordered_keys = [key for section in catalog["sections"] for key in section["object_keys"]]
+        ordered_keys = [
+            key for section in catalog["sections"] for key in section["object_keys"]
+        ]
         allowed = set(ordered_keys)
         if any(key not in allowed for key in requested):
             raise self._invalid("The request contains an unknown questionnaire object.")
@@ -109,9 +121,8 @@ class QuestionnaireProjectService:
         project_context: dict[str, object] = {
             "questionnaire_draft": True,
             "design_session": design_session.model_dump(mode="json"),
+            "plot_area_m2": payload.plot_area_sotkas * 100,
         }
-        if payload.plot_area_sotkas is not None:
-            project_context["plot_area_m2"] = payload.plot_area_sotkas * 100
         project = Project(
             user_id=user.id,
             name=name,
@@ -189,7 +200,10 @@ class QuestionnaireProjectService:
                 type="questionnaire_project_started",
                 title="Questionnaire project already started",
                 status=409,
-                detail="A questionnaire project can be discarded only before the source step is completed.",
+                detail=(
+                    "A questionnaire project can be discarded only before the source step "
+                    "is completed."
+                ),
             )
         await self._discard_model(project, datetime.now(UTC))
         await self.session.commit()
@@ -197,7 +211,9 @@ class QuestionnaireProjectService:
     async def cleanup_expired_drafts(self, *, cutoff: datetime, limit: int = 100) -> int:
         removed = 0
         deleted_at = datetime.now(UTC)
-        for project in await self.projects.list_expired_questionnaire_drafts(cutoff=cutoff, limit=limit):
+        for project in await self.projects.list_expired_questionnaire_drafts(
+            cutoff=cutoff, limit=limit
+        ):
             if not self.is_discardable_context(project.context):
                 continue
             await self._discard_model(project, deleted_at)
