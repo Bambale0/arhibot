@@ -58,8 +58,16 @@ class NexusImageProvider:
         image_url: str | None,
         model_params: dict[str, object] | None,
         idempotency_key: str,
+        timeout_seconds: float | None = None,
     ) -> NexusImageResult:
-        deadline = monotonic() + self.timeout_seconds
+        effective_timeout = (
+            self.timeout_seconds
+            if timeout_seconds is None
+            else min(float(timeout_seconds), float(self.timeout_seconds))
+        )
+        if effective_timeout <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        deadline = monotonic() + effective_timeout
         params = self._build_params(
             model_name=model_name,
             prompt=prompt,
@@ -128,7 +136,12 @@ class NexusImageProvider:
                     )
                 except CircuitOpenError as exc:
                     raise NexusProviderError("Nexus is temporarily unavailable", retryable=False) from exc
-                except (httpx.HTTPError, TimeoutError) as exc:
+                except TimeoutError as exc:
+                    raise NexusProviderError(
+                        f"Nexus polling timed out after {effective_timeout:g}s",
+                        retryable=True,
+                    ) from exc
+                except httpx.HTTPError as exc:
                     raise NexusProviderError("Nexus polling failed", retryable=True) from exc
 
                 if task_response.status_code >= 400:
@@ -163,7 +176,10 @@ class NexusImageProvider:
                     error = task.get("error") or "provider task failed"
                     raise NexusProviderError(f"Nexus task failed: {error}", retryable=True)
 
-            raise NexusProviderError("Nexus task timed out", retryable=True)
+            raise NexusProviderError(
+                f"Nexus task timed out after {effective_timeout:g}s",
+                retryable=True,
+            )
 
     @staticmethod
     def _build_params(
