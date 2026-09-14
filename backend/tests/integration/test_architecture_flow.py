@@ -153,54 +153,13 @@ async def test_architecture_package_survives_project_context_updates() -> None:
         assert 'data-source="canonical-geometry"' in plan.text
         assert "GROUND FLOOR" in plan.text
 
-        massing = await client.get(
-            f"/api/v1/projects/{project_id}/architecture/massing.svg", headers=headers
-        )
-        assert massing.status_code == 200, massing.text
-        assert 'data-source="canonical-geometry"' in massing.text
-
-        model = await client.get(
-            f"/api/v1/projects/{project_id}/architecture/model.glb", headers=headers
-        )
-        assert model.status_code == 200, model.text
-        assert model.headers["content-type"] == "model/gltf-binary"
-        assert model.headers["x-auroom-model-source"] == "canonical-geometry"
-        assert model.content.startswith(b"glTF")
-        assert b"opening:ground:living_window" in model.content
-        assert b"opening:ground:entry" in model.content
-        assert len(model.content) > 1000
-
-        queued_render = await client.post(
-            f"/api/v1/projects/{project_id}/architecture/renders",
-            headers=headers,
-            json={"camera_profile": "elevated"},
-        )
-        assert queued_render.status_code == 202, queued_render.text
-        render_payload = queued_render.json()
-        render_id = render_payload["id"]
-        source_digest = render_payload["source_digest"]
-        assert render_payload["project_id"] == project_id
-        assert render_payload["status"] == "queued"
-        assert render_payload["renderer_profile"] == "blender_eevee_v2"
-        assert render_payload["camera_profile"] == "elevated"
-        assert render_payload["renderer_version"] is None
-        assert render_payload["image_url"] is None
-        assert len(source_digest) == 64
-
-        render_status = await client.get(
-            f"/api/v1/projects/{project_id}/architecture/renders/{render_id}", headers=headers
-        )
-        assert render_status.status_code == 200, render_status.text
-        assert render_status.json()["status"] == "queued"
-        assert render_status.json()["source_digest"] == source_digest
-        assert render_status.json()["camera_profile"] == "elevated"
-
-        default_render = await client.post(
-            f"/api/v1/projects/{project_id}/architecture/renders", headers=headers
-        )
-        assert default_render.status_code == 202, default_render.text
-        assert default_render.json()["camera_profile"] == "hero_corner"
-        assert default_render.json()["renderer_profile"] == "blender_eevee_v2"
+        for method, path in [
+            ("get", f"/api/v1/projects/{project_id}/architecture/massing.svg"),
+            ("get", f"/api/v1/projects/{project_id}/architecture/model.glb"),
+            ("post", f"/api/v1/projects/{project_id}/architecture/renders"),
+        ]:
+            response = await getattr(client, method)(path, headers=headers)
+            assert response.status_code == 404, response.text
 
         updated = await client.patch(
             f"/api/v1/projects/{project_id}",
@@ -221,10 +180,3 @@ async def test_architecture_package_survives_project_context_updates() -> None:
         assert architecture.json()["geometry"]["levels"][0]["id"] == "ground"
         assert architecture.json()["geometry"]["levels"][0]["openings"][1]["id"] == "entry"
         assert architecture.json()["appearance"]["pbr_materials"]["accent"] == "black_metal"
-
-        render_after_project_update = await client.get(
-            f"/api/v1/projects/{project_id}/architecture/renders/{render_id}", headers=headers
-        )
-        assert render_after_project_update.status_code == 200, render_after_project_update.text
-        assert render_after_project_update.json()["source_digest"] == source_digest
-        assert render_after_project_update.json()["camera_profile"] == "elevated"
