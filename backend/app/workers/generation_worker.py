@@ -394,7 +394,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     image_url=source_url,
                     model_params=primary_params,
                     idempotency_key=f"auroom-{generation_id}-primary",
-                    timeout_seconds=settings.nexus_primary_timeout_seconds,
+                    timeout_seconds=(
+                        None
+                        if sandbox_request is not None
+                        else settings.nexus_primary_timeout_seconds
+                    ),
                 )
             except NexusProviderError as primary_error:
                 if not primary_error.retryable or not fallback_model:
