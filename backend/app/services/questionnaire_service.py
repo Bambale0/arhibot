@@ -369,7 +369,7 @@ class QuestionnaireService:
         definition = next(
             item for item in catalog["questionnaires"] if item["key"] == object_key
         )
-        review_question = next(
+        review_question = find_question(definition, HOUSE_REVIEW_ACCEPT) or next(
             (
                 question
                 for question in definition["questions"]
@@ -1039,7 +1039,13 @@ class QuestionnaireService:
         definitions = {item["key"]: item for item in catalog["questionnaires"]}
         definition = definitions[object_key]
         answers = payload.answers.get(object_key, {})
-        house_accepted_before = "eskez-doma" in previous_accepted
+        primary_house = find_definition(catalog, PRIMARY_HOUSE)
+        primary_house_key = str(primary_house["key"]) if primary_house is not None else None
+        house_accepted_before = (
+            primary_house_key in previous_accepted
+            if primary_house_key is not None
+            else False
+        )
 
         for question in definition["questions"]:
             if question["phase"] != "pre_render":
@@ -1087,6 +1093,9 @@ class QuestionnaireService:
         *,
         previous: DesignSession | None = None,
     ) -> None:
+        primary_house = find_definition(catalog, PRIMARY_HOUSE)
+        primary_house_key = str(primary_house["key"]) if primary_house is not None else None
+        application_key = str(catalog["application_key"])
         resolved = {}
         for object_key, generation_id in payload.generation_ids.items():
             generation = await self.generations.get_owned(generation_id, user.id)
@@ -1151,7 +1160,11 @@ class QuestionnaireService:
                         for item in catalog["questionnaires"]
                         if item["key"] == refinement_key
                     )
-                    review_question = next(
+                    review_question = find_question(
+                        definition,
+                        HOUSE_REVIEW_ACCEPT,
+                        application_key=application_key,
+                    ) or next(
                         (
                             question
                             for question in definition["questions"]
@@ -1239,23 +1252,25 @@ class QuestionnaireService:
         if len(payload.accepted_objects) == len(previous_accepted) + 1:
             new_key = payload.accepted_objects[-1]
             generation = resolved[new_key]
+            definition = next(
+                item for item in catalog["questionnaires"] if item["key"] == new_key
+            )
             expected_type = (
                 GenerationType.FACADE
-                if new_key == "eskez-doma" and generation.input_asset_id is not None
+                if definition_role(definition, application_key=application_key) == PRIMARY_HOUSE
+                and generation.input_asset_id is not None
                 else GenerationType.MASTER_PLAN
             )
             if generation.type != expected_type:
                 raise self._invalid(
                     f"Questionnaire object {new_key} must use {expected_type.value} generation."
                 )
-            definition = next(
-                item for item in catalog["questionnaires"] if item["key"] == new_key
-            )
             expected_prompt = build_questionnaire_generation_prompt(
                 definition,
                 payload,
                 accepted_before=previous_accepted,
                 input_asset_present=generation.input_asset_id is not None,
+                primary_house_key=primary_house_key,
             )
             if generation.prompt != expected_prompt:
                 legacy_bound_unchanged = bool(
