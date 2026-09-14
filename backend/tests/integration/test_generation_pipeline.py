@@ -233,8 +233,16 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
         assert failed == 0
         assert len(telegram.calls) == 1
         method, telegram_payload = telegram.calls[0]
-        assert method == "sendPhoto"
+        assert method == "sendDocument"
         assert telegram_payload["chat_id"] == "900000001"
+        document_url = telegram_payload["document"]
+        assert "preview=telegram" not in document_url
+        document_parts = urlsplit(document_url)
+        delivered_file = await client.get(
+            f"{document_parts.path}?{document_parts.query}"
+        )
+        assert delivered_file.status_code == 200, delivered_file.text
+        assert delivered_file.content == output_path.read_bytes()
         assert "Add a bathhouse only in the editable area" not in telegram_payload["caption"]
         keyboard = telegram_payload["reply_markup"]["inline_keyboard"]
         assert f"project={project_id}" in keyboard[0][0]["web_app"]["url"]
