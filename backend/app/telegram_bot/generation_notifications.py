@@ -124,17 +124,17 @@ async def deliver_pending_generations_once(
                 await session.commit()
                 continue
 
-            photo_url = LocalMediaStorage(settings).signed_telegram_photo_url(
+            document_url = LocalMediaStorage(settings).signed_url(
                 output.storage_path,
                 ttl_seconds=3600,
             )
             try:
                 await asyncio.to_thread(
                     api.call,
-                    "sendPhoto",
+                    "sendDocument",
                     {
                         "chat_id": chat_id,
-                        "photo": photo_url,
+                        "document": document_url,
                         "caption": generation_caption(project.name),
                         "reply_markup": generation_keyboard(
                             raw_webapp_url,
