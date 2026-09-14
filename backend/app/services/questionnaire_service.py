@@ -231,7 +231,13 @@ class QuestionnaireService:
         next_session.selected_objects.append(object_key)
         next_session.current_object = object_key
         answers: dict[str, object] = {}
-        house_reference_available = "eskez-doma" in next_session.accepted_objects
+        primary_house = find_definition(catalog, PRIMARY_HOUSE)
+        primary_house_key = str(primary_house["key"]) if primary_house is not None else None
+        house_reference_available = (
+            primary_house_key in next_session.accepted_objects
+            if primary_house_key is not None
+            else False
+        )
         first = next(
             (
                 question
@@ -422,6 +428,9 @@ class QuestionnaireService:
                 detail="The questionnaire revision for this project is unavailable.",
             )
         definitions = {item["key"]: item for item in catalog["questionnaires"]}
+        application_key = str(catalog["application_key"])
+        primary_house = find_definition(catalog, PRIMARY_HOUSE)
+        primary_house_key = str(primary_house["key"]) if primary_house is not None else None
 
         if session.initial_concept_mode and not session.initial_concept_accepted:
             if session.initial_generation_id is not None:
@@ -430,7 +439,11 @@ class QuestionnaireService:
                 raise self._invalid(
                     "Complete every selected questionnaire before creating the initial concept."
                 )
-            house_reference_available = "eskez-doma" in session.selected_objects
+            house_reference_available = (
+                primary_house_key in session.selected_objects
+                if primary_house_key is not None
+                else False
+            )
             for object_key in session.selected_objects:
                 definition = definitions.get(object_key)
                 if definition is None:
@@ -473,7 +486,7 @@ class QuestionnaireService:
             )
 
         object_key = session.current_object
-        if not object_key or object_key == "zayavka":
+        if not object_key or object_key == application_key:
             raise self._invalid("Choose a questionnaire object before requesting a generation.")
         refinement = bool(
             session.initial_concept_mode
@@ -489,7 +502,11 @@ class QuestionnaireService:
         if definition is None:
             raise self._invalid("The current questionnaire object is not in the catalog.")
         answers = session.answers.get(object_key, {})
-        house_accepted = "eskez-doma" in session.accepted_objects
+        house_accepted = (
+            primary_house_key in session.accepted_objects
+            if primary_house_key is not None
+            else False
+        )
         active_pre_render = [
             question
             for question in definition["questions"]
@@ -509,7 +526,8 @@ class QuestionnaireService:
             GenerationType.MASTER_PLAN
             if refinement
             else GenerationType.FACADE
-            if object_key == "eskez-doma" and input_asset_id is not None
+            if definition_role(definition, application_key=application_key) == PRIMARY_HOUSE
+            and input_asset_id is not None
             else GenerationType.MASTER_PLAN
         )
         accepted_before = [
@@ -540,6 +558,7 @@ class QuestionnaireService:
             session,
             accepted_before=accepted_before,
             input_asset_present=input_asset_id is not None,
+            primary_house_key=primary_house_key,
         )
         return (
             QuestionnaireGenerationCreate(
