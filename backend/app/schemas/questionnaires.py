@@ -10,24 +10,11 @@ from app.schemas.generations import NormalizedRect
 
 QuestionAnswer = str | int | float | bool | list[str]
 
-HOUSE_STYLE_INHERITANCE_OBJECTS = frozenset(
-    {
-        "gostevoy",
-        "banya",
-        "garazh",
-        "naves",
-        "letnyaya-kuhnya",
-        "besedka",
-        "hozblok",
-        "detskiy-domik",
-    }
-)
-
-
 class QuestionnaireQuestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
     text: str
+    semantic_role: str | None = None
     kind: Literal["single", "multi", "number", "text", "consent"]
     options: list[str] = Field(default_factory=list)
     required: bool = False
@@ -49,6 +36,7 @@ class QuestionnaireDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
     key: str
     title: str
+    semantic_role: str | None = None
     source_file: str
     order: int
     questions: list[QuestionnaireQuestion]
@@ -157,26 +145,6 @@ class DesignSession(BaseModel):
             and self.pending_removal_object not in self.accepted_objects
         ):
             raise ValueError("Pending removal object must currently be accepted.")
-        return self
-
-    @model_validator(mode="after")
-    def require_accepted_house_for_inherited_style(self) -> DesignSession:
-        house_reference_available = "eskez-doma" in self.accepted_objects or (
-            self.initial_concept_mode
-            and not self.initial_concept_accepted
-            and "eskez-doma" in self.selected_objects
-        )
-        if house_reference_available:
-            return self
-        for object_key in HOUSE_STYLE_INHERITANCE_OBJECTS:
-            if (
-                self.answers.get(object_key, {}).get("1") == "Как у дома"
-                and object_key not in self.accepted_objects
-                and object_key not in self.removed_objects
-            ):
-                raise ValueError(
-                    "Вариант «Как у дома» доступен только при наличии основного дома."
-                )
         return self
 
 
