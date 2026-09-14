@@ -28,6 +28,12 @@ export type QuestionnaireQuestion = {
 export type QuestionnaireDefinition = { key:string; title:string; source_file:string; order:number; questions:QuestionnaireQuestion[]; scene_policy:Record<string,string>|null }
 export type QuestionnaireSection = { key:string; title:string; object_keys:string[] }
 export type QuestionnaireCatalog = { version:string; sections:QuestionnaireSection[]; questionnaires:QuestionnaireDefinition[]; application_key:'zayavka'; source_rules:string[] }
+export type QuestionnaireSourceText = { filename:string; text:string }
+export type AdminQuestionnaireCatalog = {
+  catalog:QuestionnaireCatalog
+  source_texts:Record<string,QuestionnaireSourceText>
+  updated_at:string
+}
 export type DesignSession = {
   session_id:string
   catalog_version:string

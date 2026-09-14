@@ -319,6 +319,7 @@ export type AdminOperationalSettings = {
   generation_rate_limit_per_minute: number | null
   payment_rate_limit_per_minute: number | null
   starter_credits: number
+  initial_concept_credits: number
   media_retention_days: number | null
   backup_interval_hours: number | null
   backup_retention_days: number | null

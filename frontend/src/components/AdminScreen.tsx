@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import * as api from '../api'
-import type { QuestionnaireApplication } from '../questionnaireTypes'
+import type { AdminQuestionnaireCatalog, QuestionnaireApplication, QuestionnaireCatalog, QuestionnaireSourceText } from '../questionnaireTypes'
 import type {
   AdminAiHistoryItem,
   AdminAudit,
@@ -30,7 +30,7 @@ const modes: { id: GenerationMode; label: string }[] = [
   { id: 'interior', label: 'Интерьер' },
 ]
 
-type Tab = 'tariffs' | 'ideas' | 'applications' | 'generation' | 'users' | 'payments' | 'broadcasts' | 'telegram' | 'system' | 'audit'
+type Tab = 'tariffs' | 'ideas' | 'applications' | 'questionnaires' | 'generation' | 'users' | 'payments' | 'broadcasts' | 'telegram' | 'system' | 'audit'
 
 function initialAdminTab(): Tab {
   const params = new URLSearchParams(window.location.search)
@@ -63,6 +63,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   const [billingSettings, setBillingSettings] = useState<AdminBillingSettings | null>(null)
   const [ideas, setIdeas] = useState<AdminIdea[]>([])
   const [applications, setApplications] = useState<QuestionnaireApplication[]>([])
+  const [questionnaireCatalog, setQuestionnaireCatalog] = useState<AdminQuestionnaireCatalog | null>(null)
   const [generation, setGeneration] = useState<AdminGenerationSettings | null>(null)
   const [prices, setPrices] = useState<AdminGenerationPrice[]>([])
   const [prompts, setPrompts] = useState<AdminPrompt[]>([])
@@ -79,12 +80,13 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   async function reload() {
     setError(null)
     try {
-      const [o, t, bs, i, apps, g, gp, p, u, tx, pay, b, tg, ops, a] = await Promise.all([
+      const [o, t, bs, i, apps, qc, g, gp, p, u, tx, pay, b, tg, ops, a] = await Promise.all([
         api.adminOverview(),
         api.adminListTariffs(),
         api.adminGetBillingSettings(),
         api.adminListIdeas(),
         api.adminListQuestionnaireApplications(),
+        api.adminGetQuestionnaireCatalog(),
         api.adminGetGenerationSettings(),
         api.adminListGenerationPrices(),
         api.adminListPrompts(),
@@ -101,6 +103,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       setBillingSettings(bs)
       setIdeas(i)
       setApplications(apps)
+      setQuestionnaireCatalog(qc)
       setGeneration(g)
       setPrices(gp)
       setPrompts(p)
@@ -130,7 +133,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       {error && <div className="banner-error">{error}<button onClick={() => setError(null)}>Закрыть</button></div>}
       <nav className="admin-tabs">
         {([
-          ['tariffs','Тарифы и касса'], ['ideas','Идеи'], ['applications','Заявки'], ['generation','AI и стоимость'], ['users','Пользователи и кредиты'],
+          ['tariffs','Тарифы и касса'], ['ideas','Идеи'], ['applications','Заявки'], ['questionnaires','Опросники'], ['generation','AI и стоимость'], ['users','Пользователи и кредиты'],
           ['payments','Платежи'], ['broadcasts','Рассылки'], ['telegram','Telegram'], ['system','Система'], ['audit','Аудит'],
         ] as [Tab,string][]).map(([id,label]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>)}
       </nav>
@@ -139,6 +142,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
           {tab === 'tariffs' && billingSettings && <TariffsPanel items={tariffs} onItems={setTariffs} billingSettings={billingSettings} onBillingSettings={setBillingSettings} onError={setError} />}
           {tab === 'ideas' && <IdeasPanel items={ideas} onItems={setIdeas} onError={setError} />}
           {tab === 'applications' && <ApplicationsPanel items={applications} focusId={new URLSearchParams(window.location.search).get('application')} onItems={setApplications} onError={setError} />}
+          {tab === 'questionnaires' && questionnaireCatalog && <QuestionnaireCatalogPanel settings={questionnaireCatalog} onSaved={setQuestionnaireCatalog} onError={setError} />}
           {tab === 'generation' && generation && <GenerationPanel settings={generation} prices={prices} prompts={prompts} onSettings={setGeneration} onPrices={setPrices} onPrompts={setPrompts} onError={setError} />}
           {tab === 'users' && <UsersPanel items={users} transactions={transactions} onItems={setUsers} onTransactions={setTransactions} onError={setError} focusUserId={new URLSearchParams(window.location.search).get('user')} />}
           {tab === 'payments' && <PaymentsPanel items={payments} onItems={setPayments} onError={setError} />}
@@ -158,6 +162,48 @@ function applicationAnswer(value: unknown) {
   if (value === false) return 'Нет'
   if (value == null || value === '') return '—'
   return String(value)
+}
+
+function QuestionnaireCatalogPanel({ settings, onSaved, onError }: { settings: AdminQuestionnaireCatalog; onSaved:(value:AdminQuestionnaireCatalog)=>void; onError:(value:string|null)=>void }) {
+  const [version,setVersion]=useState(settings.catalog.version)
+  const [catalogJson,setCatalogJson]=useState(JSON.stringify(settings.catalog,null,2))
+  const [sourcesJson,setSourcesJson]=useState(JSON.stringify(settings.source_texts,null,2))
+  const [busy,setBusy]=useState(false)
+
+  useEffect(()=>{
+    setVersion(settings.catalog.version)
+    setCatalogJson(JSON.stringify(settings.catalog,null,2))
+    setSourcesJson(JSON.stringify(settings.source_texts,null,2))
+  },[settings.updated_at])
+
+  async function save(){
+    const nextVersion=version.trim()
+    if(!nextVersion){onError('Укажите новую версию каталога');return}
+    setBusy(true);onError(null)
+    try{
+      const parsedCatalog=JSON.parse(catalogJson) as QuestionnaireCatalog
+      const parsedSources=JSON.parse(sourcesJson) as Record<string,QuestionnaireSourceText>
+      if(!parsedCatalog||Array.isArray(parsedCatalog)||typeof parsedCatalog!=='object') throw new Error('Catalog должен быть JSON-объектом')
+      if(!parsedSources||Array.isArray(parsedSources)||typeof parsedSources!=='object') throw new Error('Source texts должны быть JSON-объектом')
+      const saved=await api.adminUpdateQuestionnaireCatalog({
+        catalog:{...parsedCatalog,version:nextVersion},
+        source_texts:parsedSources,
+      })
+      onSaved(saved)
+    }catch(err){onError(errorText(err))}
+    finally{setBusy(false)}
+  }
+
+  return <section className="admin-panel">
+    <div className="admin-panel-title"><div><h2>Опросники</h2><p>Текущий каталог хранится в PostgreSQL. Каждое изменение публикуется только с новой версией; уже начатые проекты продолжают использовать свою неизменяемую revision.</p></div><span className="status-pill">{settings.catalog.questionnaires.length} опросников · {settings.catalog.sections.length} разделов</span></div>
+    <div className="admin-form-grid">
+      <label className="admin-span-2">Новая версия каталога<input value={version} onChange={e=>setVersion(e.target.value)} placeholder="2026-09-14.1"/><small>Нельзя повторно использовать уже существовавшую версию.</small></label>
+      <label className="admin-span-2">Catalog JSON<textarea className="admin-code" value={catalogJson} onChange={e=>setCatalogJson(e.target.value)} /><small>Разделы, порядок объектов, вопросы, варианты, условия, зависимости, scene policy и правила редактирования.</small></label>
+      <label className="admin-span-2">Исходные тексты опросников JSON<textarea className="admin-code" value={sourcesJson} onChange={e=>setSourcesJson(e.target.value)} /><small>Ключи должны точно совпадать с questionnaire key, а filename — с source_file соответствующего опросника.</small></label>
+      <div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy||!version.trim()} onClick={()=>void save()}>{busy?'Публикуем…':'Опубликовать новую версию'}</button></div>
+    </div>
+    <div className="admin-subpanel"><p><strong>Важно:</strong> сервер валидирует структуру и сохраняет предыдущую версию в истории. Изменения применяются только к новым/незавершённым сессиям согласно version contract.</p><small>Последнее изменение: {formatDate(settings.updated_at)}</small></div>
+  </section>
 }
 
 function ApplicationsPanel({ items, focusId, onItems, onError }: { items: QuestionnaireApplication[]; focusId:string|null; onItems:(items:QuestionnaireApplication[])=>void; onError:(value:string|null)=>void }) {
@@ -621,13 +667,14 @@ function OperationsPanel({settings,onSaved,onError}:{settings:AdminOperationalSe
   const [generationLimit,setGenerationLimit]=useState(settings.generation_rate_limit_per_minute?.toString()||'')
   const [paymentLimit,setPaymentLimit]=useState(settings.payment_rate_limit_per_minute?.toString()||'')
   const [starterCredits,setStarterCredits]=useState(settings.starter_credits.toString())
+  const [initialConceptCredits,setInitialConceptCredits]=useState(settings.initial_concept_credits.toString())
   const [mediaRetention,setMediaRetention]=useState(settings.media_retention_days?.toString()||'')
   const [backupInterval,setBackupInterval]=useState(settings.backup_interval_hours?.toString()||'')
   const [backupRetention,setBackupRetention]=useState(settings.backup_retention_days?.toString()||'')
   const [busy,setBusy]=useState(false)
   const optionalInt=(value:string)=>value.trim()?Number(value):null
-  async function save(){setBusy(true);onError(null);try{onSaved(await api.adminUpdateOperationalSettings({auth_rate_limit_per_minute:optionalInt(authLimit),generation_rate_limit_per_minute:optionalInt(generationLimit),payment_rate_limit_per_minute:optionalInt(paymentLimit),starter_credits:Number(starterCredits||0),media_retention_days:optionalInt(mediaRetention),backup_interval_hours:optionalInt(backupInterval),backup_retention_days:optionalInt(backupRetention)}))}catch(err){onError(errorText(err))}finally{setBusy(false)}}
-  return <section className="admin-panel"><div className="admin-panel-title"><div><h2>Система</h2><p>Лимиты, очистка media и backup-политика управляются из БД. Пустое поле отключает соответствующую политику.</p></div></div><div className="admin-form-grid"><label>Auth / мин<input type="number" min="1" value={authLimit} onChange={e=>setAuthLimit(e.target.value)} placeholder="без лимита"/></label><label>Генерации / мин<input type="number" min="1" value={generationLimit} onChange={e=>setGenerationLimit(e.target.value)} placeholder="без лимита"/></label><label>Платежи / мин<input type="number" min="1" value={paymentLimit} onChange={e=>setPaymentLimit(e.target.value)} placeholder="без лимита"/></label><label>Стартовые кредиты<input type="number" min="0" value={starterCredits} onChange={e=>setStarterCredits(e.target.value)} /></label><label>Soft-deleted media, дней<input type="number" min="1" value={mediaRetention} onChange={e=>setMediaRetention(e.target.value)} placeholder="не удалять"/></label><label>Backup каждые, часов<input type="number" min="1" value={backupInterval} onChange={e=>setBackupInterval(e.target.value)} placeholder="автобэкап выключен"/></label><label>Хранить backup, дней<input type="number" min="1" value={backupRetention} onChange={e=>setBackupRetention(e.target.value)} placeholder="без автоочистки"/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={()=>void save()}>Сохранить систему</button></div></div><div className="admin-subpanel"><p><strong>Секреты</strong> Nexus, YooKassa и Telegram здесь не хранятся — только operational-настройки.</p><small>Последнее изменение: {formatDate(settings.updated_at)}</small></div></section>
+  async function save(){setBusy(true);onError(null);try{onSaved(await api.adminUpdateOperationalSettings({auth_rate_limit_per_minute:optionalInt(authLimit),generation_rate_limit_per_minute:optionalInt(generationLimit),payment_rate_limit_per_minute:optionalInt(paymentLimit),starter_credits:Number(starterCredits||0),initial_concept_credits:Number(initialConceptCredits||0),media_retention_days:optionalInt(mediaRetention),backup_interval_hours:optionalInt(backupInterval),backup_retention_days:optionalInt(backupRetention)}))}catch(err){onError(errorText(err))}finally{setBusy(false)}}
+  return <section className="admin-panel"><div className="admin-panel-title"><div><h2>Система</h2><p>Лимиты, очистка media и backup-политика управляются из БД. Пустое поле отключает соответствующую политику.</p></div></div><div className="admin-form-grid"><label>Auth / мин<input type="number" min="1" value={authLimit} onChange={e=>setAuthLimit(e.target.value)} placeholder="без лимита"/></label><label>Генерации / мин<input type="number" min="1" value={generationLimit} onChange={e=>setGenerationLimit(e.target.value)} placeholder="без лимита"/></label><label>Платежи / мин<input type="number" min="1" value={paymentLimit} onChange={e=>setPaymentLimit(e.target.value)} placeholder="без лимита"/></label><label>Стартовые кредиты<input type="number" min="0" value={starterCredits} onChange={e=>setStarterCredits(e.target.value)} /></label><label>Первая концепция, кредитов<input type="number" min="0" value={initialConceptCredits} onChange={e=>setInitialConceptCredits(e.target.value)} /><small>0 = бесплатно для обычного пользователя. Admin/superadmin всегда без списания.</small></label><label>Soft-deleted media, дней<input type="number" min="1" value={mediaRetention} onChange={e=>setMediaRetention(e.target.value)} placeholder="не удалять"/></label><label>Backup каждые, часов<input type="number" min="1" value={backupInterval} onChange={e=>setBackupInterval(e.target.value)} placeholder="автобэкап выключен"/></label><label>Хранить backup, дней<input type="number" min="1" value={backupRetention} onChange={e=>setBackupRetention(e.target.value)} placeholder="без автоочистки"/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={()=>void save()}>Сохранить систему</button></div></div><div className="admin-subpanel"><p><strong>Секреты</strong> Nexus, YooKassa и Telegram здесь не хранятся — только operational-настройки.</p><small>Последнее изменение: {formatDate(settings.updated_at)}</small></div></section>
 }
 
 function AuditPanel({items}:{items:AdminAudit[]}){

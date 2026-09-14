@@ -1,4 +1,4 @@
-import type { NormalizedRect, QuestionnaireApplication } from './questionnaireTypes'
+import type { AdminQuestionnaireCatalog, NormalizedRect, QuestionnaireApplication, QuestionnaireCatalog, QuestionnaireSourceText } from './questionnaireTypes'
 import type {
   AdminAiHistoryItem,
   AdminAudit,
@@ -165,6 +165,10 @@ export function adminArchiveTariff(id: string) { return request<AdminTariff>(`/a
 export function adminGetBillingSettings() { return request<AdminBillingSettings>('/admin/billing-settings') }
 export function adminUpdateBillingSettings(payload: Omit<AdminBillingSettings, 'updated_at'>) { return request<AdminBillingSettings>('/admin/billing-settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
 
+export function adminGetQuestionnaireCatalog() { return request<AdminQuestionnaireCatalog>('/admin/questionnaires') }
+export function adminUpdateQuestionnaireCatalog(payload: { catalog: QuestionnaireCatalog; source_texts: Record<string, QuestionnaireSourceText> }) {
+  return request<AdminQuestionnaireCatalog>('/admin/questionnaires', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+}
 export function adminListQuestionnaireApplications() { return request<QuestionnaireApplication[]>('/admin/questionnaire-applications') }
 export function adminRetryQuestionnaireApplicationTelegram(applicationId: string) { return request<void>(`/admin/questionnaire-applications/${applicationId}/telegram-retry`, { method: 'POST' }) }
 

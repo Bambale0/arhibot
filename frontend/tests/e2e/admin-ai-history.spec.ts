@@ -101,6 +101,11 @@ test('admin AI history survives reload and an older still can be reused for 360'
     if(path.endsWith('/admin/billing-settings')) return json(route,{receipts_enabled:false,vat_code:null,payment_subject:null,payment_mode:null,updated_at:null})
     if(path.endsWith('/admin/ideas')) return json(route,[])
     if(path.endsWith('/admin/questionnaire-applications')) return json(route,[])
+    if(path.endsWith('/admin/questionnaires')) return json(route,{
+      catalog:{version:'e2e-v1',sections:[],questionnaires:[],application_key:'zayavka',source_rules:[]},
+      source_texts:{},
+      updated_at:now,
+    })
     if(path.endsWith('/admin/generation/sandbox/history')) return json(route,history)
     if(path.endsWith('/admin/generation')) return json(route,{
       primary_model:'nano-banana-pro',
@@ -123,7 +128,7 @@ test('admin AI history survives reload and an older still can be reused for 360'
     })
     if(path.endsWith('/admin/operations')) return json(route,{
       auth_rate_limit_per_minute:null,generation_rate_limit_per_minute:null,payment_rate_limit_per_minute:null,
-      starter_credits:0,media_retention_days:null,backup_interval_hours:null,backup_retention_days:null,updated_at:null,
+      starter_credits:0,initial_concept_credits:0,media_retention_days:null,backup_interval_hours:null,backup_retention_days:null,updated_at:null,
     })
     if(path.endsWith('/admin/audit')) return json(route,[])
     if(path.endsWith('/projects')&&method==='GET') return json(route,{items:[],next_cursor:null,has_more:false})

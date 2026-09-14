@@ -45,6 +45,7 @@ class GenerationService:
         *,
         before_commit: Callable[[Generation, Project], None] | None = None,
         skip_pricing: bool = False,
+        credits_override: int | None = None,
     ) -> GenerationResponse:
         await RateLimitService(self.session).enforce("generation", str(user.id))
         if not (self.settings.nexus_api_key or "").strip():
@@ -86,15 +87,22 @@ class GenerationService:
 
         credits_charged = 0
         if not skip_pricing:
-            price = await self.credit_repository.get_price(payload.type.value)
-            if price is None or not price.is_active:
-                raise AppError(
-                    type="generation_price_not_configured",
-                    title="Generation price not configured",
-                    status=503,
-                    detail="The credit price for this generation scenario is not configured.",
-                )
-            credits_charged = 0 if user.role in FREE_GENERATION_ROLES else price.credits
+            configured_credits = credits_override
+            if configured_credits is None:
+                price = await self.credit_repository.get_price(payload.type.value)
+                if price is None or not price.is_active:
+                    raise AppError(
+                        type="generation_price_not_configured",
+                        title="Generation price not configured",
+                        status=503,
+                        detail="The credit price for this generation scenario is not configured.",
+                    )
+                configured_credits = price.credits
+            if configured_credits < 0:
+                raise ValueError("Generation credits override must not be negative.")
+            credits_charged = (
+                0 if user.role in FREE_GENERATION_ROLES else configured_credits
+            )
 
         generation = Generation(
             id=uuid4(),
