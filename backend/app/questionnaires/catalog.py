@@ -7,6 +7,23 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from app.questionnaires.semantics import (
+    APPLICATION,
+    HOUSE_AREA,
+    HOUSE_FLOORS,
+    HOUSE_REVIEW_ACCEPT,
+    HOUSE_REVIEW_SCOPE,
+    HOUSE_REVIEW_TARGETS,
+    HOUSE_STYLE,
+    LEAD_BUDGET,
+    LEAD_CONTACT,
+    LEAD_NAME,
+    LEAD_PLOT,
+    LEAD_TIMELINE,
+    PRIMARY_HOUSE,
+    PRIVACY_CONSENT,
+)
+
 CATALOG_VERSION = "2026-09-12.1"
 
 SECTION_SPECS = [
@@ -159,6 +176,7 @@ def _parse_question(
     return {
         "id": qid,
         "text": user_question_title(title) if user_facing else title.strip(),
+        "semantic_role": None,
         "kind": kind,
         "options": options,
         "required": any("Обязательн" in line for line in block),
@@ -187,6 +205,12 @@ def _parse_questions(
     # The house area is defined by hints instead of numbered choices.
     if key == "eskez-doma":
         by_id = {q["id"]: q for q in questions}
+        by_id["1"]["semantic_role"] = HOUSE_STYLE
+        by_id["3"]["semantic_role"] = HOUSE_AREA
+        by_id["4"]["semantic_role"] = HOUSE_FLOORS
+        by_id["15"]["semantic_role"] = HOUSE_REVIEW_ACCEPT
+        by_id["15а"]["semantic_role"] = HOUSE_REVIEW_SCOPE
+        by_id["15б"]["semantic_role"] = HOUSE_REVIEW_TARGETS
         by_id["3"]["kind"] = "number"
         by_id["3"]["options"] = ["100", "150", "200", "300", "Свой вариант"]
         by_id["3"]["field_hint"] = "свой вариант, от 40 до 1500 м²"
@@ -386,6 +410,12 @@ def _application_questions(text: str, *, user_facing: bool = True) -> list[dict[
     for qid in ("20", "21", "22", "23", "24", "25"):
         by_id[qid]["required"] = True
         by_id[qid]["phase"] = "application"
+    by_id["20"]["semantic_role"] = LEAD_PLOT
+    by_id["21"]["semantic_role"] = LEAD_BUDGET
+    by_id["22"]["semantic_role"] = LEAD_TIMELINE
+    by_id["23"]["semantic_role"] = LEAD_NAME
+    by_id["24"]["semantic_role"] = LEAD_CONTACT
+    by_id["25"]["semantic_role"] = PRIVACY_CONSENT
     by_id["23"]["kind"] = "text"
     by_id["24"]["kind"] = "text"
     by_id["24"]["text"] = "Оставьте телефон или @username Telegram"
@@ -408,6 +438,7 @@ def build_catalog(
             definitions.append({
                 "key": key,
                 "title": OBJECT_TITLES[key],
+                "semantic_role": PRIMARY_HOUSE if key == "eskez-doma" else None,
                 "source_file": source["filename"],
                 "order": order,
                 "questions": questions,
@@ -421,6 +452,7 @@ def build_catalog(
     definitions.append({
         "key": "zayavka",
         "title": OBJECT_TITLES["zayavka"],
+        "semantic_role": APPLICATION,
         "source_file": app_source["filename"],
         "order": 999,
         "questions": _application_questions(app_source["text"], user_facing=user_facing),
