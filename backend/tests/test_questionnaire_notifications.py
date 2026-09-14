@@ -1,3 +1,4 @@
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -91,6 +92,10 @@ class _RetryingTelegramApi:
         self.calls: list[tuple[str, dict]] = []
         self.failed_once = False
 
+    def send_document_file(self, **kwargs):  # noqa: ANN003
+        self.calls.append(("sendDocument", kwargs))
+        return {"message_id": len(self.calls)}
+
     def call(self, method: str, payload: dict, *, timeout: int = 15):
         self.calls.append((method, payload))
         if (
@@ -126,12 +131,12 @@ async def test_questionnaire_delivery_resumes_after_partial_failure() -> None:
         ["chunk-1", "chunk-2", "chunk-3"],
         session=session,  # type: ignore[arg-type]
         application=application,
-        photo_url="https://example.test/final.png",
+        document_path=Path("/tmp/final.png"),
     )
     assert sent == 0
     assert errors
     assert application.telegram_delivery_progress == {
-        "12345": {"photo_sent": True, "chunks_sent": 1}
+        "12345": {"document_sent": True, "chunks_sent": 1}
     }
 
     sent, errors = await _send_to_admins(
@@ -140,17 +145,51 @@ async def test_questionnaire_delivery_resumes_after_partial_failure() -> None:
         ["chunk-1", "chunk-2", "chunk-3"],
         session=session,  # type: ignore[arg-type]
         application=application,
-        photo_url="https://example.test/final.png",
+        document_path=Path("/tmp/final.png"),
     )
     assert sent == 1
     assert errors == []
     assert application.telegram_delivery_progress == {
-        "12345": {"photo_sent": True, "chunks_sent": 3}
+        "12345": {"document_sent": True, "chunks_sent": 3}
     }
-    assert [method for method, _ in api.calls].count("sendPhoto") == 1
+    assert [method for method, _ in api.calls].count("sendDocument") == 1
     sent_texts = [payload["text"] for method, payload in api.calls if method == "sendMessage"]
     assert sent_texts == ["chunk-1", "chunk-2", "chunk-2", "chunk-3"]
     assert session.commits == 4
+
+
+
+@pytest.mark.asyncio
+async def test_questionnaire_delivery_honors_legacy_photo_checkpoint() -> None:
+    application = QuestionnaireApplication(
+        id=uuid4(),
+        session_id=uuid4(),
+        project_id=uuid4(),
+        user_id=uuid4(),
+        catalog_version="2026-09-10.1",
+        selected_objects=["eskez-doma"],
+        accepted_objects=["eskez-doma"],
+        answers={},
+        scene_asset_id=None,
+        telegram_delivery_progress={
+            "12345": {"photo_sent": True, "chunks_sent": 1}
+        },
+    )
+    session = _FakeSession()
+    api = _RetryingTelegramApi()
+
+    sent, errors = await _send_to_admins(
+        api,
+        ["12345"],
+        ["chunk-1"],
+        session=session,  # type: ignore[arg-type]
+        application=application,
+        document_path=Path("/tmp/final.png"),
+    )
+
+    assert sent == 1
+    assert errors == []
+    assert [method for method, _ in api.calls].count("sendDocument") == 0
 
 
 
