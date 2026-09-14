@@ -40,7 +40,7 @@ An Idea is a user-published accepted work created through the normal `Созда
 - The owner explicitly adds an accepted generated work to Ideas from the Create flow. This action is the publication consent; another user cannot publish the generation by id.
 - Only pre-render design answers are included in the presentation snapshot; application/contact answers are never exposed in the feed.
 - Web admin does not create publications. It can moderate visibility and ordering. Hiding a publication removes it from the public feed without deleting the source Project or Generation.
-- Interactive 3D is intentionally disabled for the current Ideas release. The feed renders the generated output as a static image only; dormant legacy 3D code is not imported into the feed bundle.
+- 3D is not part of the approved AuRoom product scope. Do not plan, implement, surface, or treat GLB/interactive-3D/renderer work as a delivery requirement unless a new explicit product decision reintroduces it. The Ideas feed and normal project flow remain image-based. Existing dormant geometry/rendering code may remain inert as legacy technical substrate, but it is not product scope.
 
 ## Broadcast Campaign
 
@@ -94,6 +94,7 @@ The approved `Создать` flow has two explicit phases: one initial whole-si
 - A completed questionnaire application is available only after an accepted scene and is persisted plus delivered to configured administrators in Telegram.
 - Telegram application delivery is resumable per recipient and bounded. Successful recipients are checkpointed and never receive duplicate chunks on retries. After the bounded retry budget is exhausted, delivery becomes `partial` if at least one configured admin received the application, or `failed` if none did; operators can explicitly retry a terminal delivery after fixing the recipient without clearing successful recipient checkpoints.
 - The existing garage/canopy questionnaire branching remains source-authored. Do not replace it with a new entry question without a separate product decision.
+- The earlier five-scenario live battle run was a one-off verification request, not a recurring acceptance criterion or operational requirement. Do not retain, schedule, or recreate a production battle runner unless an operator explicitly requests a new live verification; normal CI/integration/E2E coverage is the standing requirement.
 
 ### Questionnaire source-contract invariants
 
