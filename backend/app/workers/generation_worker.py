@@ -320,6 +320,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             primary_model, prompt, primary_params = sandbox_request
             fallback_model = None
             fallback_params: dict[str, object] = {}
+            primary_timeout_seconds: int | None = None
         elif orbit_request is not None:
             (
                 primary_model,
@@ -330,6 +331,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             ) = orbit_request
             fallback_model = None
             fallback_params = {}
+            primary_timeout_seconds = None
         else:
             assert runtime is not None
             prompt = (
@@ -354,6 +356,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             fallback_params = {**dict(runtime.fallback_params or {}), **mode_params}
             primary_model = runtime.primary_model
             fallback_model = runtime.fallback_model
+            primary_timeout_seconds = runtime.primary_timeout_seconds
         composition_mode = generation.composition_mode
         edit_region = dict(generation.edit_region) if generation.edit_region else None
         protected_regions = list(generation.protected_regions or [])
@@ -394,6 +397,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     image_url=source_url,
                     model_params=primary_params,
                     idempotency_key=f"auroom-{generation_id}-primary",
+                    timeout_seconds=primary_timeout_seconds,
                 )
             except NexusProviderError as primary_error:
                 if not primary_error.retryable or not fallback_model:

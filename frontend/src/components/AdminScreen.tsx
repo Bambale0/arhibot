@@ -361,6 +361,7 @@ function parseSandboxParams(value: string): Record<string, unknown> {
 function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPrompts, onError }: { settings: AdminGenerationSettings; prices: AdminGenerationPrice[]; prompts: AdminPrompt[]; onSettings:(v:AdminGenerationSettings)=>void; onPrices:(v:AdminGenerationPrice[])=>void; onPrompts:(v:AdminPrompt[])=>void; onError:(v:string|null)=>void }) {
   const [primary,setPrimary]=useState(settings.primary_model || '')
   const [fallback,setFallback]=useState(settings.fallback_model||'')
+  const [primaryTimeout,setPrimaryTimeout]=useState(String(settings.primary_timeout_seconds||90))
   const [primaryParams,setPrimaryParams]=useState(JSON.stringify(settings.primary_params,null,2))
   const [fallbackParams,setFallbackParams]=useState(JSON.stringify(settings.fallback_params,null,2))
   const [modeParams,setModeParams]=useState(JSON.stringify(settings.mode_params,null,2))
@@ -399,7 +400,23 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [orbitGeneration?.id, orbitGeneration?.status, onError])
 
-  async function saveSettings(){setBusy(true);onError(null);try{const saved=await api.adminUpdateGenerationSettings({primary_model:primary.trim(),fallback_model:fallback.trim()||null,primary_params:JSON.parse(primaryParams||'{}') as Record<string,unknown>,fallback_params:JSON.parse(fallbackParams||'{}') as Record<string,unknown>,mode_params:JSON.parse(modeParams||'{}') as Record<string,Record<string,unknown>>});onSettings(saved)}catch(err){onError(errorText(err))}finally{setBusy(false)}}
+  async function saveSettings(){
+    const timeout=Number(primaryTimeout)
+    if(!Number.isInteger(timeout)||timeout<30||timeout>600){onError('Primary timeout должен быть целым числом от 30 до 600 секунд');return}
+    setBusy(true);onError(null)
+    try{
+      const saved=await api.adminUpdateGenerationSettings({
+        primary_model:primary.trim(),
+        fallback_model:fallback.trim()||null,
+        primary_timeout_seconds:timeout,
+        primary_params:JSON.parse(primaryParams||'{}') as Record<string,unknown>,
+        fallback_params:JSON.parse(fallbackParams||'{}') as Record<string,unknown>,
+        mode_params:JSON.parse(modeParams||'{}') as Record<string,Record<string,unknown>>,
+      })
+      onSettings(saved)
+    }catch(err){onError(errorText(err))}
+    finally{setBusy(false)}
+  }
   async function runSandbox(){
     setSandboxBusy(true);onError(null)
     try{
@@ -435,7 +452,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   }
   async function savePrice(mode: GenerationMode, value: number, active: boolean){try{const saved=await api.adminUpdateGenerationPrice(mode,value,active);onPrices([...prices.filter(x=>x.generation_type!==mode),saved])}catch(err){onError(errorText(err))}}
   return <section className="admin-panel"><div className="admin-panel-title"><div><h2>AI, стоимость и промпты</h2><p>Модели, параметры, стоимость кредитов и prompt templates управляются из БД.</p></div></div>
-    <div className="admin-form-grid"><label>Primary model<input value={primary} onChange={e=>setPrimary(e.target.value)}/></label><label>Fallback model<input value={fallback} onChange={e=>setFallback(e.target.value)}/></label><label className="admin-span-2">Primary params<textarea className="admin-code" value={primaryParams} onChange={e=>setPrimaryParams(e.target.value)}/></label><label className="admin-span-2">Fallback params<textarea className="admin-code" value={fallbackParams} onChange={e=>setFallbackParams(e.target.value)}/></label><label className="admin-span-2">Параметры по сценариям<textarea className="admin-code" value={modeParams} onChange={e=>setModeParams(e.target.value)}/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={()=>void saveSettings()}>Сохранить AI</button></div></div>
+    <div className="admin-form-grid"><label>Primary model<input value={primary} onChange={e=>setPrimary(e.target.value)}/></label><label>Fallback model<input value={fallback} onChange={e=>setFallback(e.target.value)}/></label><label>Primary timeout, сек<input type="number" min="30" max="600" value={primaryTimeout} onChange={e=>setPrimaryTimeout(e.target.value)}/><small>После этого времени production переключается на fallback. Sandbox и 360° не затрагиваются.</small></label><label className="admin-span-2">Primary params<textarea className="admin-code" value={primaryParams} onChange={e=>setPrimaryParams(e.target.value)}/></label><label className="admin-span-2">Fallback params<textarea className="admin-code" value={fallbackParams} onChange={e=>setFallbackParams(e.target.value)}/></label><label className="admin-span-2">Параметры по сценариям<textarea className="admin-code" value={modeParams} onChange={e=>setModeParams(e.target.value)}/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={()=>void saveSettings()}>Сохранить AI</button></div></div>
     <div className="admin-subpanel">
       <div className="admin-panel-title"><div><h3>AI Sandbox</h3><p>Одноразовый админский тест Nexus. Model ID, prompt и params применяются только к этому запуску: primary/fallback клиентов не меняются, кредиты не списываются.</p></div></div>
       <div className="admin-form-grid">

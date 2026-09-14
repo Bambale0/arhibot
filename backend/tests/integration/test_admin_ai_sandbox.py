@@ -145,6 +145,7 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
             "aspect_ratio": "16:9",
             "steps": 7,
         }
+        assert provider_calls[0]["timeout_seconds"] is None
 
         completed = await client.get(
             f"/api/v1/generations/{generation_id}",

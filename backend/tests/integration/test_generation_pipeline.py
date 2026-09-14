@@ -74,12 +74,27 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
         tokens, headers = await _register_user(client)
         user_id = tokens["user"]["id"]
 
+        too_slow_runtime = await client.put(
+            "/api/v1/admin/generation",
+            headers=admin_headers,
+            json={
+                "primary_model": "integration-image-model",
+                "fallback_model": None,
+                "primary_timeout_seconds": get_settings().nexus_task_timeout_seconds + 1,
+                "primary_params": {"steps": 12},
+                "fallback_params": {},
+                "mode_params": {},
+            },
+        )
+        assert too_slow_runtime.status_code == 422, too_slow_runtime.text
+
         runtime = await client.put(
             "/api/v1/admin/generation",
             headers=admin_headers,
             json={
                 "primary_model": "integration-image-model",
                 "fallback_model": None,
+                "primary_timeout_seconds": 45,
                 "primary_params": {"steps": 12},
                 "fallback_params": {},
                 "mode_params": {},
@@ -173,6 +188,7 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
         assert signed_media.status_code == 200, signed_media.text
         assert signed_media.content == base_data
         assert "Add a bathhouse only in the editable area" in provider_calls[0]["prompt"]
+        assert provider_calls[0]["timeout_seconds"] == 45
 
         async with get_session_factory()() as session:
             generation = await session.get(Generation, generation_id)

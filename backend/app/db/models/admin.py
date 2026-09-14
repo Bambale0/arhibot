@@ -147,6 +147,9 @@ class GenerationRuntimeSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     primary_model: Mapped[str] = mapped_column(String(120), nullable=False)
     fallback_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    primary_timeout_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=90, server_default="90"
+    )
     primary_params: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default="{}"
     )
