@@ -29,6 +29,7 @@ from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
 from app.repositories.credits import CreditRepository
 from app.repositories.generations import GenerationRepository
+from app.repositories.operations import OperationalSettingsRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.questionnaires import QuestionnaireRepository
 from app.schemas.generations import QuestionnaireGenerationCreate
@@ -51,6 +52,7 @@ class QuestionnaireService:
         self.assets = AssetRepository(session)
         self.credits = CreditRepository(session)
         self.generations = GenerationRepository(session)
+        self.operations = OperationalSettingsRepository(session)
         self.repository = QuestionnaireRepository(session)
         self.admin_repository = AdminRepository(session)
 
@@ -152,15 +154,24 @@ class QuestionnaireService:
         await self.session.refresh(project)
         return payload, QuestionnaireApplicationResponse.model_validate(application)
 
+    async def initial_concept_credits(self, user: User) -> int:
+        if user.role.value in {"admin", "superadmin"}:
+            return 0
+        settings = await self.operations.get()
+        return settings.initial_concept_credits if settings else 0
+
     async def generation_cost(self, user: User) -> QuestionnaireGenerationCostResponse:
+        initial_credits = await self.initial_concept_credits(user)
         price = await self.credits.get_price(GenerationType.MASTER_PLAN.value)
         if price is None or not price.is_active:
             return QuestionnaireGenerationCostResponse(
+                initial_credits=initial_credits,
                 credits=None,
-                is_available=False,
+                is_available=True,
             )
         credits = 0 if user.role.value in {"admin", "superadmin"} else price.credits
         return QuestionnaireGenerationCostResponse(
+            initial_credits=initial_credits,
             credits=credits,
             is_available=True,
         )
