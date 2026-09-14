@@ -42,7 +42,6 @@ class Settings(BaseSettings):
     nexus_api_key: str | None = None
     nexus_base_url: str = "https://nexusapi.dev"
     nexus_task_timeout_seconds: int = 180
-    nexus_primary_timeout_seconds: int = 90
     nexus_poll_interval_seconds: float = 2.0
     nexus_http_connect_timeout_seconds: float = 5.0
     nexus_http_read_timeout_seconds: float = 30.0
@@ -98,10 +97,6 @@ class Settings(BaseSettings):
             raise ValueError("MAX_MODEL_SIZE_BYTES must be at least 1 MiB")
         if self.nexus_task_timeout_seconds < 30:
             raise ValueError("NEXUS_TASK_TIMEOUT_SECONDS must be at least 30")
-        if not 30 <= self.nexus_primary_timeout_seconds <= self.nexus_task_timeout_seconds:
-            raise ValueError(
-                "NEXUS_PRIMARY_TIMEOUT_SECONDS must be between 30 and NEXUS_TASK_TIMEOUT_SECONDS"
-            )
         if self.nexus_poll_interval_seconds < 0.5:
             raise ValueError("NEXUS_POLL_INTERVAL_SECONDS must be at least 0.5")
         if self.nexus_http_connect_timeout_seconds <= 0 or self.nexus_http_read_timeout_seconds <= 0:
