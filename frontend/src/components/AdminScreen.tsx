@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import * as api from '../api'
 import type { QuestionnaireApplication } from '../questionnaireTypes'
 import type {
+  AdminAiHistoryItem,
   AdminAudit,
   AdminBillingSettings,
   AdminBroadcast,
@@ -361,7 +362,6 @@ function parseSandboxParams(value: string): Record<string, unknown> {
 function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPrompts, onError }: { settings: AdminGenerationSettings; prices: AdminGenerationPrice[]; prompts: AdminPrompt[]; onSettings:(v:AdminGenerationSettings)=>void; onPrices:(v:AdminGenerationPrice[])=>void; onPrompts:(v:AdminPrompt[])=>void; onError:(v:string|null)=>void }) {
   const [primary,setPrimary]=useState(settings.primary_model || '')
   const [fallback,setFallback]=useState(settings.fallback_model||'')
-  const [primaryTimeout,setPrimaryTimeout]=useState(String(settings.primary_timeout_seconds||90))
   const [primaryParams,setPrimaryParams]=useState(JSON.stringify(settings.primary_params,null,2))
   const [fallbackParams,setFallbackParams]=useState(JSON.stringify(settings.fallback_params,null,2))
   const [modeParams,setModeParams]=useState(JSON.stringify(settings.mode_params,null,2))
@@ -377,13 +377,45 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   const [orbitDuration,setOrbitDuration]=useState('180')
   const [orbitBusy,setOrbitBusy]=useState(false)
   const [orbitGeneration,setOrbitGeneration]=useState<Generation|null>(null)
+  const [sandboxHistory,setSandboxHistory]=useState<AdminAiHistoryItem[]>([])
+  const [historyLoading,setHistoryLoading]=useState(true)
 
+  async function refreshSandboxHistory() {
+    try {
+      const items=await api.adminListGenerationSandboxHistory()
+      setSandboxHistory(items)
+      setSandboxGeneration(current => current ?? items.find(item =>
+        item.kind==='sandbox'
+        && item.generation.status==='completed'
+        && Boolean(item.generation.output_asset)
+      )?.generation ?? null)
+    } catch(err) {
+      onError(errorText(err))
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  useEffect(() => { void refreshSandboxHistory() }, [])
+
+  const historyHasActive=sandboxHistory.some(item =>
+    ['queued','processing'].includes(item.generation.status)
+  )
+  useEffect(() => {
+    if (!historyHasActive) return
+    const timer=window.setInterval(() => { void refreshSandboxHistory() },2500)
+    return () => window.clearInterval(timer)
+  },[historyHasActive])
   useEffect(() => {
     if (!sandboxGeneration || !['queued','processing'].includes(sandboxGeneration.status)) return
     let cancelled = false
     const timer = window.setInterval(() => {
       void api.getGeneration(sandboxGeneration.id)
-        .then((generation) => { if (!cancelled) setSandboxGeneration(generation) })
+        .then((generation) => {
+          if (cancelled) return
+          setSandboxGeneration(generation)
+          if (!['queued','processing'].includes(generation.status)) void refreshSandboxHistory()
+        })
         .catch((err) => { if (!cancelled) onError(errorText(err)) })
     }, 1500)
     return () => { cancelled = true; window.clearInterval(timer) }
@@ -394,29 +426,17 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
     let cancelled = false
     const timer = window.setInterval(() => {
       void api.getGeneration(orbitGeneration.id)
-        .then((generation) => { if (!cancelled) setOrbitGeneration(generation) })
+        .then((generation) => {
+          if (cancelled) return
+          setOrbitGeneration(generation)
+          if (!['queued','processing'].includes(generation.status)) void refreshSandboxHistory()
+        })
         .catch((err) => { if (!cancelled) onError(errorText(err)) })
     }, 1500)
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [orbitGeneration?.id, orbitGeneration?.status, onError])
 
-  async function saveSettings(){
-    const timeout=Number(primaryTimeout)
-    if(!Number.isInteger(timeout)||timeout<30||timeout>600){onError('Primary timeout должен быть целым числом от 30 до 600 секунд');return}
-    setBusy(true);onError(null)
-    try{
-      const saved=await api.adminUpdateGenerationSettings({
-        primary_model:primary.trim(),
-        fallback_model:fallback.trim()||null,
-        primary_timeout_seconds:timeout,
-        primary_params:JSON.parse(primaryParams||'{}') as Record<string,unknown>,
-        fallback_params:JSON.parse(fallbackParams||'{}') as Record<string,unknown>,
-        mode_params:JSON.parse(modeParams||'{}') as Record<string,Record<string,unknown>>,
-      })
-      onSettings(saved)
-    }catch(err){onError(errorText(err))}
-    finally{setBusy(false)}
-  }
+  async function saveSettings(){setBusy(true);onError(null);try{const saved=await api.adminUpdateGenerationSettings({primary_model:primary.trim(),fallback_model:fallback.trim()||null,primary_params:JSON.parse(primaryParams||'{}') as Record<string,unknown>,fallback_params:JSON.parse(fallbackParams||'{}') as Record<string,unknown>,mode_params:JSON.parse(modeParams||'{}') as Record<string,Record<string,unknown>>});onSettings(saved)}catch(err){onError(errorText(err))}finally{setBusy(false)}}
   async function runSandbox(){
     setSandboxBusy(true);onError(null)
     try{
@@ -426,6 +446,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
         params:parseSandboxParams(sandboxParams),
       })
       setSandboxGeneration(created)
+      void refreshSandboxHistory()
     }catch(err){onError(errorText(err))}
     finally{setSandboxBusy(false)}
   }
@@ -447,12 +468,13 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
         frame_duration_ms:frameDuration,
       })
       setOrbitGeneration(created)
+      void refreshSandboxHistory()
     }catch(err){onError(errorText(err))}
     finally{setOrbitBusy(false)}
   }
   async function savePrice(mode: GenerationMode, value: number, active: boolean){try{const saved=await api.adminUpdateGenerationPrice(mode,value,active);onPrices([...prices.filter(x=>x.generation_type!==mode),saved])}catch(err){onError(errorText(err))}}
   return <section className="admin-panel"><div className="admin-panel-title"><div><h2>AI, стоимость и промпты</h2><p>Модели, параметры, стоимость кредитов и prompt templates управляются из БД.</p></div></div>
-    <div className="admin-form-grid"><label>Primary model<input value={primary} onChange={e=>setPrimary(e.target.value)}/></label><label>Fallback model<input value={fallback} onChange={e=>setFallback(e.target.value)}/></label><label>Primary timeout, сек<input type="number" min="30" max="600" value={primaryTimeout} onChange={e=>setPrimaryTimeout(e.target.value)}/><small>После этого времени production переключается на fallback. Sandbox и 360° не затрагиваются.</small></label><label className="admin-span-2">Primary params<textarea className="admin-code" value={primaryParams} onChange={e=>setPrimaryParams(e.target.value)}/></label><label className="admin-span-2">Fallback params<textarea className="admin-code" value={fallbackParams} onChange={e=>setFallbackParams(e.target.value)}/></label><label className="admin-span-2">Параметры по сценариям<textarea className="admin-code" value={modeParams} onChange={e=>setModeParams(e.target.value)}/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={()=>void saveSettings()}>Сохранить AI</button></div></div>
+    <div className="admin-form-grid"><label>Primary model<input value={primary} onChange={e=>setPrimary(e.target.value)}/></label><label>Fallback model<input value={fallback} onChange={e=>setFallback(e.target.value)}/></label><label className="admin-span-2">Primary params<textarea className="admin-code" value={primaryParams} onChange={e=>setPrimaryParams(e.target.value)}/></label><label className="admin-span-2">Fallback params<textarea className="admin-code" value={fallbackParams} onChange={e=>setFallbackParams(e.target.value)}/></label><label className="admin-span-2">Параметры по сценариям<textarea className="admin-code" value={modeParams} onChange={e=>setModeParams(e.target.value)}/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={()=>void saveSettings()}>Сохранить AI</button></div></div>
     <div className="admin-subpanel">
       <div className="admin-panel-title"><div><h3>AI Sandbox</h3><p>Одноразовый админский тест Nexus. Model ID, prompt и params применяются только к этому запуску: primary/fallback клиентов не меняются, кредиты не списываются.</p></div></div>
       <div className="admin-form-grid">
@@ -482,6 +504,25 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
           <div><small>{formatDate(orbitGeneration.completed_at||orbitGeneration.started_at||orbitGeneration.created_at)}</small></div>
         </article></div>}
       </div>}
+    </div>
+    <div className="admin-subpanel">
+      <div className="admin-panel-title"><div><h3>История AI Sandbox</h3><p>Последние still и 360° прогоны сохраняются после обновления страницы. Готовый still можно снова выбрать источником для orbit.</p></div><button type="button" className="secondary-button" onClick={()=>void refreshSandboxHistory()}>Обновить историю</button></div>
+      {historyLoading
+        ? <small>Загружаем историю…</small>
+        : sandboxHistory.length===0
+          ? <small>Тестовых запусков пока нет.</small>
+          : <div className="admin-card-list">{sandboxHistory.map(item=>{
+              const generation=item.generation
+              const durationSeconds=generation.started_at&&generation.completed_at
+                ? Math.max(0,Math.round((new Date(generation.completed_at).getTime()-new Date(generation.started_at).getTime())/1000))
+                : null
+              const selected=item.kind==='sandbox'&&sandboxGeneration?.id===generation.id
+              return <article className="admin-list-card admin-idea-card" key={generation.id}>
+                {generation.output_asset&&<img src={generation.output_asset.url} alt={item.kind==='orbit'?'360 degree orbit history':'AI Sandbox history result'}/>}
+                <div><strong>{item.kind==='orbit'?'360° orbit':'Sandbox still'} · {generation.model_name||'model —'}</strong><span>{generation.status}{durationSeconds!==null?' · '+durationSeconds+' с':''}</span><p>{item.prompt||'Без дополнительного prompt'}</p><small>params: {JSON.stringify(item.params)}{item.kind==='orbit'&&item.frame_count?' · '+item.frame_count+' кадров · '+item.frame_duration_ms+' мс':''}</small>{generation.error&&<p>{generation.error}</p>}</div>
+                <div><small>{formatDate(generation.completed_at||generation.started_at||generation.created_at)}</small>{item.kind==='sandbox'&&generation.status==='completed'&&generation.output_asset&&<button type="button" className="secondary-button" disabled={selected} onClick={()=>{setSandboxGeneration(generation);setSandboxModel(generation.model_name||'');setSandboxPrompt(item.prompt);setSandboxParams(JSON.stringify(item.params,null,2));setOrbitGeneration(null)}}>{selected?'Выбран для 360°':'Использовать для 360°'}</button>}</div>
+              </article>
+            })}</div>}
     </div>
     <div className="admin-subpanel"><h3>Стоимость генераций</h3><div className="admin-price-grid">{modes.map((m)=>{const row=prices.find(p=>p.generation_type===m.id);return <PriceEditor key={m.id} mode={m.id} label={m.label} initial={row} onSave={savePrice}/>})}</div></div>
     <div className="admin-prompts"><h3>Системные промпты</h3>{modes.map((m)=><PromptEditor key={m.id} mode={m.id} label={m.label} item={prompts.find(p=>p.generation_type===m.id)} onSaved={(saved)=>onPrompts([...prompts.filter(p=>p.generation_type!==m.id),saved])} onError={onError}/>)}</div>
