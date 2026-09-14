@@ -98,7 +98,7 @@ async def get_questionnaire_generation_cost(
     session: DbSession,
 ) -> QuestionnaireGenerationCostResponse:
     # credits is the live paid master-plan price used by refinements.
-    # initial_credits is a separate product offer and remains zero.
+    # initial_credits is the separately configurable first-concept offer.
     return await QuestionnaireService(session).generation_cost(user)
 
 
@@ -197,8 +197,16 @@ async def create_questionnaire_generation(
             generation_id=generation.id,
         )
 
+    initial_credits = (
+        await questionnaire.initial_concept_credits(user)
+        if object_key == "__initial__"
+        else None
+    )
     created = await build_generation_service(session, settings).create(
-        user, payload, before_commit=bind_generation
+        user,
+        payload,
+        before_commit=bind_generation,
+        credits_override=initial_credits,
     )
     return QuestionnaireGenerationResponse.model_validate(created)
 
