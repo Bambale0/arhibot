@@ -97,9 +97,16 @@ async def get_questionnaire_generation_cost(
     user: CurrentUser,
     session: DbSession,
 ) -> QuestionnaireGenerationCostResponse:
-    # credits is the live paid master-plan price used by refinements.
-    # initial_credits is the separately configurable first-concept offer.
-    return await QuestionnaireService(session).generation_cost(user)
+    # Pricing and project-entry bounds are live product settings controlled from admin.
+    questionnaire = QuestionnaireService(session)
+    response = await questionnaire.generation_cost(user)
+    operations = await questionnaire.operations.get()
+    return response.model_copy(
+        update={
+            "plot_area_min_sotkas": operations.plot_area_min_sotkas if operations else 4,
+            "plot_area_max_sotkas": operations.plot_area_max_sotkas if operations else 15,
+        }
+    )
 
 
 @router.post(
