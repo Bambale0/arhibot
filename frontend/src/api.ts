@@ -1,5 +1,6 @@
 import type { NormalizedRect, QuestionnaireApplication } from './questionnaireTypes'
 import type {
+  AdminAiHistoryItem,
   AdminAudit,
   AdminBillingSettings,
   AdminBroadcast,
@@ -174,8 +175,11 @@ export function adminUpdateIdea(id: string, payload: Partial<{ is_active: boolea
 export function adminArchiveIdea(id: string) { return request<AdminIdea>(`/admin/ideas/${id}`, { method: 'DELETE' }) }
 
 export function adminGetGenerationSettings() { return request<AdminGenerationSettings>('/admin/generation') }
-export function adminUpdateGenerationSettings(payload: { primary_model: string; fallback_model: string | null; primary_timeout_seconds: number; primary_params: Record<string, unknown>; fallback_params: Record<string, unknown>; mode_params: Record<string, Record<string, unknown>> }) {
+export function adminUpdateGenerationSettings(payload: { primary_model: string; fallback_model: string | null; primary_params: Record<string, unknown>; fallback_params: Record<string, unknown>; mode_params: Record<string, Record<string, unknown>> }) {
   return request<AdminGenerationSettings>('/admin/generation', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+}
+export function adminListGenerationSandboxHistory(limit = 30) {
+  return request<AdminAiHistoryItem[]>(`/admin/generation/sandbox/history?limit=${limit}`)
 }
 export function adminCreateGenerationSandbox(payload: { model_name: string; prompt: string; params: Record<string, unknown> }) {
   return request<Generation>('/admin/generation/sandbox', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
