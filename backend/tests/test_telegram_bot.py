@@ -1,7 +1,9 @@
 import pytest
 
 from app.services.telegram_user_summary_service import available_generation_count
+from app.telegram_bot import main as telegram_main
 from app.telegram_bot.main import (
+    TelegramBotApi,
     TelegramBotContent,
     TelegramUserSummary,
     canonicalize_webapp_url,
@@ -26,6 +28,63 @@ def content() -> TelegramBotContent:
         start_command_description="Open",
         app_command_description="Launch",
     )
+
+
+def test_send_document_file_uploads_original_bytes_as_multipart(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    source = tmp_path / "generation.png"
+    original = b"original-generation-bytes"
+    source.write_bytes(original)
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"ok": True, "result": {"message_id": 42}}
+
+    class FakeClient:
+        def __init__(self, *, timeout: int) -> None:
+            captured["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, *, data: dict, files: dict):
+            captured["url"] = url
+            captured["data"] = data
+            filename, document, media_type = files["document"]
+            captured["filename"] = filename
+            captured["media_type"] = media_type
+            captured["bytes"] = document.read()
+            return FakeResponse()
+
+    monkeypatch.setattr(telegram_main.httpx, "Client", FakeClient)
+
+    api = TelegramBotApi("test-token")
+    result = api.send_document_file(
+        chat_id=123,
+        path=source,
+        caption="Generation ready",
+        reply_markup={"inline_keyboard": []},
+    )
+
+    assert result == {"message_id": 42}
+    assert captured["url"] == "https://api.telegram.org/bottest-token/sendDocument"
+    assert captured["bytes"] == original
+    assert captured["filename"] == "generation.png"
+    assert captured["media_type"] == "image/png"
+    assert captured["data"] == {
+        "chat_id": "123",
+        "caption": "Generation ready",
+        "reply_markup": '{"inline_keyboard": []}',
+    }
 
 
 def test_canonicalize_webapp_url_idna_encodes_unicode_hostname() -> None:
