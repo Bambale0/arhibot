@@ -211,10 +211,18 @@ export type AdminIdea = Idea & {
 }
 
 
+export type AdminAiHistoryItem = {
+  kind: 'sandbox' | 'orbit'
+  generation: Generation
+  prompt: string
+  params: Record<string, unknown>
+  frame_count: number | null
+  frame_duration_ms: number | null
+}
+
 export type AdminGenerationSettings = {
   primary_model: string | null
   fallback_model: string | null
-  primary_timeout_seconds: number
   primary_params: Record<string, unknown>
   fallback_params: Record<string, unknown>
   mode_params: Record<string, Record<string, unknown>>
