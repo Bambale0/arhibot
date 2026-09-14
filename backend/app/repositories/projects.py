@@ -53,6 +53,18 @@ class ProjectRepository:
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
+    async def list_admin_ai_sandboxes(self, user_id: UUID) -> list[Project]:
+        result = await self.session.execute(
+            select(Project)
+            .where(
+                Project.user_id == user_id,
+                Project.deleted_at.is_(None),
+                Project.context["admin_ai_sandbox"].as_boolean().is_(True),
+            )
+            .order_by(Project.created_at.asc(), Project.id.asc())
+        )
+        return list(result.scalars().all())
+
     async def get_admin_ai_sandbox(self, user_id: UUID) -> Project | None:
         result = await self.session.execute(
             select(Project)

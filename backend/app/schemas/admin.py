@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.architecture.schemas import ArchitecturePackage
 from app.domain.generations.enums import GenerationType
 from app.domain.users.enums import UserRole, UserStatus
+from app.schemas.generations import GenerationResponse
 
 
 class AdminOverviewResponse(BaseModel):
@@ -275,6 +276,15 @@ class AdminAiOrbitCreate(BaseModel):
                 f"Orbit params cannot override provider fields: {', '.join(sorted(conflict))}"
             )
         return self
+
+
+class AdminAiHistoryItem(BaseModel):
+    kind: Literal["sandbox", "orbit"]
+    generation: GenerationResponse
+    prompt: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    frame_count: int | None = None
+    frame_duration_ms: int | None = None
 
 
 class GenerationRuntimeUpdate(BaseModel):

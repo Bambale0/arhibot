@@ -17,8 +17,11 @@ if os.getenv("RUN_INTEGRATION_TESTS") != "1":
 
 from app.core.config import get_settings  # noqa: E402
 from app.core.redis import redis_client  # noqa: E402
+from app.db.models.generations import Generation  # noqa: E402
+from app.db.models.projects import Project  # noqa: E402
 from app.db.models.users import User  # noqa: E402
 from app.db.session import get_session_factory  # noqa: E402
+from app.domain.generations.enums import GenerationType  # noqa: E402
 from app.domain.users.enums import UserRole  # noqa: E402
 from app.main import app  # noqa: E402
 from app.providers.nexus import NexusImageProvider, NexusImageResult  # noqa: E402
@@ -79,7 +82,8 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
         )
         assert denied.status_code == 403, denied.text
 
-        _, admin_headers = await _register(client, role=UserRole.SUPERADMIN)
+        admin_tokens, admin_headers = await _register(client, role=UserRole.SUPERADMIN)
+        admin_user_id = UUID(admin_tokens["user"]["id"])
         before_me = await client.get("/api/v1/me", headers=admin_headers)
         assert before_me.status_code == 200, before_me.text
         before_balance = before_me.json()["credits_balance"]
@@ -302,3 +306,82 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
         assert len(orbit_entries) == 1
         assert orbit_entries[0]["details"]["source_generation_id"] == str(generation_id)
         assert orbit_entries[0]["details"]["frame_count"] == 6
+
+
+        # A concurrent first-use race can leave more than one hidden sandbox project.
+        # History must aggregate all matching projects rather than hide one branch.
+        async with get_session_factory()() as session:
+            duplicate_project = Project(
+                user_id=admin_user_id,
+                name="AI Sandbox duplicate",
+                description="Concurrent sandbox project regression",
+                context={"admin_ai_sandbox": True},
+            )
+            session.add(duplicate_project)
+            await session.flush()
+            duplicate_generation = Generation(
+                user_id=admin_user_id,
+                project_id=duplicate_project.id,
+                type=GenerationType.MASTER_PLAN,
+                prompt=(
+                    "AUROOM_ADMIN_SANDBOX_V1\n"
+                    '{"prompt":"Duplicate hidden project","params":{"aspect_ratio":"1:1"}}'
+                ),
+                credits_charged=0,
+                model_name="nexus/duplicate-model",
+                telegram_delivery_status="skipped",
+            )
+            session.add(duplicate_generation)
+            await session.commit()
+            await session.refresh(duplicate_generation)
+            duplicate_generation_id = duplicate_generation.id
+
+        history_denied = await client.get(
+            "/api/v1/admin/generation/sandbox/history",
+            headers=user_headers,
+        )
+        assert history_denied.status_code == 403, history_denied.text
+
+        history_response = await client.get(
+            "/api/v1/admin/generation/sandbox/history?limit=10",
+            headers=admin_headers,
+        )
+        assert history_response.status_code == 200, history_response.text
+        history = history_response.json()
+        assert [item["kind"] for item in history] == ["sandbox", "orbit", "sandbox"]
+        duplicate_history = history[0]
+        assert duplicate_history["generation"]["id"] == str(duplicate_generation_id)
+        assert duplicate_history["prompt"] == "Duplicate hidden project"
+        assert duplicate_history["params"] == {"aspect_ratio": "1:1"}
+
+        orbit_history = history[1]
+        assert orbit_history["generation"]["id"] == str(orbit_id)
+        assert orbit_history["generation"]["prompt"] == "Keep the warm sunset mood"
+        assert orbit_history["prompt"] == "Keep the warm sunset mood"
+        assert orbit_history["params"] == {"guidance": 4}
+        assert orbit_history["frame_count"] == 6
+        assert orbit_history["frame_duration_ms"] == 160
+
+        sandbox_history = history[2]
+        assert sandbox_history["generation"]["id"] == str(generation_id)
+        assert sandbox_history["generation"]["prompt"] == (
+            "Photorealistic compact house on a landscaped plot"
+        )
+        assert sandbox_history["prompt"] == (
+            "Photorealistic compact house on a landscaped plot"
+        )
+        assert sandbox_history["params"] == {
+            "aspect_ratio": "16:9",
+            "steps": 7,
+        }
+        assert sandbox_history["frame_count"] is None
+        assert sandbox_history["frame_duration_ms"] is None
+
+        limited_history = await client.get(
+            "/api/v1/admin/generation/sandbox/history?limit=1",
+            headers=admin_headers,
+        )
+        assert limited_history.status_code == 200, limited_history.text
+        assert len(limited_history.json()) == 1
+        assert limited_history.json()[0]["generation"]["id"] == str(duplicate_generation_id)
+        assert "AUROOM_ADMIN_" not in limited_history.json()[0]["generation"]["prompt"]
