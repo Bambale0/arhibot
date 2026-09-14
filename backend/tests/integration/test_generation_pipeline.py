@@ -173,6 +173,7 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
         assert signed_media.status_code == 200, signed_media.text
         assert signed_media.content == base_data
         assert "Add a bathhouse only in the editable area" in provider_calls[0]["prompt"]
+        assert provider_calls[0]["timeout_seconds"] == get_settings().nexus_primary_timeout_seconds
 
         async with get_session_factory()() as session:
             generation = await session.get(Generation, generation_id)
