@@ -244,6 +244,7 @@ class AdminService:
         return GenerationRuntimeResponse(
             primary_model=row.primary_model,
             fallback_model=row.fallback_model,
+            primary_timeout_seconds=row.primary_timeout_seconds,
             primary_params=row.primary_params or {},
             fallback_params=row.fallback_params or {},
             mode_params=row.mode_params or {},
@@ -253,12 +254,23 @@ class AdminService:
     async def update_generation_settings(
         self, actor: User, payload: GenerationRuntimeUpdate
     ) -> GenerationRuntimeResponse:
+        if payload.primary_timeout_seconds > self.settings.nexus_task_timeout_seconds:
+            raise AppError(
+                type="generation_primary_timeout_too_large",
+                title="Primary generation timeout exceeds provider timeout",
+                status=422,
+                detail=(
+                    "Primary timeout must not exceed the configured Nexus task timeout "
+                    f"({self.settings.nexus_task_timeout_seconds} seconds)."
+                ),
+            )
         row = await self.repository.get_generation_settings(for_update=True)
         if row is None:
             row = GenerationRuntimeSettings(id=1, primary_model=payload.primary_model)
             self.repository.add_generation_settings(row)
         row.primary_model = payload.primary_model
         row.fallback_model = payload.fallback_model
+        row.primary_timeout_seconds = payload.primary_timeout_seconds
         row.primary_params = payload.primary_params
         row.fallback_params = payload.fallback_params
         row.mode_params = payload.mode_params
@@ -268,6 +280,11 @@ class AdminService:
             action="generation.settings.update",
             entity_type="generation_settings",
             entity_id="1",
+            details={
+                "primary_model": payload.primary_model,
+                "fallback_model": payload.fallback_model,
+                "primary_timeout_seconds": payload.primary_timeout_seconds,
+            },
         )
         await self.session.commit()
         await self.session.refresh(row)
