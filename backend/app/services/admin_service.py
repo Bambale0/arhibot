@@ -468,15 +468,22 @@ class AdminService:
         *,
         limit: int = 30,
     ) -> list[AdminAiHistoryItem]:
-        project = await self.projects.get_admin_ai_sandbox(actor.id)
-        if project is None:
+        projects = await self.projects.list_admin_ai_sandboxes(actor.id)
+        if not projects:
             return []
 
-        rows = await GenerationRepository(self.session).list_owned(
-            actor.id,
-            project_id=project.id,
-            limit=limit,
-        )
+        generation_repository = GenerationRepository(self.session)
+        rows = []
+        for project in projects:
+            rows.extend(
+                await generation_repository.list_owned(
+                    actor.id,
+                    project_id=project.id,
+                    limit=limit,
+                )
+            )
+        rows.sort(key=lambda item: (item.created_at, item.id), reverse=True)
+        rows = rows[:limit]
         generation_service = build_generation_service(self.session, self.settings)
         history: list[AdminAiHistoryItem] = []
         for row in rows:
