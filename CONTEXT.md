@@ -40,7 +40,7 @@ An Idea is a user-published accepted work created through the normal `Созда
 - The owner explicitly adds an accepted generated work to Ideas from the Create flow. This action is the publication consent; another user cannot publish the generation by id.
 - Only pre-render design answers are included in the presentation snapshot; application/contact answers are never exposed in the feed.
 - Web admin does not create publications. It can moderate visibility and ordering. Hiding a publication removes it from the public feed without deleting the source Project or Generation.
-- 3D is not part of the approved AuRoom product scope. Do not plan, implement, surface, or treat GLB/interactive-3D/renderer work as a delivery requirement unless a new explicit product decision reintroduces it. The Ideas feed and normal project flow remain image-based. Existing dormant geometry/rendering code may remain inert as legacy technical substrate, but it is not product scope.
+- 3D is not part of the approved AuRoom product scope. Do not plan, implement, surface, or treat GLB/interactive-3D/renderer work as a delivery requirement unless a new explicit product decision reintroduces it. The Ideas feed and normal project flow remain image-based. Existing dormant geometry/rendering code may remain internal as legacy technical substrate, but it must not be registered as a public GLB, massing, or renderer API while 3D remains out of scope.
 
 ## Broadcast Campaign
 
