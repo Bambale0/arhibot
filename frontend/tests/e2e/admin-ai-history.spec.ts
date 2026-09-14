@@ -83,6 +83,7 @@ async function json(route:Route, data:unknown, status=200) {
   await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)})
 }
 
+// Regression: persisted history must survive a full Mini App reload.
 test('admin AI history survives reload and an older still can be reused for 360', async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem('auroom.access_token','e2e')
