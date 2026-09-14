@@ -990,7 +990,7 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
             for method, payload in fake_telegram.calls
             if method == "sendDocument" and application_id in payload["caption"]
         )
-        assert document_payload["path"].name == "questionnaire-output.webp"
+        assert document_payload["path"].as_posix().endswith(output_asset.storage_path)
         keyboard = document_payload["reply_markup"]["inline_keyboard"]
         assert keyboard[0][0]["text"] == "Работа / проект"
         assert f"project={project_id}" in keyboard[0][0]["web_app"]["url"]
