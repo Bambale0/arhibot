@@ -807,10 +807,17 @@ class QuestionnaireService:
         revisions = await self.repository.get_catalog_revisions(missing_versions)
         catalogs: dict[str, dict | None] = {
             version: (
-                catalog_row.catalog
-                if catalog_row is not None and version == catalog_row.version
-                else revisions.get(version).catalog
-                if revisions.get(version) is not None
+                enrich_catalog_semantics(raw_catalog)
+                if (
+                    raw_catalog := (
+                        catalog_row.catalog
+                        if catalog_row is not None and version == catalog_row.version
+                        else revisions.get(version).catalog
+                        if revisions.get(version) is not None
+                        else None
+                    )
+                )
+                is not None
                 else None
             )
             for version in versions
@@ -832,9 +839,22 @@ class QuestionnaireService:
                 else None
             )
             response = QuestionnaireApplicationResponse.model_validate(item)
-            application_contact = str(
-                item.answers.get("zayavka", {}).get("24") or ""
-            ).strip() or None
+            application_catalog = catalogs[item.catalog_version]
+            application_definition = (
+                find_definition(application_catalog, APPLICATION)
+                if application_catalog is not None
+                else None
+            )
+            application_key = (
+                str(application_definition["key"])
+                if application_definition is not None
+                else None
+            )
+            application_answers = (
+                item.answers.get(application_key, {})
+                if application_key is not None
+                else {}
+            )
             result.append(
                 QuestionnaireApplicationResponse.model_validate(
                     {
@@ -843,7 +863,21 @@ class QuestionnaireService:
                         "user_name": user_name,
                         "scene_asset_url": scene_asset_url,
                         "final_generation_id": final_generation_id,
-                        "application_contact": application_contact,
+                        "application_plot": answer_by_role(
+                            application_definition, application_answers, LEAD_PLOT
+                        ),
+                        "application_budget": answer_by_role(
+                            application_definition, application_answers, LEAD_BUDGET
+                        ),
+                        "application_timeline": answer_by_role(
+                            application_definition, application_answers, LEAD_TIMELINE
+                        ),
+                        "application_name": answer_by_role(
+                            application_definition, application_answers, LEAD_NAME
+                        ),
+                        "application_contact": answer_by_role(
+                            application_definition, application_answers, LEAD_CONTACT
+                        ),
                         "user_email": user_email,
                         "telegram_user_id": telegram_user_id,
                         "brief": build_application_brief(
@@ -1354,6 +1388,9 @@ class QuestionnaireService:
             )
 
         definitions = {item["key"]: item for item in catalog["questionnaires"]}
+        application_key = str(catalog["application_key"])
+        primary_house = find_definition(catalog, PRIMARY_HOUSE)
+        primary_house_key = str(primary_house["key"]) if primary_house is not None else None
         object_keys = {item for section in catalog["sections"] for item in section["object_keys"]}
         progress_started = bool(
             payload.survey_completed_objects
@@ -1385,9 +1422,9 @@ class QuestionnaireService:
             raise self._invalid(
                 "Before the first accepted object, the current scene must equal the one-time site source."
             )
-        if payload.current_object == "zayavka" and not payload.accepted_objects:
+        if payload.current_object == application_key and not payload.accepted_objects:
             raise self._invalid("The application opens only after an accepted sketch.")
-        if payload.answers.get("zayavka") and not payload.accepted_objects:
+        if payload.answers.get(application_key) and not payload.accepted_objects:
             raise self._invalid("Application answers require an accepted sketch.")
 
         if len(payload.selected_objects) != len(set(payload.selected_objects)):
@@ -1395,7 +1432,7 @@ class QuestionnaireService:
         if any(key not in object_keys for key in payload.selected_objects):
             raise self._invalid("The session contains an unknown questionnaire object.")
         if payload.current_object is not None and payload.current_object not in (
-            set(payload.selected_objects) | {"zayavka"}
+            set(payload.selected_objects) | {application_key}
         ):
             raise self._invalid("The current questionnaire is not part of this session.")
         if (
@@ -1436,8 +1473,12 @@ class QuestionnaireService:
                     "Lock-region selection must target the current or accepted object."
                 )
 
-        house_accepted = "eskez-doma" in payload.accepted_objects
-        allowed_answer_keys = set(payload.selected_objects) | {"zayavka"}
+        house_accepted = (
+            primary_house_key in payload.accepted_objects
+            if primary_house_key is not None
+            else False
+        )
+        allowed_answer_keys = set(payload.selected_objects) | {application_key}
         previous_accepted = (
             set(previous.accepted_objects)
             if previous is not None and previous.session_id == payload.session_id
@@ -1484,8 +1525,17 @@ class QuestionnaireService:
                         f"Unknown question {object_key}.{question_id} in the saved session."
                     )
                 allow_empty_multi = (
-                    object_key == "eskez-doma"
-                    and question_id == "15б"
+                    definition_role(
+                        definition,
+                        application_key=application_key,
+                    )
+                    == PRIMARY_HOUSE
+                    and question_role(
+                        definition,
+                        question,
+                        application_key=application_key,
+                    )
+                    == HOUSE_REVIEW_TARGETS
                     and bool(payload.review_comments.get(object_key, "").strip())
                 )
                 self._validate_answer(
@@ -1509,7 +1559,7 @@ class QuestionnaireService:
                 raise self._invalid("The current question is inactive for the saved answers.")
 
         if payload.edit_question_ids:
-            if payload.current_object is None or payload.current_object == "zayavka":
+            if payload.current_object is None or payload.current_object == application_key:
                 raise self._invalid("Edit targets require a current design questionnaire.")
             valid_ids = {item["id"] for item in definitions[payload.current_object]["questions"]}
             if any(question_id not in valid_ids for question_id in payload.edit_question_ids):
@@ -1520,12 +1570,21 @@ class QuestionnaireService:
                 raise self._invalid("Application submission is not allowed on this endpoint.")
             if not payload.accepted_objects:
                 raise self._invalid("The application can be submitted only after an accepted sketch.")
-            application = payload.answers.get("zayavka", {})
-            for qid in ("20", "21", "22", "23", "24"):
-                if application.get(qid) in (None, "", []):
+            application_definition = definitions[application_key]
+            application = payload.answers.get(application_key, {})
+            for question in application_definition["questions"]:
+                if question.get("phase") != "application":
+                    continue
+                if not self._condition_ok(question.get("condition"), application, house_accepted):
+                    continue
+                if question.get("required") and application.get(question["id"]) in (None, "", []):
                     raise self._invalid("The application is incomplete.")
-            if application.get("25") is not True:
-                raise self._invalid("Personal-data consent is required.")
+                if (
+                    question.get("required")
+                    and question.get("kind") == "consent"
+                    and application.get(question["id"]) is not True
+                ):
+                    raise self._invalid("Required consent is missing.")
 
     def _validate_answer(
         self,
