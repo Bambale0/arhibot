@@ -214,6 +214,7 @@ export type AdminIdea = Idea & {
 export type AdminGenerationSettings = {
   primary_model: string | null
   fallback_model: string | null
+  primary_timeout_seconds: number
   primary_params: Record<string, unknown>
   fallback_params: Record<string, unknown>
   mode_params: Record<string, Record<string, unknown>>
