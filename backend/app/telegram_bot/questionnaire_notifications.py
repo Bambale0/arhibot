@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -150,8 +151,8 @@ async def _send_to_admins(
     *,
     session: AsyncSession,
     application: QuestionnaireApplication,
-    photo_url: str | None = None,
-    photo_reply_markup: dict | None = None,
+    document_path: Path | None = None,
+    document_reply_markup: dict | None = None,
 ) -> tuple[int, list[str]]:
     sent = 0
     errors: list[str] = []
@@ -159,31 +160,30 @@ async def _send_to_admins(
     for recipient_id in recipient_ids:
         progress = dict(application.telegram_delivery_progress or {})
         recipient = dict(progress.get(recipient_id) or {})
-        photo_sent = bool(recipient.get("photo_sent"))
+        media_sent = bool(
+            recipient.get("document_sent") or recipient.get("photo_sent")
+        )
         chunks_sent = max(0, int(recipient.get("chunks_sent") or 0))
 
-        if (not photo_url or photo_sent) and chunks_sent >= len(messages):
+        if (not document_path or media_sent) and chunks_sent >= len(messages):
             sent += 1
             continue
 
-        if photo_url and not photo_sent:
+        if document_path and not media_sent:
             try:
                 await asyncio.to_thread(
-                    api.call,
-                    "sendPhoto",
-                    {
-                        "chat_id": recipient_id,
-                        "photo": photo_url,
-                        "caption": f"Финальный эскиз AuRoom · заявка {application.id}",
-                        **({"reply_markup": photo_reply_markup} if photo_reply_markup else {}),
-                    },
+                    api.send_document_file,
+                    chat_id=recipient_id,
+                    path=document_path,
+                    caption=f"Финальный эскиз AuRoom · заявка {application.id}",
+                    reply_markup=document_reply_markup or {"inline_keyboard": []},
                 )
             except Exception as exc:  # Telegram adapter failure must stay retryable.
                 errors.append(
                     f"recipient {recipient_id}: {type(exc).__name__}: {str(exc)[:160]}"
                 )
                 continue
-            recipient["photo_sent"] = True
+            recipient["document_sent"] = True
             progress[recipient_id] = recipient
             application.telegram_delivery_progress = progress
             await session.commit()
@@ -196,11 +196,11 @@ async def _send_to_admins(
                     "text": messages[index],
                 }
                 if (
-                    photo_url is None
+                    document_path is None
                     and index == 0
-                    and photo_reply_markup is not None
+                    and document_reply_markup is not None
                 ):
-                    message_payload["reply_markup"] = photo_reply_markup
+                    message_payload["reply_markup"] = document_reply_markup
                 await asyncio.to_thread(
                     api.call,
                     "sendMessage",
@@ -281,11 +281,8 @@ async def deliver_pending_applications_once(
                 if application.scene_asset_id is not None
                 else None
             )
-            photo_url = (
-                LocalMediaStorage(get_settings()).signed_telegram_photo_url(
-                    scene_asset.storage_path,
-                    ttl_seconds=3600,
-                )
+            document_path = (
+                LocalMediaStorage(get_settings()).absolute_path(scene_asset.storage_path)
                 if scene_asset is not None
                 else None
             )
@@ -304,11 +301,11 @@ async def deliver_pending_applications_once(
                 final_generation_id=final_generation_id,
                 catalog=catalog,
             )
-            photo_reply_markup = None
+            document_reply_markup = None
             resolved_webapp_url = (webapp_url or get_settings().telegram_webapp_url or "").strip()
             if resolved_webapp_url:
                 try:
-                    photo_reply_markup = admin_application_keyboard(
+                    document_reply_markup = admin_application_keyboard(
                         resolved_webapp_url,
                         application_id=application.id,
                         project_id=application.project_id,
@@ -327,8 +324,8 @@ async def deliver_pending_applications_once(
                 _chunk_message(message),
                 session=session,
                 application=application,
-                photo_url=photo_url,
-                photo_reply_markup=photo_reply_markup,
+                document_path=document_path,
+                document_reply_markup=document_reply_markup,
             )
             delivery_status = _delivery_status(
                 sent=sent,
