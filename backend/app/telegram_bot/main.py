@@ -1,11 +1,15 @@
 import json
 import logging
+import mimetypes
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
+
+import httpx
 
 from app.core.config import get_settings
 
@@ -253,6 +257,58 @@ class TelegramBotApi:
                 retry_after=retry_after,
             )
         return data.get("result")
+
+    def send_document_file(
+        self,
+        *,
+        chat_id: int | str,
+        path: Path,
+        caption: str,
+        reply_markup: dict[str, Any],
+        timeout: int = 60,
+    ) -> Any:
+        media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        data = {
+            "chat_id": str(chat_id),
+            "caption": caption,
+            "reply_markup": json.dumps(reply_markup, ensure_ascii=False),
+        }
+        try:
+            with path.open("rb") as document:
+                with httpx.Client(timeout=timeout) as client:
+                    response = client.post(
+                        f"{self.base_url}/sendDocument",
+                        data=data,
+                        files={
+                            "document": (
+                                path.name,
+                                document,
+                                media_type,
+                            )
+                        },
+                    )
+        except (OSError, httpx.HTTPError) as exc:
+            raise TelegramApiError(
+                "Telegram API request failed: sendDocument"
+            ) from exc
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise TelegramApiError(
+                f"Telegram API request failed in sendDocument: HTTP {response.status_code}"
+            ) from exc
+
+        if not payload.get("ok"):
+            parameters = payload.get("parameters") or {}
+            raw_retry = parameters.get("retry_after")
+            retry_after = raw_retry if isinstance(raw_retry, int) and raw_retry > 0 else None
+            raise TelegramApiError(
+                "Telegram API error in sendDocument: "
+                f"{payload.get('description', 'unknown error')}",
+                retry_after=retry_after,
+            )
+        return payload.get("result")
 
 
 def normalize_command(text: str) -> str:

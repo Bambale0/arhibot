@@ -218,10 +218,10 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
 
         class FakeTelegramApi:
             def __init__(self) -> None:
-                self.calls: list[tuple[str, dict]] = []
+                self.calls: list[dict] = []
 
-            def call(self, method: str, payload: dict, *, timeout: int = 15):
-                self.calls.append((method, payload))
+            def send_document_file(self, **kwargs):  # noqa: ANN003
+                self.calls.append(kwargs)
                 return {"message_id": 1}
 
         telegram = FakeTelegramApi()
@@ -232,9 +232,10 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
         assert sent == 1
         assert failed == 0
         assert len(telegram.calls) == 1
-        method, telegram_payload = telegram.calls[0]
-        assert method == "sendPhoto"
+        telegram_payload = telegram.calls[0]
         assert telegram_payload["chat_id"] == "900000001"
+        assert telegram_payload["path"] == output_path
+        assert telegram_payload["path"].read_bytes() == output_path.read_bytes()
         assert "Add a bathhouse only in the editable area" not in telegram_payload["caption"]
         keyboard = telegram_payload["reply_markup"]["inline_keyboard"]
         assert f"project={project_id}" in keyboard[0][0]["web_app"]["url"]
