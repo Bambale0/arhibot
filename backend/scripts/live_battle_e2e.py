@@ -301,7 +301,7 @@ async def _main(args: argparse.Namespace) -> int:
         for index, item in enumerate(SCENARIOS[: args.scenarios], 1)
     ]
     if not args.apply:
-        print(json.dumps({"environment": settings.environment, "plan": plan}, ensure_ascii=False))
+        print(json.dumps({"environment": settings.app_env, "plan": plan}, ensure_ascii=False))
         return 0
     if not args.confirm_live_provider_cost:
         raise SystemExit("Refusing live Nexus calls without --confirm-live-provider-cost")
