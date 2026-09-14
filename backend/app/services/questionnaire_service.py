@@ -25,6 +25,23 @@ from app.questionnaires.generation_prompt import (
 from app.questionnaires.generation_prompt import (
     condition_ok as questionnaire_condition_ok,
 )
+from app.questionnaires.semantics import (
+    APPLICATION,
+    HOUSE_REVIEW_ACCEPT,
+    HOUSE_REVIEW_TARGETS,
+    LEAD_BUDGET,
+    LEAD_CONTACT,
+    LEAD_NAME,
+    LEAD_PLOT,
+    LEAD_TIMELINE,
+    PRIMARY_HOUSE,
+    answer_by_role,
+    definition_role,
+    enrich_catalog_semantics,
+    find_definition,
+    find_question,
+    question_role,
+)
 from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
 from app.repositories.credits import CreditRepository
@@ -65,16 +82,19 @@ class QuestionnaireService:
                 status=503,
                 detail="The questionnaire catalog has not been configured.",
             )
-        return QuestionnaireCatalogResponse.model_validate(row.catalog).model_dump(mode="json")
+        catalog = enrich_catalog_semantics(row.catalog)
+        return QuestionnaireCatalogResponse.model_validate(catalog).model_dump(mode="json")
 
     async def catalog_for_version(self, version: str) -> dict | None:
         row = await self.repository.get_catalog()
         if row is not None and row.version == version:
-            return QuestionnaireCatalogResponse.model_validate(row.catalog).model_dump(mode="json")
+            catalog = enrich_catalog_semantics(row.catalog)
+            return QuestionnaireCatalogResponse.model_validate(catalog).model_dump(mode="json")
         revision = await self.repository.get_catalog_revision(version)
         if revision is None:
             return None
-        return QuestionnaireCatalogResponse.model_validate(revision.catalog).model_dump(mode="json")
+        catalog = enrich_catalog_semantics(revision.catalog)
+        return QuestionnaireCatalogResponse.model_validate(catalog).model_dump(mode="json")
 
     async def get_session(self, user: User, project_id: UUID) -> DesignSession | None:
         project = await ProjectService(self.projects).get_owned_model(user, project_id)
@@ -642,8 +662,9 @@ class QuestionnaireService:
                 status=503,
                 detail="The questionnaire catalog has not been configured.",
             )
+        enriched = enrich_catalog_semantics(row.catalog)
         return QuestionnaireCatalogAdminResponse(
-            catalog=QuestionnaireCatalogResponse.model_validate(row.catalog),
+            catalog=QuestionnaireCatalogResponse.model_validate(enriched),
             source_texts=row.source_texts,
             updated_at=row.updated_at,
         )
