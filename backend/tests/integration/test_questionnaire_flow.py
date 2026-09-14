@@ -948,6 +948,10 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
             def __init__(self) -> None:
                 self.calls: list[tuple[str, dict]] = []
 
+            def send_document_file(self, **kwargs):  # noqa: ANN003
+                self.calls.append(("sendDocument", kwargs))
+                return {"message_id": len(self.calls)}
+
             def call(self, method: str, payload: dict, *, timeout: int = 15):
                 self.calls.append((method, payload))
                 return {"message_id": len(self.calls)}
@@ -981,13 +985,13 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
         assert f"User ID: {user_id}" in joined_admin_text
         assert f"Проект ID: {project_id}" in joined_admin_text
         assert f"Финальная работа generation: {generation.id}" in joined_admin_text
-        photo_payload = next(
+        document_payload = next(
             payload
             for method, payload in fake_telegram.calls
-            if method == "sendPhoto" and application_id in payload["caption"]
+            if method == "sendDocument" and application_id in payload["caption"]
         )
-        assert photo_payload["photo"]
-        keyboard = photo_payload["reply_markup"]["inline_keyboard"]
+        assert document_payload["path"].name == "questionnaire-output.webp"
+        keyboard = document_payload["reply_markup"]["inline_keyboard"]
         assert keyboard[0][0]["text"] == "Работа / проект"
         assert f"project={project_id}" in keyboard[0][0]["web_app"]["url"]
         assert f"generation={generation.id}" in keyboard[0][0]["web_app"]["url"]
