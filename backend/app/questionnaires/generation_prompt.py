@@ -6,6 +6,16 @@ from math import floor
 from typing import Any
 
 from app.schemas.questionnaires import DesignSession
+from app.questionnaires.semantics import (
+    HOUSE_AREA,
+    HOUSE_FLOORS,
+    HOUSE_REVIEW_SCOPE,
+    PRIMARY_HOUSE,
+    answer_by_role,
+    definition_role,
+    find_definition,
+    inherited_house_style_selected,
+)
 
 
 def condition_ok(
@@ -155,17 +165,24 @@ def _house_floor_count_reference(answer: object) -> float | None:
     return count
 
 
-def _initial_site_scale(session: DesignSession) -> dict[str, object]:
+def _initial_site_scale(
+    catalog: dict[str, Any],
+    session: DesignSession,
+) -> dict[str, object]:
     plot_sotkas = session.plot_area_sotkas
     plot_m2 = plot_sotkas * 100 if plot_sotkas is not None else None
-    house_answers = session.answers.get("eskez-doma", {})
-    raw_house_area = house_answers.get("3")
+    house_definition = find_definition(catalog, PRIMARY_HOUSE)
+    house_key = str(house_definition["key"]) if house_definition is not None else None
+    house_answers = session.answers.get(house_key, {}) if house_key is not None else {}
+    raw_house_area = answer_by_role(house_definition, house_answers, HOUSE_AREA)
     house_area_m2 = (
         float(raw_house_area)
         if isinstance(raw_house_area, (int, float)) and not isinstance(raw_house_area, bool)
         else None
     )
-    floor_count = _house_floor_count_reference(house_answers.get("4"))
+    floor_count = _house_floor_count_reference(
+        answer_by_role(house_definition, house_answers, HOUSE_FLOORS)
+    )
     estimated_footprint_m2 = (
         round(house_area_m2 / floor_count, 1)
         if house_area_m2 is not None and floor_count
@@ -216,7 +233,13 @@ def build_initial_concept_prompt(
         if item["key"] != catalog.get("application_key")
     }
     objects: list[dict[str, object]] = []
-    house_reference_available = "eskez-doma" in session.selected_objects
+    primary_house = find_definition(catalog, PRIMARY_HOUSE)
+    primary_house_key = str(primary_house["key"]) if primary_house is not None else None
+    house_reference_available = (
+        primary_house_key in session.selected_objects
+        if primary_house_key is not None
+        else False
+    )
     for object_key in session.selected_objects:
         definition = definitions[object_key]
         answers = session.answers.get(object_key, {})
@@ -248,7 +271,7 @@ def build_initial_concept_prompt(
         )
 
     camera = _initial_concept_camera(len(objects))
-    site_scale = _initial_site_scale(session)
+    site_scale = _initial_site_scale(catalog, session)
     source = (
         {
             "kind": "site_photo",
@@ -329,6 +352,7 @@ def build_questionnaire_generation_prompt(
     *,
     accepted_before: Sequence[str],
     input_asset_present: bool,
+    primary_house_key: str | None,
 ) -> str:
     """Build a deterministic, model-facing render specification.
 
@@ -338,7 +362,11 @@ def build_questionnaire_generation_prompt(
     """
     object_key = str(definition["key"])
     answers = session.answers.get(object_key, {})
-    house_accepted = "eskez-doma" in accepted_before
+    house_accepted = (
+        primary_house_key in accepted_before
+        if primary_house_key is not None
+        else False
+    )
     removing_object = session.pending_removal_object == object_key
 
     questionnaire_constraints: list[dict[str, object]] = []
@@ -403,10 +431,11 @@ def build_questionnaire_generation_prompt(
         if removing_object
         else session.review_comments.get(object_key, "").strip() or None
     )
+    review_scope = answer_by_role(definition, answers, HOUSE_REVIEW_SCOPE)
     full_rerender = (
-        object_key == "eskez-doma"
-        and isinstance(answers.get("15а"), str)
-        and str(answers["15а"]).startswith("Всё")
+        definition_role(definition) == PRIMARY_HOUSE
+        and isinstance(review_scope, str)
+        and review_scope.startswith("Всё")
     )
     if full_rerender and not removing_object:
         refinement = None
@@ -416,16 +445,16 @@ def build_questionnaire_generation_prompt(
         "Не заменять явно выбранные параметры собственными предположениями.",
         "Не менять ранее принятую сцену вне разрешённой области изменения.",
     ]
-    if object_key == "eskez-doma" and not removing_object:
+    if definition_role(definition) == PRIMARY_HOUSE and not removing_object:
         prohibitions.append(
             "Визуализировать только внешний вид дома. Планировок, комнат и "
             "внутренних помещений не придумывать."
         )
 
-    style_inherited = answers.get("1") == "Как у дома"
+    style_inherited = inherited_house_style_selected(definition, answers)
     if removing_object:
         inheritance_rule = "Не применяется при удалении объекта."
-    elif object_key == "eskez-doma":
+    elif definition_role(definition) == PRIMARY_HOUSE:
         inheritance_rule = "Не применяется к основному дому."
     elif not style_inherited:
         inheritance_rule = (
