@@ -7,6 +7,7 @@ from app.api.dependencies.auth import AdminUser, DbSession
 from app.core.config import Settings, get_settings
 from app.domain.generations.enums import GenerationType
 from app.schemas.admin import (
+    AdminAiHistoryItem,
     AdminAiOrbitCreate,
     AdminAiSandboxCreate,
     AdminOverviewResponse,
@@ -125,6 +126,22 @@ async def get_generation_settings(_admin: AdminUser, session: DbSession, setting
 @router.put("/generation", response_model=GenerationRuntimeResponse)
 async def update_generation_settings(payload: GenerationRuntimeUpdate, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> GenerationRuntimeResponse:
     return await service(session, settings).update_generation_settings(admin, payload)
+
+
+@router.get(
+    "/generation/sandbox/history",
+    response_model=list[AdminAiHistoryItem],
+)
+async def list_generation_sandbox_history(
+    admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+    limit: Annotated[int, Query(ge=1, le=100)] = 30,
+) -> list[AdminAiHistoryItem]:
+    return await service(session, settings).list_ai_sandbox_history(
+        admin,
+        limit=limit,
+    )
 
 
 @router.post(
