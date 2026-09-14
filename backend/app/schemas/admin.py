@@ -280,6 +280,7 @@ class AdminAiOrbitCreate(BaseModel):
 class GenerationRuntimeUpdate(BaseModel):
     primary_model: str = Field(min_length=1, max_length=120)
     fallback_model: str | None = Field(default=None, max_length=120)
+    primary_timeout_seconds: int = Field(default=90, ge=30, le=600)
     primary_params: dict[str, Any] = Field(default_factory=dict)
     fallback_params: dict[str, Any] = Field(default_factory=dict)
     mode_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -324,6 +325,7 @@ class GenerationRuntimeUpdate(BaseModel):
 class GenerationRuntimeResponse(BaseModel):
     primary_model: str | None = None
     fallback_model: str | None = None
+    primary_timeout_seconds: int = 90
     primary_params: dict[str, Any] = Field(default_factory=dict)
     fallback_params: dict[str, Any] = Field(default_factory=dict)
     mode_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
