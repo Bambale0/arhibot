@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import Response
@@ -48,10 +49,10 @@ async def test_email_auth_rate_limits_source_and_account(
 
     class FakeAuth:
         async def register(self, email: str, password: str, display_name: str):  # noqa: ANN001
-            return {"registered": email}
+            return SimpleNamespace(refresh_token="r" * 64)
 
         async def login(self, email: str, password: str):  # noqa: ANN001
-            return {"logged_in": email}
+            return SimpleNamespace(refresh_token="r" * 64)
 
     monkeypatch.setattr(auth_api, "RateLimitService", FakeLimiter)
     monkeypatch.setattr(auth_api, "_service", lambda session, settings: FakeAuth())
