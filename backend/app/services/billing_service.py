@@ -457,9 +457,11 @@ class BillingService:
 
     async def handle_webhook(self, payload: dict) -> None:
         event = str(payload.get("event") or "")
-        obj = payload.get("object") or {}
+        obj = payload.get("object")
+        if not isinstance(obj, dict):
+            return
         provider_id = str(obj.get("id") or "").strip()
-        if not provider_id:
+        if not provider_id or len(provider_id) > 128:
             return
         if not self.provider_configured:
             raise YooKassaError("YooKassa webhook received while billing is not configured")
@@ -470,8 +472,7 @@ class BillingService:
             remote = await provider.get_payment(provider_id)
             await self.apply_remote(remote)
         elif event == "refund.succeeded":
-            payment_id = str(obj.get("payment_id") or "").strip() or None
-            if not await self.repository.has_provider_refund(provider_id, payment_id):
+            if not await self.repository.has_provider_refund(provider_id):
                 return
             remote_refund = await provider.get_refund(provider_id)
             await self.apply_refund_remote(remote_refund)
