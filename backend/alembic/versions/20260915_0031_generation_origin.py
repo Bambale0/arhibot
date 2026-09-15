@@ -27,12 +27,40 @@ def upgrade() -> None:
     op.execute(
         sa.text(
             """
-            UPDATE generations
+            UPDATE generations AS generation
             SET origin = CASE
-                WHEN prompt LIKE 'AUROOM_ADMIN_SANDBOX_V1%' THEN 'admin_sandbox'
-                WHEN prompt LIKE 'AUROOM_ADMIN_ORBIT_V1%' THEN 'admin_orbit'
-                WHEN prompt LIKE 'AUROOM_INITIAL_CONCEPT_V1%' THEN 'questionnaire_initial'
-                WHEN prompt LIKE 'AUROOM_RENDER_SPEC_V1%' THEN 'questionnaire'
+                WHEN generation.prompt LIKE 'AUROOM_ADMIN_SANDBOX_V1%'
+                     AND EXISTS (
+                         SELECT 1
+                         FROM projects AS project
+                         WHERE project.id = generation.project_id
+                           AND project.context ->> 'admin_ai_sandbox' = 'true'
+                     )
+                    THEN 'admin_sandbox'
+                WHEN generation.prompt LIKE 'AUROOM_ADMIN_ORBIT_V1%'
+                     AND EXISTS (
+                         SELECT 1
+                         FROM projects AS project
+                         WHERE project.id = generation.project_id
+                           AND project.context ->> 'admin_ai_sandbox' = 'true'
+                     )
+                    THEN 'admin_orbit'
+                WHEN generation.prompt LIKE 'AUROOM_INITIAL_CONCEPT_V1%'
+                     AND EXISTS (
+                         SELECT 1
+                         FROM projects AS project
+                         WHERE project.id = generation.project_id
+                           AND project.context ? 'questionnaire_draft'
+                     )
+                    THEN 'questionnaire_initial'
+                WHEN generation.prompt LIKE 'AUROOM_RENDER_SPEC_V1%'
+                     AND EXISTS (
+                         SELECT 1
+                         FROM projects AS project
+                         WHERE project.id = generation.project_id
+                           AND project.context ? 'questionnaire_draft'
+                     )
+                    THEN 'questionnaire'
                 ELSE 'generic'
             END
             """
