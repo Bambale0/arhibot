@@ -378,6 +378,31 @@ A feature cannot be marked done until:
 - documentation and `CONTEXT.md` contain actual verification evidence;
 - no unresolved high-severity finding remains.
 
+## Documentation stewardship and mandatory whole-surface review
+
+Documentation is part of the implementation, not a follow-up.
+
+Before **any implementation or code intervention**:
+
+1. Read the current `AGENTS.md`, `CONTEXT.md`, relevant specs/ADRs/README files and the code/tests for the affected area.
+2. Record the fresh audit, intended behavior, risks, plan, acceptance criteria and verification plan in `CONTEXT.md` **before production code is changed**.
+3. If the current `CONTEXT.md` is stale or contradicts repository reality, correct it first.
+4. Do not begin implementation from memory or from an old chat summary alone.
+
+After **any intervention that changes code, schema, configuration behavior, API behavior, UI behavior, deployment behavior, tests or operational workflow**:
+
+1. Update `CONTEXT.md` with the actual implementation, exact verification evidence, rollout/deployment state, residual risks and follow-ups.
+2. Update **all affected repository documentation** so README/spec/ADR/runbook/API/operations/admin/deployment guidance remains consistent with the shipped behavior. Do not update unrelated docs mechanically; do update every document whose factual contract changed.
+3. Run a mandatory code review of the **whole affected runtime surface**, not only the edited diff. Review callers, consumers, data model/migrations, authorization, admin/control-plane behavior, queues/workers, integrations, tests, frontend/API contracts and deployment impact as applicable.
+4. The code review must cover both axes:
+   - **Standards:** repository rules, engineering quality, security, reliability and code-smell review.
+   - **Spec/product contract:** whether the implementation exactly matches the requested behavior and documented product rules.
+5. Resolve every P0/P1/high-severity finding before merge. If a finding is intentionally deferred, record the owner/reason and explicit product decision in `CONTEXT.md`; never silently carry it.
+6. Re-run the appropriate verification after review fixes. The exact commit that is merged must have green CI and documented evidence.
+7. After merge/deploy, update documentation again if production verification reveals any difference from the planned or reviewed behavior.
+
+A task is **not complete** merely because code compiles or CI is green. It is complete only when code, tests, documentation, `CONTEXT.md`, review findings and verified runtime behavior describe the same system.
+
 ## Standard delivery format
 
 Every agent response must include:
