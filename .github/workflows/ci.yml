@@ -108,7 +108,6 @@ jobs:
       YOOKASSA_SHOP_ID: integration-shop
       YOOKASSA_SECRET_KEY: integration-secret
       YOOKASSA_RETURN_URL: https://example.test/return
-      REGISTRATION_DAILY_LIMIT_PER_IP: '10000'
     defaults:
       run:
         working-directory: backend
