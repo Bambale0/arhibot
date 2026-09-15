@@ -55,7 +55,6 @@ class BillingRepository:
         *,
         user_id: UUID,
         package_code: str,
-        receipt_email: str | None,
         since: datetime,
     ) -> BillingPayment | None:
         result = await self.session.execute(
@@ -63,7 +62,6 @@ class BillingRepository:
             .where(
                 BillingPayment.user_id == user_id,
                 BillingPayment.package_code == package_code,
-                BillingPayment.receipt_email == receipt_email,
                 BillingPayment.yookassa_payment_id.is_(None),
                 BillingPayment.status.in_(["creating", "uncertain"]),
                 BillingPayment.created_at >= since,
