@@ -322,6 +322,9 @@ export type AdminOperationalSettings = {
   payment_rate_limit_per_minute: number | null
   registration_rate_limit_per_day: number | null
   yookassa_webhook_rate_limit_per_minute: number | null
+  asset_upload_rate_limit_per_minute: number
+  asset_max_retained_count_per_user: number
+  asset_max_retained_bytes_per_user: number
   starter_credits: number
   initial_concept_credits: number
   media_retention_days: number | null
