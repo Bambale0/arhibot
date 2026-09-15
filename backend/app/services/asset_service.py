@@ -75,8 +75,8 @@ class LocalMediaStorage:
                 image.save(
                     temp,
                     format="WEBP",
-                    quality=76,
-                    method=4,
+                    quality=72,
+                    method=5,
                 )
             temp.replace(target)
         finally:
