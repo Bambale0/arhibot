@@ -90,7 +90,20 @@ async def get_signed_media(
     preview: str | None = None,
 ) -> Response:
     storage = LocalMediaStorage(settings)
-    if not storage.verify_signature(media_path, expires=expires, signature=signature):
+    variant = preview if preview in {"feed", "telegram"} else None
+    if preview is not None and variant is None:
+        raise AppError(
+            type="media_preview_invalid",
+            title="Media preview invalid",
+            status=422,
+            detail="The requested media preview variant is not supported.",
+        )
+    if not storage.verify_signature(
+        media_path,
+        expires=expires,
+        signature=signature,
+        variant=variant,
+    ):
         raise AppError(
             type="media_link_invalid",
             title="Media link invalid",
