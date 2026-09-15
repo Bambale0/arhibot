@@ -13,7 +13,8 @@ from app.providers.yookassa import YooKassaProvider
 from app.schemas.auth import LoginRequest, RegisterRequest
 from app.services.asset_service import LocalMediaStorage
 from app.services.billing_service import BillingService
-from app.workers.generation_worker import _commit_output_or_cleanup
+from app.workers import generation_worker
+from app.workers.generation_worker import _commit_output_or_cleanup, _validate_remote_image_url
 
 
 def _request(ip: str) -> Request:
@@ -156,6 +157,37 @@ async def test_unknown_yookassa_webhook_id_does_not_trigger_provider_request(
     assert exc.value.status == 503
     assert exc.value.type == "billing_webhook_object_not_ready"
     assert provider_called is False
+
+
+@pytest.mark.asyncio
+async def test_generated_media_url_rejects_private_network_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(RuntimeError, match="non-public"):
+        await _validate_remote_image_url("https://127.0.0.1/result.png")
+    with pytest.raises(RuntimeError, match="credentials"):
+        await _validate_remote_image_url("https://user:secret@example.com/result.png")
+    with pytest.raises(RuntimeError, match="standard HTTPS port"):
+        await _validate_remote_image_url("https://example.com:8443/result.png")
+
+    def private_dns(*args, **kwargs):  # noqa: ANN002, ANN003, ARG001
+        return [(2, 1, 6, "", ("10.1.2.3", 443))]
+
+    monkeypatch.setattr(generation_worker.socket, "getaddrinfo", private_dns)
+    with pytest.raises(RuntimeError, match="non-public"):
+        await _validate_remote_image_url("https://cdn.example.test/result.png")
+
+
+@pytest.mark.asyncio
+async def test_generated_media_url_accepts_public_https_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def public_dns(*args, **kwargs):  # noqa: ANN002, ANN003, ARG001
+        return [(2, 1, 6, "", ("93.184.216.34", 443))]
+
+    monkeypatch.setattr(generation_worker.socket, "getaddrinfo", public_dns)
+    url = "https://cdn.example.test/result.png"
+    assert await _validate_remote_image_url(url) == url
 
 
 @pytest.mark.asyncio
