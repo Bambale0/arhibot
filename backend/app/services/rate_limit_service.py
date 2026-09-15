@@ -43,12 +43,11 @@ class RateLimitService:
 
     async def enforce_registration_daily(self, identity: str) -> None:
         settings = await self.repository.get()
-        if settings is None or settings.registration_rate_limit_per_day is None:
-            return
+        limit = settings.registration_rate_limit_per_day if settings is not None else 20
         await self.enforce_window(
             "register-day",
             identity,
-            limit=settings.registration_rate_limit_per_day,
+            limit=limit,
             window_seconds=86_400,
         )
 
@@ -64,26 +63,30 @@ class RateLimitService:
 
     async def enforce_yookassa_webhook(self, identity: str) -> None:
         settings = await self.repository.get()
-        if settings is None or settings.yookassa_webhook_rate_limit_per_minute is None:
-            return
+        limit = (
+            settings.yookassa_webhook_rate_limit_per_minute
+            if settings is not None
+            else 120
+        )
         await self.enforce_window(
             "yookassa-webhook",
             identity,
-            limit=settings.yookassa_webhook_rate_limit_per_minute,
+            limit=limit,
             window_seconds=60,
         )
 
     async def enforce(self, kind: RateLimitKind, identity: str) -> None:
         settings = await self.repository.get()
-        if settings is None:
-            return
-        limit = {
-            "auth": settings.auth_rate_limit_per_minute,
-            "generation": settings.generation_rate_limit_per_minute,
-            "payment": settings.payment_rate_limit_per_minute,
-        }[kind]
-        if limit is None:
-            return
+        defaults = {"auth": 30, "generation": 10, "payment": 10}
+        limit = (
+            {
+                "auth": settings.auth_rate_limit_per_minute,
+                "generation": settings.generation_rate_limit_per_minute,
+                "payment": settings.payment_rate_limit_per_minute,
+            }[kind]
+            if settings is not None
+            else defaults[kind]
+        )
 
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
         minute_bucket = int(time.time() // 60)
