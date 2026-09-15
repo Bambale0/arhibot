@@ -177,6 +177,20 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
         assert "media" not in idea
         assert idea["is_saved"] is False
 
+        full_public = await client.get("/api/v1/ideas?limit=100", headers=user_headers)
+        assert full_public.status_code == 200, full_public.text
+        position = next(
+            index
+            for index, item in enumerate(full_public.json())
+            if item["id"] == publication["id"]
+        )
+        paged_public = await client.get(
+            f"/api/v1/ideas?limit=1&offset={position}",
+            headers=user_headers,
+        )
+        assert paged_public.status_code == 200, paged_public.text
+        assert [item["id"] for item in paged_public.json()] == [publication["id"]]
+
         saved_idea = await client.put(
             f"/api/v1/ideas/{idea['id']}/save", headers=user_headers
         )
