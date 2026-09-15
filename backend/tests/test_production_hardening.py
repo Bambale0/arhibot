@@ -1,5 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from PIL import Image
@@ -244,7 +245,22 @@ async def test_ideas_feed_preview_is_webp_and_bounded(
     monkeypatch.setattr(asset_service_module.time, "time", lambda: 1_700_000_100)
     second = storage.signed_feed_preview_url("users/test/large.png")
     assert first == second
-    assert "preview=feed" in first
+    parsed = urlsplit(first)
+    query = parse_qs(parsed.query)
+    expires = int(query["expires"][0])
+    signature = query["signature"][0]
+    assert query["preview"] == ["feed"]
+    assert storage.verify_signature(
+        "users/test/large.png",
+        expires=expires,
+        signature=signature,
+        variant="feed",
+    )
+    assert not storage.verify_signature(
+        "users/test/large.png",
+        expires=expires,
+        signature=signature,
+    )
 
 
 @pytest.mark.asyncio
