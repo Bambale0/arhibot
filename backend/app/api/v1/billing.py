@@ -86,12 +86,7 @@ async def yookassa_webhook(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, bool]:
     source = request_identity(request)
-    await RateLimitService(session).enforce_window(
-        "yookassa-webhook",
-        source,
-        limit=settings.yookassa_webhook_rate_limit_per_minute,
-        window_seconds=60,
-    )
+    await RateLimitService(session).enforce_yookassa_webhook(source)
     content_type = (request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
     if content_type != "application/json":
         raise AppError(
