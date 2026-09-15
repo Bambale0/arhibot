@@ -288,6 +288,14 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             await _mark_failed_and_refund(generation_id, exc)
             return
 
+        if generation.origin == GenerationOrigin.LEGACY_INTERNAL.value:
+            await session.rollback()
+            await _mark_failed_and_refund(
+                generation_id,
+                "Legacy internal generation cannot be processed after the security migration.",
+            )
+            return
+
         admin_internal_generation = (
             sandbox_request is not None or orbit_request is not None
         )
