@@ -104,6 +104,8 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
                 "auth_rate_limit_per_minute": None,
                 "generation_rate_limit_per_minute": 50,
                 "payment_rate_limit_per_minute": 20,
+                "registration_rate_limit_per_day": 40,
+                "yookassa_webhook_rate_limit_per_minute": 80,
                 "media_retention_days": 30,
                 "backup_interval_hours": 24,
                 "backup_retention_days": 14,
@@ -111,6 +113,8 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
         )
         assert ops.status_code == 200, ops.text
         assert ops.json()["backup_interval_hours"] == 24
+        assert ops.json()["registration_rate_limit_per_day"] == 40
+        assert ops.json()["yookassa_webhook_rate_limit_per_minute"] == 80
 
         project = await client.post(
             "/api/v1/projects",
