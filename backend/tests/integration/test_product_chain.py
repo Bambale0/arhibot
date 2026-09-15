@@ -1,3 +1,4 @@
+import base64
 import os
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -106,6 +107,9 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
                 "payment_rate_limit_per_minute": 20,
                 "registration_rate_limit_per_day": 40,
                 "yookassa_webhook_rate_limit_per_minute": 80,
+                "asset_upload_rate_limit_per_minute": 24,
+                "asset_max_retained_count_per_user": 200,
+                "asset_max_retained_bytes_per_user": 536870912,
                 "media_retention_days": 30,
                 "backup_interval_hours": 24,
                 "backup_retention_days": 14,
@@ -115,6 +119,9 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
         assert ops.json()["backup_interval_hours"] == 24
         assert ops.json()["registration_rate_limit_per_day"] == 40
         assert ops.json()["yookassa_webhook_rate_limit_per_minute"] == 80
+        assert ops.json()["asset_upload_rate_limit_per_minute"] == 24
+        assert ops.json()["asset_max_retained_count_per_user"] == 200
+        assert ops.json()["asset_max_retained_bytes_per_user"] == 536870912
 
         partial_ops = await client.put(
             "/api/v1/admin/operations",
@@ -127,6 +134,9 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
         assert partial_ops.json()["payment_rate_limit_per_minute"] == 20
         assert partial_ops.json()["registration_rate_limit_per_day"] == 40
         assert partial_ops.json()["yookassa_webhook_rate_limit_per_minute"] == 80
+        assert partial_ops.json()["asset_upload_rate_limit_per_minute"] == 24
+        assert partial_ops.json()["asset_max_retained_count_per_user"] == 200
+        assert partial_ops.json()["asset_max_retained_bytes_per_user"] == 536870912
 
         project = await client.post(
             "/api/v1/projects",
@@ -191,6 +201,59 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
         assert insufficient.json()["type"] == "insufficient_credits"
 
         await redis_client.lpop(GENERATION_QUEUE_KEY)
+
+
+@pytest.mark.asyncio
+async def test_asset_upload_retained_quota_survives_soft_delete() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _, admin_headers = await _register_admin(client)
+        _tokens, headers = await _register_user(client, display_name="Asset Quota User")
+
+        configured = await client.put(
+            "/api/v1/admin/operations",
+            headers=admin_headers,
+            json={
+                "asset_upload_rate_limit_per_minute": 100,
+                "asset_max_retained_count_per_user": 1,
+                "asset_max_retained_bytes_per_user": 1048576,
+            },
+        )
+        assert configured.status_code == 200, configured.text
+
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        )
+        first = await client.post(
+            "/api/v1/assets",
+            headers=headers,
+            files={"file": ("tiny.png", png, "image/png")},
+            data={"purpose": "generation_input"},
+        )
+        assert first.status_code == 201, first.text
+
+        deleted = await client.delete(f"/api/v1/assets/{first.json()['id']}", headers=headers)
+        assert deleted.status_code == 204, deleted.text
+
+        second = await client.post(
+            "/api/v1/assets",
+            headers=headers,
+            files={"file": ("tiny-2.png", png, "image/png")},
+            data={"purpose": "generation_input"},
+        )
+        assert second.status_code == 409, second.text
+        assert second.json()["type"] == "asset_storage_quota_exceeded"
+
+        restored = await client.put(
+            "/api/v1/admin/operations",
+            headers=admin_headers,
+            json={
+                "asset_upload_rate_limit_per_minute": 12,
+                "asset_max_retained_count_per_user": 200,
+                "asset_max_retained_bytes_per_user": 536870912,
+            },
+        )
+        assert restored.status_code == 200, restored.text
 
 
 @pytest.mark.asyncio
