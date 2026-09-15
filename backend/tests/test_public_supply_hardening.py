@@ -85,6 +85,18 @@ def test_compose_isolates_edge_and_data_planes() -> None:
     frontend = compose.split('  frontend:', 1)[1].split('\n  nginx:', 1)[0]
     nginx = compose.split('  nginx:', 1)[1].split('\n  postgres:', 1)[0]
     assert '- data' not in bot
+    assert 'env_file:' not in bot
+    assert 'RUNTIME_ROLE: "bot"' in bot
+    for secret_name in (
+        'DATABASE_URL',
+        'REDIS_URL',
+        'JWT_SECRET',
+        'REFRESH_TOKEN_SECRET',
+        'MEDIA_SIGNING_SECRET',
+        'NEXUS_API_KEY',
+        'YOOKASSA_SECRET_KEY',
+    ):
+        assert secret_name not in bot
     assert '- data' not in frontend
     assert '- data' not in nginx
 
