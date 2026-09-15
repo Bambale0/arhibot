@@ -4,6 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.assets import Asset
+from app.db.models.projects import Project
 from app.db.models.users import User
 
 
@@ -16,10 +17,13 @@ class AssetRepository:
 
     async def get_owned(self, asset_id: UUID, user_id: UUID) -> Asset | None:
         result = await self.session.execute(
-            select(Asset).where(
+            select(Asset)
+            .outerjoin(Project, Project.id == Asset.project_id)
+            .where(
                 Asset.id == asset_id,
                 Asset.user_id == user_id,
                 Asset.deleted_at.is_(None),
+                (Asset.project_id.is_(None) | Project.deleted_at.is_(None)),
             )
         )
         return result.scalar_one_or_none()
