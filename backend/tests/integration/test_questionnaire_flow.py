@@ -228,7 +228,7 @@ async def test_initial_concept_pricing_uses_control_plane_for_regular_user() -> 
         configured = await client.put(
             "/api/v1/admin/operations",
             headers=admin_headers,
-            json={"starter_credits": 5, "initial_concept_credits": 2},
+            json={"starter_credits": 20, "initial_concept_credits": 2},
         )
         assert configured.status_code == 200, configured.text
         assert configured.json()["initial_concept_credits"] == 2
@@ -241,7 +241,7 @@ async def test_initial_concept_pricing_uses_control_plane_for_regular_user() -> 
         assert price.status_code == 200, price.text
 
         tokens, headers = await _register_user(client, display_name="Initial Pricing User")
-        assert tokens["user"]["credits_balance"] == 5
+        assert tokens["user"]["credits_balance"] == 20
         catalog = (await client.get("/api/v1/questionnaires", headers=headers)).json()
         house_definition = next(
             item for item in catalog["questionnaires"] if item["key"] == "eskez-doma"
@@ -284,10 +284,14 @@ async def test_initial_concept_pricing_uses_control_plane_for_regular_user() -> 
         )
         assert saved.status_code == 200, saved.text
 
-        cost = await client.get("/api/v1/questionnaire-generation-cost", headers=headers)
+        cost = await client.get(
+            f"/api/v1/questionnaire-generation-cost?project_id={project_id}",
+            headers=headers,
+        )
         assert cost.status_code == 200, cost.text
         assert cost.json()["initial_credits"] == 2
         assert cost.json()["credits"] == 7
+        assert cost.json()["initial_offer_available"] is True
 
         queued = await client.post(
             f"/api/v1/projects/{project_id}/questionnaire-generation",
@@ -299,9 +303,43 @@ async def test_initial_concept_pricing_uses_control_plane_for_regular_user() -> 
 
         me = await client.get("/api/v1/me", headers=headers)
         assert me.status_code == 200, me.text
-        assert me.json()["credits_balance"] == 3
+        assert me.json()["credits_balance"] == 18
 
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, body["id"])
+
+        stored = await client.get(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+        )
+        assert stored.status_code == 200, stored.text
+        retry_session = stored.json()["session"]
+        retry_session["initial_generation_id"] = None
+        reopened = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=retry_session,
+        )
+        assert reopened.status_code == 200, reopened.text
+
+        repeat_cost = await client.get(
+            f"/api/v1/questionnaire-generation-cost?project_id={project_id}",
+            headers=headers,
+        )
+        assert repeat_cost.status_code == 200, repeat_cost.text
+        assert repeat_cost.json()["initial_offer_available"] is False
+        assert repeat_cost.json()["credits"] == 7
+
+        repeated = await client.post(
+            f"/api/v1/projects/{project_id}/questionnaire-generation",
+            headers=headers,
+        )
+        assert repeated.status_code == 202, repeated.text
+        assert repeated.json()["credits_charged"] == 7
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, repeated.json()["id"])
+
+        me_after_repeat = await client.get("/api/v1/me", headers=headers)
+        assert me_after_repeat.status_code == 200, me_after_repeat.text
+        assert me_after_repeat.json()["credits_balance"] == 11
 
         reset = await client.put(
             "/api/v1/admin/operations",
@@ -420,7 +458,14 @@ async def test_questionnaire_generation_prompt_is_built_only_on_server_and_hidde
 
         fetched = await client.get(f"/api/v1/generations/{generation_id}", headers=headers)
         assert fetched.status_code == 200, fetched.text
-        assert fetched.json()["prompt"] == generation.prompt
+        assert fetched.json()["prompt"] == ""
+
+        repeated = await client.post(
+            f"/api/v1/generations/{generation_id}/repeat",
+            headers=headers,
+        )
+        assert repeated.status_code == 409, repeated.text
+        assert repeated.json()["type"] == "generation_repeat_not_allowed"
 
         questionnaire_fetched = await client.get(
             f"/api/v1/projects/{project_id}/questionnaire-generation/{generation_id}",
