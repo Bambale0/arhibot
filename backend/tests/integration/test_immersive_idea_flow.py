@@ -147,6 +147,8 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
         assert publication["is_active"] is True
         assert publication["sort_order"] == 0
         assert urlsplit(publication["image_url"]).path.endswith(".png")
+        assert urlsplit(publication["preview_url"]).path.endswith(".png")
+        assert "preview=feed" in urlsplit(publication["preview_url"]).query
         assert publication["objects"][0]["answers"] == [
             {"question": "Какой стиль вам нравится?", "answer": "Современный минимализм"}
         ]
