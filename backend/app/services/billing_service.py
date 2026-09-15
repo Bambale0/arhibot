@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -160,22 +160,40 @@ class BillingService:
             else None
         )
 
-        local_id = uuid4()
-        idempotence_key = str(uuid4())
-        payment = BillingPayment(
-            id=local_id,
+        # YooKassa guarantees one idempotence key for 24 hours. Reuse an
+        # unresolved attempt for the same user/package/receipt inside a 23-hour
+        # safety window so a lost provider response cannot create a duplicate
+        # payment when the client retries.
+        normalized_receipt_email = receipt_email if receipt is not None else None
+        await self.session.execute(
+            __import__("sqlalchemy").select(User.id).where(User.id == user.id).with_for_update()
+        )
+        payment = await self.repository.get_recent_unresolved_create_for_update(
             user_id=user.id,
             package_code=package.code,
-            credits=package.credits,
-            amount_value=Decimal(package.amount_value).quantize(Decimal("0.01")),
-            currency=package.currency,
-            status="creating",
-            idempotence_key=idempotence_key,
-            receipt_email=receipt_email if receipt is not None else None,
+            receipt_email=normalized_receipt_email,
+            since=datetime.now(UTC) - timedelta(hours=23),
         )
-        self.repository.add(payment)
-        await self.session.commit()
+        if payment is None:
+            payment = BillingPayment(
+                id=uuid4(),
+                user_id=user.id,
+                package_code=package.code,
+                credits=package.credits,
+                amount_value=Decimal(package.amount_value).quantize(Decimal("0.01")),
+                currency=package.currency,
+                status="creating",
+                idempotence_key=str(uuid4()),
+                receipt_email=normalized_receipt_email,
+            )
+            self.repository.add(payment)
+            await self.session.commit()
+        else:
+            payment.status = "creating"
+            payment.provider_error = None
+            await self.session.commit()
 
+        idempotence_key = payment.idempotence_key
         return_url = (
             (self.settings.yookassa_return_url or "").strip()
             or (self.settings.telegram_webapp_url or "").strip()
@@ -209,9 +227,19 @@ class BillingService:
                 receipt=receipt,
             )
         except YooKassaError as exc:
-            payment.status = "failed"
+            payment.status = "uncertain" if exc.ambiguous else "failed"
             payment.provider_error = str(exc)[:1000]
             await self.session.commit()
+            if exc.ambiguous:
+                raise AppError(
+                    type="payment_provider_uncertain",
+                    title="Payment creation is being reconciled",
+                    status=503,
+                    detail=(
+                        "YooKassa did not confirm whether the payment was created. "
+                        "Retry the same purchase to safely resume this payment attempt."
+                    ),
+                ) from exc
             raise AppError(
                 type="payment_provider_unavailable",
                 title="Payment provider unavailable",
