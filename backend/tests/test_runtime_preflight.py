@@ -20,6 +20,8 @@ def valid_env() -> dict[str, str]:
         "MEDIA_PUBLIC_BASE_URL": "https://app.example.test",
         "NEXUS_BASE_URL": "https://nexus.example.test",
         "TELEGRAM_WEBAPP_URL": "https://app.example.test",
+        "YOOKASSA_BASE_URL": "https://api.yookassa.test/v3",
+        "YOOKASSA_RETURN_URL": "https://app.example.test/billing-return",
         "CORS_ORIGINS": "https://app.example.test",
     }
 
@@ -41,6 +43,16 @@ def test_runtime_preflight_rejects_local_mode_and_default_secrets() -> None:
     assert any("APP_ENV" in error for error in errors)
     assert any("JWT_SECRET" in error for error in errors)
     assert any("REFRESH_TOKEN_SECRET" in error for error in errors)
+
+
+def test_runtime_preflight_rejects_insecure_yookassa_urls() -> None:
+    module = _module()
+    values = valid_env()
+    values["YOOKASSA_BASE_URL"] = "http://payments.example.test"
+    values["YOOKASSA_RETURN_URL"] = "http://app.example.test/return"
+    errors = module.validate(values)
+    assert any("YOOKASSA_BASE_URL" in error for error in errors)
+    assert any("YOOKASSA_RETURN_URL" in error for error in errors)
 
 
 def test_runtime_preflight_rejects_localhost_cors() -> None:
