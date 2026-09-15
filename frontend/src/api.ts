@@ -24,7 +24,7 @@ import type {
   GenerationMode,
   Idea,
   Project,
-  ProjectContext,
+  ProjectContextWrite,
   ProjectList,
   TokenPair,
   User,
@@ -118,8 +118,8 @@ export function listProjects(cursor?: string | null, limit = 20) {
   const params = new URLSearchParams({ limit: String(limit) }); if (cursor) params.set('cursor', cursor); return request<ProjectList>(`/projects?${params}`)
 }
 export function getProject(projectId: string) { return request<Project>(`/projects/${projectId}`) }
-export function createProject(payload: { name: string; description?: string; context?: ProjectContext }) { return request<Project>('/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
-export function updateProject(projectId: string, payload: Partial<{ name: string; description: string | null; status: string; context: ProjectContext }>) { return request<Project>(`/projects/${projectId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
+export function createProject(payload: { name: string; description?: string; context?: ProjectContextWrite }) { return request<Project>('/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
+export function updateProject(projectId: string, payload: Partial<{ name: string; description: string | null; status: string; context: ProjectContextWrite }>) { return request<Project>(`/projects/${projectId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
 export function deleteProject(projectId: string) { return request<void>(`/projects/${projectId}`, { method: 'DELETE' }) }
 
 export async function uploadAsset(projectId: string | null, file: File, purpose: 'generation_input' | 'project_reference' = 'generation_input') {
