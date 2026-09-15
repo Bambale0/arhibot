@@ -57,9 +57,8 @@ test('admin publishes a new questionnaire catalog revision from the control plan
   let submitted:unknown=null
 
   await page.addInitScript(()=>{
-    localStorage.setItem('auroom.access_token','e2e')
-    localStorage.setItem('auroom.refresh_token','e2e-refresh')
-  })
+    sessionStorage.setItem('auroom.access_token','e2e')
+      })
 
   await page.route('**/api/v1/**',async route=>{
     const req=route.request()
