@@ -329,9 +329,10 @@ export type AdminOperationalSettings = {
   initial_concept_offer_limit_per_day: number
   starter_credits: number
   initial_concept_credits: number
-  media_retention_days: number | null
-  backup_interval_hours: number | null
-  backup_retention_days: number | null
+  media_retention_days: number
+  backup_interval_hours: number
+  backup_retention_days: number
+  media_min_free_bytes: number
   updated_at: string | null
 }
 
