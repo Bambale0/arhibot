@@ -269,7 +269,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             if generation.input_asset_id is not None
             else None
         )
-        if project is None:
+        if project is None or project.deleted_at is not None:
             await session.rollback()
             await _mark_failed_and_refund(generation_id, "Generation project is no longer available.")
             return
@@ -489,8 +489,16 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             data = composite.data
 
         async with get_session_factory()() as session:
-            generation = await session.get(Generation, generation_id)
-            if generation is None:
+            generation = await GenerationRepository(session).get_for_update(generation_id)
+            if generation is None or generation.status != GenerationStatus.PROCESSING:
+                return
+            project = await session.get(Project, generation.project_id)
+            if project is None or project.deleted_at is not None:
+                await session.rollback()
+                await _mark_failed_and_refund(
+                    generation_id,
+                    "Generation project was deleted before provider completion.",
+                )
                 return
             asset_service = AssetService(
                 AssetRepository(session),
