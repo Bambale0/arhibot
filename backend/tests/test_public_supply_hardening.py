@@ -71,6 +71,41 @@ def test_ci_has_dependency_and_container_build_gates() -> None:
     assert 'Post-reload AuRoom health check failed' in installer
 
 
+def test_compose_isolates_edge_and_data_planes() -> None:
+    compose = (REPO_ROOT / 'backend' / 'docker-compose.yml').read_text()
+    assert 'data:\n    internal: true' in compose
+    assert 'security_opt:\n      - no-new-privileges:true' in compose
+    assert 'cap_drop:\n      - ALL' in compose
+
+    # Edge containers must not join the private data network.
+    frontend = compose.split('  frontend:', 1)[1].split('\n  nginx:', 1)[0]
+    nginx = compose.split('  nginx:', 1)[1].split('\n  postgres:', 1)[0]
+    assert '- data' not in frontend
+    assert '- data' not in nginx
+
+    postgres = compose.split('  postgres:', 1)[1].split('\n  redis:', 1)[0]
+    redis = compose.split('  redis:', 1)[1].split('\nvolumes:', 1)[0]
+    assert 'networks:\n      - data' in postgres
+    assert 'networks:\n      - data' in redis
+
+
+def test_runtime_mutations_are_serialized_and_backups_are_private() -> None:
+    deploy = (REPO_ROOT / 'ops' / 'deploy_docker.sh').read_text()
+    backup = (REPO_ROOT / 'ops' / 'backup_runtime.sh').read_text()
+    restore = (REPO_ROOT / 'ops' / 'restore_runtime.sh').read_text()
+    housekeeping = (REPO_ROOT / 'ops' / 'runtime_housekeeping.sh').read_text()
+
+    for script in (deploy, backup, restore, housekeeping):
+        assert 'umask 077' in script
+        assert '.runtime-mutation.lock' in script
+
+    assert 'install -d -m 700' in backup
+    assert 'chmod 600' in backup
+    assert 'pg_restore --list' in backup
+    assert 'tar -tzf' in backup
+    assert 'Draining write traffic before database migrations' in deploy
+
+
 def test_production_disables_fastapi_docs_and_openapi() -> None:
     env = os.environ.copy()
     env.update(
