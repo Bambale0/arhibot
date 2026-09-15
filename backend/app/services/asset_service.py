@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import hmac
+import shutil
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -222,6 +223,25 @@ class AssetService:
                     "retained_bytes": retained_bytes,
                     "max_count": max_count,
                     "max_bytes": max_bytes,
+                },
+            )
+
+        min_free_bytes = (
+            operations.media_min_free_bytes
+            if operations is not None
+            else 2 * 1024 * 1024 * 1024
+        )
+        probe = self.storage.root if self.storage.root.exists() else self.storage.root.parent
+        free_bytes = (await asyncio.to_thread(shutil.disk_usage, probe)).free
+        if free_bytes - len(image.data) < min_free_bytes:
+            raise AppError(
+                type="media_storage_low",
+                title="Media storage temporarily unavailable",
+                status=507,
+                detail="AuRoom is preserving emergency disk headroom. Try again later.",
+                meta={
+                    "free_bytes": free_bytes,
+                    "required_free_bytes": min_free_bytes,
                 },
             )
 
