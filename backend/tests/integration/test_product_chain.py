@@ -116,6 +116,18 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
         assert ops.json()["registration_rate_limit_per_day"] == 40
         assert ops.json()["yookassa_webhook_rate_limit_per_minute"] == 80
 
+        partial_ops = await client.put(
+            "/api/v1/admin/operations",
+            headers=admin_headers,
+            json={"media_retention_days": 31},
+        )
+        assert partial_ops.status_code == 200, partial_ops.text
+        assert partial_ops.json()["media_retention_days"] == 31
+        assert partial_ops.json()["generation_rate_limit_per_minute"] == 50
+        assert partial_ops.json()["payment_rate_limit_per_minute"] == 20
+        assert partial_ops.json()["registration_rate_limit_per_day"] == 40
+        assert partial_ops.json()["yookassa_webhook_rate_limit_per_minute"] == 80
+
         project = await client.post(
             "/api/v1/projects",
             headers=headers,
