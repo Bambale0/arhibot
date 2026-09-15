@@ -74,9 +74,29 @@ services:
       com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     build: .
     command: ["python", "-m", "app.workers.generation_worker"]
-    env_file:
-      - .env
     environment:
+      APP_ENV: "${APP_ENV:-local}"
+      RUNTIME_ROLE: "generation_worker"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://app:local-only-postgres-password-change-me@postgres:5432/app}"
+      REDIS_URL: "${REDIS_URL:-redis://:local-only-redis-password-change-me@redis:6379/0}"
+      REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: "${REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS:-2}"
+      REDIS_SOCKET_TIMEOUT_SECONDS: "${REDIS_SOCKET_TIMEOUT_SECONDS:-5}"
+      NEXUS_API_KEY: "${NEXUS_API_KEY:-}"
+      NEXUS_BASE_URL: "${NEXUS_BASE_URL:-https://nexusapi.dev}"
+      NEXUS_TASK_TIMEOUT_SECONDS: "${NEXUS_TASK_TIMEOUT_SECONDS:-180}"
+      NEXUS_POLL_INTERVAL_SECONDS: "${NEXUS_POLL_INTERVAL_SECONDS:-2}"
+      NEXUS_HTTP_CONNECT_TIMEOUT_SECONDS: "${NEXUS_HTTP_CONNECT_TIMEOUT_SECONDS:-5}"
+      NEXUS_HTTP_READ_TIMEOUT_SECONDS: "${NEXUS_HTTP_READ_TIMEOUT_SECONDS:-30}"
+      NEXUS_RETRY_ATTEMPTS: "${NEXUS_RETRY_ATTEMPTS:-3}"
+      NEXUS_CIRCUIT_FAILURE_THRESHOLD: "${NEXUS_CIRCUIT_FAILURE_THRESHOLD:-5}"
+      NEXUS_CIRCUIT_RECOVERY_SECONDS: "${NEXUS_CIRCUIT_RECOVERY_SECONDS:-30}"
+      MEDIA_ROOT: "${MEDIA_ROOT:-/data/media}"
+      MEDIA_PUBLIC_BASE_URL: "${MEDIA_PUBLIC_BASE_URL:-http://localhost:8000}"
+      MEDIA_SIGNING_SECRET: "${MEDIA_SIGNING_SECRET:-}"
+      MEDIA_URL_TTL_SECONDS: "${MEDIA_URL_TTL_SECONDS:-900}"
+      MAX_IMAGE_SIZE_BYTES: "${MAX_IMAGE_SIZE_BYTES:-20971520}"
+      MAX_IMAGE_PIXELS: "${MAX_IMAGE_PIXELS:-80000000}"
       RELEASE_SHA: "${AUROOM_RELEASE_SHA:-unknown}"
     volumes:
       - media_data:/data/media
@@ -136,9 +156,16 @@ services:
       com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     build: .
     command: ["python", "-m", "app.workers.broadcast_worker"]
-    env_file:
-      - .env
     environment:
+      APP_ENV: "${APP_ENV:-local}"
+      RUNTIME_ROLE: "broadcast_worker"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      APP_ENV: "${APP_ENV:-local}"
+      DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://app:local-only-postgres-password-change-me@postgres:5432/app}"
+      REDIS_URL: "${REDIS_URL:-redis://:local-only-redis-password-change-me@redis:6379/0}"
+      REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: "${REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS:-2}"
+      REDIS_SOCKET_TIMEOUT_SECONDS: "${REDIS_SOCKET_TIMEOUT_SECONDS:-5}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       RELEASE_SHA: "${AUROOM_RELEASE_SHA:-unknown}"
     depends_on:
       postgres:
@@ -170,9 +197,23 @@ services:
       com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     build: .
     command: ["python", "-m", "app.workers.maintenance_worker"]
-    env_file:
-      - .env
     environment:
+      APP_ENV: "${APP_ENV:-local}"
+      RUNTIME_ROLE: "maintenance"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      APP_ENV: "${APP_ENV:-local}"
+      DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://app:local-only-postgres-password-change-me@postgres:5432/app}"
+      REDIS_URL: "${REDIS_URL:-redis://:local-only-redis-password-change-me@redis:6379/0}"
+      REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: "${REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS:-2}"
+      REDIS_SOCKET_TIMEOUT_SECONDS: "${REDIS_SOCKET_TIMEOUT_SECONDS:-5}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_WEBAPP_URL: "${TELEGRAM_WEBAPP_URL:-}"
+      MEDIA_ROOT: "${MEDIA_ROOT:-/data/media}"
+      MEDIA_PUBLIC_BASE_URL: "${MEDIA_PUBLIC_BASE_URL:-http://localhost:8000}"
+      MEDIA_SIGNING_SECRET: "${MEDIA_SIGNING_SECRET:-}"
+      MEDIA_URL_TTL_SECONDS: "${MEDIA_URL_TTL_SECONDS:-900}"
+      MAX_IMAGE_SIZE_BYTES: "${MAX_IMAGE_SIZE_BYTES:-20971520}"
+      MAX_IMAGE_PIXELS: "${MAX_IMAGE_PIXELS:-80000000}"
       RELEASE_SHA: "${AUROOM_RELEASE_SHA:-unknown}"
     volumes:
       - media_data:/data/media
