@@ -216,6 +216,27 @@ async def _generate_orbit_frames(
     return [item[1] for item in generated], generated[-1][2] if generated else None
 
 
+async def _commit_output_or_cleanup(
+    session,
+    storage: LocalMediaStorage,
+    relative_path: str,
+) -> None:
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        target = storage.absolute_path(relative_path)
+        try:
+            if target.exists():
+                await asyncio.to_thread(target.unlink)
+        except OSError:
+            logger.exception(
+                "Could not remove orphaned generation output %s after DB failure",
+                relative_path,
+            )
+        raise
+
+
 async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -> None:
     async with get_session_factory()() as session:
         generation = await session.get(Generation, generation_id)
@@ -499,20 +520,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             generation.status = GenerationStatus.COMPLETED
             generation.error = None
             generation.completed_at = datetime.now(UTC)
-            try:
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                target = asset_service.storage.absolute_path(relative_path)
-                try:
-                    if target.exists():
-                        await asyncio.to_thread(target.unlink)
-                except OSError:
-                    logger.exception(
-                        "Could not remove orphaned generation output %s after DB failure",
-                        relative_path,
-                    )
-                raise
+            await _commit_output_or_cleanup(
+                session,
+                asset_service.storage,
+                relative_path,
+            )
             logger.info(
                 "Generation %s completed with %s%s%s%s",
                 generation_id,
