@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import delete, select
@@ -62,6 +63,7 @@ class IdeaRepository:
             .order_by(
                 IdeaPublication.sort_order.asc(),
                 IdeaPublication.created_at.desc(),
+                IdeaPublication.id.asc(),
             )
             .offset(offset)
             .limit(limit)
@@ -69,10 +71,17 @@ class IdeaRepository:
         return [(publication, generation, asset) for publication, generation, asset in result.all()]
 
 
-    async def saved_publication_ids(self, user_id: UUID) -> set[UUID]:
-        result = await self.session.execute(
-            select(IdeaSave.idea_publication_id).where(IdeaSave.user_id == user_id)
-        )
+    async def saved_publication_ids(
+        self,
+        user_id: UUID,
+        publication_ids: Sequence[UUID] | None = None,
+    ) -> set[UUID]:
+        stmt = select(IdeaSave.idea_publication_id).where(IdeaSave.user_id == user_id)
+        if publication_ids is not None:
+            if not publication_ids:
+                return set()
+            stmt = stmt.where(IdeaSave.idea_publication_id.in_(publication_ids))
+        result = await self.session.execute(stmt)
         return set(result.scalars().all())
 
     async def get_save(self, user_id: UUID, idea_id: UUID) -> IdeaSave | None:
