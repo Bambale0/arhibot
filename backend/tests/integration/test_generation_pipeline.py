@@ -249,6 +249,28 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
             assert generation.telegram_delivery_attempts == 1
             assert generation.telegram_notified_at is not None
 
+            # Simulate a process crash after Telegram accepted the document but before
+            # AuRoom committed the final "sent" state. Delivery is intentionally
+            # at-least-once: the next maintenance pass retries instead of losing it.
+            generation.telegram_delivery_status = "sending"
+            generation.telegram_notified_at = None
+            await session.commit()
+
+        retried_sent, retried_failed = await deliver_pending_generations_once(
+            api=telegram,  # type: ignore[arg-type]
+            webapp_url="https://app.example.test/",
+        )
+        assert retried_sent == 1
+        assert retried_failed == 0
+        assert len(telegram.calls) == 2
+
+        async with get_session_factory()() as session:
+            generation = await session.get(Generation, generation_id)
+            assert generation is not None
+            assert generation.telegram_delivery_status == "sent"
+            assert generation.telegram_delivery_attempts == 2
+            assert generation.telegram_notified_at is not None
+
 @pytest.mark.asyncio
 async def test_public_reserved_prompt_is_rejected_and_internal_questionnaire_origin_bypasses_template(
     monkeypatch: pytest.MonkeyPatch,
