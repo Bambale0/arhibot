@@ -63,7 +63,11 @@ async function json(route:Route,data:unknown,status=200){
   await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)})
 }
 
-async function prepare(page:Page, ideas:unknown[] = []) {
+async function prepare(
+  page:Page,
+  ideas:unknown[] = [],
+  onIdeasPage?: (limit:number, offset:number) => void,
+) {
   await page.addInitScript(() => {
     sessionStorage.setItem('auroom.access_token','fullscreen-e2e')
     window.Telegram = { WebApp: { initData:'', requestFullscreen:() => {} } }
@@ -73,7 +77,13 @@ async function prepare(page:Page, ideas:unknown[] = []) {
     if(path.endsWith('/me')&&method==='GET') return json(route,user)
     if(path.endsWith('/projects')&&method==='GET') return json(route,{items:[],next_cursor:null,has_more:false})
     if(path.endsWith(`/projects/${projectId}`)&&method==='GET') return json(route,project)
-    if(path.endsWith('/ideas')&&method==='GET') return json(route,ideas)
+    if(path.endsWith('/ideas')&&method==='GET') {
+      const url=new URL(request.url())
+      const limit=Number(url.searchParams.get('limit')||50)
+      const offset=Number(url.searchParams.get('offset')||0)
+      onIdeasPage?.(limit,offset)
+      return json(route,ideas.slice(offset,offset+limit))
+    }
     if(path.endsWith('/questionnaires')&&method==='GET') return json(route,catalog)
     if(path.endsWith('/questionnaire-generation-cost')&&method==='GET') return json(route,{generation_type:'master_plan',initial_credits:0,credits:1,initial_offer_available:true,is_available:true})
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='GET') return json(route,{session})
@@ -148,6 +158,31 @@ test('Ideas slideshow requests only active and neighboring previews',async({page
   await expect.poll(()=>requested.includes('/perf/preview-2.webp')).toBe(true)
   await expect.poll(()=>requested.includes('/perf/preview-3.webp')).toBe(true)
   expect(requested.some(path=>path.includes('/perf/original-'))).toBe(false)
+})
+
+test('Ideas feed loads metadata in pages instead of mounting the full catalog up front',async({page})=>{
+  const requests:{limit:number;offset:number}[]=[]
+  const ideas=Array.from({length:18},(_,index)=>({
+    id:`paged-idea-${index}`,
+    title:`Paged idea ${index}`,
+    category:'Performance',
+    generation_type:'master_plan',
+    image_url:null,
+    preview_url:null,
+    objects:[],
+    selected_objects:[],
+    published_at:now,
+    is_saved:false,
+  }))
+  await prepare(page,ideas,(limit,offset)=>requests.push({limit,offset}))
+  await page.goto('/?section=ideas')
+
+  await expect(page.locator('[data-feed-index]')).toHaveCount(12)
+  expect(requests[0]).toEqual({limit:12,offset:0})
+
+  await page.locator('[data-feed-index="9"]').scrollIntoViewIfNeeded()
+  await expect.poll(()=>requests.some((item)=>item.limit===12&&item.offset===12)).toBe(true)
+  await expect(page.locator('[data-feed-index]')).toHaveCount(18)
 })
 
 test('fullscreen control stays visible inside standalone questionnaire flow',async({page})=>{
