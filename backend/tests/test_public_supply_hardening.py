@@ -33,6 +33,14 @@ def test_public_nginx_denies_internal_docs_and_has_security_headers() -> None:
     assert "script-src 'self' https://telegram.org" in nginx
 
 
+def test_inner_nginx_preserves_host_sanitized_client_ip() -> None:
+    nginx = (REPO_ROOT / "backend" / "deploy" / "nginx.conf").read_text()
+    assert "127.0.0.1:18080:80" in (REPO_ROOT / "backend" / "docker-compose.yml").read_text()
+    assert "proxy_set_header X-Real-IP $remote_addr;" not in nginx
+    assert nginx.count("proxy_set_header X-Real-IP $http_x_real_ip;") >= 3
+    assert nginx.count("proxy_set_header X-Forwarded-For $http_x_forwarded_for;") >= 3
+
+
 def test_supply_chain_dependencies_are_immutable_or_monitored() -> None:
     backend_docker = (REPO_ROOT / 'backend' / 'Dockerfile').read_text()
     renderer_docker = (REPO_ROOT / 'backend' / 'Dockerfile.renderer').read_text()
