@@ -37,7 +37,6 @@ class Settings(BaseSettings):
     telegram_webapp_url: str | None = None
     telegram_init_data_ttl_seconds: int = 3600
     bot_internal_api_base_url: str = "http://api:8000"
-    registration_daily_limit_per_ip: int = 20
 
     # Provider credentials/infrastructure only. Model selection and model params live in DB/admin.
     nexus_api_key: str | None = None
@@ -61,7 +60,6 @@ class Settings(BaseSettings):
     yookassa_retry_attempts: int = 3
     yookassa_circuit_failure_threshold: int = 5
     yookassa_circuit_recovery_seconds: float = 30.0
-    yookassa_webhook_rate_limit_per_minute: int = 120
     yookassa_webhook_max_body_bytes: int = 65_536
 
     media_root: str = "/data/media"
@@ -88,8 +86,6 @@ class Settings(BaseSettings):
             raise ValueError("REFRESH_TOKEN_TTL_SECONDS must exceed access-token TTL")
         if self.telegram_init_data_ttl_seconds < 60:
             raise ValueError("TELEGRAM_INIT_DATA_TTL_SECONDS must be at least 60")
-        if self.registration_daily_limit_per_ip < 1:
-            raise ValueError("REGISTRATION_DAILY_LIMIT_PER_IP must be positive")
         if self.redis_socket_connect_timeout_seconds <= 0 or self.redis_socket_timeout_seconds <= 0:
             raise ValueError("Redis socket timeouts must be greater than zero")
         if not 60 <= self.media_url_ttl_seconds <= 3600:
@@ -118,8 +114,6 @@ class Settings(BaseSettings):
             raise ValueError("YOOKASSA_RETRY_ATTEMPTS must be between 1 and 5")
         if self.yookassa_circuit_failure_threshold < 1 or self.yookassa_circuit_recovery_seconds <= 0:
             raise ValueError("YooKassa circuit breaker settings must be positive")
-        if self.yookassa_webhook_rate_limit_per_minute < 1:
-            raise ValueError("YOOKASSA_WEBHOOK_RATE_LIMIT_PER_MINUTE must be positive")
         if not 1024 <= self.yookassa_webhook_max_body_bytes <= 1_048_576:
             raise ValueError("YOOKASSA_WEBHOOK_MAX_BODY_BYTES must be between 1 KiB and 1 MiB")
         if self.is_production:
