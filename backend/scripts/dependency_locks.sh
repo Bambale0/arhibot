@@ -50,6 +50,12 @@ fi
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "${tmp_dir}"' EXIT
+# Seed temporary outputs with the committed pins. pip-compile reuses existing
+# versions unless an explicit upgrade is requested, so CHECK validates that
+# pyproject constraints still admit the committed lock instead of drifting
+# whenever PyPI publishes a newer transitive dependency.
+cp requirements.lock "${tmp_dir}/requirements.lock"
+cp requirements-build.lock "${tmp_dir}/requirements-build.lock"
 compile_runtime "${tmp_dir}/requirements.lock"
 compile_build "${tmp_dir}/requirements-build.lock"
 status=0
