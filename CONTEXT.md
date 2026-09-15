@@ -1,5 +1,52 @@
 # AuRoom domain context
 
+## Active Feature Execution
+
+### Feature
+Repository engineering-governance synchronization from `Bambale0/start`, strengthened by the explicit project rule that documentation and whole-surface code review are mandatory around every code intervention.
+
+### Audit baseline
+- Target repository baseline: `dev@8302749550713c118b93df149056a13211d2289f`.
+- Source engineering-governance update: `Bambale0/start@07a651d123e1d6208e8202e3e3766e5755840838` (`AGENTS.md` feature-preflight/execution-ledger block).
+- Existing AuRoom `AGENTS.md` already contains AuRoom-specific control-plane, no-hardcode, authorization, release and skill-source rules; these must be preserved.
+- Existing `CONTEXT.md` had no `Active Feature Execution` section before this change.
+
+### Intended outcome
+Every future AuRoom intervention follows one auditable lifecycle:
+`fresh repository/context audit → CONTEXT.md plan → implementation → tests → documentation synchronization → whole affected-surface code review → review fixes → final verification → merge/deploy evidence → CONTEXT.md closeout`.
+
+### Scope and compatibility
+- Documentation/governance only; no runtime, schema, API, UI or deployment behavior changes.
+- Start/Business-OS-specific product rules are **not** copied into AuRoom.
+- AuRoom-specific rules remain authoritative for this repository.
+- No hardcoded business-value decision is introduced by this change.
+
+### Security / permissions / tenant impact
+Not applicable: documentation-only change. Existing authorization and production boundaries are unchanged.
+
+### Observability / rollout
+- Verification seam: exact GitHub diff against `dev` and repository CI for the exact PR head.
+- Rollout: PR #86 to `dev`; no production behavior change is expected after deployment because only documentation changes.
+
+### Implementation steps and progress
+1. ✅ Read current AuRoom `AGENTS.md` and `CONTEXT.md`.
+2. ✅ Read latest `Bambale0/start/AGENTS.md` and identify the generic update from commit `07a651d...`.
+3. ✅ Copy the 123-line generic **Mandatory feature preflight and execution ledger** block while preserving AuRoom-specific instructions.
+4. ✅ Read `Bambale0/skills` implementation and code-review guidance.
+5. ✅ Add explicit AuRoom rule requiring documentation maintenance before/after code changes and mandatory whole-affected-surface review after every code intervention.
+6. ✅ Add this live execution ledger before further repository implementation work.
+7. ⏳ Run CI for the final documentation commit.
+8. ⏳ Review the final docs diff against both repository standards and the requested governance contract.
+9. ⏳ Merge PR #86 only after exact-head CI is green and review has no unresolved high-severity findings.
+
+### Verification evidence
+- PR #86 initially contained exactly one changed file (`AGENTS.md`) and no runtime changes before the explicit documentation-stewardship addition.
+- Final exact-head CI/review/merge evidence will be recorded here before this feature is closed.
+
+### Follow-ups
+After PR #86 is merged, resume `feat/control-plane-business-rules` only by first writing a fresh Active Feature Execution audit for that implementation and then addressing the P0/P1 findings from the full code review.
+
+
 ## Control Plane
 
 The authenticated web admin used by operators to manage business configuration and operational entities without changing code, SQL, shell commands, or environment files.
