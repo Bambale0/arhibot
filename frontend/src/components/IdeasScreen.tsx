@@ -262,7 +262,7 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
         if (!cancelled) setError(err instanceof Error ? err.message : 'Не удалось загрузить работы для поиска')
       } finally {
         pageRequestInFlight.current = false
-        if (!cancelled) setLoadingMore(false)
+        setLoadingMore(false)
       }
     })()
     return () => { cancelled = true }
