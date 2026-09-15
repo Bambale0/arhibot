@@ -22,11 +22,12 @@ function FullscreenIcon() {
 export function TelegramFullscreenButton() {
   const telegram = window.Telegram?.WebApp
   if (!telegram?.requestFullscreen) return null
+  const webApp = telegram
 
   function requestFullscreen() {
     try {
-      telegram.expand?.()
-      telegram.requestFullscreen?.()
+      webApp.expand?.()
+      webApp.requestFullscreen?.()
     } catch {
       // Telegram clients can reject fullscreen transiently; keep the app usable.
     }
