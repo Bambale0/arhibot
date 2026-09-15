@@ -46,9 +46,18 @@ class OperationalSettings(Base):
     )
     starter_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     initial_concept_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
-    media_retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    backup_interval_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    backup_retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    media_retention_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="30"
+    )
+    backup_interval_hours: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="24"
+    )
+    backup_retention_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="14"
+    )
+    media_min_free_bytes: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=str(2 * 1024 * 1024 * 1024)
+    )
     updated_by_user_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
