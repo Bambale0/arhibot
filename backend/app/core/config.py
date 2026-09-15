@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -131,6 +132,14 @@ class Settings(BaseSettings):
                 raise ValueError("Production media signing secret must be explicitly configured with at least 32 characters")
             if self.media_signing_secret in {self.jwt_secret, self.refresh_token_secret}:
                 raise ValueError("Production media signing secret must be independent from auth secrets")
+            for name, value in (
+                ("YOOKASSA_BASE_URL", self.yookassa_base_url),
+                ("YOOKASSA_RETURN_URL", self.yookassa_return_url),
+            ):
+                if value:
+                    parsed = urlsplit(value)
+                    if parsed.scheme != "https" or not parsed.netloc:
+                        raise ValueError(f"{name} must use HTTPS in production")
         return self
 
 
