@@ -10,7 +10,7 @@ from sqlalchemy import or_, select
 
 from app.core.config import get_settings
 from app.core.redis import redis_client
-from app.db.models.admin import IdeaTemplate
+from app.db.models.admin import IdeaPublication, IdeaTemplate
 from app.db.models.assets import Asset
 from app.db.models.generations import Generation
 from app.db.session import dispose_engine, get_session_factory
@@ -93,7 +93,10 @@ async def cleanup_media_once() -> int:
             if not await _prepare_asset_for_cleanup(session, asset.id):
                 continue
             path: Path = storage.absolute_path(asset.storage_path)
+            preview_path = storage.feed_preview_path(asset.storage_path)
             try:
+                if preview_path.exists():
+                    await asyncio.to_thread(preview_path.unlink)
                 if path.exists():
                     await asyncio.to_thread(path.unlink)
             except OSError:
@@ -104,6 +107,38 @@ async def cleanup_media_once() -> int:
         if removed:
             await session.commit()
     return removed
+
+
+async def prewarm_idea_feed_previews_once() -> int:
+    settings = get_settings()
+    storage = LocalMediaStorage(settings)
+    async with get_session_factory()() as session:
+        rows = await session.execute(
+            select(Asset.storage_path)
+            .join(Generation, Generation.output_asset_id == Asset.id)
+            .join(IdeaPublication, IdeaPublication.generation_id == Generation.id)
+            .where(
+                IdeaPublication.is_active.is_(True),
+                IdeaPublication.owner_published.is_(True),
+                Generation.status == GenerationStatus.COMPLETED,
+                Asset.deleted_at.is_(None),
+            )
+            .order_by(IdeaPublication.sort_order.asc(), IdeaPublication.created_at.desc())
+            .limit(100)
+        )
+        paths = list(rows.scalars().all())
+
+    warmed = 0
+    for storage_path in paths:
+        preview_path = storage.feed_preview_path(storage_path)
+        if preview_path.is_file():
+            continue
+        try:
+            await storage.ensure_feed_preview(storage_path)
+            warmed += 1
+        except (FileNotFoundError, OSError):
+            logger.exception("Could not prewarm Ideas preview for %s", storage_path)
+    return warmed
 
 
 async def cleanup_questionnaire_drafts_once() -> int:
@@ -143,6 +178,9 @@ async def run_worker() -> None:
 
             now = monotonic()
             if now >= next_cleanup_at:
+                warmed_previews = await prewarm_idea_feed_previews_once()
+                if warmed_previews:
+                    logger.info("Prewarmed %s Ideas feed preview(s)", warmed_previews)
                 removed_drafts = await cleanup_questionnaire_drafts_once()
                 if removed_drafts:
                     logger.info("Discarded %s abandoned questionnaire draft project(s)", removed_drafts)
