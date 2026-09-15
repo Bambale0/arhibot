@@ -45,22 +45,13 @@ def upgrade() -> None:
                            AND project.context ->> 'admin_ai_sandbox' = 'true'
                      )
                     THEN 'admin_orbit'
+                -- Historical questionnaire context was writable through the
+                -- generic project API before this hardening release. Never promote
+                -- those rows into a trusted server pipeline during migration.
                 WHEN generation.prompt LIKE 'AUROOM_INITIAL_CONCEPT_V1%'
-                     AND EXISTS (
-                         SELECT 1
-                         FROM projects AS project
-                         WHERE project.id = generation.project_id
-                           AND project.context ? 'questionnaire_draft'
-                     )
-                    THEN 'questionnaire_initial'
+                    THEN 'legacy_internal'
                 WHEN generation.prompt LIKE 'AUROOM_RENDER_SPEC_V1%'
-                     AND EXISTS (
-                         SELECT 1
-                         FROM projects AS project
-                         WHERE project.id = generation.project_id
-                           AND project.context ? 'questionnaire_draft'
-                     )
-                    THEN 'questionnaire'
+                    THEN 'legacy_internal'
                 ELSE 'generic'
             END
             """
