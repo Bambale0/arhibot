@@ -31,6 +31,14 @@ services:
     pids_limit: ${AUROOM_API_PIDS_LIMIT:-256}
     logging: *default-logging
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - app
+      - data
+
 
   bot:
     labels:
@@ -48,6 +56,14 @@ services:
     pids_limit: ${AUROOM_BOT_PIDS_LIMIT:-128}
     logging: *default-logging
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - app
+      - data
+
 
   worker:
     labels:
@@ -76,6 +92,14 @@ services:
     pids_limit: ${AUROOM_WORKER_PIDS_LIMIT:-256}
     logging: *default-logging
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - app
+      - data
+
 
   renderer-worker:
     profiles: ["3d"]
@@ -94,6 +118,14 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - app
+      - data
+
 
   broadcast-worker:
     labels:
@@ -120,6 +152,14 @@ services:
     pids_limit: ${AUROOM_BROADCAST_WORKER_PIDS_LIMIT:-128}
     logging: *default-logging
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - app
+      - data
+
 
   maintenance:
     labels:
@@ -148,6 +188,14 @@ services:
     pids_limit: ${AUROOM_MAINTENANCE_PIDS_LIMIT:-128}
     logging: *default-logging
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - app
+      - data
+
 
   frontend:
     labels:
@@ -164,6 +212,9 @@ services:
     pids_limit: ${AUROOM_FRONTEND_PIDS_LIMIT:-64}
     logging: *default-logging
     restart: unless-stopped
+    networks:
+      - edge
+
 
   nginx:
     labels:
@@ -181,6 +232,10 @@ services:
     pids_limit: ${AUROOM_NGINX_PIDS_LIMIT:-64}
     logging: *default-logging
     restart: unless-stopped
+    networks:
+      - edge
+      - app
+
 
   postgres:
     image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
@@ -221,3 +276,9 @@ volumes:
   postgres_data:
   redis_data:
   media_data:
+
+networks:
+  edge:
+  app:
+  data:
+    internal: true
