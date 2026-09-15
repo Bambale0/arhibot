@@ -27,6 +27,15 @@ class AdminOperationsService:
             yookassa_webhook_rate_limit_per_minute=(
                 row.yookassa_webhook_rate_limit_per_minute if row else None
             ),
+            asset_upload_rate_limit_per_minute=(
+                row.asset_upload_rate_limit_per_minute if row else 12
+            ),
+            asset_max_retained_count_per_user=(
+                row.asset_max_retained_count_per_user if row else 200
+            ),
+            asset_max_retained_bytes_per_user=(
+                row.asset_max_retained_bytes_per_user if row else 512 * 1024 * 1024
+            ),
             starter_credits=row.starter_credits if row else 0,
             initial_concept_credits=row.initial_concept_credits if row else 0,
             media_retention_days=row.media_retention_days if row else None,
