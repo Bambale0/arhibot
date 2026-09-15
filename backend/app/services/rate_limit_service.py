@@ -52,6 +52,16 @@ class RateLimitService:
             window_seconds=86_400,
         )
 
+    async def enforce_asset_upload(self, identity: str) -> None:
+        settings = await self.repository.get()
+        limit = settings.asset_upload_rate_limit_per_minute if settings is not None else 12
+        await self.enforce_window(
+            "asset-upload",
+            identity,
+            limit=limit,
+            window_seconds=60,
+        )
+
     async def enforce_yookassa_webhook(self, identity: str) -> None:
         settings = await self.repository.get()
         if settings is None or settings.yookassa_webhook_rate_limit_per_minute is None:
