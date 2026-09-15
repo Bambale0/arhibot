@@ -222,19 +222,12 @@ test('house terrace floor options follow selected storeys in the UI',async({page
 })
 
 
-test('fullscreen control calls Telegram expand and requestFullscreen',async({page})=>{
-  await page.goto('/')
-  await page.evaluate(()=>{
-    const target=window as typeof window & { __expandCalls?:number; __fullscreenCalls?:number }
-    if (!window.Telegram?.WebApp) throw new Error('Telegram WebApp SDK is unavailable')
-    window.Telegram.WebApp.expand=()=>{target.__expandCalls=(target.__expandCalls||0)+1}
-    window.Telegram.WebApp.requestFullscreen=()=>{target.__fullscreenCalls=(target.__fullscreenCalls||0)+1}
+test('fullscreen control stays hidden in the mobile product flow',async({page})=>{
+  await page.addInitScript(()=>{
+    window.Telegram = { WebApp: { initData:'', requestFullscreen:()=>{} } }
   })
-  await page.getByRole('button',{name:'Открыть на весь экран'}).click()
-  await expect.poll(()=>page.evaluate(()=>({
-    expand:(window as typeof window & {__expandCalls?:number}).__expandCalls||0,
-    fullscreen:(window as typeof window & {__fullscreenCalls?:number}).__fullscreenCalls||0,
-  }))).toEqual({expand:1,fullscreen:1})
+  await page.goto('/')
+  await expect(page.locator('.telegram-fullscreen-button')).toBeHidden()
 })
 
 
