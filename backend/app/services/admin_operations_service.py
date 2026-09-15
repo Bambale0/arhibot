@@ -21,9 +21,11 @@ class AdminOperationsService:
             auth_rate_limit_per_minute=row.auth_rate_limit_per_minute if row else None,
             generation_rate_limit_per_minute=row.generation_rate_limit_per_minute if row else None,
             payment_rate_limit_per_minute=row.payment_rate_limit_per_minute if row else None,
-            registration_rate_limit_per_day=row.registration_rate_limit_per_day if row else 20,
+            registration_rate_limit_per_day=(
+                row.registration_rate_limit_per_day if row else None
+            ),
             yookassa_webhook_rate_limit_per_minute=(
-                row.yookassa_webhook_rate_limit_per_minute if row else 120
+                row.yookassa_webhook_rate_limit_per_minute if row else None
             ),
             starter_credits=row.starter_credits if row else 0,
             initial_concept_credits=row.initial_concept_credits if row else 0,
