@@ -56,13 +56,16 @@ class IdeaService:
         self.repository = IdeaRepository(session)
         self.storage = LocalMediaStorage(settings)
 
-    async def _image_url(self, generation: Generation) -> str | None:
+    async def _image_urls(self, generation: Generation) -> tuple[str | None, str | None]:
         if generation.output_asset_id is None:
-            return None
+            return None, None
         asset = await self.session.get(Asset, generation.output_asset_id)
         if asset is None or asset.deleted_at is not None:
-            return None
-        return self.storage.signed_url(asset.storage_path)
+            return None, None
+        return (
+            self.storage.signed_url(asset.storage_path),
+            self.storage.signed_feed_preview_url(asset.storage_path),
+        )
 
     async def _publication_response(
         self,
@@ -74,7 +77,7 @@ class IdeaService:
         generation = await self.session.get(Generation, publication.generation_id)
         if generation is None:
             return None
-        image_url = await self._image_url(generation)
+        image_url, preview_url = await self._image_urls(generation)
         if require_public_ready and (
             generation.status != GenerationStatus.COMPLETED or image_url is None
         ):
@@ -94,6 +97,7 @@ class IdeaService:
             category=category,
             generation_type=generation.type,
             image_url=image_url,
+            preview_url=preview_url,
             objects=objects,
             selected_objects=selected_objects,
             published_at=publication.created_at,
