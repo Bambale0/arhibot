@@ -142,7 +142,7 @@
 .idea-work-stage.media-ready>img{opacity:1}
 .idea-work-image-placeholder{position:absolute;inset:0;z-index:0;background:#151b1a}
 .idea-work-empty{height:100%;min-height:360px;display:grid;place-items:center;color:#77736d;background:#eee8df}
-.idea-work-actions{position:absolute;right:12px;top:12px;display:flex;flex-direction:column;gap:8px}
+.idea-work-actions{position:absolute;z-index:3;right:12px;top:12px;display:flex;flex-direction:column;gap:8px}
 .idea-work-actions button{width:44px;height:44px;border:1px solid rgba(20,35,45,.1);border-radius:14px;background:rgba(250,247,241,.9);backdrop-filter:blur(10px);display:grid;place-items:center;color:#14232d;cursor:pointer;box-shadow:0 6px 18px rgba(25,22,18,.08)}
 .idea-work-actions button.active{color:#b85e38;background:#fff7f2}.idea-work-actions svg{width:21px;height:21px}
 .idea-work-meta{display:grid;gap:8px}.idea-work-summary{border-top:1px solid rgba(20,35,45,.1);padding-top:8px}
