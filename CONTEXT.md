@@ -38,16 +38,19 @@ Not applicable: documentation-only change. Existing authorization and production
 7. ⚠️ CI run #503 executed on `d66c43a...`: Backend integration and Frontend build passed; Backend tests stopped at dependency-lock verification because regenerated `requirements.lock` differs from the committed lock.
 8. ✅ Review the final governance docs diff against both repository standards and the requested governance contract: no P0/P1 findings; only `AGENTS.md` and `CONTEXT.md` are changed and no Start-specific product rules were imported.
 9. ✅ Reproduced lock generation in two isolated environments: host Python 3.12.4 with `pip 26.2.1` + `pip-tools 7.6.1`, and clean `python:3.12.14-slim` with the same pip/pip-tools versions. Both regenerate byte-identical lock files; there is no dependency-version delta.
-10. 🔄 Root cause is CI cache sensitivity: GitHub Actions restores a pip cache and then `pip-compile` produces a different lock while fresh isolated resolution does not. Make lock verification cache-independent with pip-tools rebuild/no-cache behavior, add a contract assertion, and update operations hardening documentation before rerunning CI.
-11. ⏳ Merge PR #86 only after exact-head CI is green and review has no unresolved high-severity findings.
+10. ✅ Corrected root cause after direct output comparison: `UPDATE` writes onto an existing lock and pip-tools preserves existing transitive pins unless `--upgrade` is requested, while `CHECK` writes to a fresh temporary file and resolves the newest allowed graph. The first delta is `greenlet 3.5.5 → 3.5.6`. Cache-independent resolution alone is insufficient because UPDATE/CHECK semantics still differ.
+11. 🔄 Make UPDATE and CHECK use the same fresh-resolution semantics (`--upgrade`, rebuild, no pip cache), regenerate the committed lock from that canonical resolver path, assert those flags in the lock contract test, update operations hardening docs, then run dependency audit/full CI.
+12. ⏳ Merge PR #86 only after exact-head CI is green and review has no unresolved high-severity findings.
+
 
 ### Verification evidence
 - PR #86 initially contained exactly one changed file (`AGENTS.md`) and no runtime changes before the explicit documentation-stewardship addition.
 - CI run #503 (`d66c43a...`): Backend integration ✅; Frontend build/typecheck/critical mobile E2E ✅; Backend tests ❌ at `Verify Python dependency locks are current` before compile/unit tests. The failure reports `requirements.lock` drift at byte 19276 / line 250.
 - Governance review: Standards axis — 0 findings; Spec/product-contract axis — 0 findings. The change preserves AuRoom-specific rules, copies only the generic Start preflight block, and explicitly adds mandatory documentation stewardship + whole-affected-surface review.
 - Clean lock regeneration evidence: `requirements.lock` and `requirements-build.lock` remain byte-identical in both a fresh local venv and a clean Python 3.12.14 container with `pip 26.2.1` / `pip-tools 7.6.1`; no package version changes were produced.
-- The repeatable GitHub-only drift therefore indicates resolver/cache nondeterminism in the CHECK environment rather than an intentional dependency update. The corrective scope is the lock verification script + its contract test + affected operations documentation; dependency pins themselves must remain unchanged.
-- Final exact-head CI/merge evidence will be recorded after making the check cache-independent.
+- Direct comparison of in-place `UPDATE` vs fresh-file `CHECK` shows the actual semantic mismatch: fresh resolution selects `greenlet 3.5.6`, while in-place UPDATE preserves `3.5.5` from the pre-existing output file. The prior cache-only hypothesis is superseded by this evidence.
+- Corrective scope: make both modes explicitly resolve with `--upgrade` plus rebuild/no-cache, regenerate the canonical lock once, verify the dependency delta with `pip-audit`/full CI, and document the behavior.
+- Final exact-head CI/merge evidence will be recorded after the canonical lock/update path is verified.
 
 ### Follow-ups
 After PR #86 is merged, resume `feat/control-plane-business-rules` only by first writing a fresh Active Feature Execution audit for that implementation and then addressing the P0/P1 findings from the full code review.
