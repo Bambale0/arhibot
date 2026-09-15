@@ -69,7 +69,7 @@ function WorkCard({
   useEffect(() => {
     setFallbackOriginal(false)
     setImageReady(false)
-  }, [idea.id, preferredUrl])
+  }, [idea.id, preferredUrl, shouldLoadImage])
   return <article id={`idea-${idea.id}`} className="idea-feed-card idea-work-card" data-idea-id={idea.id}>
     <div className="idea-feed-copy">
       <div className="idea-feed-kicker"><span>Идеи AuRoom</span><b>{index + 1} / {total}</b></div>
