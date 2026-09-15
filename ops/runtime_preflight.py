@@ -58,7 +58,13 @@ def validate(values: dict[str, str]) -> list[str]:
     elif media_signing in {access, refresh}:
         errors.append("MEDIA_SIGNING_SECRET must be independent from auth secrets")
 
-    for name in ("MEDIA_PUBLIC_BASE_URL", "NEXUS_BASE_URL", "TELEGRAM_WEBAPP_URL"):
+    for name in (
+        "MEDIA_PUBLIC_BASE_URL",
+        "NEXUS_BASE_URL",
+        "TELEGRAM_WEBAPP_URL",
+        "YOOKASSA_BASE_URL",
+        "YOOKASSA_RETURN_URL",
+    ):
         value = values.get(name, "").strip()
         if value and not _is_https(value):
             errors.append(f"{name} must use HTTPS on the public runtime")
