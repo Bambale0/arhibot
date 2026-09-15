@@ -67,6 +67,10 @@ class IdeaService:
             self.storage.signed_feed_preview_url(asset.storage_path),
         )
 
+    async def _image_url(self, generation: Generation) -> str | None:
+        image_url, _preview_url = await self._image_urls(generation)
+        return image_url
+
     async def _publication_response(
         self,
         publication: IdeaPublication,
