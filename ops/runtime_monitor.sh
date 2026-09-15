@@ -112,9 +112,12 @@ for service in worker broadcast-worker maintenance frontend postgres redis; do
   [[ "${health}" == "healthy" ]] || fail "container health ${service}=${health:-missing}"
 done
 
-generation_queued=$(compose exec -T redis redis-cli --raw LLEN auroom:generation_queue 2>/dev/null | tr -d '\r' || echo unknown)
-generation_processing=$(compose exec -T redis redis-cli --raw LLEN auroom:generation_processing 2>/dev/null | tr -d '\r' || echo unknown)
-broadcast_queued=$(compose exec -T redis redis-cli --raw LLEN auroom:broadcast_queue 2>/dev/null | tr -d '\r' || echo unknown)
+redis_cli() {
+  compose exec -T redis sh -lc 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --raw "$@"' sh "$@"
+}
+generation_queued=$(redis_cli LLEN auroom:generation_queue 2>/dev/null | tr -d '\r' || echo unknown)
+generation_processing=$(redis_cli LLEN auroom:generation_processing 2>/dev/null | tr -d '\r' || echo unknown)
+broadcast_queued=$(redis_cli LLEN auroom:broadcast_queue 2>/dev/null | tr -d '\r' || echo unknown)
 metrics+=("generation_queue=${generation_queued}" "generation_processing=${generation_processing}" "broadcast_queue=${broadcast_queued}")
 
 stale_generations=$(compose exec -T postgres psql -U app -d app -Atc "select count(*) from generations where status='processing' and coalesce(started_at, created_at) < now() - interval '${generation_stale_minutes} minutes'" 2>/dev/null | tr -d '[:space:]' || echo unknown)
