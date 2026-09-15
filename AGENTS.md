@@ -255,6 +255,129 @@ A change is not done until:
 
 ---
 
+## Mandatory feature preflight and execution ledger
+
+Before implementing **any feature**, the agent/developer MUST perform a fresh audit of the repository state relevant to that feature. Do not rely on an old plan or assume a documented capability already exists.
+
+### Pre-feature audit
+
+Inspect at minimum:
+
+- current `CONTEXT.md` active-feature section;
+- relevant specs and ADRs;
+- current domain/application/API code;
+- database models and latest migrations;
+- authorization/tenant enforcement;
+- admin/configuration surfaces;
+- existing tests at the intended seams;
+- E2E and smoke coverage;
+- CI workflow;
+- integration adapters involved;
+- logs/metrics/traces for an existing runtime path, if one exists;
+- open/closed issues that overlap the feature.
+
+Record the audit in `CONTEXT.md` **before writing production code**.
+
+The audit must state:
+
+1. what already exists;
+2. what is partial;
+3. what is missing;
+4. what can be reused;
+5. what must be prefactored first;
+6. architecture/security/tenant risks;
+7. migrations/integration impact;
+8. agreed public test seams;
+9. exact feature plan and acceptance criteria.
+
+### CONTEXT.md is the live execution ledger
+
+For the feature currently being implemented, `CONTEXT.md` must contain an **Active Feature Execution** section with:
+
+- feature/ticket/spec;
+- audit baseline and commit SHA;
+- dependencies/blockers;
+- intended user-visible outcome;
+- no-hardcode/configuration decisions;
+- schema/API/UI changes;
+- permissions and tenant scope;
+- observability plan;
+- test seams;
+- unit/integration/contract/E2E/smoke plan;
+- migration/rollout plan;
+- numbered implementation steps;
+- progress log with completed steps and evidence;
+- final verification results;
+- follow-ups.
+
+Update this section step-by-step during implementation. Do not wait until the end and reconstruct history from memory.
+
+When the feature is complete, move the final concise outcome into the execution history section and prepare `Active Feature Execution` for the next feature.
+
+### No-hardcode gate
+
+Before implementation and again during review, explicitly check that the feature does not hardcode mutable business values.
+
+If a value may differ by organization, vertical, business unit or operational policy, it should normally be:
+
+- typed configuration;
+- database-backed;
+- scoped;
+- validated;
+- editable in the appropriate admin/control plane;
+- versioned/audited when material.
+
+A feature is incomplete if routine behavior still requires source editing or manual SQL.
+
+### Test-first vertical slices
+
+Use the repository's pre-agreed testing seams:
+
+1. **HTTP/API seam** for user-visible backend behavior;
+2. **domain/application service seam** for complex deterministic business rules when the API seam would be too broad;
+3. **provider adapter seam** for third-party contracts;
+4. **browser/user-journey seam** for E2E;
+5. **deployed service seam** for smoke.
+
+Each implementation ticket should be a tracer-bullet vertical slice where possible:
+
+`failing behavior test → minimal implementation → focused checks → next slice`.
+
+Do not write a horizontal pile of implementation-detail tests before the behavior exists.
+
+### Mandatory verification layers
+
+Every feature must explicitly decide and document all of the following, even if one is genuinely not applicable:
+
+- unit/domain behavior;
+- database/repository integration;
+- authorization and tenant isolation;
+- migrations;
+- external adapter contract;
+- workflow/idempotency/retry behavior;
+- API integration;
+- E2E user journey;
+- smoke/deployability;
+- observability/audit;
+- no-hardcode/admin configurability.
+
+"Not applicable" requires a reason in `CONTEXT.md`.
+
+### Feature completion gate
+
+A feature cannot be marked done until:
+
+- its acceptance criteria pass;
+- focused tests pass;
+- full backend/frontend test suite appropriate to the changed surface passes;
+- tenant-isolation/security checks pass;
+- E2E for the primary happy path and critical failure/permission path passes;
+- smoke checks pass in a production-like environment or the repository's defined smoke environment;
+- CI is green for the exact commit;
+- code review against both repository standards and originating spec is complete;
+- documentation and `CONTEXT.md` contain actual verification evidence;
+- no unresolved high-severity finding remains.
+
 ## Standard delivery format
 
 Every agent response must include:
