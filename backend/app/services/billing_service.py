@@ -467,15 +467,37 @@ class BillingService:
             raise YooKassaError("YooKassa webhook received while billing is not configured")
         provider = YooKassaProvider(self.settings)
         if event in {"payment.succeeded", "payment.canceled", "payment.waiting_for_capture"}:
+            expected_local_id: UUID | None = None
             if not await self.repository.has_provider_payment(provider_id):
-                raise AppError(
-                    type="billing_webhook_object_not_ready",
-                    title="Billing webhook object not ready",
-                    status=503,
-                    detail="The referenced payment is not available locally yet.",
+                metadata = obj.get("metadata")
+                local_id_raw = (
+                    str(metadata.get("billing_payment_id") or "").strip()
+                    if isinstance(metadata, dict)
+                    else ""
                 )
+                try:
+                    candidate_id = UUID(local_id_raw)
+                except (TypeError, ValueError):
+                    candidate_id = None
+                candidate = (
+                    await self.repository.get_payment(candidate_id)
+                    if candidate_id is not None
+                    else None
+                )
+                if (
+                    candidate is None
+                    or candidate.yookassa_payment_id is not None
+                    or candidate.status not in {"creating", "failed"}
+                ):
+                    raise AppError(
+                        type="billing_webhook_object_not_ready",
+                        title="Billing webhook object not ready",
+                        status=503,
+                        detail="The referenced payment is not available locally yet.",
+                    )
+                expected_local_id = candidate.id
             remote = await provider.get_payment(provider_id)
-            await self.apply_remote(remote)
+            await self.apply_remote(remote, expected_local_id=expected_local_id)
         elif event == "refund.succeeded":
             if not await self.repository.has_provider_refund(provider_id):
                 raise AppError(
