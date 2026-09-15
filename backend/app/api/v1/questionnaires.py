@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Response, status
 
 from app.api.dependencies.auth import CurrentUser, DbSession
 from app.core.config import Settings, get_settings
+from app.domain.generations.provenance import GenerationOrigin
 from app.core.errors import AppError
 from app.schemas.generations import QuestionnaireGenerationResponse
 from app.schemas.projects import ProjectResponse
@@ -199,7 +200,7 @@ async def create_questionnaire_generation(
 
     initial_credits = (
         await questionnaire.initial_concept_credits(user)
-        if object_key == "__initial__"
+        if object_key == "__initial__" and expected_session.initial_generation_id is None
         else None
     )
     created = await build_generation_service(session, settings).create(
@@ -207,6 +208,7 @@ async def create_questionnaire_generation(
         payload,
         before_commit=bind_generation,
         credits_override=initial_credits,
+        origin=GenerationOrigin.QUESTIONNAIRE,
     )
     return QuestionnaireGenerationResponse.model_validate(created)
 

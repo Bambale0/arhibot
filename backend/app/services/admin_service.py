@@ -15,6 +15,11 @@ from app.db.models.admin import BillingPlan, BroadcastCampaign, GenerationPrompt
 from app.db.models.projects import Project
 from app.db.models.users import User
 from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.domain.generations.provenance import (
+    ADMIN_ORBIT_PROMPT_PREFIX,
+    ADMIN_SANDBOX_PROMPT_PREFIX,
+    GenerationOrigin,
+)
 from app.domain.users.enums import UserRole
 from app.repositories.admin import AdminRepository
 from app.repositories.billing import BillingRepository
@@ -49,10 +54,6 @@ from app.services.billing_service import BillingService
 from app.services.generation_service import build_generation_service
 from app.telegram_bot.broadcast import send_broadcast
 from app.telegram_bot.main import TelegramBotApi
-
-
-ADMIN_SANDBOX_PROMPT_PREFIX = "AUROOM_ADMIN_SANDBOX_V1\n"
-ADMIN_ORBIT_PROMPT_PREFIX = "AUROOM_ADMIN_ORBIT_V1\n"
 
 
 def _parse_admin_ai_envelope(
@@ -359,6 +360,7 @@ class AdminService:
             ),
             before_commit=bind_sandbox,
             skip_pricing=True,
+            origin=GenerationOrigin.ADMIN_SANDBOX,
         )
         self.repository.add_audit(
             actor_user_id=actor.id,
@@ -395,7 +397,7 @@ class AdminService:
                 status=409,
                 detail="Complete an AI Sandbox image before building an orbit loop.",
             )
-        if not source.prompt.startswith(ADMIN_SANDBOX_PROMPT_PREFIX):
+        if source.origin != GenerationOrigin.ADMIN_SANDBOX.value:
             raise AppError(
                 type="orbit_source_not_sandbox",
                 title="Orbit source must be an AI Sandbox image",
@@ -444,6 +446,7 @@ class AdminService:
             ),
             before_commit=bind_orbit,
             skip_pricing=True,
+            origin=GenerationOrigin.ADMIN_ORBIT,
         )
         self.repository.add_audit(
             actor_user_id=actor.id,
@@ -487,10 +490,10 @@ class AdminService:
         generation_service = build_generation_service(self.session, self.settings)
         history: list[AdminAiHistoryItem] = []
         for row in rows:
-            if row.prompt.startswith(ADMIN_SANDBOX_PROMPT_PREFIX):
+            if row.origin == GenerationOrigin.ADMIN_SANDBOX.value:
                 kind = "sandbox"
                 prefix = ADMIN_SANDBOX_PROMPT_PREFIX
-            elif row.prompt.startswith(ADMIN_ORBIT_PROMPT_PREFIX):
+            elif row.origin == GenerationOrigin.ADMIN_ORBIT.value:
                 kind = "orbit"
                 prefix = ADMIN_ORBIT_PROMPT_PREFIX
             else:

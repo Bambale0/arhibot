@@ -115,6 +115,9 @@ class ProjectService:
             existing_questionnaire_draft = (project.context or {}).get("questionnaire_draft")
             if existing_questionnaire_draft is not None:
                 updated_context["questionnaire_draft"] = existing_questionnaire_draft
+            existing_design_session = (project.context or {}).get("design_session")
+            if existing_design_session is not None:
+                updated_context["design_session"] = existing_design_session
             project.context = updated_context
         await self.repository.session.commit()
         await self.repository.session.refresh(project)

@@ -11,6 +11,10 @@ from app.db.models.generations import Generation
 from app.db.models.projects import Project
 from app.db.models.users import User
 from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.domain.generations.provenance import (
+    GenerationOrigin,
+    RESERVED_INTERNAL_PROMPT_PREFIXES,
+)
 from app.domain.users.enums import UserRole
 from app.repositories.assets import AssetRepository
 from app.repositories.credits import CreditRepository
@@ -46,8 +50,19 @@ class GenerationService:
         before_commit: Callable[[Generation, Project], None] | None = None,
         skip_pricing: bool = False,
         credits_override: int | None = None,
+        origin: GenerationOrigin = GenerationOrigin.GENERIC,
     ) -> GenerationResponse:
         await RateLimitService(self.session).enforce("generation", str(user.id))
+        normalized_prompt = payload.prompt.strip()
+        if origin == GenerationOrigin.GENERIC and normalized_prompt.startswith(
+            RESERVED_INTERNAL_PROMPT_PREFIXES
+        ):
+            raise AppError(
+                type="generation_reserved_prompt",
+                title="Reserved generation prompt",
+                status=422,
+                detail="This prompt prefix is reserved for server-owned generation pipelines.",
+            )
         if not (self.settings.nexus_api_key or "").strip():
             raise AppError(
                 type="generation_provider_not_configured",
@@ -111,7 +126,8 @@ class GenerationService:
             input_asset_id=asset.id if asset else None,
             type=payload.type,
             status=GenerationStatus.QUEUED,
-            prompt=payload.prompt.strip(),
+            prompt=normalized_prompt,
+            origin=origin.value,
             credits_charged=credits_charged,
             composition_mode=payload.composition_mode,
             edit_region=(
@@ -174,6 +190,13 @@ class GenerationService:
                 title="Generation not found",
                 status=404,
                 detail="The generation does not exist or is not available to this user.",
+            )
+        if source.origin != GenerationOrigin.GENERIC.value:
+            raise AppError(
+                type="generation_repeat_not_supported",
+                title="Generation cannot be repeated here",
+                status=409,
+                detail="Use the product flow that created this generation to create another iteration.",
             )
         return await self.create(
             user,
@@ -247,7 +270,11 @@ class GenerationService:
             output_asset=output_asset,
             type=generation.type,
             status=generation.status,
-            prompt=generation.prompt,
+            prompt=(
+                generation.prompt
+                if generation.origin == GenerationOrigin.GENERIC.value
+                else ""
+            ),
             credits_charged=generation.credits_charged,
             model_name=generation.model_name,
             fallback_used=generation.fallback_used,

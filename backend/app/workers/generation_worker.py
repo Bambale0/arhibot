@@ -17,6 +17,12 @@ from app.db.models.projects import Project
 from app.db.session import dispose_engine, get_session_factory
 from app.domain.assets.enums import AssetPurpose, AssetType
 from app.domain.generations.enums import GenerationStatus
+from app.domain.generations.provenance import (
+    ADMIN_ORBIT_PROMPT_PREFIX,
+    ADMIN_SANDBOX_PROMPT_PREFIX,
+    GenerationOrigin,
+    INITIAL_CONCEPT_PROMPT_PREFIX,
+)
 from app.image_compositor import compose_masked_edit
 from app.image_orbit import build_orbit_animation
 from app.prompt_builders.generation import build_generation_prompt
@@ -32,14 +38,6 @@ from app.workers.heartbeat import worker_heartbeat
 
 logger = logging.getLogger(__name__)
 GENERATION_PROCESSING_KEY = "auroom:generation_processing"
-QUESTIONNAIRE_PROMPT_PREFIX = "AUROOM_RENDER_SPEC_V1"
-INITIAL_CONCEPT_PROMPT_PREFIX = "AUROOM_INITIAL_CONCEPT_V1"
-ADMIN_SANDBOX_PROMPT_PREFIX = "AUROOM_ADMIN_SANDBOX_V1\n"
-ADMIN_ORBIT_PROMPT_PREFIX = "AUROOM_ADMIN_ORBIT_V1\n"
-QUESTIONNAIRE_PROMPT_PREFIXES = (
-    QUESTIONNAIRE_PROMPT_PREFIX,
-    INITIAL_CONCEPT_PROMPT_PREFIX,
-)
 QUESTIONNAIRE_ASPECT_RATIOS = {"1:1": 1.0, "4:3": 4 / 3, "3:4": 3 / 4, "16:9": 16 / 9, "9:16": 9 / 16}
 RESERVED_PROVIDER_PARAMS = {"model_name", "prompt", "image_url", "image_urls"}
 ADMIN_ORBIT_MAX_CONCURRENCY = 3
@@ -49,8 +47,10 @@ def _admin_sandbox_request(
     generation: Generation,
     project: Project,
 ) -> tuple[str, str, dict[str, object]] | None:
-    if not generation.prompt.startswith(ADMIN_SANDBOX_PROMPT_PREFIX):
+    if generation.origin != GenerationOrigin.ADMIN_SANDBOX.value:
         return None
+    if not generation.prompt.startswith(ADMIN_SANDBOX_PROMPT_PREFIX):
+        raise ValueError("Admin sandbox envelope prefix is invalid.")
     if not bool((project.context or {}).get("admin_ai_sandbox")):
         raise ValueError("Admin sandbox envelope is outside the sandbox project.")
     model_name = (generation.model_name or "").strip()
@@ -83,8 +83,10 @@ def _admin_orbit_request(
     generation: Generation,
     project: Project,
 ) -> tuple[str, str, dict[str, object], int, int] | None:
-    if not generation.prompt.startswith(ADMIN_ORBIT_PROMPT_PREFIX):
+    if generation.origin != GenerationOrigin.ADMIN_ORBIT.value:
         return None
+    if not generation.prompt.startswith(ADMIN_ORBIT_PROMPT_PREFIX):
+        raise ValueError("Admin orbit envelope prefix is invalid.")
     if not bool((project.context or {}).get("admin_ai_sandbox")):
         raise ValueError("Admin orbit envelope is outside the sandbox project.")
     if generation.input_asset_id is None:
@@ -233,6 +235,22 @@ async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -
         await session.commit()
 
 
+async def _output_commit_visible(
+    generation_id: UUID,
+    storage_path: str,
+) -> bool:
+    async with get_session_factory()() as session:
+        generation = await session.get(Generation, generation_id)
+        if (
+            generation is None
+            or generation.status != GenerationStatus.COMPLETED
+            or generation.output_asset_id is None
+        ):
+            return False
+        output = await session.get(Asset, generation.output_asset_id)
+        return output is not None and output.storage_path == storage_path
+
+
 async def process_generation(generation_id: UUID, settings: Settings) -> None:
     async with get_session_factory()() as session:
         generation = await GenerationRepository(session).get_for_update(generation_id)
@@ -263,15 +281,15 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             await _mark_failed_and_refund(generation_id, exc)
             return
 
-        admin_internal_generation = (
-            sandbox_request is not None or orbit_request is not None
-        )
+        admin_internal_generation = generation.origin in {
+            GenerationOrigin.ADMIN_SANDBOX.value,
+            GenerationOrigin.ADMIN_ORBIT.value,
+        }
         admin_repository = AdminRepository(session)
-        initial_concept_generation = generation.prompt.startswith(
-            INITIAL_CONCEPT_PROMPT_PREFIX
-        )
-        questionnaire_generation = generation.prompt.startswith(
-            QUESTIONNAIRE_PROMPT_PREFIXES
+        questionnaire_generation = generation.origin == GenerationOrigin.QUESTIONNAIRE.value
+        initial_concept_generation = bool(
+            questionnaire_generation
+            and generation.prompt.startswith(INITIAL_CONCEPT_PROMPT_PREFIX)
         )
         runtime = (
             None
@@ -366,6 +384,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
     model_name = primary_model
     fallback_used = False
     provider_task_id: str | None = None
+    written_output_path: str | None = None
     try:
         if orbit_request is not None:
             if source_url is None or input_storage_path is None:
@@ -449,6 +468,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             now = datetime.now(UTC)
             relative_path = f"users/{generation.user_id}/{now:%Y/%m}/{asset_id}.{image.extension}"
             await asset_service.storage.write(relative_path, image.data)
+            written_output_path = relative_path
 
             output = Asset(
                 id=asset_id,
@@ -476,6 +496,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             generation.error = None
             generation.completed_at = datetime.now(UTC)
             await session.commit()
+            written_output_path = None
             logger.info(
                 "Generation %s completed with %s%s%s%s",
                 generation_id,
@@ -486,6 +507,32 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             )
     except Exception as exc:
         logger.exception("Generation %s failed", generation_id)
+        if written_output_path is not None:
+            try:
+                if await _output_commit_visible(generation_id, written_output_path):
+                    logger.warning(
+                        "Generation %s output commit is visible after an ambiguous commit error; "
+                        "keeping the completed output.",
+                        generation_id,
+                    )
+                    return
+            except Exception:
+                # A failed verification means commit state is unknown. Never delete/refund when
+                # PostgreSQL may already have committed the completed generation.
+                logger.exception(
+                    "Could not verify ambiguous output commit for generation %s; "
+                    "leaving it for stale-job reconciliation.",
+                    generation_id,
+                )
+                return
+            try:
+                await LocalMediaStorage(settings).unlink(written_output_path)
+            except Exception:
+                logger.exception(
+                    "Failed to remove orphaned output for generation %s at %s",
+                    generation_id,
+                    written_output_path,
+                )
         await _mark_failed_and_refund(generation_id, exc)
 
 

@@ -296,9 +296,18 @@ async def test_yookassa_payment_webhook_credits_once_and_full_refund(monkeypatch
 
         monkeypatch.setattr(YooKassaProvider, "get_payment", get_payment)
         webhook = {"event": "payment.succeeded", "object": {"id": remote_payment_id}}
-        first = await client.post("/api/v1/billing/webhooks/yookassa", json=webhook)
+        webhook_headers = {"x-real-ip": "185.71.76.1"}
+        first = await client.post(
+            "/api/v1/billing/webhooks/yookassa",
+            headers=webhook_headers,
+            json=webhook,
+        )
         assert first.status_code == 200, first.text
-        second = await client.post("/api/v1/billing/webhooks/yookassa", json=webhook)
+        second = await client.post(
+            "/api/v1/billing/webhooks/yookassa",
+            headers=webhook_headers,
+            json=webhook,
+        )
         assert second.status_code == 200, second.text
 
         me_paid = await client.get("/api/v1/me", headers=headers)

@@ -34,6 +34,8 @@ def test_project_context_response_preserves_known_legacy_fields_and_ignores_inte
 def test_project_context_write_contract_remains_strict() -> None:
     with pytest.raises(ValidationError):
         ProjectContext.model_validate({"smoke_test": True})
+    with pytest.raises(ValidationError):
+        ProjectContext.model_validate({"design_session": {}})
 
     context = ProjectContext.model_validate(
         {"garage_cars": 1, "pool": False, "attic": True, "glazed_veranda": False}

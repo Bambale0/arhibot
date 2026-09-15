@@ -62,6 +62,19 @@ def test_invalid_image_is_rejected(settings: Settings) -> None:
 
 
 @pytest.mark.asyncio
+async def test_local_media_storage_unlink_is_idempotent(settings: Settings) -> None:
+    storage = LocalMediaStorage(settings)
+    relative = "users/abc/2026/09/orphan.png"
+    await storage.write(relative, b"payload")
+    target = storage.absolute_path(relative)
+    assert target.exists()
+
+    await storage.unlink(relative)
+    assert not target.exists()
+    await storage.unlink(relative)
+
+
+@pytest.mark.asyncio
 async def test_local_media_storage_writes_under_root(settings: Settings) -> None:
     storage = LocalMediaStorage(settings)
     relative = "users/abc/2026/09/file.png"

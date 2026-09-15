@@ -17,6 +17,30 @@ class RateLimitService:
     def __init__(self, session: AsyncSession) -> None:
         self.repository = OperationalSettingsRepository(session)
 
+    @staticmethod
+    async def enforce_fixed(
+        namespace: str,
+        identity: str,
+        *,
+        limit: int,
+        window_seconds: int = 60,
+    ) -> None:
+        if limit < 1 or window_seconds < 1:
+            raise ValueError("Rate limit and window must be positive.")
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+        bucket = int(time.time() // window_seconds)
+        key = f"auroom:rate:fixed:{namespace}:{digest}:{bucket}"
+        count = await redis_client.incr(key)
+        if count == 1:
+            await redis_client.expire(key, window_seconds + 10)
+        if count > limit:
+            raise AppError(
+                type="rate_limit_exceeded",
+                title="Too many requests",
+                status=429,
+                detail="Request limit exceeded. Please retry shortly.",
+            )
+
     async def enforce(self, kind: RateLimitKind, identity: str) -> None:
         settings = await self.repository.get()
         if settings is None:

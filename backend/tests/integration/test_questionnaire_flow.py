@@ -19,6 +19,7 @@ from app.db.models.users import AuthIdentity, User  # noqa: E402
 from app.db.session import get_session_factory  # noqa: E402
 from app.domain.assets.enums import AssetPurpose, AssetType  # noqa: E402
 from app.domain.generations.enums import GenerationStatus, GenerationType  # noqa: E402
+from app.domain.generations.provenance import GenerationOrigin  # noqa: E402
 from app.domain.users.enums import AuthProvider, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
 from app.questionnaires.generation_prompt import build_questionnaire_generation_prompt  # noqa: E402
@@ -228,7 +229,7 @@ async def test_initial_concept_pricing_uses_control_plane_for_regular_user() -> 
         configured = await client.put(
             "/api/v1/admin/operations",
             headers=admin_headers,
-            json={"starter_credits": 5, "initial_concept_credits": 2},
+            json={"starter_credits": 20, "initial_concept_credits": 2},
         )
         assert configured.status_code == 200, configured.text
         assert configured.json()["initial_concept_credits"] == 2
@@ -241,7 +242,7 @@ async def test_initial_concept_pricing_uses_control_plane_for_regular_user() -> 
         assert price.status_code == 200, price.text
 
         tokens, headers = await _register_user(client, display_name="Initial Pricing User")
-        assert tokens["user"]["credits_balance"] == 5
+        assert tokens["user"]["credits_balance"] == 20
         catalog = (await client.get("/api/v1/questionnaires", headers=headers)).json()
         house_definition = next(
             item for item in catalog["questionnaires"] if item["key"] == "eskez-doma"
@@ -299,9 +300,45 @@ async def test_initial_concept_pricing_uses_control_plane_for_regular_user() -> 
 
         me = await client.get("/api/v1/me", headers=headers)
         assert me.status_code == 200, me.text
-        assert me.json()["credits_balance"] == 3
+        assert me.json()["credits_balance"] == 18
+
+        stored = await client.get(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+        )
+        assert stored.status_code == 200, stored.text
+        bound_session = stored.json()["session"]
+        assert bound_session["initial_generation_id"] == body["id"]
+
+        forged_clear = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json={**bound_session, "initial_generation_id": None},
+        )
+        assert forged_clear.status_code == 422, forged_clear.text
+
+        regenerated = await client.post(
+            f"/api/v1/projects/{project_id}/questionnaire-generation",
+            headers=headers,
+        )
+        assert regenerated.status_code == 202, regenerated.text
+        regenerated_body = regenerated.json()
+        assert regenerated_body["id"] != body["id"]
+        assert regenerated_body["credits_charged"] == 7
+
+        me_after_regeneration = await client.get("/api/v1/me", headers=headers)
+        assert me_after_regeneration.status_code == 200, me_after_regeneration.text
+        assert me_after_regeneration.json()["credits_balance"] == 11
+
+        rebound = await client.get(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+        )
+        assert rebound.status_code == 200, rebound.text
+        assert rebound.json()["session"]["initial_generation_id"] == regenerated_body["id"]
 
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, body["id"])
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, regenerated_body["id"])
 
         reset = await client.put(
             "/api/v1/admin/operations",
@@ -412,15 +449,31 @@ async def test_questionnaire_generation_prompt_is_built_only_on_server_and_hidde
             == str(generation_id)
         )
 
-        duplicate = await client.post(
+        regenerated = await client.post(
             f"/api/v1/projects/{project_id}/questionnaire-generation",
             headers=headers,
         )
-        assert duplicate.status_code == 422, duplicate.text
+        assert regenerated.status_code == 202, regenerated.text
+        assert regenerated.json()["id"] != str(generation_id)
 
         fetched = await client.get(f"/api/v1/generations/{generation_id}", headers=headers)
         assert fetched.status_code == 200, fetched.text
-        assert fetched.json()["prompt"] == generation.prompt
+        assert fetched.json()["prompt"] == ""
+
+        listed = await client.get(
+            f"/api/v1/generations?project_id={project_id}",
+            headers=headers,
+        )
+        assert listed.status_code == 200, listed.text
+        listed_item = next(item for item in listed.json()["items"] if item["id"] == str(generation_id))
+        assert listed_item["prompt"] == ""
+
+        repeated = await client.post(
+            f"/api/v1/generations/{generation_id}/repeat",
+            headers=headers,
+        )
+        assert repeated.status_code == 409, repeated.text
+        assert repeated.json()["type"] == "generation_repeat_not_supported"
 
         questionnaire_fetched = await client.get(
             f"/api/v1/projects/{project_id}/questionnaire-generation/{generation_id}",
@@ -429,6 +482,7 @@ async def test_questionnaire_generation_prompt_is_built_only_on_server_and_hidde
         assert questionnaire_fetched.status_code == 200, questionnaire_fetched.text
         assert "prompt" not in questionnaire_fetched.json()
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, regenerated.json()["id"])
 
 
 @pytest.mark.asyncio
@@ -986,6 +1040,7 @@ async def test_questionnaire_catalog_session_and_application_flow() -> None:
             type=GenerationType.MASTER_PLAN,
             status=GenerationStatus.COMPLETED,
             prompt=canonical_house_prompt,
+            origin=GenerationOrigin.QUESTIONNAIRE.value,
             credits_charged=0,
         )
         async with get_session_factory()() as session:
@@ -1182,6 +1237,7 @@ async def test_second_accepted_object_requires_masked_composition() -> None:
                 accepted_before=[],
                 input_asset_present=False,
             ),
+            origin=GenerationOrigin.QUESTIONNAIRE.value,
             credits_charged=0,
         )
         async with get_session_factory()() as session:
@@ -1259,6 +1315,7 @@ async def test_second_accepted_object_requires_masked_composition() -> None:
             type=GenerationType.MASTER_PLAN,
             status=GenerationStatus.COMPLETED,
             prompt=canonical_bath_prompt,
+            origin=GenerationOrigin.QUESTIONNAIRE.value,
             credits_charged=0,
             composition_mode="replace",
         )
@@ -1321,6 +1378,7 @@ async def test_second_accepted_object_requires_masked_composition() -> None:
             type=GenerationType.MASTER_PLAN,
             status=GenerationStatus.COMPLETED,
             prompt="forged questionnaire prompt",
+            origin=GenerationOrigin.QUESTIONNAIRE.value,
             credits_charged=0,
             composition_mode="masked_edit",
             edit_region=bath_region,
@@ -1345,6 +1403,7 @@ async def test_second_accepted_object_requires_masked_composition() -> None:
             type=GenerationType.FACADE,
             status=GenerationStatus.COMPLETED,
             prompt=canonical_bath_prompt,
+            origin=GenerationOrigin.QUESTIONNAIRE.value,
             credits_charged=0,
             composition_mode="masked_edit",
             edit_region=bath_region,
@@ -1411,6 +1470,7 @@ async def test_second_accepted_object_requires_masked_composition() -> None:
             type=GenerationType.MASTER_PLAN,
             status=GenerationStatus.COMPLETED,
             prompt=canonical_bath_prompt,
+            origin=GenerationOrigin.QUESTIONNAIRE.value,
             credits_charged=0,
             composition_mode="masked_edit",
             edit_region=bath_region,

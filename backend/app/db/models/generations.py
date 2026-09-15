@@ -10,6 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.domain.generations.provenance import GenerationOrigin
 
 
 class Generation(Base):
@@ -18,6 +19,7 @@ class Generation(Base):
         Index("ix_generations_user_created", "user_id", "created_at"),
         Index("ix_generations_project_created", "project_id", "created_at"),
         Index("ix_generations_status_created", "status", "created_at"),
+        Index("ix_generations_origin_created", "origin", "created_at"),
         Index("ix_generations_telegram_delivery", "telegram_delivery_status", "completed_at"),
     )
 
@@ -53,6 +55,12 @@ class Generation(Base):
         server_default=GenerationStatus.QUEUED.value,
     )
     prompt: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    origin: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=GenerationOrigin.GENERIC.value,
+        server_default=GenerationOrigin.GENERIC.value,
+    )
     credits_charged: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     model_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     fallback_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")

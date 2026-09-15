@@ -52,6 +52,10 @@ class LocalMediaStorage:
         await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread(target.write_bytes, data)
 
+    async def unlink(self, relative_path: str) -> None:
+        target = self.absolute_path(relative_path)
+        await asyncio.to_thread(target.unlink, missing_ok=True)
+
     def _signature(self, relative_path: str, expires: int) -> str:
         payload = f"{expires}\n{relative_path}".encode()
         return hmac.new(self.signing_key, payload, hashlib.sha256).hexdigest()

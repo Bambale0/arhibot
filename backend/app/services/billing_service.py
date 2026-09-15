@@ -22,6 +22,7 @@ from app.schemas.billing import (
     BillingPackageResponse,
     BillingPaymentResponse,
     BillingSummaryResponse,
+    YooKassaWebhookNotification,
 )
 from app.services.credit_service import CreditService
 
@@ -455,12 +456,9 @@ class BillingService:
             payment.status = "succeeded"
         await self.session.commit()
 
-    async def handle_webhook(self, payload: dict) -> None:
-        event = str(payload.get("event") or "")
-        obj = payload.get("object") or {}
-        provider_id = str(obj.get("id") or "").strip()
-        if not provider_id:
-            return
+    async def handle_webhook(self, payload: YooKassaWebhookNotification) -> None:
+        event = payload.event
+        provider_id = payload.object.id
         if not self.provider_configured:
             raise YooKassaError("YooKassa webhook received while billing is not configured")
         provider = YooKassaProvider(self.settings)

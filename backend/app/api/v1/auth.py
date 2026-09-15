@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.request_identity import request_ip
 from app.core.config import Settings, get_settings
 from app.db.session import get_db_session
 from app.repositories.users import UserRepository
@@ -30,16 +31,6 @@ def _disable_auth_response_caching(response: Response) -> None:
     response.headers["Pragma"] = "no-cache"
 
 
-def _request_identity(request: Request) -> str:
-    real_ip = (request.headers.get("x-real-ip") or "").strip()
-    if real_ip:
-        return real_ip
-    forwarded = (request.headers.get("x-forwarded-for") or "").split(",", maxsplit=1)[0].strip()
-    if forwarded:
-        return forwarded
-    return request.client.host if request.client else "unknown"
-
-
 @router.post(
     "/register",
     operation_id="registerUser",
@@ -51,11 +42,16 @@ def _request_identity(request: Request) -> str:
 )
 async def register_user(
     payload: RegisterRequest,
+    request: Request,
     response: Response,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> TokenPairResponse:
-    await RateLimitService(session).enforce("auth", f"register:{payload.email.strip().lower()}")
+    limiter = RateLimitService(session)
+    source_ip = request_ip(request)
+    email = payload.email.strip().lower()
+    await limiter.enforce("auth", f"register:ip:{source_ip}")
+    await limiter.enforce("auth", f"register:email:{email}")
     _disable_auth_response_caching(response)
     return await _service(session, settings).register(
         payload.email, payload.password, payload.display_name
@@ -72,11 +68,16 @@ async def register_user(
 )
 async def login_user(
     payload: LoginRequest,
+    request: Request,
     response: Response,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> TokenPairResponse:
-    await RateLimitService(session).enforce("auth", f"login:{payload.email.strip().lower()}")
+    limiter = RateLimitService(session)
+    source_ip = request_ip(request)
+    email = payload.email.strip().lower()
+    await limiter.enforce("auth", f"login:ip:{source_ip}")
+    await limiter.enforce("auth", f"login:email:{email}")
     _disable_auth_response_caching(response)
     return await _service(session, settings).login(payload.email, payload.password)
 
@@ -103,7 +104,7 @@ async def authenticate_with_telegram(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> TokenPairResponse:
-    await RateLimitService(session).enforce("auth", f"telegram:{_request_identity(request)}")
+    await RateLimitService(session).enforce("auth", f"telegram:{request_ip(request)}")
     _disable_auth_response_caching(response)
     return await _service(session, settings).authenticate_telegram(payload.init_data)
 

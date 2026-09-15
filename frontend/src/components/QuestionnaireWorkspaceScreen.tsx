@@ -213,6 +213,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const [customOption, setCustomOption] = useState(false)
   const [busy, setBusy] = useState(false)
   const [generationInFlight, setGenerationInFlight] = useState(false)
+  const [editingInitialAnswers, setEditingInitialAnswers] = useState(false)
   const [ideaPublication, setIdeaPublication] = useState<AdminIdea|null|undefined>(undefined)
   const [ideaPublishing, setIdeaPublishing] = useState(false)
   const [error, setError] = useState<string|null>(null)
@@ -282,6 +283,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const active = current && session ? visible.find((q) => q.id === session.current_question_id) || null : null
   const currentGenerationId = current && session && session.region_mode == null ? session.generation_ids[current.key] || null : null
   const initialGenerationId = session?.initial_generation_id || null
+  const showInitialGeneration = Boolean(initialGenerationId && !editingInitialAnswers)
   const latestAcceptedKey = session?.accepted_objects.at(-1) || null
   const latestAcceptedGenerationId = session?.scene_generation_id
     || (latestAcceptedKey ? session?.generation_ids[latestAcceptedKey] || null : null)
@@ -336,7 +338,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }, [project.id, current?.key, currentGenerationId])
 
   useEffect(() => {
-    if (!session?.initial_concept_mode || session.initial_concept_accepted || !initialGenerationId || current || generationInFlight) return
+    if (!session?.initial_concept_mode || session.initial_concept_accepted || !initialGenerationId || editingInitialAnswers || current || generationInFlight) return
     let stopped = false
     setGenerationInFlight(true)
     setBusy(true)
@@ -356,7 +358,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       }
     })()
     return () => { stopped = true }
-  }, [project.id, initialGenerationId, session?.initial_concept_accepted, current?.key])
+  }, [project.id, initialGenerationId, session?.initial_concept_accepted, current?.key, editingInitialAnswers])
 
   useEffect(() => {
     if (!session || busy || generationInFlight || session.current_object || !sceneAsset) return
@@ -439,6 +441,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }
 
   function initialGenerationCostLabel() {
+    if (initialGenerationId) return generationCostLabel()
     if (!generationCost) return 'Стоимость уточняется'
     if (!generationCost.is_available) return 'Генерация временно недоступна'
     return generationCost.initial_credits === 0 ? 'Бесплатно' : `${generationCost.initial_credits} кр.`
@@ -460,7 +463,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }
 
   async function editInitialQuestion(key:string, questionId:string) {
-    if (!session || session.initial_concept_accepted || session.initial_generation_id) return
+    if (!session || session.initial_concept_accepted || !editingInitialAnswers) return
     await persist({ ...session, current_object:key, current_question_id:questionId })
   }
 
@@ -690,6 +693,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     try {
       const queued = await createQuestionnaireGeneration(project.id)
       const queuedState = { ...next, initial_generation_id:queued.id }
+      setEditingInitialAnswers(false)
       setSession(queuedState)
       syncProject(queuedState)
       const completed = await poll(queued)
@@ -705,8 +709,8 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   async function reopenInitialAnswers() {
     if (!session) return
-    const saved = await persist({ ...session, initial_generation_id:null })
-    if (saved) setRenderOutput(null)
+    setEditingInitialAnswers(true)
+    setRenderOutput(null)
   }
 
   async function acceptInitial() {
@@ -1006,13 +1010,13 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     if (session.initial_concept_mode && !session.initial_concept_accepted) {
       const remaining = session.selected_objects.filter((key) => !session.survey_completed_objects.includes(key))
       const ready = remaining.length === 0
-      return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{initialGenerationId ? 'Общая концепция' : 'Опрос проекта'}</span></header><section className="questionnaire-card">
-        <span className="eyebrow">{initialGenerationId ? 'ОДНА ГЕНЕРАЦИЯ' : ready ? 'ПРОВЕРЬТЕ ТЗ' : 'СОБИРАЕМ ОБЩЕЕ ТЗ'}</span>
-        <h1>{initialGenerationId ? 'Общая концепция участка' : ready ? 'Всё готово к одной генерации' : 'Заполните параметры всех объектов'}</h1>
-        <p>{initialGenerationId ? 'В одной визуализации собраны все объекты, выбранные до старта проекта.' : 'AuRoom сначала соберёт полное ТЗ по всем выбранным объектам и только потом сделает одну общую визуализацию участка.'}</p>
+      return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{showInitialGeneration ? 'Общая концепция' : 'Опрос проекта'}</span></header><section className="questionnaire-card">
+        <span className="eyebrow">{showInitialGeneration ? 'ОБЩАЯ КОНЦЕПЦИЯ' : ready ? 'ПРОВЕРЬТЕ ТЗ' : 'СОБИРАЕМ ОБЩЕЕ ТЗ'}</span>
+        <h1>{showInitialGeneration ? 'Общая концепция участка' : ready ? (initialGenerationId ? 'Измените ТЗ для новой генерации' : 'Всё готово к одной генерации') : 'Заполните параметры всех объектов'}</h1>
+        <p>{showInitialGeneration ? 'В одной визуализации собраны все объекты, выбранные до старта проекта.' : initialGenerationId ? 'Измените нужные параметры. Следующая общая генерация оплачивается по обычной стоимости master plan.' : 'AuRoom сначала соберёт полное ТЗ по всем выбранным объектам и только потом сделает одну общую визуализацию участка.'}</p>
         {renderOutput && <div className="questionnaire-result"><img src={renderOutput.url} alt="Общая концепция участка"/></div>}
-        {!initialGenerationId && <div className="questionnaire-options">{session.selected_objects.map((key) => <button key={key} className={`questionnaire-option ${session.survey_completed_objects.includes(key) ? 'selected' : ''}`} disabled={busy} onClick={() => void chooseObject(key)}><span>{session.survey_completed_objects.includes(key) ? '✓ ' : ''}{definitions.get(key)?.title || key}</span><i/></button>)}</div>}
-        {ready && !initialGenerationId && <div className="questionnaire-answer-review">{session.selected_objects.map((key) => {
+        {!showInitialGeneration && <div className="questionnaire-options">{session.selected_objects.map((key) => <button key={key} className={`questionnaire-option ${session.survey_completed_objects.includes(key) ? 'selected' : ''}`} disabled={busy} onClick={() => void chooseObject(key)}><span>{session.survey_completed_objects.includes(key) ? '✓ ' : ''}{definitions.get(key)?.title || key}</span><i/></button>)}</div>}
+        {ready && !showInitialGeneration && <div className="questionnaire-answer-review">{session.selected_objects.map((key) => {
           const definition = definitions.get(key)
           const answers = session.answers[key] || {}
           if (!definition) return null
@@ -1023,9 +1027,9 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
           )
           return <details key={key}><summary>{definition.title}</summary>{answered.map((question) => <button type="button" key={question.id} disabled={busy} onClick={() => void editInitialQuestion(key, question.id)}><span>{question.text}</span><strong>{text(answers[question.id])}</strong></button>)}</details>
         })}</div>}
-        {ready && !initialGenerationId && <><p className="region-hint">Одна общая генерация · {initialGenerationCostLabel()}</p><div className="questionnaire-actions"><button className="primary-button" disabled={busy || generationCost?.is_available === false} onClick={() => void generateInitial(session)}>Создать общую концепцию</button></div></>}
-        {initialGenerationId && renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void acceptInitial()}>Принять концепцию</button><button className="secondary-button" disabled={busy} onClick={() => void reopenInitialAnswers()}>Изменить ТЗ · новая генерация</button></div>}
-        {(busy || generationInFlight) && initialGenerationId && !renderOutput && <div className="empty-inline">Создаём весь участок одной генерацией…</div>}
+        {ready && !showInitialGeneration && <><p className="region-hint">Одна общая генерация · {initialGenerationCostLabel()}</p><div className="questionnaire-actions"><button className="primary-button" disabled={busy || generationCost?.is_available === false} onClick={() => void generateInitial(session)}>Создать общую концепцию</button></div></>}
+        {showInitialGeneration && renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void acceptInitial()}>Принять концепцию</button><button className="secondary-button" disabled={busy} onClick={() => void reopenInitialAnswers()}>Изменить ТЗ · новая генерация</button></div>}
+        {(busy || generationInFlight) && showInitialGeneration && !renderOutput && <div className="empty-inline">Создаём весь участок одной генерацией…</div>}
         {error && <div className="banner-error">{error}</div>}
       </section></main>
     }

@@ -22,6 +22,7 @@ from app.db.models.projects import Project  # noqa: E402
 from app.db.models.users import User  # noqa: E402
 from app.db.session import get_session_factory  # noqa: E402
 from app.domain.generations.enums import GenerationType  # noqa: E402
+from app.domain.generations.provenance import GenerationOrigin  # noqa: E402
 from app.domain.users.enums import UserRole  # noqa: E402
 from app.main import app  # noqa: E402
 from app.providers.nexus import NexusImageProvider, NexusImageResult  # noqa: E402
@@ -327,6 +328,7 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
                     "AUROOM_ADMIN_SANDBOX_V1\n"
                     '{"prompt":"Duplicate hidden project","params":{"aspect_ratio":"1:1"}}'
                 ),
+                origin=GenerationOrigin.ADMIN_SANDBOX.value,
                 credits_charged=0,
                 model_name="nexus/duplicate-model",
                 telegram_delivery_status="skipped",

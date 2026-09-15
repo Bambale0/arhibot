@@ -29,7 +29,6 @@ class ProjectContext(BaseModel):
     attic: bool | None = None
     glazed_veranda: bool | None = None
     architecture: ArchitecturePackage | None = None
-    design_session: DesignSession | None = None
 
 
 class ProjectContextResponse(ProjectContext):
@@ -44,6 +43,7 @@ class ProjectContextResponse(ProjectContext):
 
     model_config = ConfigDict(extra="ignore")
     questionnaire_draft: bool | None = None
+    design_session: DesignSession | None = None
 
 
 class ProjectCreateRequest(BaseModel):

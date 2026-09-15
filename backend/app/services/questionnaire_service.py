@@ -17,6 +17,11 @@ from app.db.models.questionnaires import (
 )
 from app.db.models.users import User
 from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.domain.generations.provenance import (
+    GenerationOrigin,
+    INITIAL_CONCEPT_PROMPT_PREFIX,
+    QUESTIONNAIRE_PROMPT_PREFIX,
+)
 from app.questionnaires.application_brief import build_application_brief
 from app.questionnaires.generation_prompt import (
     build_initial_concept_prompt,
@@ -281,7 +286,11 @@ class QuestionnaireService:
         generation_id = current.generation_ids.get(current.pending_removal_object)
         if generation_id is not None:
             generation = await self.generations.get_owned(generation_id, user.id)
-            if generation is not None and '"operation":"remove_object"' in generation.prompt:
+            if (
+                generation is not None
+                and generation.origin == GenerationOrigin.QUESTIONNAIRE.value
+                and '"operation":"remove_object"' in generation.prompt
+            ):
                 raise self._invalid(
                     "A started removal generation cannot be cancelled; review or retry the iteration."
                 )
@@ -325,6 +334,8 @@ class QuestionnaireService:
             or generation.output_asset_id is None
         ):
             raise self._invalid("The object-removal generation is not completed.")
+        if generation.origin != GenerationOrigin.QUESTIONNAIRE.value:
+            raise self._invalid("Object removal must come from the questionnaire pipeline.")
         if generation.type != GenerationType.MASTER_PLAN:
             raise self._invalid("Object removal must use master_plan generation.")
         if generation.input_asset_id != current.scene_asset_id:
@@ -404,8 +415,6 @@ class QuestionnaireService:
         definitions = {item["key"]: item for item in catalog["questionnaires"]}
 
         if session.initial_concept_mode and not session.initial_concept_accepted:
-            if session.initial_generation_id is not None:
-                raise self._invalid("The initial concept already has a generation task.")
             if set(session.survey_completed_objects) != set(session.selected_objects):
                 raise self._invalid(
                     "Complete every selected questionnaire before creating the initial concept."
@@ -557,13 +566,6 @@ class QuestionnaireService:
             )
         bound = current.model_copy(deep=True)
         if object_key == "__initial__":
-            if current.initial_generation_id is not None:
-                raise AppError(
-                    type="questionnaire_generation_exists",
-                    title="Initial concept already exists",
-                    status=409,
-                    detail="The initial concept already has a generation task.",
-                )
             bound.initial_generation_id = generation_id
         else:
             refinement = bool(
@@ -610,7 +612,9 @@ class QuestionnaireService:
             raise self._invalid("The initial concept source does not match the project source.")
         if generation.composition_mode != "replace":
             raise self._invalid("The initial concept must use replace composition.")
-        if not generation.prompt.startswith("AUROOM_INITIAL_CONCEPT_V1"):
+        if generation.origin != GenerationOrigin.QUESTIONNAIRE.value:
+            raise self._invalid("The initial concept must come from the questionnaire pipeline.")
+        if not generation.prompt.startswith(INITIAL_CONCEPT_PROMPT_PREFIX):
             raise self._invalid("The initial concept generation prompt is not canonical.")
 
         accepted = current.model_copy(deep=True)
@@ -843,11 +847,10 @@ class QuestionnaireService:
             and payload.survey_completed_objects != previous.survey_completed_objects
         ):
             raise cls._invalid("The initial object snapshot is immutable after acceptance.")
-        if (
-            previous.initial_concept_accepted
-            and payload.initial_generation_id != previous.initial_generation_id
-        ):
-            raise cls._invalid("The accepted initial generation cannot change.")
+        if payload.initial_generation_id != previous.initial_generation_id:
+            raise cls._invalid(
+                "The initial generation id is server-owned and cannot change through session updates."
+            )
         if payload.initial_concept_mode != previous.initial_concept_mode:
             raise cls._invalid("The questionnaire flow mode cannot change after project creation.")
         if payload.removed_objects != previous.removed_objects:
@@ -1054,6 +1057,18 @@ class QuestionnaireService:
                 raise self._invalid(
                     f"Generation for {object_key} must belong to the current project."
                 )
+            legacy_bound_unchanged = bool(
+                previous is not None
+                and previous.session_id == payload.session_id
+                and previous.generation_ids.get(object_key) == generation.id
+            )
+            if (
+                generation.origin != GenerationOrigin.QUESTIONNAIRE.value
+                and not legacy_bound_unchanged
+            ):
+                raise self._invalid(
+                    f"Generation for {object_key} must come from the questionnaire pipeline."
+                )
             resolved[object_key] = generation
 
         for object_key in payload.accepted_objects:
@@ -1222,7 +1237,7 @@ class QuestionnaireService:
                     previous is not None
                     and previous.generation_ids.get(new_key) == generation.id
                     and payload.answers.get(new_key, {}) == previous.answers.get(new_key, {})
-                    and not generation.prompt.startswith("AUROOM_RENDER_SPEC_V1")
+                    and not generation.prompt.startswith(QUESTIONNAIRE_PROMPT_PREFIX)
                 )
                 if not legacy_bound_unchanged:
                     raise self._invalid(

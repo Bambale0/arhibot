@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class BillingPackageResponse(BaseModel):
@@ -11,6 +11,19 @@ class BillingPackageResponse(BaseModel):
     credits: int
     amount: Decimal
     currency: str = "RUB"
+
+
+class YooKassaWebhookObject(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class YooKassaWebhookNotification(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    event: str = Field(min_length=1, max_length=80)
+    object: YooKassaWebhookObject
 
 
 class BillingPaymentCreate(BaseModel):
