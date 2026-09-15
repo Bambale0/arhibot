@@ -24,6 +24,8 @@ compile_runtime() {
     --strip-extras \
     --no-header \
     --resolver=backtracking \
+    --rebuild \
+    --pip-args="--no-cache-dir" \
     --index-url=https://pypi.org/simple
 }
 
@@ -36,6 +38,8 @@ compile_build() {
     --strip-extras \
     --no-header \
     --resolver=backtracking \
+    --rebuild \
+    --pip-args="--no-cache-dir" \
     --index-url=https://pypi.org/simple \
     --build-deps-for=wheel \
     --only-build-deps
