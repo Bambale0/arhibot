@@ -44,9 +44,12 @@ class AdminOperationsService:
             ),
             starter_credits=row.starter_credits if row else 0,
             initial_concept_credits=row.initial_concept_credits if row else 0,
-            media_retention_days=row.media_retention_days if row else None,
-            backup_interval_hours=row.backup_interval_hours if row else None,
-            backup_retention_days=row.backup_retention_days if row else None,
+            media_retention_days=row.media_retention_days if row else 30,
+            backup_interval_hours=row.backup_interval_hours if row else 24,
+            backup_retention_days=row.backup_retention_days if row else 14,
+            media_min_free_bytes=(
+                row.media_min_free_bytes if row else 2 * 1024 * 1024 * 1024
+            ),
             updated_at=row.updated_at if row else None,
         )
 
