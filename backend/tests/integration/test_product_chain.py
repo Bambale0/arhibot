@@ -447,6 +447,7 @@ async def test_payment_create_retry_reuses_uncertain_idempotence_key(
 
         attempt_keys: list[str] = []
         local_ids: list[str] = []
+        provider_requests: list[dict] = []
 
         async def create_payment(
             self,
@@ -461,6 +462,16 @@ async def test_payment_create_retry_reuses_uncertain_idempotence_key(
         ):  # noqa: ANN001, ARG001
             attempt_keys.append(idempotence_key)
             local_ids.append(metadata["billing_payment_id"])
+            provider_requests.append(
+                {
+                    "amount": str(amount),
+                    "currency": currency,
+                    "description": description,
+                    "return_url": return_url,
+                    "metadata": dict(metadata),
+                    "receipt": receipt,
+                }
+            )
             if len(attempt_keys) == 1:
                 raise YooKassaError("provider response lost", ambiguous=True)
             return YooKassaPayment(
@@ -482,6 +493,18 @@ async def test_payment_create_retry_reuses_uncertain_idempotence_key(
         assert first.status_code == 503, first.text
         assert first.json()["type"] == "payment_provider_uncertain"
 
+        changed = await client.patch(
+            f"/api/v1/admin/tariffs/{tariff.json()['id']}",
+            headers=headers,
+            json={
+                "name": "Changed after uncertain create",
+                "credits": 99,
+                "amount": "150.00",
+                "is_active": False,
+            },
+        )
+        assert changed.status_code == 200, changed.text
+
         second = await client.post(
             "/api/v1/billing/payments",
             headers=headers,
@@ -492,6 +515,9 @@ async def test_payment_create_retry_reuses_uncertain_idempotence_key(
         assert len(attempt_keys) == 2
         assert attempt_keys[0] == attempt_keys[1]
         assert local_ids[0] == local_ids[1] == second.json()["id"]
+        assert provider_requests[0] == provider_requests[1]
+        assert provider_requests[1]["amount"] == "90.00"
+        assert provider_requests[1]["description"] == "AuRoom: Retry-safe pack"
 
         payments = await client.get("/api/v1/admin/payments", headers=headers)
         assert payments.status_code == 200, payments.text
