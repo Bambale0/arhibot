@@ -127,7 +127,7 @@ test('admin AI history survives reload and an older still can be reused for 360'
       open_button_text:null,start_command_description:null,app_command_description:null,updated_at:null,
     })
     if(path.endsWith('/admin/operations')) return json(route,{
-      auth_rate_limit_per_minute:null,generation_rate_limit_per_minute:null,payment_rate_limit_per_minute:null,registration_rate_limit_per_day:20,yookassa_webhook_rate_limit_per_minute:120,
+      auth_rate_limit_per_minute:null,generation_rate_limit_per_minute:null,payment_rate_limit_per_minute:null,registration_rate_limit_per_day:20,yookassa_webhook_rate_limit_per_minute:120,asset_upload_rate_limit_per_minute:12,asset_max_retained_count_per_user:200,asset_max_retained_bytes_per_user:536870912,
       starter_credits:0,initial_concept_credits:0,media_retention_days:null,backup_interval_hours:null,backup_retention_days:null,updated_at:null,
     })
     if(path.endsWith('/admin/audit')) return json(route,[])
