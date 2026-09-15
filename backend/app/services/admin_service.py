@@ -14,7 +14,7 @@ from app.core.errors import AppError
 from app.db.models.admin import BillingPlan, BroadcastCampaign, GenerationPromptTemplate, GenerationRuntimeSettings, IdeaTemplate
 from app.db.models.projects import Project
 from app.db.models.users import User
-from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.domain.generations.enums import GenerationOrigin, GenerationStatus, GenerationType
 from app.domain.users.enums import UserRole
 from app.repositories.admin import AdminRepository
 from app.repositories.billing import BillingRepository
@@ -359,6 +359,7 @@ class AdminService:
             ),
             before_commit=bind_sandbox,
             skip_pricing=True,
+            origin=GenerationOrigin.ADMIN_SANDBOX,
         )
         self.repository.add_audit(
             actor_user_id=actor.id,
@@ -395,7 +396,7 @@ class AdminService:
                 status=409,
                 detail="Complete an AI Sandbox image before building an orbit loop.",
             )
-        if not source.prompt.startswith(ADMIN_SANDBOX_PROMPT_PREFIX):
+        if source.origin != GenerationOrigin.ADMIN_SANDBOX.value:
             raise AppError(
                 type="orbit_source_not_sandbox",
                 title="Orbit source must be an AI Sandbox image",
@@ -444,6 +445,7 @@ class AdminService:
             ),
             before_commit=bind_orbit,
             skip_pricing=True,
+            origin=GenerationOrigin.ADMIN_ORBIT,
         )
         self.repository.add_audit(
             actor_user_id=actor.id,
