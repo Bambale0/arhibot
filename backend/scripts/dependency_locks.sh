@@ -24,9 +24,6 @@ compile_runtime() {
     --strip-extras \
     --no-header \
     --resolver=backtracking \
-    --upgrade \
-    --rebuild \
-    --pip-args="--no-cache-dir" \
     --index-url=https://pypi.org/simple
 }
 
@@ -39,9 +36,6 @@ compile_build() {
     --strip-extras \
     --no-header \
     --resolver=backtracking \
-    --upgrade \
-    --rebuild \
-    --pip-args="--no-cache-dir" \
     --index-url=https://pypi.org/simple \
     --build-deps-for=wheel \
     --only-build-deps
@@ -56,6 +50,8 @@ fi
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "${tmp_dir}"' EXIT
+cp requirements.lock "${tmp_dir}/requirements.lock"
+cp requirements-build.lock "${tmp_dir}/requirements-build.lock"
 compile_runtime "${tmp_dir}/requirements.lock"
 compile_build "${tmp_dir}/requirements-build.lock"
 cmp requirements.lock "${tmp_dir}/requirements.lock"
