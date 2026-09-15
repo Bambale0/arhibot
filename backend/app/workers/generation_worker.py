@@ -16,7 +16,7 @@ from app.db.models.generations import Generation
 from app.db.models.projects import Project
 from app.db.session import dispose_engine, get_session_factory
 from app.domain.assets.enums import AssetPurpose, AssetType
-from app.domain.generations.enums import GenerationStatus
+from app.domain.generations.enums import GenerationOrigin, GenerationStatus
 from app.image_compositor import compose_masked_edit
 from app.image_orbit import build_orbit_animation
 from app.prompt_builders.generation import build_generation_prompt
@@ -49,8 +49,10 @@ def _admin_sandbox_request(
     generation: Generation,
     project: Project,
 ) -> tuple[str, str, dict[str, object]] | None:
-    if not generation.prompt.startswith(ADMIN_SANDBOX_PROMPT_PREFIX):
+    if generation.origin != GenerationOrigin.ADMIN_SANDBOX.value:
         return None
+    if not generation.prompt.startswith(ADMIN_SANDBOX_PROMPT_PREFIX):
+        raise ValueError("Admin sandbox generation has an invalid envelope.")
     if not bool((project.context or {}).get("admin_ai_sandbox")):
         raise ValueError("Admin sandbox envelope is outside the sandbox project.")
     model_name = (generation.model_name or "").strip()
@@ -83,8 +85,10 @@ def _admin_orbit_request(
     generation: Generation,
     project: Project,
 ) -> tuple[str, str, dict[str, object], int, int] | None:
-    if not generation.prompt.startswith(ADMIN_ORBIT_PROMPT_PREFIX):
+    if generation.origin != GenerationOrigin.ADMIN_ORBIT.value:
         return None
+    if not generation.prompt.startswith(ADMIN_ORBIT_PROMPT_PREFIX):
+        raise ValueError("Admin orbit generation has an invalid envelope.")
     if not bool((project.context or {}).get("admin_ai_sandbox")):
         raise ValueError("Admin orbit envelope is outside the sandbox project.")
     if generation.input_asset_id is None:
@@ -267,12 +271,32 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             sandbox_request is not None or orbit_request is not None
         )
         admin_repository = AdminRepository(session)
-        initial_concept_generation = generation.prompt.startswith(
+        initial_concept_generation = (
+            generation.origin == GenerationOrigin.QUESTIONNAIRE_INITIAL.value
+        )
+        questionnaire_generation = generation.origin in {
+            GenerationOrigin.QUESTIONNAIRE.value,
+            GenerationOrigin.QUESTIONNAIRE_INITIAL.value,
+        }
+        if initial_concept_generation and not generation.prompt.startswith(
             INITIAL_CONCEPT_PROMPT_PREFIX
-        )
-        questionnaire_generation = generation.prompt.startswith(
-            QUESTIONNAIRE_PROMPT_PREFIXES
-        )
+        ):
+            await session.rollback()
+            await _mark_failed_and_refund(
+                generation_id,
+                "Initial questionnaire generation has an invalid server prompt.",
+            )
+            return
+        if (
+            generation.origin == GenerationOrigin.QUESTIONNAIRE.value
+            and not generation.prompt.startswith(QUESTIONNAIRE_PROMPT_PREFIX)
+        ):
+            await session.rollback()
+            await _mark_failed_and_refund(
+                generation_id,
+                "Questionnaire generation has an invalid server prompt.",
+            )
+            return
         runtime = (
             None
             if admin_internal_generation
@@ -475,7 +499,20 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             generation.status = GenerationStatus.COMPLETED
             generation.error = None
             generation.completed_at = datetime.now(UTC)
-            await session.commit()
+            try:
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                target = asset_service.storage.absolute_path(relative_path)
+                try:
+                    if target.exists():
+                        await asyncio.to_thread(target.unlink)
+                except OSError:
+                    logger.exception(
+                        "Could not remove orphaned generation output %s after DB failure",
+                        relative_path,
+                    )
+                raise
             logger.info(
                 "Generation %s completed with %s%s%s%s",
                 generation_id,
