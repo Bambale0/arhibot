@@ -89,7 +89,7 @@ PY
   offsite_remote=$(read_backup_value AUROOM_OFFSITE_BACKUP_REMOTE)
   age_recipient=$(read_backup_value AUROOM_BACKUP_AGE_RECIPIENT)
   if [[ -n "${offsite_remote}" || -n "${age_recipient}" ]]; then
-    AUROOM_OFFSITE_BACKUP_REMOTE="${offsite_remote}"     AUROOM_BACKUP_AGE_RECIPIENT="${age_recipient}"       "${script_dir}/export_offsite_backup.sh" "${target}"
+    AUROOM_OFFSITE_BACKUP_REMOTE="${offsite_remote}"     AUROOM_BACKUP_AGE_RECIPIENT="${age_recipient}"       bash "${script_dir}/export_offsite_backup.sh" "${target}"
   fi
 fi
 
