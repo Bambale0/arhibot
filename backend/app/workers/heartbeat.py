@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from secrets import token_hex
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from time import time
@@ -13,6 +14,22 @@ logger = logging.getLogger(__name__)
 HEARTBEAT_PREFIX = 'auroom:worker_heartbeat:'
 HEARTBEAT_INTERVAL_SECONDS = 10
 HEARTBEAT_TTL_SECONDS = 60
+WORKER_LEASE_PREFIX = 'auroom:worker_lease:'
+WORKER_LEASE_TTL_SECONDS = 45
+WORKER_LEASE_REFRESH_SECONDS = 10
+
+
+def _normalized_worker_name(worker_name: str) -> str:
+    normalized = worker_name.strip().lower().replace("_", "-")
+    if not normalized or any(
+        char not in "abcdefghijklmnopqrstuvwxyz0123456789-" for char in normalized
+    ):
+        raise ValueError("Invalid worker name")
+    return normalized
+
+
+def worker_lease_key(worker_name: str) -> str:
+    return f'{WORKER_LEASE_PREFIX}{_normalized_worker_name(worker_name)}'
 
 
 def heartbeat_key(worker_name: str) -> str:
@@ -61,6 +78,78 @@ async def _heartbeat_loop(worker_name: str) -> None:
         except Exception:
             logger.exception('Worker heartbeat update failed for %s', worker_name)
         await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+
+
+async def _worker_lease_loop(
+    worker_name: str,
+    owner_token: str,
+    owner_task: asyncio.Task,
+) -> None:
+    key = worker_lease_key(worker_name)
+    refresh_script = """
+    if redis.call('get', KEYS[1]) == ARGV[1] then
+      return redis.call('expire', KEYS[1], ARGV[2])
+    end
+    return 0
+    """
+    while True:
+        await asyncio.sleep(WORKER_LEASE_REFRESH_SECONDS)
+        try:
+            refreshed = await redis_client.eval(
+                refresh_script,
+                1,
+                key,
+                owner_token,
+                WORKER_LEASE_TTL_SECONDS,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('Worker lease refresh failed for %s', worker_name)
+            owner_task.cancel()
+            return
+        if int(refreshed or 0) != 1:
+            logger.error('Worker lease was lost for %s; stopping worker', worker_name)
+            owner_task.cancel()
+            return
+
+
+@asynccontextmanager
+async def worker_singleton(worker_name: str) -> AsyncIterator[None]:
+    key = worker_lease_key(worker_name)
+    owner_token = token_hex(24)
+    acquired = await redis_client.set(
+        key,
+        owner_token,
+        ex=WORKER_LEASE_TTL_SECONDS,
+        nx=True,
+    )
+    if not acquired:
+        raise RuntimeError(f'Another {worker_name} worker already owns the singleton lease')
+
+    owner_task = asyncio.current_task()
+    if owner_task is None:
+        raise RuntimeError('Worker singleton requires a running asyncio task')
+    lease_task = asyncio.create_task(
+        _worker_lease_loop(worker_name, owner_token, owner_task),
+        name=f'lease:{worker_name}',
+    )
+    try:
+        yield
+    finally:
+        lease_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await lease_task
+        release_script = """
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+          return redis.call('del', KEYS[1])
+        end
+        return 0
+        """
+        try:
+            await redis_client.eval(release_script, 1, key, owner_token)
+        except Exception:
+            logger.warning('Could not release worker lease for %s', worker_name, exc_info=True)
 
 
 @asynccontextmanager

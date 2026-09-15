@@ -63,20 +63,29 @@ async function json(route:Route,data:unknown,status=200){
   await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)})
 }
 
-async function prepare(page:Page) {
+async function prepare(
+  page:Page,
+  ideas:unknown[] = [],
+  onIdeasPage?: (limit:number, offset:number) => void,
+) {
   await page.addInitScript(() => {
-    localStorage.setItem('auroom.access_token','fullscreen-e2e')
-    localStorage.setItem('auroom.refresh_token','fullscreen-e2e-refresh')
-    window.Telegram = { WebApp: { initData:'' } }
+    sessionStorage.setItem('auroom.access_token','fullscreen-e2e')
+    window.Telegram = { WebApp: { initData:'', requestFullscreen:() => {} } }
   })
   await page.route('**/api/v1/**',async route => {
     const request=route.request(), path=new URL(request.url()).pathname, method=request.method()
     if(path.endsWith('/me')&&method==='GET') return json(route,user)
     if(path.endsWith('/projects')&&method==='GET') return json(route,{items:[],next_cursor:null,has_more:false})
     if(path.endsWith(`/projects/${projectId}`)&&method==='GET') return json(route,project)
-    if(path.endsWith('/ideas')&&method==='GET') return json(route,[])
+    if(path.endsWith('/ideas')&&method==='GET') {
+      const url=new URL(request.url())
+      const limit=Number(url.searchParams.get('limit')||50)
+      const offset=Number(url.searchParams.get('offset')||0)
+      onIdeasPage?.(limit,offset)
+      return json(route,ideas.slice(offset,offset+limit))
+    }
     if(path.endsWith('/questionnaires')&&method==='GET') return json(route,catalog)
-    if(path.endsWith('/questionnaire-generation-cost')&&method==='GET') return json(route,{generation_type:'master_plan',initial_credits:0,credits:1,is_available:true})
+    if(path.endsWith('/questionnaire-generation-cost')&&method==='GET') return json(route,{generation_type:'master_plan',initial_credits:0,credits:1,initial_offer_available:true,is_available:true})
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='GET') return json(route,{session})
     return json(route,{type:'mock_unhandled',detail:`${method} ${path}`},404)
   })
@@ -94,17 +103,90 @@ async function installFullscreenCounters(page:Page) {
 }
 
 test('fullscreen control stays visible on Ideas where AppFrame topbar is hidden',async({page})=>{
+  await page.setViewportSize({width:1024,height:720})
   await prepare(page)
   await page.goto('/?section=ideas')
   const button=page.getByRole('button',{name:'Открыть на весь экран'})
   await expect(button).toBeVisible()
+  await expect(button.locator('svg')).toHaveCount(1)
+  const box=await button.boundingBox()
+  expect(box?.width).toBe(40)
+  expect(box?.height).toBe(40)
   await installFullscreenCounters(page)
   await button.click()
   await expect.poll(() => page.evaluate(() => (window as unknown as { __expandCalls:number }).__expandCalls)).toBe(1)
   await expect.poll(() => page.evaluate(() => (window as unknown as { __fullscreenCalls:number }).__fullscreenCalls)).toBe(1)
 })
 
+test('fullscreen control is hidden on mobile Telegram viewports',async({page})=>{
+  await page.setViewportSize({width:390,height:844})
+  await prepare(page)
+  await page.goto('/?section=ideas')
+  await expect(page.locator('.telegram-fullscreen-button')).toBeHidden()
+})
+
+test('Ideas slideshow requests only active and neighboring previews',async({page})=>{
+  const tinyPng=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64')
+  const requested:string[]=[]
+  await page.route('**/perf/**',async route=>{
+    requested.push(new URL(route.request().url()).pathname)
+    await route.fulfill({status:200,contentType:'image/png',body:tinyPng})
+  })
+  const ideas=Array.from({length:4},(_,index)=>({
+    id:`idea-${index}`,
+    title:`Idea ${index}`,
+    category:'Performance',
+    generation_type:'master_plan',
+    image_url:`/perf/original-${index}.png`,
+    preview_url:`/perf/preview-${index}.webp`,
+    objects:[],
+    selected_objects:[],
+    published_at:now,
+    is_saved:false,
+  }))
+  await prepare(page,ideas)
+  await page.goto('/?section=ideas')
+
+  await expect(page.locator('[data-feed-index="0"]')).toBeVisible()
+  await expect.poll(()=>requested.includes('/perf/preview-0.webp')).toBe(true)
+  await expect.poll(()=>requested.includes('/perf/preview-1.webp')).toBe(true)
+  expect(requested).not.toContain('/perf/preview-2.webp')
+  expect(requested).not.toContain('/perf/preview-3.webp')
+  expect(requested.some(path=>path.includes('/perf/original-'))).toBe(false)
+
+  await page.locator('[data-feed-index="2"]').scrollIntoViewIfNeeded()
+  await expect.poll(()=>requested.includes('/perf/preview-2.webp')).toBe(true)
+  await expect.poll(()=>requested.includes('/perf/preview-3.webp')).toBe(true)
+  expect(requested.some(path=>path.includes('/perf/original-'))).toBe(false)
+})
+
+test('Ideas feed loads metadata in pages instead of mounting the full catalog up front',async({page})=>{
+  const requests:{limit:number;offset:number}[]=[]
+  const ideas=Array.from({length:18},(_,index)=>({
+    id:`paged-idea-${index}`,
+    title:`Paged idea ${index}`,
+    category:'Performance',
+    generation_type:'master_plan',
+    image_url:null,
+    preview_url:null,
+    objects:[],
+    selected_objects:[],
+    published_at:now,
+    is_saved:false,
+  }))
+  await prepare(page,ideas,(limit,offset)=>requests.push({limit,offset}))
+  await page.goto('/?section=ideas')
+
+  await expect(page.locator('[data-feed-index]')).toHaveCount(12)
+  expect(requests[0]).toEqual({limit:12,offset:0})
+
+  await page.locator('[data-feed-index="9"]').scrollIntoViewIfNeeded()
+  await expect.poll(()=>requests.some((item)=>item.limit===12&&item.offset===12)).toBe(true)
+  await expect(page.locator('[data-feed-index]')).toHaveCount(18)
+})
+
 test('fullscreen control stays visible inside standalone questionnaire flow',async({page})=>{
+  await page.setViewportSize({width:1024,height:720})
   await prepare(page)
   await page.goto(`/?project=${projectId}`)
   await expect(page.getByText('Заполните параметры всех объектов')).toBeVisible()

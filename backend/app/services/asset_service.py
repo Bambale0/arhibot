@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import hmac
+import shutil
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +19,7 @@ from app.db.models.assets import Asset
 from app.db.models.users import User
 from app.domain.assets.enums import AssetPurpose, AssetType, AssetUploadPurpose
 from app.repositories.assets import AssetRepository
+from app.repositories.operations import OperationalSettingsRepository
 from app.repositories.projects import ProjectRepository
 from app.schemas.assets import AssetResponse
 
@@ -52,8 +54,52 @@ class LocalMediaStorage:
         await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread(target.write_bytes, data)
 
-    def _signature(self, relative_path: str, expires: int) -> str:
-        payload = f"{expires}\n{relative_path}".encode()
+    def feed_preview_path(self, relative_path: str) -> Path:
+        source = self.absolute_path(relative_path)
+        return source.with_name(f".{source.name}.feed.webp")
+
+    @staticmethod
+    def _build_feed_preview(source: Path, target: Path) -> None:
+        if target.is_file():
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temp = target.with_name(f"{target.name}.{uuid4().hex}.tmp")
+        try:
+            with Image.open(source) as opened:
+                opened.thumbnail(
+                    (1280, 1280),
+                    Image.Resampling.LANCZOS,
+                    reducing_gap=3.0,
+                )
+                image = opened.convert("RGB")
+                image.save(
+                    temp,
+                    format="WEBP",
+                    quality=72,
+                    method=5,
+                )
+            temp.replace(target)
+        finally:
+            if temp.exists():
+                temp.unlink()
+
+    async def ensure_feed_preview(self, relative_path: str) -> Path:
+        source = self.absolute_path(relative_path)
+        if not source.is_file():
+            raise FileNotFoundError(source)
+        target = self.feed_preview_path(relative_path)
+        if not target.is_file():
+            await asyncio.to_thread(self._build_feed_preview, source, target)
+        return target
+
+    def _signature(
+        self,
+        relative_path: str,
+        expires: int,
+        *,
+        variant: str | None = None,
+    ) -> str:
+        payload = f"{expires}\n{relative_path}\n{variant or 'original'}".encode()
         return hmac.new(self.signing_key, payload, hashlib.sha256).hexdigest()
 
     def signed_url(self, relative_path: str, *, ttl_seconds: int | None = None) -> str:
@@ -71,10 +117,42 @@ class LocalMediaStorage:
     def signed_telegram_photo_url(
         self, relative_path: str, *, ttl_seconds: int | None = None
     ) -> str:
-        return f"{self.signed_url(relative_path, ttl_seconds=ttl_seconds)}&preview=telegram"
+        self.absolute_path(relative_path)
+        ttl = ttl_seconds if ttl_seconds is not None else self.url_ttl_seconds
+        expires = int(time.time()) + max(1, int(ttl))
+        signature = self._signature(relative_path, expires, variant="telegram")
+        encoded_path = quote(relative_path, safe="/")
+        return (
+            f"{self.public_base_url}/api/v1/media/{encoded_path}"
+            f"?expires={expires}&signature={signature}&preview=telegram"
+        )
+
+    def signed_feed_preview_url(
+        self, relative_path: str, *, ttl_seconds: int | None = None
+    ) -> str:
+        ttl = max(300, int(ttl_seconds or self.url_ttl_seconds))
+        now = int(time.time())
+        # Use an hourly-or-longer bucket so routine feed refreshes keep the same
+        # preview URL. The response itself is cached for only 15 minutes, while
+        # the signed low-resolution preview remains valid long enough to reuse it.
+        bucket_seconds = max(3600, ttl)
+        expires = ((now // bucket_seconds) + 2) * bucket_seconds
+        self.absolute_path(relative_path)
+        signature = self._signature(relative_path, expires, variant="feed")
+        encoded_path = quote(relative_path, safe="/")
+        return (
+            f"{self.public_base_url}/api/v1/media/{encoded_path}"
+            f"?expires={expires}&signature={signature}&preview=feed"
+        )
 
     def verify_signature(
-        self, relative_path: str, *, expires: int, signature: str, now: int | None = None
+        self,
+        relative_path: str,
+        *,
+        expires: int,
+        signature: str,
+        now: int | None = None,
+        variant: str | None = None,
     ) -> bool:
         try:
             self.absolute_path(relative_path)
@@ -83,7 +161,7 @@ class LocalMediaStorage:
         current = int(time.time()) if now is None else int(now)
         if expires < current:
             return False
-        expected = self._signature(relative_path, expires)
+        expected = self._signature(relative_path, expires, variant=variant)
         return hmac.compare_digest(expected, signature)
 
 
@@ -177,8 +255,13 @@ class AssetService:
         purpose: AssetUploadPurpose,
         project_id: UUID | None,
     ) -> AssetResponse:
+        # Lock the owner before the project so project deletion and upload admission
+        # always acquire rows in the same order.
+        await self.repository.lock_owner(user.id)
         if project_id is not None:
-            project = await self.project_repository.get_owned(project_id, user.id)
+            project = await self.project_repository.get_owned(
+                project_id, user.id, for_update=True
+            )
             if not project:
                 raise AppError(
                     type="project_not_found",
@@ -188,6 +271,56 @@ class AssetService:
                 )
 
         image = self._validate_image(data)
+
+        # Serialize quota checks for one user so parallel uploads cannot race past
+        # the retained-media budget. Soft-deleted rows still count until the file
+        # is physically removed by retention cleanup because they still consume disk.
+        operations = await OperationalSettingsRepository(self.repository.session).get()
+        max_count = (
+            operations.asset_max_retained_count_per_user if operations is not None else 200
+        )
+        max_bytes = (
+            operations.asset_max_retained_bytes_per_user
+            if operations is not None
+            else 512 * 1024 * 1024
+        )
+        retained_count, retained_bytes = await self.repository.retained_usage(user.id)
+        if retained_count >= max_count or retained_bytes + len(image.data) > max_bytes:
+            raise AppError(
+                type="asset_storage_quota_exceeded",
+                title="Media storage quota exceeded",
+                status=409,
+                detail=(
+                    "The retained media limit for this account has been reached. "
+                    "Remove old media and wait for retention cleanup, or contact support."
+                ),
+                meta={
+                    "retained_count": retained_count,
+                    "retained_bytes": retained_bytes,
+                    "max_count": max_count,
+                    "max_bytes": max_bytes,
+                },
+            )
+
+        min_free_bytes = (
+            operations.media_min_free_bytes
+            if operations is not None
+            else 2 * 1024 * 1024 * 1024
+        )
+        probe = self.storage.root if self.storage.root.exists() else self.storage.root.parent
+        free_bytes = (await asyncio.to_thread(shutil.disk_usage, probe)).free
+        if free_bytes - len(image.data) < min_free_bytes:
+            raise AppError(
+                type="media_storage_low",
+                title="Media storage temporarily unavailable",
+                status=507,
+                detail="AuRoom is preserving emergency disk headroom. Try again later.",
+                meta={
+                    "free_bytes": free_bytes,
+                    "required_free_bytes": min_free_bytes,
+                },
+            )
+
         asset_id = uuid4()
         now = datetime.now(UTC)
         relative_path = (

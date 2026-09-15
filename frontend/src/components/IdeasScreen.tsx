@@ -9,6 +9,20 @@ const BookmarkIcon = ({ filled, ...props }: IconProps & { filled?: boolean }) =>
 const ShareIcon = (props: IconProps) => <svg {...iconProps} {...props}><path d="M12 4v11M8 8l4-4 4 4"/><path d="M5 12v7h14v-7"/></svg>
 
 const LEGACY_SAVED_KEY = 'auroom.saved_ideas'
+const IDEAS_PAGE_SIZE = 12
+const IDEAS_SEARCH_LIMIT = 100
+
+function appendUniqueIdeas(current: Idea[], incoming: Idea[]) {
+  if (!incoming.length) return current
+  const seen = new Set(current.map((item) => item.id))
+  const next = [...current]
+  for (const item of incoming) {
+    if (seen.has(item.id)) continue
+    seen.add(item.id)
+    next.push(item)
+  }
+  return next
+}
 
 function legacySavedIds(): string[] {
   try {
@@ -46,6 +60,8 @@ function WorkCard({
   onSave,
   onShare,
   onStart,
+  active,
+  shouldLoadImage,
 }: {
   idea: Idea
   index: number
@@ -55,8 +71,25 @@ function WorkCard({
   onSave: () => void
   onShare: () => void
   onStart: () => void
+  active: boolean
+  shouldLoadImage: boolean
 }) {
   const summary = idea.objects.flatMap((object) => object.answers.map((item) => ({ ...item, objectTitle: object.title })))
+  const [previewFailed, setPreviewFailed] = useState(false)
+  const [imageReady, setImageReady] = useState(false)
+  const imageUrl = idea.preview_url
+    ? (previewFailed ? (active ? idea.image_url : null) : idea.preview_url)
+    : (active ? idea.image_url : null)
+  const hasMedia = Boolean(idea.preview_url || idea.image_url)
+
+  useEffect(() => {
+    setPreviewFailed(false)
+    setImageReady(false)
+  }, [idea.id, idea.image_url, idea.preview_url])
+
+  useEffect(() => {
+    setImageReady(false)
+  }, [imageUrl])
   return <article id={`idea-${idea.id}`} className="idea-feed-card idea-work-card" data-idea-id={idea.id}>
     <div className="idea-feed-copy">
       <div className="idea-feed-kicker"><span>Идеи AuRoom</span><b>{index + 1} / {total}</b></div>
@@ -64,8 +97,25 @@ function WorkCard({
       <p>{idea.category}</p>
     </div>
 
-    <div className="idea-work-stage">
-      {idea.image_url ? <img src={idea.image_url} alt={idea.title} loading={index === 0 ? 'eager' : 'lazy'} /> : <div className="idea-work-empty">Работа временно недоступна</div>}
+    <div className={`idea-work-stage ${imageReady ? 'media-ready' : 'media-pending'}`}>
+      {imageUrl && shouldLoadImage ? (
+        <img
+          src={imageUrl}
+          alt={idea.title}
+          loading="eager"
+          decoding="async"
+          fetchPriority={active ? 'high' : 'low'}
+          draggable={false}
+          onLoad={() => setImageReady(true)}
+          onError={() => {
+            if (idea.preview_url && !previewFailed) {
+              setPreviewFailed(true)
+              return
+            }
+            setImageReady(false)
+          }}
+        />
+      ) : hasMedia ? <div className="idea-work-image-placeholder" aria-hidden="true" /> : <div className="idea-work-empty">Работа временно недоступна</div>}
       <div className="idea-work-actions">
         <button type="button" disabled={saving} className={idea.is_saved ? 'active' : ''} aria-label={idea.is_saved ? 'Убрать из сохранённых' : 'Сохранить'} onClick={onSave}><BookmarkIcon filled={idea.is_saved}/></button>
         <button type="button" aria-label="Поделиться" onClick={onShare}><ShareIcon /></button>
@@ -99,15 +149,30 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
   const [searchOpen, setSearchOpen] = useState(false)
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set())
   const [startingId, setStartingId] = useState<string | null>(null)
+  const [activeIndex, setActiveIndex] = useState(0)
+  const [nextOffset, setNextOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const feedRef = useRef<HTMLDivElement>(null)
+  const pageRequestInFlight = useRef(false)
+  const searchHydrated = useRef(false)
   const sharedIdeaId = new URLSearchParams(window.location.search).get('idea')
   const sharedScrollDone = useRef(false)
 
   useEffect(() => {
     let cancelled = false
+    searchHydrated.current = false
+    sharedScrollDone.current = false
+    setLoading(true)
+    setError(null)
+    setActiveIndex(0)
+    setNextOffset(0)
+    setHasMore(false)
+
     void (async () => {
       try {
         const [items, shared] = await Promise.all([
-          api.listIdeas(),
+          api.listIdeas(IDEAS_PAGE_SIZE, 0),
           sharedIdeaId
             ? api.getIdea(sharedIdeaId).catch((err) => {
                 if (err instanceof api.ApiError && err.status === 404) return null
@@ -116,23 +181,26 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
             : Promise.resolve(null),
         ])
         if (cancelled) return
-        let nextItems = shared && !items.some((item) => item.id === shared.id) ? [shared, ...items] : items
+        const nextItems = shared && !items.some((item) => item.id === shared.id) ? [shared, ...items] : items
+        setIdeas(nextItems)
+        setNextOffset(items.length)
+        setHasMore(items.length === IDEAS_PAGE_SIZE)
+        if (sharedIdeaId && !shared) setError('Эта работа больше не опубликована в Идеях.')
 
         const legacyIds = legacySavedIds()
         if (legacyIds.length) {
-          const migrated = await Promise.allSettled(legacyIds.map((ideaId) => api.saveIdea(ideaId)))
-          if (cancelled) return
-          const savedIds = new Set(
-            migrated.flatMap((result, index) => result.status === 'fulfilled' ? [legacyIds[index]] : []),
-          )
-          nextItems = nextItems.map((item) => savedIds.has(item.id) ? { ...item, is_saved:true } : item)
-          const remaining = legacyIds.filter((ideaId) => !savedIds.has(ideaId))
-          if (remaining.length) localStorage.setItem(LEGACY_SAVED_KEY, JSON.stringify(remaining))
-          else localStorage.removeItem(LEGACY_SAVED_KEY)
+          void (async () => {
+            const migrated = await Promise.allSettled(legacyIds.map((ideaId) => api.saveIdea(ideaId)))
+            if (cancelled) return
+            const savedIds = new Set(
+              migrated.flatMap((result, index) => result.status === 'fulfilled' ? [legacyIds[index]] : []),
+            )
+            setIdeas((current) => current.map((item) => savedIds.has(item.id) ? { ...item, is_saved:true } : item))
+            const remaining = legacyIds.filter((ideaId) => !savedIds.has(ideaId))
+            if (remaining.length) localStorage.setItem(LEGACY_SAVED_KEY, JSON.stringify(remaining))
+            else localStorage.removeItem(LEGACY_SAVED_KEY)
+          })()
         }
-
-        setIdeas(nextItems)
-        if (sharedIdeaId && !shared) setError('Эта работа больше не опубликована в Идеях.')
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Не удалось загрузить работы')
       } finally {
@@ -150,11 +218,84 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
     sharedScrollDone.current = true
   }, [loading, sharedIdeaId])
 
+  const loadMore = useCallback(async () => {
+    if (loading || !hasMore || pageRequestInFlight.current) return
+    pageRequestInFlight.current = true
+    setLoadingMore(true)
+    try {
+      const page = await api.listIdeas(IDEAS_PAGE_SIZE, nextOffset)
+      setIdeas((current) => appendUniqueIdeas(current, page))
+      setNextOffset((current) => current + page.length)
+      setHasMore(page.length === IDEAS_PAGE_SIZE)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось загрузить следующие работы')
+    } finally {
+      pageRequestInFlight.current = false
+      setLoadingMore(false)
+    }
+  }, [hasMore, loading, nextOffset])
+
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     if (!normalized) return ideas
     return ideas.filter((idea) => searchableText(idea).includes(normalized))
   }, [ideas, query])
+  const searchActive = Boolean(query.trim())
+
+  useEffect(() => {
+    if (loading || !searchActive || searchHydrated.current || pageRequestInFlight.current || !hasMore) return
+    let cancelled = false
+    pageRequestInFlight.current = true
+    setLoadingMore(true)
+    void (async () => {
+      try {
+        const page = await api.listIdeas(IDEAS_SEARCH_LIMIT, 0)
+        if (cancelled) return
+        setIdeas((current) => {
+          const shared = sharedIdeaId ? current.find((item) => item.id === sharedIdeaId) : null
+          return shared && !page.some((item) => item.id === shared.id) ? [shared, ...page] : page
+        })
+        setNextOffset(page.length)
+        setHasMore(page.length === IDEAS_SEARCH_LIMIT)
+        searchHydrated.current = true
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Не удалось загрузить работы для поиска')
+      } finally {
+        pageRequestInFlight.current = false
+        setLoadingMore(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [hasMore, loading, searchActive, sharedIdeaId])
+
+  useEffect(() => {
+    if (loading || searchActive || !hasMore || !filtered.length) return
+    if (activeIndex < Math.max(filtered.length - 4, 0)) return
+    void loadMore()
+  }, [activeIndex, filtered.length, hasMore, loadMore, loading, searchActive])
+
+  useEffect(() => {
+    setActiveIndex((current) => Math.min(current, Math.max(filtered.length - 1, 0)))
+  }, [filtered.length])
+
+  useEffect(() => {
+    const root = feedRef.current
+    if (!root || !filtered.length) return
+    const nodes = Array.from(root.querySelectorAll<HTMLElement>('[data-feed-index]'))
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0]
+        if (!visible || visible.intersectionRatio < 0.45) return
+        const nextIndex = Number((visible.target as HTMLElement).dataset.feedIndex)
+        if (Number.isInteger(nextIndex)) setActiveIndex(nextIndex)
+      },
+      { root, threshold: [0.45, 0.6, 0.8] },
+    )
+    nodes.forEach((node) => observer.observe(node))
+    return () => observer.disconnect()
+  }, [filtered])
 
   const toggleSaved = useCallback(async (idea: Idea) => {
     if (savingIds.has(idea.id)) return
@@ -211,14 +352,16 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
 
     {error && <div className="ideas-floating-error banner-error">{error}<button type="button" onClick={() => setError(null)}>Закрыть</button></div>}
     {loading ? <div className="ideas-feed-status"><div className="idea-feed-skeleton" /></div> : filtered.length ? (
-      <div className="ideas-feed">
-        {filtered.map((idea, index) => <div className="idea-feed-snap" key={idea.id}>
+      <div className="ideas-feed" ref={feedRef} aria-busy={loadingMore}>
+        {filtered.map((idea, index) => <div className="idea-feed-snap" key={idea.id} data-feed-index={index}>
           <WorkCard
             idea={idea}
             index={index}
             total={filtered.length}
             saving={savingIds.has(idea.id)}
             starting={startingId === idea.id}
+            active={index === activeIndex}
+            shouldLoadImage={Math.abs(index - activeIndex) <= 1}
             onSave={() => void toggleSaved(idea)}
             onShare={() => void shareIdea(idea)}
             onStart={() => void startFromIdea(idea)}

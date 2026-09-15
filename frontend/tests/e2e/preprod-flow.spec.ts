@@ -57,7 +57,7 @@ async function json(route:Route,data:unknown,status=200){await route.fulfill({st
 
 test.beforeEach(async ({page})=>{
   resetState()
-  await page.addInitScript(()=>{localStorage.setItem('auroom.access_token','e2e');localStorage.setItem('auroom.refresh_token','e2e-refresh')})
+  await page.addInitScript(()=>{sessionStorage.setItem('auroom.access_token','e2e')})
   await page.route('**/api/v1/**',async route=>{
     const req=route.request(), path=new URL(req.url()).pathname, method=req.method()
     if(path.endsWith('/me')&&method==='GET') return json(route,user)
@@ -65,7 +65,7 @@ test.beforeEach(async ({page})=>{
     if(path.endsWith(`/projects/${projectId}`)&&method==='GET') return json(route,project)
     for(let i=0;i<generationIds.length;i++) if(path.endsWith(`/generations/${generationIds[i]}`)&&method==='GET') return json(route,generation(i))
     if(path.endsWith('/questionnaires')&&method==='GET') return json(route,catalog)
-    if(path.endsWith('/questionnaire-generation-cost')&&method==='GET') return json(route,{generation_type:'master_plan',initial_credits:0,credits:1,is_available:true})
+    if(path.endsWith('/questionnaire-generation-cost')&&method==='GET') return json(route,{generation_type:'master_plan',initial_credits:0,credits:1,initial_offer_available:true,is_available:true})
     if(path.endsWith('/questionnaire-projects')&&method==='POST') return json(route,project,201)
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='GET') return json(route,{session})
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='PUT') {session=JSON.parse(req.postData()||'{}');project={...project,context:{...project.context,design_session:session}};return json(route,{session})}
@@ -222,19 +222,12 @@ test('house terrace floor options follow selected storeys in the UI',async({page
 })
 
 
-test('fullscreen control calls Telegram expand and requestFullscreen',async({page})=>{
-  await page.goto('/')
-  await page.evaluate(()=>{
-    const target=window as typeof window & { __expandCalls?:number; __fullscreenCalls?:number }
-    if (!window.Telegram?.WebApp) throw new Error('Telegram WebApp SDK is unavailable')
-    window.Telegram.WebApp.expand=()=>{target.__expandCalls=(target.__expandCalls||0)+1}
-    window.Telegram.WebApp.requestFullscreen=()=>{target.__fullscreenCalls=(target.__fullscreenCalls||0)+1}
+test('fullscreen control stays hidden in the mobile product flow',async({page})=>{
+  await page.addInitScript(()=>{
+    window.Telegram = { WebApp: { initData:'', requestFullscreen:()=>{} } }
   })
-  await page.getByRole('button',{name:'Открыть на весь экран'}).click()
-  await expect.poll(()=>page.evaluate(()=>({
-    expand:(window as typeof window & {__expandCalls?:number}).__expandCalls||0,
-    fullscreen:(window as typeof window & {__fullscreenCalls?:number}).__fullscreenCalls||0,
-  }))).toEqual({expand:1,fullscreen:1})
+  await page.goto('/')
+  await expect(page.locator('.telegram-fullscreen-button')).toBeHidden()
 })
 
 

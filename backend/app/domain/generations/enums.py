@@ -13,3 +13,12 @@ class GenerationStatus(StrEnum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class GenerationOrigin(StrEnum):
+    GENERIC = "generic"
+    LEGACY_INTERNAL = "legacy_internal"
+    QUESTIONNAIRE = "questionnaire"
+    QUESTIONNAIRE_INITIAL = "questionnaire_initial"
+    ADMIN_SANDBOX = "admin_sandbox"
+    ADMIN_ORBIT = "admin_orbit"

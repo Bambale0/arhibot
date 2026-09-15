@@ -23,8 +23,13 @@ async def list_ideas(
     session: DbSession,
     settings: Settings = Depends(get_settings),
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0, le=10_000)] = 0,
 ) -> list[PublicIdeaPublicationResponse]:
-    return await IdeaService(session, settings).list_public(user, limit=limit)
+    return await IdeaService(session, settings).list_public(
+        user,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post(

@@ -24,7 +24,7 @@ import type {
   GenerationMode,
   Idea,
   Project,
-  ProjectContext,
+  ProjectContextWrite,
   ProjectList,
   TokenPair,
   User,
@@ -38,8 +38,10 @@ const LEGACY_ACCESS_KEY = 'archiai.access_token'
 const LEGACY_REFRESH_KEY = 'archiai.refresh_token'
 
 function migrateLegacyTokens() {
-  if (!localStorage.getItem(ACCESS_KEY) && localStorage.getItem(LEGACY_ACCESS_KEY)) localStorage.setItem(ACCESS_KEY, localStorage.getItem(LEGACY_ACCESS_KEY) || '')
+  const previousAccess = localStorage.getItem(ACCESS_KEY) || localStorage.getItem(LEGACY_ACCESS_KEY)
+  if (!sessionStorage.getItem(ACCESS_KEY) && previousAccess) sessionStorage.setItem(ACCESS_KEY, previousAccess)
   if (!localStorage.getItem(REFRESH_KEY) && localStorage.getItem(LEGACY_REFRESH_KEY)) localStorage.setItem(REFRESH_KEY, localStorage.getItem(LEGACY_REFRESH_KEY) || '')
+  localStorage.removeItem(ACCESS_KEY)
   localStorage.removeItem(LEGACY_ACCESS_KEY)
   localStorage.removeItem(LEGACY_REFRESH_KEY)
 }
@@ -55,9 +57,21 @@ export class ApiError extends Error {
 }
 
 type RequestOptions = RequestInit & { auth?: boolean; retryAuth?: boolean }
-function saveTokens(pair: TokenPair) { localStorage.setItem(ACCESS_KEY, pair.access_token); localStorage.setItem(REFRESH_KEY, pair.refresh_token) }
-export function clearTokens() { localStorage.removeItem(ACCESS_KEY); localStorage.removeItem(REFRESH_KEY); localStorage.removeItem(LEGACY_ACCESS_KEY); localStorage.removeItem(LEGACY_REFRESH_KEY) }
-export function hasStoredSession() { return Boolean(localStorage.getItem(ACCESS_KEY) || localStorage.getItem(REFRESH_KEY)) }
+function saveTokens(pair: TokenPair) {
+  sessionStorage.setItem(ACCESS_KEY, pair.access_token)
+  // New browser sessions keep refresh credentials only in the HttpOnly cookie.
+  // Keep the localStorage key solely as a one-time migration source for old clients.
+  localStorage.removeItem(ACCESS_KEY)
+  localStorage.removeItem(REFRESH_KEY)
+}
+export function clearTokens() {
+  sessionStorage.removeItem(ACCESS_KEY)
+  localStorage.removeItem(ACCESS_KEY)
+  localStorage.removeItem(REFRESH_KEY)
+  localStorage.removeItem(LEGACY_ACCESS_KEY)
+  localStorage.removeItem(LEGACY_REFRESH_KEY)
+}
+export function hasStoredSession() { return Boolean(sessionStorage.getItem(ACCESS_KEY) || localStorage.getItem(REFRESH_KEY)) }
 
 async function parseError(response: Response): Promise<ApiError> {
   let body: Record<string, unknown> = {}
@@ -72,25 +86,68 @@ async function parseError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, detail || title, detail, errorType)
 }
 
-let refreshPromise: Promise<TokenPair> | null = null
-async function refreshSession(): Promise<TokenPair> {
-  const token = localStorage.getItem(REFRESH_KEY)
-  if (!token) throw new ApiError(401, 'Сессия закончилась')
+let refreshPromise: Promise<void> | null = null
+
+type BrowserLockManager = {
+  request<T>(name: string, callback: () => Promise<T>): Promise<T>
+}
+
+async function refreshSession(): Promise<void> {
   if (!refreshPromise) {
-    refreshPromise = fetch(`${API_BASE}/auth/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: token }) })
-      .then(async (response) => { if (!response.ok) throw await parseError(response); const pair = (await response.json()) as TokenPair; saveTokens(pair); return pair })
-      .finally(() => { refreshPromise = null })
+    refreshPromise = (async () => {
+      const rotate = async () => {
+        const legacyToken = localStorage.getItem(REFRESH_KEY)
+        const options: RequestInit = {
+          method: 'POST',
+          credentials: 'same-origin',
+        }
+        if (legacyToken) {
+          options.headers = { 'Content-Type': 'application/json' }
+          options.body = JSON.stringify({ refresh_token: legacyToken })
+        }
+        const response = await fetch(`${API_BASE}/auth/refresh`, options)
+        if (!response.ok) throw await parseError(response)
+        saveTokens((await response.json()) as TokenPair)
+      }
+
+      const locks = (navigator as Navigator & { locks?: BrowserLockManager }).locks
+      if (locks) await locks.request('auroom-auth-refresh', rotate)
+      else await rotate()
+    })().finally(() => { refreshPromise = null })
   }
   return refreshPromise
+}
+
+async function clearBrowserRefreshCookie(): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/auth/logout`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    })
+  } catch { /* best-effort cookie cleanup */ }
+}
+
+export async function restoreSession(): Promise<User | null> {
+  try {
+    await refreshSession()
+    return await getMe()
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      await clearBrowserRefreshCookie()
+      clearTokens()
+      return null
+    }
+    throw error
+  }
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { auth = true, retryAuth = true, headers, ...rest } = options
   const finalHeaders = new Headers(headers)
-  const accessToken = localStorage.getItem(ACCESS_KEY)
+  const accessToken = sessionStorage.getItem(ACCESS_KEY)
   if (auth && accessToken) finalHeaders.set('Authorization', `Bearer ${accessToken}`)
-  const response = await fetch(`${API_BASE}${path}`, { ...rest, headers: finalHeaders })
-  if (response.status === 401 && auth && retryAuth && localStorage.getItem(REFRESH_KEY)) {
+  const response = await fetch(`${API_BASE}${path}`, { credentials: 'same-origin', ...rest, headers: finalHeaders })
+  if (response.status === 401 && auth && retryAuth) {
     try { await refreshSession(); return request<T>(path, { ...options, retryAuth: false }) }
     catch (error) { clearTokens(); throw error }
   }
@@ -109,8 +166,13 @@ export async function loginTelegram(initData: string): Promise<TokenPair> {
 }
 export function getMe() { return request<User>('/me') }
 export async function logout() {
-  const refreshToken = localStorage.getItem(REFRESH_KEY)
-  try { if (refreshToken) await request('/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: refreshToken }) }) }
+  const legacyRefreshToken = localStorage.getItem(REFRESH_KEY)
+  const options: RequestOptions = { method: 'POST', auth: false, retryAuth: false }
+  if (legacyRefreshToken) {
+    options.headers = { 'Content-Type': 'application/json' }
+    options.body = JSON.stringify({ refresh_token: legacyRefreshToken })
+  }
+  try { await request('/auth/logout', options) }
   finally { clearTokens() }
 }
 
@@ -118,8 +180,8 @@ export function listProjects(cursor?: string | null, limit = 20) {
   const params = new URLSearchParams({ limit: String(limit) }); if (cursor) params.set('cursor', cursor); return request<ProjectList>(`/projects?${params}`)
 }
 export function getProject(projectId: string) { return request<Project>(`/projects/${projectId}`) }
-export function createProject(payload: { name: string; description?: string; context?: ProjectContext }) { return request<Project>('/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
-export function updateProject(projectId: string, payload: Partial<{ name: string; description: string | null; status: string; context: ProjectContext }>) { return request<Project>(`/projects/${projectId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
+export function createProject(payload: { name: string; description?: string; context?: ProjectContextWrite }) { return request<Project>('/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
+export function updateProject(projectId: string, payload: Partial<{ name: string; description: string | null; status: string; context: ProjectContextWrite }>) { return request<Project>(`/projects/${projectId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
 export function deleteProject(projectId: string) { return request<void>(`/projects/${projectId}`, { method: 'DELETE' }) }
 
 export async function uploadAsset(projectId: string | null, file: File, purpose: 'generation_input' | 'project_reference' = 'generation_input') {
@@ -138,7 +200,10 @@ export function listGenerations(projectId?: string, limit = 50, cursor?: string 
   const params = new URLSearchParams({ limit: String(limit) }); if (projectId) params.set('project_id', projectId); if (cursor) params.set('cursor', cursor)
   return request<GenerationList>(`/generations?${params}`)
 }
-export function listIdeas(limit = 50) { return request<Idea[]>(`/ideas?limit=${limit}`) }
+export function listIdeas(limit = 50, offset = 0) {
+  const params = new URLSearchParams({ limit:String(limit), offset:String(offset) })
+  return request<Idea[]>(`/ideas?${params}`)
+}
 export function getIdea(ideaId: string) { return request<Idea>(`/ideas/${ideaId}`) }
 export function publishIdea(generationId: string) { return request<AdminIdea>('/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generation_id: generationId }) }) }
 export function getOwnIdeaPublication(generationId: string) { return request<AdminIdea | null>(`/ideas/mine/${generationId}`) }

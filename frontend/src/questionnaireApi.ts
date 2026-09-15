@@ -40,8 +40,9 @@ export function submitQuestionnaireApplication(projectId:string, session:DesignS
   })
 }
 
-export function getQuestionnaireGenerationCost():Promise<QuestionnaireGenerationCost> {
-  return apiRequest<QuestionnaireGenerationCost>('/questionnaire-generation-cost')
+export function getQuestionnaireGenerationCost(projectId?:string):Promise<QuestionnaireGenerationCost> {
+  const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
+  return apiRequest<QuestionnaireGenerationCost>(`/questionnaire-generation-cost${query}`)
 }
 
 export function addQuestionnaireObject(projectId:string, objectKey:string):Promise<{session:DesignSession}> {

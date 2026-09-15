@@ -32,6 +32,8 @@ export type ProjectContext = {
   questionnaire_draft?: boolean | null
 }
 
+export type ProjectContextWrite = Omit<ProjectContext, 'architecture' | 'design_session' | 'questionnaire_draft'>
+
 export type Project = {
   id: string
   name: string
@@ -168,6 +170,7 @@ export type Idea = {
   category: string
   generation_type: GenerationMode
   image_url: string | null
+  preview_url?: string | null
   objects: IdeaObjectSummary[]
   selected_objects: string[]
   published_at: string
@@ -315,14 +318,22 @@ export type AdminTelegramContent = {
 }
 
 export type AdminOperationalSettings = {
-  auth_rate_limit_per_minute: number | null
-  generation_rate_limit_per_minute: number | null
-  payment_rate_limit_per_minute: number | null
+  auth_rate_limit_per_minute: number
+  generation_rate_limit_per_minute: number
+  payment_rate_limit_per_minute: number
+  registration_rate_limit_per_day: number
+  yookassa_webhook_rate_limit_per_minute: number
+  asset_upload_rate_limit_per_minute: number
+  asset_max_retained_count_per_user: number
+  asset_max_retained_bytes_per_user: number
+  generation_max_inflight_per_user: number
+  initial_concept_offer_limit_per_day: number
   starter_credits: number
   initial_concept_credits: number
-  media_retention_days: number | null
-  backup_interval_hours: number | null
-  backup_retention_days: number | null
+  media_retention_days: number
+  backup_interval_hours: number
+  backup_retention_days: number
+  media_min_free_bytes: number
   updated_at: string | null
 }
 

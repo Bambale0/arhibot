@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.admin import BillingPlan
@@ -49,6 +49,26 @@ class BillingRepository:
         )
         return list(result.scalars().all())
 
+    async def get_recent_unresolved_create_for_update(
+        self,
+        *,
+        user_id: UUID,
+        package_code: str,
+    ) -> BillingPayment | None:
+        result = await self.session.execute(
+            select(BillingPayment)
+            .where(
+                BillingPayment.user_id == user_id,
+                BillingPayment.package_code == package_code,
+                BillingPayment.yookassa_payment_id.is_(None),
+                BillingPayment.status.in_(["creating", "uncertain"]),
+            )
+            .order_by(BillingPayment.created_at.desc())
+            .limit(1)
+            .with_for_update()
+        )
+        return result.scalar_one_or_none()
+
     async def get_owned(self, payment_id: UUID, user_id: UUID) -> BillingPayment | None:
         result = await self.session.execute(
             select(BillingPayment).where(
@@ -66,6 +86,18 @@ class BillingRepository:
             select(BillingPayment).where(BillingPayment.id == payment_id).with_for_update()
         )
         return result.scalar_one_or_none()
+
+    async def has_provider_payment(self, provider_id: str) -> bool:
+        result = await self.session.execute(
+            select(exists().where(BillingPayment.yookassa_payment_id == provider_id))
+        )
+        return bool(result.scalar())
+
+    async def has_provider_refund(self, refund_id: str) -> bool:
+        result = await self.session.execute(
+            select(exists().where(BillingPayment.refund_id == refund_id))
+        )
+        return bool(result.scalar())
 
     async def get_by_provider_id_for_update(self, provider_id: str) -> BillingPayment | None:
         result = await self.session.execute(

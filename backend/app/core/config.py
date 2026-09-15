@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,6 +15,14 @@ class Settings(BaseSettings):
     )
 
     app_env: str = "local"
+    runtime_role: Literal[
+        "api",
+        "bot",
+        "generation_worker",
+        "broadcast_worker",
+        "maintenance",
+        "renderer_worker",
+    ] = "api"
     app_name: str = "AuRoom API"
     release_sha: str = "unknown"
     api_v1_prefix: str = "/api/v1"
@@ -60,6 +69,7 @@ class Settings(BaseSettings):
     yookassa_retry_attempts: int = 3
     yookassa_circuit_failure_threshold: int = 5
     yookassa_circuit_recovery_seconds: float = 30.0
+    yookassa_webhook_max_body_bytes: int = 65_536
 
     media_root: str = "/data/media"
     media_public_base_url: str = "http://localhost:8000"
@@ -113,7 +123,9 @@ class Settings(BaseSettings):
             raise ValueError("YOOKASSA_RETRY_ATTEMPTS must be between 1 and 5")
         if self.yookassa_circuit_failure_threshold < 1 or self.yookassa_circuit_recovery_seconds <= 0:
             raise ValueError("YooKassa circuit breaker settings must be positive")
-        if self.is_production:
+        if not 1024 <= self.yookassa_webhook_max_body_bytes <= 1_048_576:
+            raise ValueError("YOOKASSA_WEBHOOK_MAX_BODY_BYTES must be between 1 KiB and 1 MiB")
+        if self.is_production and self.runtime_role == "api":
             insecure = {
                 "local-only-change-me-access-secret-32-bytes",
                 "local-only-change-me-refresh-secret-32-bytes",
@@ -128,6 +140,21 @@ class Settings(BaseSettings):
                 raise ValueError("Production media signing secret must be explicitly configured with at least 32 characters")
             if self.media_signing_secret in {self.jwt_secret, self.refresh_token_secret}:
                 raise ValueError("Production media signing secret must be independent from auth secrets")
+            for name, value in (
+                ("YOOKASSA_BASE_URL", self.yookassa_base_url),
+                ("YOOKASSA_RETURN_URL", self.yookassa_return_url),
+            ):
+                if value:
+                    parsed = urlsplit(value)
+                    if parsed.scheme != "https" or not parsed.netloc:
+                        raise ValueError(f"{name} must use HTTPS in production")
+        if self.is_production and self.runtime_role == "bot":
+            if not (self.telegram_bot_token or "").strip():
+                raise ValueError("Production bot requires TELEGRAM_BOT_TOKEN")
+            webapp = (self.telegram_webapp_url or "").strip()
+            parsed = urlsplit(webapp)
+            if parsed.scheme != "https" or not parsed.netloc:
+                raise ValueError("Production bot requires an HTTPS TELEGRAM_WEBAPP_URL")
         return self
 
 

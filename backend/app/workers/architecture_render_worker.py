@@ -23,6 +23,7 @@ from app.services.architecture_render_service import (
     digest_architecture_payload,
 )
 from app.services.asset_service import LocalMediaStorage
+from app.workers.heartbeat import worker_singleton
 
 logger = logging.getLogger(__name__)
 ARCHITECTURE_RENDER_PROCESSING_KEY = "auroom:architecture_render_processing"
@@ -264,7 +265,8 @@ async def run_worker() -> None:
 
 async def _main() -> None:
     try:
-        await run_worker()
+        async with worker_singleton("architecture-render"):
+            await run_worker()
     finally:
         await redis_client.aclose()
         await dispose_engine()

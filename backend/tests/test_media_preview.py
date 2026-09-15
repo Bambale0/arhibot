@@ -79,3 +79,16 @@ def test_telegram_photo_url_reuses_signed_media_contract(tmp_path) -> None:
     assert query["preview"] == ["telegram"]
     assert "expires" in query
     assert "signature" in query
+    expires = int(query["expires"][0])
+    signature = query["signature"][0]
+    assert storage.verify_signature(
+        path,
+        expires=expires,
+        signature=signature,
+        variant="telegram",
+    )
+    assert not storage.verify_signature(
+        path,
+        expires=expires,
+        signature=signature,
+    )

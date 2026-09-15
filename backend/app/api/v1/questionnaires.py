@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Response, status
 from app.api.dependencies.auth import CurrentUser, DbSession
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
+from app.domain.generations.enums import GenerationOrigin
 from app.schemas.generations import QuestionnaireGenerationResponse
 from app.schemas.projects import ProjectResponse
 from app.schemas.questionnaires import (
@@ -96,10 +97,11 @@ async def save_questionnaire_session(
 async def get_questionnaire_generation_cost(
     user: CurrentUser,
     session: DbSession,
+    project_id: UUID | None = None,
 ) -> QuestionnaireGenerationCostResponse:
-    # credits is the live paid master-plan price used by refinements.
-    # initial_credits is the separately configurable first-concept offer.
-    return await QuestionnaireService(session).generation_cost(user)
+    # credits is the live paid master-plan price used by refinements and repeat concepts.
+    # initial_credits is the separately configurable one-time first-concept offer.
+    return await QuestionnaireService(session).generation_cost(user, project_id)
 
 
 @router.post(
@@ -197,16 +199,22 @@ async def create_questionnaire_generation(
             generation_id=generation.id,
         )
 
-    initial_credits = (
-        await questionnaire.initial_concept_credits(user)
+    credits_override = await questionnaire.generation_credits_override(
+        user,
+        project_id,
+        object_key,
+    )
+    origin = (
+        GenerationOrigin.QUESTIONNAIRE_INITIAL
         if object_key == "__initial__"
-        else None
+        else GenerationOrigin.QUESTIONNAIRE
     )
     created = await build_generation_service(session, settings).create(
         user,
         payload,
         before_commit=bind_generation,
-        credits_override=initial_credits,
+        credits_override=credits_override,
+        origin=origin,
     )
     return QuestionnaireGenerationResponse.model_validate(created)
 

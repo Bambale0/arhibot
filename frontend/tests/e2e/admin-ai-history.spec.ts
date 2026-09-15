@@ -86,9 +86,8 @@ async function json(route:Route, data:unknown, status=200) {
 // Regression: persisted history must survive a full Mini App reload.
 test('admin AI history survives reload and an older still can be reused for 360', async ({ page }) => {
   await page.addInitScript(() => {
-    localStorage.setItem('auroom.access_token','e2e')
-    localStorage.setItem('auroom.refresh_token','e2e-refresh')
-  })
+    sessionStorage.setItem('auroom.access_token','e2e')
+      })
 
   await page.route('**/api/v1/**', async route => {
     const req=route.request()
@@ -127,8 +126,8 @@ test('admin AI history survives reload and an older still can be reused for 360'
       open_button_text:null,start_command_description:null,app_command_description:null,updated_at:null,
     })
     if(path.endsWith('/admin/operations')) return json(route,{
-      auth_rate_limit_per_minute:null,generation_rate_limit_per_minute:null,payment_rate_limit_per_minute:null,
-      starter_credits:0,initial_concept_credits:0,media_retention_days:null,backup_interval_hours:null,backup_retention_days:null,updated_at:null,
+      auth_rate_limit_per_minute:30,generation_rate_limit_per_minute:10,payment_rate_limit_per_minute:10,registration_rate_limit_per_day:20,yookassa_webhook_rate_limit_per_minute:120,asset_upload_rate_limit_per_minute:12,asset_max_retained_count_per_user:200,asset_max_retained_bytes_per_user:536870912,generation_max_inflight_per_user:2,initial_concept_offer_limit_per_day:3,
+      starter_credits:0,initial_concept_credits:0,media_retention_days:30,backup_interval_hours:24,backup_retention_days:14,media_min_free_bytes:2147483648,updated_at:null,
     })
     if(path.endsWith('/admin/audit')) return json(route,[])
     if(path.endsWith('/projects')&&method==='GET') return json(route,{items:[],next_cursor:null,has_more:false})

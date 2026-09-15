@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 app_dir=${1:-/root/arhibot}
 backup_dir=${2:?backup directory is required}
 confirm=${3:-}
 compose_file="${app_dir}/backend/docker-compose.yml"
+
+mkdir -p "${app_dir}"
+command -v flock >/dev/null || { echo "flock is required by AuRoom restore" >&2; exit 1; }
+if [[ "${AUROOM_RUNTIME_LOCK_HELD:-0}" != "1" ]]; then
+  exec 9>"${app_dir}/.runtime-mutation.lock"
+  flock -n 9 || { echo "Restore refused: another runtime mutation is in progress" >&2; exit 75; }
+  export AUROOM_RUNTIME_LOCK_HELD=1
+fi
 
 [[ "${confirm}" == "RESTORE" || "${confirm}" == "VERIFY" ]] || {
   echo "Use VERIFY for a non-destructive backup check or RESTORE for an actual restore" >&2
