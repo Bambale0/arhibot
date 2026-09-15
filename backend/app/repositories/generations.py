@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, exists, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.generations import Generation
@@ -32,6 +32,32 @@ class GenerationRepository:
             select(Generation).where(Generation.id == generation_id).with_for_update()
         )
         return result.scalar_one_or_none()
+
+    async def count_inflight(self, user_id: UUID) -> int:
+        result = await self.session.execute(
+            select(func.count(Generation.id)).where(
+                Generation.user_id == user_id,
+                Generation.status.in_(
+                    [GenerationStatus.QUEUED, GenerationStatus.PROCESSING]
+                ),
+            )
+        )
+        return int(result.scalar_one() or 0)
+
+    async def count_origin_since(
+        self,
+        user_id: UUID,
+        origin: str,
+        since: datetime,
+    ) -> int:
+        result = await self.session.execute(
+            select(func.count(Generation.id)).where(
+                Generation.user_id == user_id,
+                Generation.origin == origin,
+                Generation.created_at >= since,
+            )
+        )
+        return int(result.scalar_one() or 0)
 
     async def project_has_origin(self, project_id: UUID, origin: str) -> bool:
         result = await self.session.execute(
