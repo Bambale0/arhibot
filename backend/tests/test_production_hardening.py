@@ -145,12 +145,15 @@ async def test_unknown_yookassa_webhook_id_does_not_trigger_provider_request(
 
     monkeypatch.setattr(YooKassaProvider, "get_payment", unexpected_get_payment)
 
-    await service.handle_webhook(
-        {
-            "event": "payment.succeeded",
-            "object": {"id": "unknown-payment"},
-        }
-    )
+    with pytest.raises(AppError) as exc:
+        await service.handle_webhook(
+            {
+                "event": "payment.succeeded",
+                "object": {"id": "unknown-payment"},
+            }
+        )
+    assert exc.value.status == 503
+    assert exc.value.type == "billing_webhook_object_not_ready"
     assert provider_called is False
 
 
