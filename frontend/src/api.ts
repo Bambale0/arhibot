@@ -200,7 +200,10 @@ export function listGenerations(projectId?: string, limit = 50, cursor?: string 
   const params = new URLSearchParams({ limit: String(limit) }); if (projectId) params.set('project_id', projectId); if (cursor) params.set('cursor', cursor)
   return request<GenerationList>(`/generations?${params}`)
 }
-export function listIdeas(limit = 50) { return request<Idea[]>(`/ideas?limit=${limit}`) }
+export function listIdeas(limit = 50, offset = 0) {
+  const params = new URLSearchParams({ limit:String(limit), offset:String(offset) })
+  return request<Idea[]>(`/ideas?${params}`)
+}
 export function getIdea(ideaId: string) { return request<Idea>(`/ideas/${ideaId}`) }
 export function publishIdea(generationId: string) { return request<AdminIdea>('/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generation_id: generationId }) }) }
 export function getOwnIdeaPublication(generationId: string) { return request<AdminIdea | null>(`/ideas/mine/${generationId}`) }
