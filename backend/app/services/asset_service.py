@@ -18,6 +18,7 @@ from app.db.models.assets import Asset
 from app.db.models.users import User
 from app.domain.assets.enums import AssetPurpose, AssetType, AssetUploadPurpose
 from app.repositories.assets import AssetRepository
+from app.repositories.operations import OperationalSettingsRepository
 from app.repositories.projects import ProjectRepository
 from app.schemas.assets import AssetResponse
 
@@ -188,6 +189,38 @@ class AssetService:
                 )
 
         image = self._validate_image(data)
+
+        # Serialize quota checks for one user so parallel uploads cannot race past
+        # the retained-media budget. Soft-deleted rows still count until the file
+        # is physically removed by retention cleanup because they still consume disk.
+        await self.repository.lock_owner(user.id)
+        operations = await OperationalSettingsRepository(self.repository.session).get()
+        max_count = (
+            operations.asset_max_retained_count_per_user if operations is not None else 200
+        )
+        max_bytes = (
+            operations.asset_max_retained_bytes_per_user
+            if operations is not None
+            else 512 * 1024 * 1024
+        )
+        retained_count, retained_bytes = await self.repository.retained_usage(user.id)
+        if retained_count >= max_count or retained_bytes + len(image.data) > max_bytes:
+            raise AppError(
+                type="asset_storage_quota_exceeded",
+                title="Media storage quota exceeded",
+                status=409,
+                detail=(
+                    "The retained media limit for this account has been reached. "
+                    "Remove old media and wait for retention cleanup, or contact support."
+                ),
+                meta={
+                    "retained_count": retained_count,
+                    "retained_bytes": retained_bytes,
+                    "max_count": max_count,
+                    "max_bytes": max_bytes,
+                },
+            )
+
         asset_id = uuid4()
         now = datetime.now(UTC)
         relative_path = (
