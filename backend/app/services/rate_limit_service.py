@@ -41,6 +41,28 @@ class RateLimitService:
                 detail="Request limit exceeded. Please retry later.",
             )
 
+    async def enforce_registration_daily(self, identity: str) -> None:
+        settings = await self.repository.get()
+        if settings is None or settings.registration_rate_limit_per_day is None:
+            return
+        await self.enforce_window(
+            "register-day",
+            identity,
+            limit=settings.registration_rate_limit_per_day,
+            window_seconds=86_400,
+        )
+
+    async def enforce_yookassa_webhook(self, identity: str) -> None:
+        settings = await self.repository.get()
+        if settings is None or settings.yookassa_webhook_rate_limit_per_minute is None:
+            return
+        await self.enforce_window(
+            "yookassa-webhook",
+            identity,
+            limit=settings.yookassa_webhook_rate_limit_per_minute,
+            window_seconds=60,
+        )
+
     async def enforce(self, kind: RateLimitKind, identity: str) -> None:
         settings = await self.repository.get()
         if settings is None:
