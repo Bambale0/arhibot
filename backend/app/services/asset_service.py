@@ -179,7 +179,9 @@ class AssetService:
         project_id: UUID | None,
     ) -> AssetResponse:
         if project_id is not None:
-            project = await self.project_repository.get_owned(project_id, user.id)
+            project = await self.project_repository.get_owned(
+                project_id, user.id, for_update=True
+            )
             if not project:
                 raise AppError(
                     type="project_not_found",
