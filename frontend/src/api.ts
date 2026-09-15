@@ -72,14 +72,39 @@ async function parseError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, detail || title, detail, errorType)
 }
 
-let refreshPromise: Promise<TokenPair> | null = null
-async function refreshSession(): Promise<TokenPair> {
-  const token = localStorage.getItem(REFRESH_KEY)
-  if (!token) throw new ApiError(401, 'Сессия закончилась')
+let refreshPromise: Promise<void> | null = null
+
+type BrowserLockManager = {
+  request<T>(name: string, callback: () => Promise<T>): Promise<T>
+}
+
+async function refreshSession(): Promise<void> {
+  const observedAccessToken = localStorage.getItem(ACCESS_KEY)
+  if (!localStorage.getItem(REFRESH_KEY)) throw new ApiError(401, 'Сессия закончилась')
   if (!refreshPromise) {
-    refreshPromise = fetch(`${API_BASE}/auth/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: token }) })
-      .then(async (response) => { if (!response.ok) throw await parseError(response); const pair = (await response.json()) as TokenPair; saveTokens(pair); return pair })
-      .finally(() => { refreshPromise = null })
+    refreshPromise = (async () => {
+      const rotate = async () => {
+        // localStorage is shared between tabs. If another tab refreshed while this
+        // tab was waiting for the browser lock, reuse its access token instead of
+        // replaying the now-consumed refresh token and revoking the whole family.
+        const currentAccessToken = localStorage.getItem(ACCESS_KEY)
+        if (currentAccessToken && currentAccessToken !== observedAccessToken) return
+
+        const token = localStorage.getItem(REFRESH_KEY)
+        if (!token) throw new ApiError(401, 'Сессия закончилась')
+        const response = await fetch(`${API_BASE}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: token }),
+        })
+        if (!response.ok) throw await parseError(response)
+        saveTokens((await response.json()) as TokenPair)
+      }
+
+      const locks = (navigator as Navigator & { locks?: BrowserLockManager }).locks
+      if (locks) await locks.request('auroom-auth-refresh', rotate)
+      else await rotate()
+    })().finally(() => { refreshPromise = null })
   }
   return refreshPromise
 }
