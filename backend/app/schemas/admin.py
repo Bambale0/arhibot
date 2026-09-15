@@ -203,6 +203,7 @@ class PublicIdeaPublicationResponse(BaseModel):
     category: str
     generation_type: GenerationType
     image_url: str | None
+    preview_url: str | None = None
     objects: list[IdeaObjectSummary]
     selected_objects: list[str]
     published_at: datetime
