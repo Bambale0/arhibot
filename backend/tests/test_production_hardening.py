@@ -5,7 +5,9 @@ from fastapi import Response
 from starlette.requests import Request
 
 from app.api.v1 import auth as auth_api
+from app.api.v1.billing import _read_limited_body
 from app.core.config import Settings
+from app.core.errors import AppError
 from app.providers.yookassa import YooKassaProvider
 from app.schemas.auth import LoginRequest, RegisterRequest
 from app.services.asset_service import LocalMediaStorage
@@ -84,6 +86,39 @@ async def test_email_auth_rate_limits_source_and_account(
     )
     assert ("enforce", "auth", "login-ip:203.0.113.10") in calls
     assert ("enforce", "auth", "login-email:user@example.com") in calls
+
+
+@pytest.mark.asyncio
+async def test_yookassa_webhook_body_stops_at_configured_limit() -> None:
+    sent = False
+
+    async def receive():
+        nonlocal sent
+        if sent:
+            return {"type": "http.disconnect"}
+        sent = True
+        return {
+            "type": "http.request",
+            "body": b"x" * 65,
+            "more_body": False,
+        }
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/billing/webhooks/yookassa",
+            "headers": [(b"content-type", b"application/json")],
+            "client": ("203.0.113.20", 12345),
+            "server": ("test", 80),
+            "scheme": "http",
+            "query_string": b"",
+        },
+        receive=receive,
+    )
+    with pytest.raises(AppError) as exc:
+        await _read_limited_body(request, max_bytes=64)
+    assert exc.value.status == 413
 
 
 @pytest.mark.asyncio
