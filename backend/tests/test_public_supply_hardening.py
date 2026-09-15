@@ -92,6 +92,11 @@ def test_compose_isolates_edge_and_data_planes() -> None:
     redis = compose.split('  redis:', 1)[1].split('\nvolumes:', 1)[0]
     assert 'networks:\n      - data' in postgres
     assert 'networks:\n      - data' in redis
+    assert 'POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-local-only-postgres-password-change-me}"' in postgres
+    assert 'POSTGRES_PASSWORD: app' not in postgres
+    assert 'REDIS_PASSWORD: "${REDIS_PASSWORD:-local-only-redis-password-change-me}"' in redis
+    assert '--requirepass' in redis
+    assert 'REDISCLI_AUTH=' in redis
 
 
 def test_runtime_mutations_are_serialized_and_backups_are_private() -> None:
