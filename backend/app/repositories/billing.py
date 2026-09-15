@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import exists, select
@@ -48,6 +49,30 @@ class BillingRepository:
             stmt.order_by(BillingPlan.sort_order.asc(), BillingPlan.created_at.asc())
         )
         return list(result.scalars().all())
+
+    async def get_recent_unresolved_create_for_update(
+        self,
+        *,
+        user_id: UUID,
+        package_code: str,
+        receipt_email: str | None,
+        since: datetime,
+    ) -> BillingPayment | None:
+        result = await self.session.execute(
+            select(BillingPayment)
+            .where(
+                BillingPayment.user_id == user_id,
+                BillingPayment.package_code == package_code,
+                BillingPayment.receipt_email == receipt_email,
+                BillingPayment.yookassa_payment_id.is_(None),
+                BillingPayment.status.in_(["creating", "uncertain"]),
+                BillingPayment.created_at >= since,
+            )
+            .order_by(BillingPayment.created_at.desc())
+            .limit(1)
+            .with_for_update()
+        )
+        return result.scalar_one_or_none()
 
     async def get_owned(self, payment_id: UUID, user_id: UUID) -> BillingPayment | None:
         result = await self.session.execute(
