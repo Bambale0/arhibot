@@ -115,6 +115,7 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
                 "media_retention_days": 30,
                 "backup_interval_hours": 24,
                 "backup_retention_days": 14,
+                "media_min_free_bytes": 67108864,
             },
         )
         assert ops.status_code == 200, ops.text
@@ -126,6 +127,7 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
         assert ops.json()["asset_max_retained_bytes_per_user"] == 536870912
         assert ops.json()["generation_max_inflight_per_user"] == 2
         assert ops.json()["initial_concept_offer_limit_per_day"] == 3
+        assert ops.json()["media_min_free_bytes"] == 67108864
 
         partial_ops = await client.put(
             "/api/v1/admin/operations",
@@ -143,6 +145,7 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
         assert partial_ops.json()["asset_max_retained_bytes_per_user"] == 536870912
         assert partial_ops.json()["generation_max_inflight_per_user"] == 2
         assert partial_ops.json()["initial_concept_offer_limit_per_day"] == 3
+        assert partial_ops.json()["media_min_free_bytes"] == 67108864
 
         project = await client.post(
             "/api/v1/projects",
