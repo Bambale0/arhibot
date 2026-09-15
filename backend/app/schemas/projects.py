@@ -28,7 +28,6 @@ class ProjectContext(BaseModel):
     pool: bool | None = None
     attic: bool | None = None
     glazed_veranda: bool | None = None
-    architecture: ArchitecturePackage | None = None
 
 
 class ProjectContextResponse(ProjectContext):
@@ -42,6 +41,7 @@ class ProjectContextResponse(ProjectContext):
     """
 
     model_config = ConfigDict(extra="ignore")
+    architecture: ArchitecturePackage | None = None
     design_session: DesignSession | None = None
     questionnaire_draft: bool | None = None
 
