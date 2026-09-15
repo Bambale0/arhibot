@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Integer, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, func
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,6 +22,15 @@ class OperationalSettings(Base):
     )
     yookassa_webhook_rate_limit_per_minute: Mapped[int | None] = mapped_column(
         Integer, nullable=True, server_default="120"
+    )
+    asset_upload_rate_limit_per_minute: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="12"
+    )
+    asset_max_retained_count_per_user: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="200"
+    )
+    asset_max_retained_bytes_per_user: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=str(512 * 1024 * 1024)
     )
     starter_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     initial_concept_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
