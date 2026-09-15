@@ -20,7 +20,7 @@ from app.services.asset_service import LocalMediaStorage
 from app.services.questionnaire_project_service import QuestionnaireProjectService
 from app.telegram_bot.generation_notifications import deliver_pending_generations_once
 from app.telegram_bot.questionnaire_notifications import deliver_pending_applications_once
-from app.workers.heartbeat import worker_heartbeat
+from app.workers.heartbeat import worker_heartbeat, worker_singleton
 
 logger = logging.getLogger(__name__)
 WORKER_INTERVAL_SECONDS = 30
@@ -159,8 +159,9 @@ async def run_worker() -> None:
 
 async def _main() -> None:
     try:
-        async with worker_heartbeat("maintenance"):
-            await run_worker()
+        async with worker_singleton("maintenance"):
+            async with worker_heartbeat("maintenance"):
+                await run_worker()
     finally:
         await redis_client.aclose()
         await dispose_engine()
