@@ -179,19 +179,32 @@ class QuestionnaireService:
             return None
         return price.credits
 
-    async def generation_cost(self, user: User) -> QuestionnaireGenerationCostResponse:
+    async def generation_cost(
+        self,
+        user: User,
+        project_id: UUID | None = None,
+    ) -> QuestionnaireGenerationCostResponse:
         initial_credits = await self.initial_concept_credits(user)
+        initial_offer_available = True
+        if project_id is not None:
+            await ProjectService(self.projects).get_owned_model(user, project_id)
+            initial_offer_available = not await self.generations.project_has_origin(
+                project_id,
+                GenerationOrigin.QUESTIONNAIRE_INITIAL.value,
+            )
         price = await self.credits.get_price(GenerationType.MASTER_PLAN.value)
         if price is None or not price.is_active:
             return QuestionnaireGenerationCostResponse(
                 initial_credits=initial_credits,
                 credits=None,
-                is_available=True,
+                initial_offer_available=initial_offer_available,
+                is_available=initial_offer_available,
             )
         credits = 0 if user.role.value in {"admin", "superadmin"} else price.credits
         return QuestionnaireGenerationCostResponse(
             initial_credits=initial_credits,
             credits=credits,
+            initial_offer_available=initial_offer_available,
             is_available=True,
         )
 
