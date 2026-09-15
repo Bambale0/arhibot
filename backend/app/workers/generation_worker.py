@@ -202,12 +202,37 @@ async def _validate_remote_image_url(url: str) -> str:
     return url
 
 
+def _validate_connected_peer(response: httpx.Response) -> None:
+    stream = response.extensions.get("network_stream")
+    if stream is None or not hasattr(stream, "get_extra_info"):
+        raise RuntimeError("Generated image connection did not expose its peer address")
+    server_addr = stream.get_extra_info("server_addr")
+    if (
+        not isinstance(server_addr, (tuple, list))
+        or not server_addr
+        or not isinstance(server_addr[0], str)
+    ):
+        raise RuntimeError("Generated image connection peer address is unavailable")
+    address = server_addr[0].split("%", 1)[0]
+    try:
+        public = _address_is_public(address)
+    except ValueError as exc:
+        raise RuntimeError("Generated image connection peer address is invalid") from exc
+    if not public:
+        raise RuntimeError("Generated image connection reached a non-public address")
+
+
 async def _download_image(url: str, settings: Settings) -> bytes:
     limit = settings.max_image_size_bytes
     current_url = await _validate_remote_image_url(url)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0), follow_redirects=False) as client:
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(60.0),
+        follow_redirects=False,
+        trust_env=False,
+    ) as client:
         for redirect_count in range(6):
             async with client.stream("GET", current_url) as response:
+                _validate_connected_peer(response)
                 if response.is_redirect:
                     if redirect_count >= 5:
                         raise RuntimeError("Generated image exceeded redirect limit")
