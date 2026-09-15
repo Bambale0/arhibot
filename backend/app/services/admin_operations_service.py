@@ -18,14 +18,14 @@ class AdminOperationsService:
     @staticmethod
     def response(row: OperationalSettings | None) -> OperationalSettingsResponse:
         return OperationalSettingsResponse(
-            auth_rate_limit_per_minute=row.auth_rate_limit_per_minute if row else None,
-            generation_rate_limit_per_minute=row.generation_rate_limit_per_minute if row else None,
-            payment_rate_limit_per_minute=row.payment_rate_limit_per_minute if row else None,
+            auth_rate_limit_per_minute=row.auth_rate_limit_per_minute if row else 30,
+            generation_rate_limit_per_minute=row.generation_rate_limit_per_minute if row else 10,
+            payment_rate_limit_per_minute=row.payment_rate_limit_per_minute if row else 10,
             registration_rate_limit_per_day=(
-                row.registration_rate_limit_per_day if row else None
+                row.registration_rate_limit_per_day if row else 20
             ),
             yookassa_webhook_rate_limit_per_minute=(
-                row.yookassa_webhook_rate_limit_per_minute if row else None
+                row.yookassa_webhook_rate_limit_per_minute if row else 120
             ),
             asset_upload_rate_limit_per_minute=(
                 row.asset_upload_rate_limit_per_minute if row else 12
@@ -35,6 +35,12 @@ class AdminOperationsService:
             ),
             asset_max_retained_bytes_per_user=(
                 row.asset_max_retained_bytes_per_user if row else 512 * 1024 * 1024
+            ),
+            generation_max_inflight_per_user=(
+                row.generation_max_inflight_per_user if row else 2
+            ),
+            initial_concept_offer_limit_per_day=(
+                row.initial_concept_offer_limit_per_day if row else 3
             ),
             starter_credits=row.starter_credits if row else 0,
             initial_concept_credits=row.initial_concept_credits if row else 0,
