@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -166,7 +167,7 @@ class BillingService:
         # payment when the client retries.
         normalized_receipt_email = receipt_email if receipt is not None else None
         await self.session.execute(
-            __import__("sqlalchemy").select(User.id).where(User.id == user.id).with_for_update()
+            select(User.id).where(User.id == user.id).with_for_update()
         )
         payment = await self.repository.get_recent_unresolved_create_for_update(
             user_id=user.id,
