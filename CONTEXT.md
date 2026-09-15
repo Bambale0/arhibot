@@ -42,7 +42,9 @@ Not applicable: documentation-only change. Existing authorization and production
 11. ✅ UPDATE and CHECK now use identical canonical resolution semantics: `--upgrade`, `--rebuild`, and pip `--no-cache-dir`. The contract test asserts these flags and `docs/operations-hardening.md` documents the behavior.
 12. ✅ Canonical runtime lock regenerated from clean Python 3.12.14 / pip 26.2.1 / pip-tools 7.6.1. Only two allowed transitive patch upgrades occurred: `SQLAlchemy 2.0.52 → 2.0.53` and `greenlet 3.5.5 → 3.5.6`; build lock is unchanged.
 13. ✅ Local verification on the generated lock: `dependency_locks.sh CHECK` passes; `pip-audit -r requirements.lock` reports no known vulnerabilities; `tests/test_python_runtime_lock.py` reports 3 passed; `git diff --check` passes.
-14. ⏳ Run exact-head GitHub CI, complete whole affected-surface review, then merge PR #86 only with no unresolved P0/P1 findings.
+14. ⚠️ Whole affected-surface review found a P1 in the intermediate `--upgrade` approach: it makes lock verification time-dependent and introduces unrelated transitive runtime upgrades whenever PyPI publishes a compatible release. That violates the small-scope lock contract and would make unrelated PRs fail for dependency freshness.
+15. 🔄 Replace the intermediate approach with the minimal symmetric check: seed each temporary CHECK output by copying the committed lock, then run the same normal `pip-compile` semantics used by UPDATE. Revert the unrelated SQLAlchemy/greenlet lock bump, update the contract test and operations docs, then rerun clean local verification and exact-head CI.
+16. ⏳ Merge PR #86 only after the corrected whole-surface review has no unresolved P0/P1 findings and exact-head CI is green.
 
 
 ### Verification evidence
@@ -53,9 +55,9 @@ Not applicable: documentation-only change. Existing authorization and production
 - Direct comparison of in-place `UPDATE` vs fresh-file `CHECK` shows the actual semantic mismatch: fresh resolution selects `greenlet 3.5.6`, while in-place UPDATE preserves `3.5.5` from the pre-existing output file. The prior cache-only hypothesis is superseded by this evidence.
 - Implemented canonical resolver flags in `backend/scripts/dependency_locks.sh`: `--upgrade`, `--rebuild`, and `--pip-args="--no-cache-dir"` for both runtime and build lock compilation.
 - Updated `backend/tests/test_python_runtime_lock.py` to enforce the canonical resolver flags and updated `docs/operations-hardening.md` to document the exact semantics.
-- Canonical dependency delta: SQLAlchemy `2.0.52 → 2.0.53`; greenlet `3.5.5 → 3.5.6`; no other runtime/build version changes.
-- Local clean-environment verification: lock CHECK ✅; `pip-audit` ✅ with no known vulnerabilities; lock-contract test ✅ 3/3; `git diff --check` ✅.
-- Final exact-head CI/merge evidence will be recorded after GitHub CI.
+- Intermediate canonical-resolver experiment produced SQLAlchemy `2.0.52 → 2.0.53` and greenlet `3.5.5 → 3.5.6` and passed local CHECK/audit, but whole-surface review rejected this as unnecessary runtime dependency churn and a time-dependent CI policy.
+- Review decision: preserve committed dependency pins unless project inputs require a change. CHECK must seed its temporary outputs from the committed locks before recompilation, matching UPDATE semantics without `--upgrade`.
+- The intermediate runtime lock bump will be reverted before merge; final verification evidence below must describe only the corrected seeded-CHECK implementation.
 
 ### Follow-ups
 After PR #86 is merged, resume `feat/control-plane-business-rules` only by first writing a fresh Active Feature Execution audit for that implementation and then addressing the P0/P1 findings from the full code review.
