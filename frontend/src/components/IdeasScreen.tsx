@@ -46,6 +46,8 @@ function WorkCard({
   onSave,
   onShare,
   onStart,
+  active,
+  shouldLoadImage,
 }: {
   idea: Idea
   index: number
@@ -55,8 +57,19 @@ function WorkCard({
   onSave: () => void
   onShare: () => void
   onStart: () => void
+  active: boolean
+  shouldLoadImage: boolean
 }) {
   const summary = idea.objects.flatMap((object) => object.answers.map((item) => ({ ...item, objectTitle: object.title })))
+  const [fallbackOriginal, setFallbackOriginal] = useState(false)
+  const [imageReady, setImageReady] = useState(false)
+  const preferredUrl = idea.preview_url || idea.image_url
+  const imageUrl = fallbackOriginal ? idea.image_url : preferredUrl
+
+  useEffect(() => {
+    setFallbackOriginal(false)
+    setImageReady(false)
+  }, [idea.id, preferredUrl])
   return <article id={`idea-${idea.id}`} className="idea-feed-card idea-work-card" data-idea-id={idea.id}>
     <div className="idea-feed-copy">
       <div className="idea-feed-kicker"><span>Идеи AuRoom</span><b>{index + 1} / {total}</b></div>
@@ -64,8 +77,25 @@ function WorkCard({
       <p>{idea.category}</p>
     </div>
 
-    <div className="idea-work-stage">
-      {idea.image_url ? <img src={idea.image_url} alt={idea.title} loading={index === 0 ? 'eager' : 'lazy'} /> : <div className="idea-work-empty">Работа временно недоступна</div>}
+    <div className={`idea-work-stage ${imageReady ? 'media-ready' : 'media-pending'}`}>
+      {imageUrl && shouldLoadImage ? (
+        <img
+          src={imageUrl}
+          alt={idea.title}
+          loading="eager"
+          decoding="async"
+          fetchPriority={active ? 'high' : 'low'}
+          onLoad={() => setImageReady(true)}
+          onError={() => {
+            if (!fallbackOriginal && idea.preview_url && idea.image_url) {
+              setFallbackOriginal(true)
+              setImageReady(false)
+              return
+            }
+            setImageReady(false)
+          }}
+        />
+      ) : imageUrl ? <div className="idea-work-image-placeholder" aria-hidden="true" /> : <div className="idea-work-empty">Работа временно недоступна</div>}
       <div className="idea-work-actions">
         <button type="button" disabled={saving} className={idea.is_saved ? 'active' : ''} aria-label={idea.is_saved ? 'Убрать из сохранённых' : 'Сохранить'} onClick={onSave}><BookmarkIcon filled={idea.is_saved}/></button>
         <button type="button" aria-label="Поделиться" onClick={onShare}><ShareIcon /></button>
@@ -99,6 +129,8 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
   const [searchOpen, setSearchOpen] = useState(false)
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set())
   const [startingId, setStartingId] = useState<string | null>(null)
+  const [activeIndex, setActiveIndex] = useState(0)
+  const feedRef = useRef<HTMLDivElement>(null)
   const sharedIdeaId = new URLSearchParams(window.location.search).get('idea')
   const sharedScrollDone = useRef(false)
 
@@ -156,6 +188,29 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
     return ideas.filter((idea) => searchableText(idea).includes(normalized))
   }, [ideas, query])
 
+  useEffect(() => {
+    setActiveIndex((current) => Math.min(current, Math.max(filtered.length - 1, 0)))
+  }, [filtered.length])
+
+  useEffect(() => {
+    const root = feedRef.current
+    if (!root || !filtered.length) return
+    const nodes = Array.from(root.querySelectorAll<HTMLElement>('[data-feed-index]'))
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0]
+        if (!visible || visible.intersectionRatio < 0.45) return
+        const nextIndex = Number((visible.target as HTMLElement).dataset.feedIndex)
+        if (Number.isInteger(nextIndex)) setActiveIndex(nextIndex)
+      },
+      { root, threshold: [0.45, 0.6, 0.8] },
+    )
+    nodes.forEach((node) => observer.observe(node))
+    return () => observer.disconnect()
+  }, [filtered])
+
   const toggleSaved = useCallback(async (idea: Idea) => {
     if (savingIds.has(idea.id)) return
     setSavingIds((current) => new Set(current).add(idea.id))
@@ -211,14 +266,16 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
 
     {error && <div className="ideas-floating-error banner-error">{error}<button type="button" onClick={() => setError(null)}>Закрыть</button></div>}
     {loading ? <div className="ideas-feed-status"><div className="idea-feed-skeleton" /></div> : filtered.length ? (
-      <div className="ideas-feed">
-        {filtered.map((idea, index) => <div className="idea-feed-snap" key={idea.id}>
+      <div className="ideas-feed" ref={feedRef}>
+        {filtered.map((idea, index) => <div className="idea-feed-snap" key={idea.id} data-feed-index={index}>
           <WorkCard
             idea={idea}
             index={index}
             total={filtered.length}
             saving={savingIds.has(idea.id)}
             starting={startingId === idea.id}
+            active={index === activeIndex}
+            shouldLoadImage={Math.abs(index - activeIndex) <= 1}
             onSave={() => void toggleSaved(idea)}
             onShare={() => void shareIdea(idea)}
             onStart={() => void startFromIdea(idea)}
