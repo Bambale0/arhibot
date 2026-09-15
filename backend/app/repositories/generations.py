@@ -100,7 +100,7 @@ class GenerationRepository:
             .where(
                 Generation.status == GenerationStatus.COMPLETED,
                 Generation.output_asset_id.is_not(None),
-                Generation.telegram_delivery_status == "pending",
+                Generation.telegram_delivery_status.in_(["pending", "sending"]),
             )
             .order_by(
                 Generation.telegram_delivery_attempts.asc(),
