@@ -6,7 +6,7 @@ from __future__ import annotations
 import stat
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 DEFAULT_ACCESS_SECRET = "local-only-change-me-access-secret-32-bytes"
 DEFAULT_REFRESH_SECRET = "local-only-change-me-refresh-secret-32-bytes"
@@ -57,6 +57,44 @@ def validate(values: dict[str, str]) -> list[str]:
         errors.append("MEDIA_SIGNING_SECRET must be an explicit secret with at least 32 characters")
     elif media_signing in {access, refresh}:
         errors.append("MEDIA_SIGNING_SECRET must be independent from auth secrets")
+
+    postgres_password = values.get("POSTGRES_PASSWORD", "").strip()
+    database_url = values.get("DATABASE_URL", "").strip()
+    try:
+        database = urlsplit(database_url)
+    except ValueError:
+        database = None
+    database_password = (
+        unquote(database.password)
+        if database is not None and database.password is not None
+        else ""
+    )
+    if len(postgres_password) < 20 or postgres_password in {"app", "postgres"}:
+        errors.append("POSTGRES_PASSWORD must be an explicit high-entropy production secret")
+    if database is None or not database.hostname or not database_password:
+        errors.append("DATABASE_URL must include the production database password")
+    elif postgres_password and database_password != postgres_password:
+        errors.append("DATABASE_URL password must match POSTGRES_PASSWORD")
+
+    redis_password = values.get("REDIS_PASSWORD", "").strip()
+    redis_url = values.get("REDIS_URL", "").strip()
+    try:
+        redis = urlsplit(redis_url)
+    except ValueError:
+        redis = None
+    redis_url_password = (
+        unquote(redis.password)
+        if redis is not None and redis.password is not None
+        else ""
+    )
+    if len(redis_password) < 20:
+        errors.append("REDIS_PASSWORD must be an explicit high-entropy production secret")
+    if redis is None or redis.scheme not in {"redis", "rediss"} or not redis.hostname:
+        errors.append("REDIS_URL must be a valid Redis URL")
+    elif not redis_url_password:
+        errors.append("REDIS_URL must authenticate to Redis in production")
+    elif redis_password and redis_url_password != redis_password:
+        errors.append("REDIS_URL password must match REDIS_PASSWORD")
 
     for name in (
         "MEDIA_PUBLIC_BASE_URL",
