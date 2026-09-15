@@ -128,6 +128,28 @@ def test_runtime_mutations_are_serialized_and_backups_are_private() -> None:
     assert 'Draining write traffic before database migrations' in deploy
 
 
+def test_offsite_backup_is_encrypted_before_provider_upload() -> None:
+    export = (REPO_ROOT / 'ops' / 'export_offsite_backup.sh').read_text()
+    fetch = (REPO_ROOT / 'ops' / 'fetch_offsite_backup.sh').read_text()
+    backup = (REPO_ROOT / 'ops' / 'backup_runtime.sh').read_text()
+    monitor = (REPO_ROOT / 'ops' / 'runtime_monitor.sh').read_text()
+
+    assert 'age --encrypt --recipient' in export
+    assert '| age --encrypt' in export
+    assert 'rclone copyto' in export
+    assert '--immutable --checksum' in export
+    assert 'OFFSITE_OK' in export
+    assert 'AUROOM_BACKUP_AGE_IDENTITY_FILE' not in export
+
+    assert 'AUROOM_BACKUP_AGE_IDENTITY_FILE' in fetch
+    assert 'age --decrypt --identity' in fetch
+    assert 'sha256sum' in fetch
+
+    assert '.backup.env' in backup
+    assert 'bash "${script_dir}/export_offsite_backup.sh"' in backup
+    assert 'OFFSITE_OK' in monitor
+
+
 def test_production_disables_fastapi_docs_and_openapi() -> None:
     env = os.environ.copy()
     env.update(
