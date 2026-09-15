@@ -90,7 +90,15 @@ async def deliver_pending_generations_once(
         generations = await repository.list_pending_telegram_deliveries(limit=limit)
 
         for generation in generations:
+            if generation.telegram_delivery_status == "sending":
+                logger.warning(
+                    "Retrying generation %s after an interrupted Telegram delivery; "
+                    "the previous send may have reached Telegram",
+                    generation.id,
+                )
+            generation.telegram_delivery_status = "sending"
             generation.telegram_delivery_attempts += 1
+            await session.commit()
             identity_result = await session.execute(
                 select(AuthIdentity.provider_user_id)
                 .where(
@@ -145,6 +153,8 @@ async def deliver_pending_generations_once(
                 )[:500]
                 if generation.telegram_delivery_attempts >= MAX_DELIVERY_ATTEMPTS:
                     generation.telegram_delivery_status = "failed"
+                else:
+                    generation.telegram_delivery_status = "pending"
                 failed += 1
                 await session.commit()
                 continue
