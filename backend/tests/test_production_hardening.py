@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 from fastapi import Response
 from starlette.requests import Request
 
@@ -11,6 +12,7 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.providers.yookassa import YooKassaProvider
 from app.schemas.auth import LoginRequest, RegisterRequest
+from app.services import asset_service as asset_service_module
 from app.services.asset_service import LocalMediaStorage
 from app.services.billing_service import BillingService
 from app.workers import generation_worker
@@ -213,6 +215,36 @@ def test_generated_media_connection_accepts_public_actual_peer() -> None:
 
     response = SimpleNamespace(extensions={"network_stream": FakeStream()})
     _validate_connected_peer(response)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_ideas_feed_preview_is_webp_and_bounded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "users" / "test" / "large.png"
+    source.parent.mkdir(parents=True)
+    Image.new("RGB", (2752, 1536), (120, 130, 140)).save(source, format="PNG")
+
+    storage = LocalMediaStorage(
+        Settings(
+            media_root=str(tmp_path),
+            media_public_base_url="https://app.example.test",
+            media_signing_secret="preview-signing-secret-that-is-long-enough-001",
+        )
+    )
+    preview = await storage.ensure_feed_preview("users/test/large.png")
+    assert preview.is_file()
+    with Image.open(preview) as image:
+        assert image.format == "WEBP"
+        assert max(image.size) <= 1280
+
+    monkeypatch.setattr(asset_service_module.time, "time", lambda: 1_700_000_001)
+    first = storage.signed_feed_preview_url("users/test/large.png")
+    monkeypatch.setattr(asset_service_module.time, "time", lambda: 1_700_000_100)
+    second = storage.signed_feed_preview_url("users/test/large.png")
+    assert first == second
+    assert "preview=feed" in first
 
 
 @pytest.mark.asyncio
