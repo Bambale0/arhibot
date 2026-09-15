@@ -77,11 +77,21 @@ class IdeaService:
         *,
         require_public_ready: bool = False,
         is_saved: bool = False,
+        generation: Generation | None = None,
+        asset: Asset | None = None,
     ) -> IdeaPublicationResponse | None:
-        generation = await self.session.get(Generation, publication.generation_id)
+        if generation is None:
+            generation = await self.session.get(Generation, publication.generation_id)
         if generation is None:
             return None
-        image_url, preview_url = await self._image_urls(generation)
+        if asset is None and generation.output_asset_id is not None:
+            asset = await self.session.get(Asset, generation.output_asset_id)
+        if asset is None or asset.deleted_at is not None:
+            image_url = None
+            preview_url = None
+        else:
+            image_url = self.storage.signed_url(asset.storage_path)
+            preview_url = self.storage.signed_feed_preview_url(asset.storage_path)
         if require_public_ready and (
             generation.status != GenerationStatus.COMPLETED or image_url is None
         ):
@@ -117,11 +127,14 @@ class IdeaService:
     ) -> list[PublicIdeaPublicationResponse]:
         result: list[PublicIdeaPublicationResponse] = []
         saved_ids = await self.repository.saved_publication_ids(user.id)
-        for publication in await self.repository.list(active_only=True, limit=limit):
+        rows = await self.repository.list_public_media_rows(limit=limit)
+        for publication, generation, asset in rows:
             response = await self._publication_response(
                 publication,
                 require_public_ready=True,
                 is_saved=publication.id in saved_ids,
+                generation=generation,
+                asset=asset,
             )
             if response is None:
                 continue
