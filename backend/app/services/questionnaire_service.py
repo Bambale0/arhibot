@@ -168,10 +168,7 @@ class QuestionnaireService:
     ) -> bool:
         if project_id is not None:
             await ProjectService(self.projects).get_owned_model(user, project_id)
-            if await self.generations.project_has_origin(
-                project_id,
-                GenerationOrigin.QUESTIONNAIRE_INITIAL.value,
-            ):
+            if await self.generations.project_used_initial_offer(project_id):
                 return False
 
         if user.role.value in {"admin", "superadmin"}:
@@ -179,9 +176,8 @@ class QuestionnaireService:
 
         settings = await self.operations.get()
         daily_limit = settings.initial_concept_offer_limit_per_day if settings else 3
-        used = await self.generations.count_origin_since(
+        used = await self.generations.count_initial_offer_attempts_since(
             user.id,
-            GenerationOrigin.QUESTIONNAIRE_INITIAL.value,
             datetime.now(UTC) - timedelta(days=1),
         )
         return used < daily_limit
