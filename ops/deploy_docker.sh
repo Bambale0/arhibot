@@ -160,6 +160,31 @@ cd "${app_dir}"
 echo "Building API, bot, workers and frontend"
 compose build api bot worker broadcast-worker maintenance frontend
 
+# Stop public writers before any security/data backfill. Let the old generation
+# worker finish accepted jobs so historical rows are terminal before provenance
+# migration. YooKassa/Telegram callers can safely retry during this bounded drain.
+echo "Draining write traffic before database migrations"
+compose stop api bot
+drain_passed=0
+for attempt in $(seq 1 180); do
+  active_generations=$(compose exec -T postgres psql -U app -d app -Atc "select count(*) from generations where status in ('queued','processing')" | tr -d '[:space:]')
+  if [[ "${active_generations}" == "0" ]]; then
+    drain_passed=1
+    break
+  fi
+  if (( attempt % 10 == 0 )); then
+    echo "Waiting for ${active_generations} active generation(s) to drain"
+  fi
+  sleep 5
+done
+if (( drain_passed == 0 )); then
+  echo "Refusing migration: generation queue did not drain within 15 minutes" >&2
+  exit 1
+fi
+
+# Freeze remaining DB writers while Alembic runs.
+compose stop worker broadcast-worker maintenance
+
 echo "Applying database migrations"
 compose run --rm api alembic upgrade head
 migration_applied=1
