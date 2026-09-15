@@ -70,6 +70,41 @@ else
   elif (( backup_age_hours >= backup_warn_hours )); then warn "runtime backup age ${backup_age_hours}h >= ${backup_warn_hours}h"; fi
 fi
 
+backup_env=${AUROOM_BACKUP_ENV_FILE:-${app_dir}/.backup.env}
+offsite_configured=0
+if [[ -f "${backup_env}" ]]; then
+  offsite_configured=$(python3 - "${backup_env}" <<'PY'
+import sys
+from pathlib import Path
+
+values = {}
+for raw in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    line = raw.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    key, value = line.split("=", 1)
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    values[key.strip()] = value
+print(1 if values.get("AUROOM_OFFSITE_BACKUP_REMOTE") and values.get("AUROOM_BACKUP_AGE_RECIPIENT") else 0)
+PY
+)
+fi
+if [[ "${offsite_configured}" == "1" ]]; then
+  latest_offsite=$(find "${app_dir}/backups/runtime" -mindepth 2 -maxdepth 2 -type f -name OFFSITE_OK -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)
+  if [[ -z "${latest_offsite}" ]]; then
+    fail "off-site backup is configured but no successful export marker exists"
+  else
+    offsite_epoch=$(stat -c %Y "${latest_offsite}")
+    now_epoch=${now_epoch:-$(date +%s)}
+    offsite_age_hours=$(( (now_epoch - offsite_epoch) / 3600 ))
+    metrics+=("offsite_backup_age=${offsite_age_hours}h")
+    if (( offsite_age_hours >= backup_fail_hours )); then fail "off-site backup age ${offsite_age_hours}h >= ${backup_fail_hours}h";
+    elif (( offsite_age_hours >= backup_warn_hours )); then warn "off-site backup age ${offsite_age_hours}h >= ${backup_warn_hours}h"; fi
+  fi
+fi
+
 expected_sha=$(awk -F= '$1 == "RELEASE_SHA" {print $2}' "${app_dir}/.release/current.env" 2>/dev/null || true)
 if [[ -z "${expected_sha}" ]]; then
   fail "release manifest has no RELEASE_SHA"
