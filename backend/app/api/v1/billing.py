@@ -16,6 +16,35 @@ from app.services.rate_limit_service import RateLimitService
 router = APIRouter(prefix="/billing", tags=["Billing"])
 
 
+async def _read_limited_body(request: Request, *, max_bytes: int) -> bytes:
+    content_length = (request.headers.get("content-length") or "").strip()
+    if content_length:
+        try:
+            if int(content_length) > max_bytes:
+                raise AppError(
+                    type="webhook_payload_too_large",
+                    title="Webhook payload too large",
+                    status=413,
+                    detail="YooKassa webhook payload exceeds the configured size limit.",
+                )
+        except ValueError:
+            pass
+
+    chunks: list[bytes] = []
+    received = 0
+    async for chunk in request.stream():
+        received += len(chunk)
+        if received > max_bytes:
+            raise AppError(
+                type="webhook_payload_too_large",
+                title="Webhook payload too large",
+                status=413,
+                detail="YooKassa webhook payload exceeds the configured size limit.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @router.get(
     "",
     response_model=BillingSummaryResponse,
@@ -95,14 +124,10 @@ async def yookassa_webhook(
             status=415,
             detail="YooKassa webhook must use application/json.",
         )
-    raw = await request.body()
-    if len(raw) > settings.yookassa_webhook_max_body_bytes:
-        raise AppError(
-            type="webhook_payload_too_large",
-            title="Webhook payload too large",
-            status=413,
-            detail="YooKassa webhook payload exceeds the configured size limit.",
-        )
+    raw = await _read_limited_body(
+        request,
+        max_bytes=settings.yookassa_webhook_max_body_bytes,
+    )
     try:
         payload = loads(raw)
     except (JSONDecodeError, UnicodeDecodeError) as exc:
