@@ -472,9 +472,14 @@ class OperationalSettingsUpdate(BaseModel):
     initial_concept_offer_limit_per_day: int = Field(default=3, ge=1, le=1000)
     starter_credits: int = Field(default=0, ge=0, le=1_000_000)
     initial_concept_credits: int = Field(default=0, ge=0, le=1_000_000)
-    media_retention_days: int | None = Field(default=None, ge=1, le=3650)
-    backup_interval_hours: int | None = Field(default=None, ge=1, le=8760)
-    backup_retention_days: int | None = Field(default=None, ge=1, le=3650)
+    media_retention_days: int = Field(default=30, ge=1, le=3650)
+    backup_interval_hours: int = Field(default=24, ge=1, le=8760)
+    backup_retention_days: int = Field(default=14, ge=1, le=3650)
+    media_min_free_bytes: int = Field(
+        default=2 * 1024 * 1024 * 1024,
+        ge=64 * 1024 * 1024,
+        le=10_000_000_000_000,
+    )
 
 
 class OperationalSettingsResponse(OperationalSettingsUpdate):
