@@ -412,7 +412,7 @@ Local skill discovery must include `/root/anthropic-skills` in addition to `/roo
 This shared baseline supplements repository-specific rules; it never replaces stricter local architecture, release, security, channel, or product constraints.
 
 ### Engineering playbook and task flow
-- Treat `Bambale0/skills` as the primary engineering playbook. Also inspect relevant safe guidance from `Bambale0/claw` and `anthropics/skills`.
+- Treat `wondelai/skills` as the primary engineering playbook. Also inspect relevant safe guidance from `Bambale0/claw` and `anthropics/skills`.
 - Do not use deprecated skills. Use in-progress skills only when they fit and account for their experimental status.
 - Large ambiguous work: use a wayfinder-style flow.
 - Feature development where applicable: `grill-with-docs → to-spec → to-tickets → implement → tdd → code-review`.
