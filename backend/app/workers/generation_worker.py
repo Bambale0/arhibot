@@ -170,7 +170,7 @@ def _address_is_public(address: str) -> bool:
 async def _validate_remote_image_url(url: str) -> str:
     parsed = urlsplit(url)
     if parsed.scheme.lower() != "https" or not parsed.hostname:
-        raise RuntimeError("Generated image URL must be absolute HTTPS")
+        raise RuntimeError("Generated image URL must use HTTPS and be absolute")
     if parsed.username is not None or parsed.password is not None:
         raise RuntimeError("Generated image URL must not contain credentials")
     try:
