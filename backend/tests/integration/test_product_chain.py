@@ -531,6 +531,88 @@ async def test_payment_create_retry_reuses_uncertain_idempotence_key(
 
 
 @pytest.mark.asyncio
+async def test_payment_create_outside_replay_window_requires_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.db.models.billing import BillingPayment
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _tokens, headers = await _register_admin(client)
+        plan_code = f"expired-retry-{uuid4().hex[:10]}"
+        tariff = await client.post(
+            "/api/v1/admin/tariffs",
+            headers=headers,
+            json={
+                "code": plan_code,
+                "name": "Expired retry pack",
+                "credits": 4,
+                "amount": "70.00",
+                "currency": "RUB",
+                "is_active": True,
+                "sort_order": 0,
+            },
+        )
+        assert tariff.status_code == 201, tariff.text
+
+        local_payment_id: str | None = None
+
+        async def ambiguous_create(
+            self,
+            *,
+            amount,
+            currency,
+            description,
+            return_url,
+            metadata,
+            idempotence_key,
+            receipt=None,
+        ):  # noqa: ANN001, ARG001
+            nonlocal local_payment_id
+            local_payment_id = metadata["billing_payment_id"]
+            raise YooKassaError("provider response lost", ambiguous=True)
+
+        monkeypatch.setattr(YooKassaProvider, "create_payment", ambiguous_create)
+        first = await client.post(
+            "/api/v1/billing/payments",
+            headers=headers,
+            json={"package_code": plan_code},
+        )
+        assert first.status_code == 503, first.text
+        assert local_payment_id is not None
+
+        async with get_session_factory()() as session:
+            payment = await session.get(BillingPayment, UUID(local_payment_id))
+            assert payment is not None
+            payment.created_at = datetime.now(UTC) - timedelta(hours=24)
+            await session.commit()
+
+        provider_called = False
+
+        async def must_not_create(self, **kwargs):  # noqa: ANN001, ARG001
+            nonlocal provider_called
+            provider_called = True
+            raise AssertionError("expired uncertain payment must not be replayed")
+
+        monkeypatch.setattr(YooKassaProvider, "create_payment", must_not_create)
+        retry = await client.post(
+            "/api/v1/billing/payments",
+            headers=headers,
+            json={"package_code": plan_code},
+        )
+        assert retry.status_code == 503, retry.text
+        assert retry.json()["type"] == "payment_reconciliation_required"
+        assert provider_called is False
+
+        payments = await client.get("/api/v1/admin/payments", headers=headers)
+        assert payments.status_code == 200, payments.text
+        matching = [item for item in payments.json() if item["package_code"] == plan_code]
+        assert len(matching) == 1
+
+
+@pytest.mark.asyncio
 async def test_yookassa_payment_webhook_credits_once_and_full_refund(monkeypatch: pytest.MonkeyPatch) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
