@@ -14,14 +14,20 @@ class OperationalSettings(Base):
     __tablename__ = "operational_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    auth_rate_limit_per_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    generation_rate_limit_per_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    payment_rate_limit_per_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    registration_rate_limit_per_day: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, server_default="20"
+    auth_rate_limit_per_minute: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="30"
     )
-    yookassa_webhook_rate_limit_per_minute: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, server_default="120"
+    generation_rate_limit_per_minute: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="10"
+    )
+    payment_rate_limit_per_minute: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="10"
+    )
+    registration_rate_limit_per_day: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="20"
+    )
+    yookassa_webhook_rate_limit_per_minute: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="120"
     )
     asset_upload_rate_limit_per_minute: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="12"
@@ -31,6 +37,12 @@ class OperationalSettings(Base):
     )
     asset_max_retained_bytes_per_user: Mapped[int] = mapped_column(
         BigInteger, nullable=False, server_default=str(512 * 1024 * 1024)
+    )
+    generation_max_inflight_per_user: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="2"
+    )
+    initial_concept_offer_limit_per_day: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="3"
     )
     starter_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     initial_concept_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
