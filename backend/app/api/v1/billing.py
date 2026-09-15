@@ -1,9 +1,12 @@
+from json import JSONDecodeError, loads
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, status
 
+from app.api.client import request_identity
 from app.api.dependencies.auth import CurrentUser, DbSession
 from app.core.config import Settings, get_settings
+from app.core.errors import AppError
 from app.providers.yookassa import YooKassaError
 from app.schemas.billing import BillingPaymentCreate, BillingPaymentResponse, BillingSummaryResponse
 from app.schemas.errors import ProblemDetails
@@ -82,7 +85,45 @@ async def yookassa_webhook(
     session: DbSession,
     settings: Settings = Depends(get_settings),
 ) -> dict[str, bool]:
-    payload = await request.json()
+    source = request_identity(request)
+    await RateLimitService(session).enforce_window(
+        "yookassa-webhook",
+        source,
+        limit=settings.yookassa_webhook_rate_limit_per_minute,
+        window_seconds=60,
+    )
+    content_type = (request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    if content_type != "application/json":
+        raise AppError(
+            type="invalid_webhook_content_type",
+            title="Invalid webhook content type",
+            status=415,
+            detail="YooKassa webhook must use application/json.",
+        )
+    raw = await request.body()
+    if len(raw) > settings.yookassa_webhook_max_body_bytes:
+        raise AppError(
+            type="webhook_payload_too_large",
+            title="Webhook payload too large",
+            status=413,
+            detail="YooKassa webhook payload exceeds the configured size limit.",
+        )
+    try:
+        payload = loads(raw)
+    except (JSONDecodeError, UnicodeDecodeError) as exc:
+        raise AppError(
+            type="invalid_webhook_payload",
+            title="Invalid webhook payload",
+            status=400,
+            detail="YooKassa webhook payload must be valid JSON.",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise AppError(
+            type="invalid_webhook_payload",
+            title="Invalid webhook payload",
+            status=400,
+            detail="YooKassa webhook payload must be a JSON object.",
+        )
     try:
         await build_billing_service(session, settings).handle_webhook(payload)
     except YooKassaError:
