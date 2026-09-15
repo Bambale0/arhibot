@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -160,6 +161,31 @@ class QuestionnaireService:
         settings = await self.operations.get()
         return settings.initial_concept_credits if settings else 0
 
+    async def _initial_offer_available(
+        self,
+        user: User,
+        project_id: UUID | None,
+    ) -> bool:
+        if project_id is not None:
+            await ProjectService(self.projects).get_owned_model(user, project_id)
+            if await self.generations.project_has_origin(
+                project_id,
+                GenerationOrigin.QUESTIONNAIRE_INITIAL.value,
+            ):
+                return False
+
+        if user.role.value in {"admin", "superadmin"}:
+            return True
+
+        settings = await self.operations.get()
+        daily_limit = settings.initial_concept_offer_limit_per_day if settings else 3
+        used = await self.generations.count_origin_since(
+            user.id,
+            GenerationOrigin.QUESTIONNAIRE_INITIAL.value,
+            datetime.now(UTC) - timedelta(days=1),
+        )
+        return used < daily_limit
+
     async def generation_credits_override(
         self,
         user: User,
@@ -168,12 +194,13 @@ class QuestionnaireService:
     ) -> int | None:
         if object_key != "__initial__":
             return None
-        introductory_used = await self.generations.project_has_origin(
-            project_id,
-            GenerationOrigin.QUESTIONNAIRE_INITIAL.value,
-        )
-        if not introductory_used:
+
+        # Keep the offer decision and subsequent generation insert in one serialized
+        # per-user transaction so parallel projects cannot race past the daily budget.
+        await self.credits.get_user_for_update(user.id)
+        if await self._initial_offer_available(user, project_id):
             return await self.initial_concept_credits(user)
+
         price = await self.credits.get_price(GenerationType.MASTER_PLAN.value)
         if price is None or not price.is_active:
             return None
@@ -185,13 +212,7 @@ class QuestionnaireService:
         project_id: UUID | None = None,
     ) -> QuestionnaireGenerationCostResponse:
         initial_credits = await self.initial_concept_credits(user)
-        initial_offer_available = True
-        if project_id is not None:
-            await ProjectService(self.projects).get_owned_model(user, project_id)
-            initial_offer_available = not await self.generations.project_has_origin(
-                project_id,
-                GenerationOrigin.QUESTIONNAIRE_INITIAL.value,
-            )
+        initial_offer_available = await self._initial_offer_available(user, project_id)
         price = await self.credits.get_price(GenerationType.MASTER_PLAN.value)
         if price is None or not price.is_active:
             return QuestionnaireGenerationCostResponse(
