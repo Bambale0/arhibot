@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 app_dir=${1:-/root/arhibot}
 mode=${2:-REPORT}
@@ -20,6 +21,13 @@ dangling_count=$(docker images --filter dangling=true -q 2>/dev/null | sort -u |
 echo "Expired release workdirs: ${candidate_count}"
 echo "Dangling Docker images: ${dangling_count}"
 docker system df || true
+
+if [[ "${mode}" == "APPLY" && "${AUROOM_RUNTIME_LOCK_HELD:-0}" != "1" ]]; then
+  command -v flock >/dev/null || { echo "flock is required by AuRoom housekeeping" >&2; exit 1; }
+  exec 9>"${app_dir}/.runtime-mutation.lock"
+  flock -n 9 || { echo "Housekeeping refused: another runtime mutation is in progress" >&2; exit 75; }
+  export AUROOM_RUNTIME_LOCK_HELD=1
+fi
 
 if [[ "${mode}" == "REPORT" ]]; then
   echo "Housekeeping is report-only. APPLY removes expired release workdirs, dangling images, and unused build cache."
