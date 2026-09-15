@@ -465,9 +465,14 @@ class BillingService:
             raise YooKassaError("YooKassa webhook received while billing is not configured")
         provider = YooKassaProvider(self.settings)
         if event in {"payment.succeeded", "payment.canceled", "payment.waiting_for_capture"}:
+            if not await self.repository.has_provider_payment(provider_id):
+                return
             remote = await provider.get_payment(provider_id)
             await self.apply_remote(remote)
         elif event == "refund.succeeded":
+            payment_id = str(obj.get("payment_id") or "").strip() or None
+            if not await self.repository.has_provider_refund(provider_id, payment_id):
+                return
             remote_refund = await provider.get_refund(provider_id)
             await self.apply_refund_remote(remote_refund)
 
