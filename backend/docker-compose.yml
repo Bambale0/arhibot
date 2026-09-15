@@ -255,6 +255,8 @@ services:
     pids_limit: ${AUROOM_POSTGRES_PIDS_LIMIT:-256}
     logging: *default-logging
     restart: unless-stopped
+    networks:
+      - data
 
   redis:
     image: redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
@@ -271,6 +273,8 @@ services:
     pids_limit: ${AUROOM_REDIS_PIDS_LIMIT:-128}
     logging: *default-logging
     restart: unless-stopped
+    networks:
+      - data
 
 volumes:
   postgres_data:
