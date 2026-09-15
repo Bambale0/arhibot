@@ -81,8 +81,10 @@ def test_compose_isolates_edge_and_data_planes() -> None:
     assert 'cap_drop:\n      - ALL' in compose
 
     # Edge containers must not join the private data network.
+    bot = compose.split('  bot:', 1)[1].split('\n\n  worker:', 1)[0]
     frontend = compose.split('  frontend:', 1)[1].split('\n  nginx:', 1)[0]
     nginx = compose.split('  nginx:', 1)[1].split('\n  postgres:', 1)[0]
+    assert '- data' not in bot
     assert '- data' not in frontend
     assert '- data' not in nginx
 
