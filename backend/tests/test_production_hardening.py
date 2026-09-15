@@ -14,7 +14,11 @@ from app.schemas.auth import LoginRequest, RegisterRequest
 from app.services.asset_service import LocalMediaStorage
 from app.services.billing_service import BillingService
 from app.workers import generation_worker
-from app.workers.generation_worker import _commit_output_or_cleanup, _validate_remote_image_url
+from app.workers.generation_worker import (
+    _commit_output_or_cleanup,
+    _validate_connected_peer,
+    _validate_remote_image_url,
+)
 
 
 def _request(ip: str) -> Request:
@@ -188,6 +192,27 @@ async def test_generated_media_url_accepts_public_https_host(
     monkeypatch.setattr(generation_worker.socket, "getaddrinfo", public_dns)
     url = "https://cdn.example.test/result.png"
     assert await _validate_remote_image_url(url) == url
+
+
+def test_generated_media_connection_rejects_private_actual_peer() -> None:
+    class FakeStream:
+        def get_extra_info(self, name: str):
+            assert name == "server_addr"
+            return ("169.254.169.254", 443)
+
+    response = SimpleNamespace(extensions={"network_stream": FakeStream()})
+    with pytest.raises(RuntimeError, match="non-public"):
+        _validate_connected_peer(response)  # type: ignore[arg-type]
+
+
+def test_generated_media_connection_accepts_public_actual_peer() -> None:
+    class FakeStream:
+        def get_extra_info(self, name: str):
+            assert name == "server_addr"
+            return ("93.184.216.34", 443)
+
+    response = SimpleNamespace(extensions={"network_stream": FakeStream()})
+    _validate_connected_peer(response)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
