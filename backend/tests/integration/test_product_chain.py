@@ -102,7 +102,7 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
             "/api/v1/admin/operations",
             headers=admin_headers,
             json={
-                "auth_rate_limit_per_minute": None,
+                "auth_rate_limit_per_minute": 30,
                 "generation_rate_limit_per_minute": 50,
                 "payment_rate_limit_per_minute": 20,
                 "registration_rate_limit_per_day": 40,
@@ -110,6 +110,8 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
                 "asset_upload_rate_limit_per_minute": 24,
                 "asset_max_retained_count_per_user": 200,
                 "asset_max_retained_bytes_per_user": 536870912,
+                "generation_max_inflight_per_user": 2,
+                "initial_concept_offer_limit_per_day": 3,
                 "media_retention_days": 30,
                 "backup_interval_hours": 24,
                 "backup_retention_days": 14,
@@ -122,6 +124,8 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
         assert ops.json()["asset_upload_rate_limit_per_minute"] == 24
         assert ops.json()["asset_max_retained_count_per_user"] == 200
         assert ops.json()["asset_max_retained_bytes_per_user"] == 536870912
+        assert ops.json()["generation_max_inflight_per_user"] == 2
+        assert ops.json()["initial_concept_offer_limit_per_day"] == 3
 
         partial_ops = await client.put(
             "/api/v1/admin/operations",
@@ -137,6 +141,8 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
         assert partial_ops.json()["asset_upload_rate_limit_per_minute"] == 24
         assert partial_ops.json()["asset_max_retained_count_per_user"] == 200
         assert partial_ops.json()["asset_max_retained_bytes_per_user"] == 536870912
+        assert partial_ops.json()["generation_max_inflight_per_user"] == 2
+        assert partial_ops.json()["initial_concept_offer_limit_per_day"] == 3
 
         project = await client.post(
             "/api/v1/projects",
