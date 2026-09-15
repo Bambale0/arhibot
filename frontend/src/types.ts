@@ -170,6 +170,7 @@ export type Idea = {
   category: string
   generation_type: GenerationMode
   image_url: string | null
+  preview_url?: string | null
   objects: IdeaObjectSummary[]
   selected_objects: string[]
   published_at: string
