@@ -54,6 +54,44 @@ class LocalMediaStorage:
         await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread(target.write_bytes, data)
 
+    def feed_preview_path(self, relative_path: str) -> Path:
+        source = self.absolute_path(relative_path)
+        return source.with_name(f".{source.name}.feed.webp")
+
+    @staticmethod
+    def _build_feed_preview(source: Path, target: Path) -> None:
+        if target.is_file():
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temp = target.with_name(f"{target.name}.{uuid4().hex}.tmp")
+        try:
+            with Image.open(source) as opened:
+                opened.thumbnail(
+                    (1280, 1280),
+                    Image.Resampling.LANCZOS,
+                    reducing_gap=3.0,
+                )
+                image = opened.convert("RGB")
+                image.save(
+                    temp,
+                    format="WEBP",
+                    quality=76,
+                    method=4,
+                )
+            temp.replace(target)
+        finally:
+            if temp.exists():
+                temp.unlink()
+
+    async def ensure_feed_preview(self, relative_path: str) -> Path:
+        source = self.absolute_path(relative_path)
+        if not source.is_file():
+            raise FileNotFoundError(source)
+        target = self.feed_preview_path(relative_path)
+        if not target.is_file():
+            await asyncio.to_thread(self._build_feed_preview, source, target)
+        return target
+
     def _signature(self, relative_path: str, expires: int) -> str:
         payload = f"{expires}\n{relative_path}".encode()
         return hmac.new(self.signing_key, payload, hashlib.sha256).hexdigest()
@@ -74,6 +112,22 @@ class LocalMediaStorage:
         self, relative_path: str, *, ttl_seconds: int | None = None
     ) -> str:
         return f"{self.signed_url(relative_path, ttl_seconds=ttl_seconds)}&preview=telegram"
+
+    def signed_feed_preview_url(
+        self, relative_path: str, *, ttl_seconds: int | None = None
+    ) -> str:
+        ttl = max(300, int(ttl_seconds or self.url_ttl_seconds))
+        now = int(time.time())
+        # Bucket expiry so refreshing the feed does not manufacture a different
+        # URL every second and defeat the browser cache.
+        expires = ((now // ttl) + 2) * ttl
+        self.absolute_path(relative_path)
+        signature = self._signature(relative_path, expires)
+        encoded_path = quote(relative_path, safe="/")
+        return (
+            f"{self.public_base_url}/api/v1/media/{encoded_path}"
+            f"?expires={expires}&signature={signature}&preview=feed"
+        )
 
     def verify_signature(
         self, relative_path: str, *, expires: int, signature: str, now: int | None = None
