@@ -15,6 +15,7 @@ from app.domain.users.enums import UserRole
 from app.repositories.assets import AssetRepository
 from app.repositories.credits import CreditRepository
 from app.repositories.generations import GenerationRepository
+from app.repositories.operations import OperationalSettingsRepository
 from app.repositories.projects import ProjectRepository
 from app.schemas.assets import AssetResponse
 from app.schemas.generations import GenerationCreate, GenerationListResponse, GenerationResponse
@@ -41,6 +42,7 @@ class GenerationService:
         self.assets = AssetRepository(session)
         self.projects = ProjectRepository(session)
         self.credit_repository = CreditRepository(session)
+        self.operations = OperationalSettingsRepository(session)
         self.credit_service = CreditService(session)
         self.asset_service: AssetService = build_asset_service(session, settings)
 
@@ -55,6 +57,23 @@ class GenerationService:
         origin: GenerationOrigin = GenerationOrigin.GENERIC,
     ) -> GenerationResponse:
         await RateLimitService(self.session).enforce("generation", str(user.id))
+        # Serialize generation admission for one account. This makes the inflight
+        # cap authoritative even when the client submits several requests in parallel.
+        await self.credit_repository.get_user_for_update(user.id)
+        operations = await self.operations.get()
+        max_inflight = (
+            operations.generation_max_inflight_per_user
+            if operations is not None
+            else 2
+        )
+        if await self.repository.count_inflight(user.id) >= max_inflight:
+            raise AppError(
+                type="generation_inflight_limit_exceeded",
+                title="Too many active generations",
+                status=429,
+                detail="Wait for an active generation to finish before starting another.",
+                meta={"max_inflight": max_inflight},
+            )
         normalized_prompt = payload.prompt.strip()
         if origin == GenerationOrigin.GENERIC and normalized_prompt.startswith(
             RESERVED_INTERNAL_PROMPT_PREFIXES
