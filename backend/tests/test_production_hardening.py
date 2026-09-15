@@ -1,0 +1,162 @@
+from pathlib import Path
+
+import pytest
+from fastapi import Response
+from starlette.requests import Request
+
+from app.api.v1 import auth as auth_api
+from app.core.config import Settings
+from app.providers.yookassa import YooKassaProvider
+from app.schemas.auth import LoginRequest, RegisterRequest
+from app.services.asset_service import LocalMediaStorage
+from app.services.billing_service import BillingService
+from app.workers.generation_worker import _commit_output_or_cleanup
+
+
+def _request(ip: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [(b"x-real-ip", ip.encode())],
+            "client": (ip, 12345),
+            "server": ("test", 80),
+            "scheme": "http",
+            "query_string": b"",
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_email_auth_rate_limits_source_and_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple] = []
+
+    class FakeLimiter:
+        def __init__(self, session) -> None:  # noqa: ANN001, ARG002
+            pass
+
+        async def enforce(self, kind: str, identity: str) -> None:
+            calls.append(("enforce", kind, identity))
+
+        async def enforce_window(
+            self,
+            namespace: str,
+            identity: str,
+            *,
+            limit: int,
+            window_seconds: int,
+        ) -> None:
+            calls.append(("window", namespace, identity, limit, window_seconds))
+
+    class FakeAuth:
+        async def register(self, email: str, password: str, display_name: str):  # noqa: ANN001
+            return {"registered": email}
+
+        async def login(self, email: str, password: str):  # noqa: ANN001
+            return {"logged_in": email}
+
+    monkeypatch.setattr(auth_api, "RateLimitService", FakeLimiter)
+    monkeypatch.setattr(auth_api, "_service", lambda session, settings: FakeAuth())
+
+    settings = Settings(registration_daily_limit_per_ip=3)
+    response = Response()
+    await auth_api.register_user(
+        RegisterRequest(
+            email="User@Example.com",
+            password="correct-horse-battery-staple",
+            display_name="User",
+        ),
+        _request("203.0.113.10"),
+        response,
+        object(),  # type: ignore[arg-type]
+        settings,
+    )
+    assert ("enforce", "auth", "register-ip:203.0.113.10") in calls
+    assert ("enforce", "auth", "register-email:user@example.com") in calls
+    assert ("window", "register-day", "203.0.113.10", 3, 86_400) in calls
+
+    calls.clear()
+    await auth_api.login_user(
+        LoginRequest(
+            email="User@Example.com",
+            password="correct-horse-battery-staple",
+        ),
+        _request("203.0.113.10"),
+        Response(),
+        object(),  # type: ignore[arg-type]
+        settings,
+    )
+    assert ("enforce", "auth", "login-ip:203.0.113.10") in calls
+    assert ("enforce", "auth", "login-email:user@example.com") in calls
+
+
+@pytest.mark.asyncio
+async def test_unknown_yookassa_webhook_id_does_not_trigger_provider_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = BillingService(
+        object(),  # type: ignore[arg-type]
+        Settings(yookassa_shop_id="shop", yookassa_secret_key="secret"),
+    )
+
+    class FakeRepository:
+        async def has_provider_payment(self, provider_id: str) -> bool:
+            assert provider_id == "unknown-payment"
+            return False
+
+    service.repository = FakeRepository()  # type: ignore[assignment]
+    provider_called = False
+
+    async def unexpected_get_payment(self, provider_id: str):  # noqa: ANN001, ARG001
+        nonlocal provider_called
+        provider_called = True
+        raise AssertionError("provider must not be called for unknown ids")
+
+    monkeypatch.setattr(YooKassaProvider, "get_payment", unexpected_get_payment)
+
+    await service.handle_webhook(
+        {
+            "event": "payment.succeeded",
+            "object": {"id": "unknown-payment"},
+        }
+    )
+    assert provider_called is False
+
+
+@pytest.mark.asyncio
+async def test_generation_output_is_removed_if_database_commit_fails(
+    tmp_path: Path,
+) -> None:
+    storage = LocalMediaStorage(
+        Settings(
+            media_root=str(tmp_path),
+            media_public_base_url="http://test",
+        )
+    )
+    relative_path = "users/test/orphan.png"
+    await storage.write(relative_path, b"orphan")
+    target = storage.absolute_path(relative_path)
+    assert target.exists()
+
+    class FailingSession:
+        rolled_back = False
+
+        async def commit(self) -> None:
+            raise RuntimeError("database commit failed")
+
+        async def rollback(self) -> None:
+            self.rolled_back = True
+
+    session = FailingSession()
+    with pytest.raises(RuntimeError, match="database commit failed"):
+        await _commit_output_or_cleanup(  # type: ignore[arg-type]
+            session,
+            storage,
+            relative_path,
+        )
+
+    assert session.rolled_back is True
+    assert target.exists() is False
