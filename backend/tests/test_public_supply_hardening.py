@@ -100,6 +100,23 @@ def test_compose_isolates_edge_and_data_planes() -> None:
     assert '- data' not in frontend
     assert '- data' not in nginx
 
+    worker = compose.split('  worker:', 1)[1].split('\n\n  renderer-worker:', 1)[0]
+    broadcast = compose.split('  broadcast-worker:', 1)[1].split('\n\n  maintenance:', 1)[0]
+    maintenance = compose.split('  maintenance:', 1)[1].split('\n\n  frontend:', 1)[0]
+    for service in (worker, broadcast, maintenance):
+        assert 'env_file:' not in service
+        assert 'JWT_SECRET' not in service
+        assert 'REFRESH_TOKEN_SECRET' not in service
+        assert 'YOOKASSA_SECRET_KEY' not in service
+    assert 'NEXUS_API_KEY' in worker
+    assert 'TELEGRAM_BOT_TOKEN' not in worker
+    assert 'NEXUS_API_KEY' not in broadcast
+    assert 'MEDIA_SIGNING_SECRET' not in broadcast
+    assert 'TELEGRAM_BOT_TOKEN' in broadcast
+    assert 'NEXUS_API_KEY' not in maintenance
+    assert 'TELEGRAM_BOT_TOKEN' in maintenance
+    assert 'MEDIA_SIGNING_SECRET' in maintenance
+
     postgres = compose.split('  postgres:', 1)[1].split('\n  redis:', 1)[0]
     redis = compose.split('  redis:', 1)[1].split('\nvolumes:', 1)[0]
     assert 'networks:\n      - data' in postgres
