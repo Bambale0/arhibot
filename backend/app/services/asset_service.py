@@ -92,8 +92,14 @@ class LocalMediaStorage:
             await asyncio.to_thread(self._build_feed_preview, source, target)
         return target
 
-    def _signature(self, relative_path: str, expires: int) -> str:
-        payload = f"{expires}\n{relative_path}".encode()
+    def _signature(
+        self,
+        relative_path: str,
+        expires: int,
+        *,
+        variant: str | None = None,
+    ) -> str:
+        payload = f"{expires}\n{relative_path}\n{variant or 'original'}".encode()
         return hmac.new(self.signing_key, payload, hashlib.sha256).hexdigest()
 
     def signed_url(self, relative_path: str, *, ttl_seconds: int | None = None) -> str:
@@ -111,7 +117,15 @@ class LocalMediaStorage:
     def signed_telegram_photo_url(
         self, relative_path: str, *, ttl_seconds: int | None = None
     ) -> str:
-        return f"{self.signed_url(relative_path, ttl_seconds=ttl_seconds)}&preview=telegram"
+        self.absolute_path(relative_path)
+        ttl = ttl_seconds if ttl_seconds is not None else self.url_ttl_seconds
+        expires = int(time.time()) + max(1, int(ttl))
+        signature = self._signature(relative_path, expires, variant="telegram")
+        encoded_path = quote(relative_path, safe="/")
+        return (
+            f"{self.public_base_url}/api/v1/media/{encoded_path}"
+            f"?expires={expires}&signature={signature}&preview=telegram"
+        )
 
     def signed_feed_preview_url(
         self, relative_path: str, *, ttl_seconds: int | None = None
@@ -124,7 +138,7 @@ class LocalMediaStorage:
         bucket_seconds = max(3600, ttl)
         expires = ((now // bucket_seconds) + 2) * bucket_seconds
         self.absolute_path(relative_path)
-        signature = self._signature(relative_path, expires)
+        signature = self._signature(relative_path, expires, variant="feed")
         encoded_path = quote(relative_path, safe="/")
         return (
             f"{self.public_base_url}/api/v1/media/{encoded_path}"
@@ -132,7 +146,13 @@ class LocalMediaStorage:
         )
 
     def verify_signature(
-        self, relative_path: str, *, expires: int, signature: str, now: int | None = None
+        self,
+        relative_path: str,
+        *,
+        expires: int,
+        signature: str,
+        now: int | None = None,
+        variant: str | None = None,
     ) -> bool:
         try:
             self.absolute_path(relative_path)
@@ -141,7 +161,7 @@ class LocalMediaStorage:
         current = int(time.time()) if now is None else int(now)
         if expires < current:
             return False
-        expected = self._signature(relative_path, expires)
+        expected = self._signature(relative_path, expires, variant=variant)
         return hmac.compare_digest(expected, signature)
 
 
