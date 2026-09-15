@@ -21,6 +21,7 @@ from app.db.models.assets import Asset  # noqa: E402
 from app.db.models.generations import Generation  # noqa: E402
 from app.db.models.users import AuthIdentity, User  # noqa: E402
 from app.db.session import get_session_factory  # noqa: E402
+from app.domain.generations.enums import GenerationOrigin, GenerationStatus, GenerationType  # noqa: E402
 from app.domain.users.enums import AuthProvider, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
 from app.providers.nexus import NexusImageProvider, NexusImageResult  # noqa: E402
@@ -248,14 +249,36 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
             assert generation.telegram_delivery_attempts == 1
             assert generation.telegram_notified_at is not None
 
+            # Simulate a process crash after Telegram accepted the document but before
+            # AuRoom committed the final "sent" state. Delivery is intentionally
+            # at-least-once: the next maintenance pass retries instead of losing it.
+            generation.telegram_delivery_status = "sending"
+            generation.telegram_notified_at = None
+            await session.commit()
+
+        retried_sent, retried_failed = await deliver_pending_generations_once(
+            api=telegram,  # type: ignore[arg-type]
+            webapp_url="https://app.example.test/",
+        )
+        assert retried_sent == 1
+        assert retried_failed == 0
+        assert len(telegram.calls) == 2
+
+        async with get_session_factory()() as session:
+            generation = await session.get(Generation, generation_id)
+            assert generation is not None
+            assert generation.telegram_delivery_status == "sent"
+            assert generation.telegram_delivery_attempts == 2
+            assert generation.telegram_notified_at is not None
+
 @pytest.mark.asyncio
-async def test_structured_questionnaire_prompt_bypasses_legacy_template_and_inherits_ratio(
+async def test_public_reserved_prompt_is_rejected_and_internal_questionnaire_origin_bypasses_template(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         _, admin_headers = await _register_admin(client)
-        _, headers = await _register_admin(client)
+        tokens, headers = await _register_admin(client)
         await client.put(
             "/api/v1/admin/generation",
             headers=admin_headers,
@@ -299,8 +322,26 @@ async def test_structured_questionnaire_prompt_bypasses_legacy_template_and_inhe
                 "prompt": structured,
             },
         )
-        assert created.status_code == 202, created.text
-        generation_id = UUID(created.json()["id"])
+        assert created.status_code == 422, created.text
+        assert created.json()["type"] == "reserved_generation_prompt"
+
+        generation_id = uuid4()
+        async with get_session_factory()() as session:
+            session.add(
+                Generation(
+                    id=generation_id,
+                    user_id=UUID(tokens["user"]["id"]),
+                    project_id=UUID(project_id),
+                    input_asset_id=UUID(uploaded.json()["id"]),
+                    type=GenerationType.MASTER_PLAN,
+                    status=GenerationStatus.QUEUED,
+                    origin=GenerationOrigin.QUESTIONNAIRE.value,
+                    prompt=structured,
+                    credits_charged=0,
+                )
+            )
+            await session.commit()
+
         calls: list[dict] = []
 
         async def fake_generate(self, **kwargs):  # noqa: ANN001, ARG001

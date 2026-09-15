@@ -37,6 +37,45 @@ async def test_heartbeat_rejects_missing_or_future_value(monkeypatch: pytest.Mon
     assert await heartbeat.worker_heartbeat_age('generation', now_epoch=100.0) is None
 
 
+@pytest.mark.asyncio
+async def test_worker_singleton_uses_owner_checked_lease(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple] = []
+
+    async def fake_set(key: str, value: str, *, ex: int | None = None, nx: bool = False) -> bool:
+        calls.append(("set", key, ex, nx, value))
+        return True
+
+    async def fake_eval(script: str, numkeys: int, *values):
+        calls.append(("eval", numkeys, values, script))
+        return 1
+
+    monkeypatch.setattr(heartbeat.redis_client, "set", fake_set)
+    monkeypatch.setattr(heartbeat.redis_client, "eval", fake_eval)
+
+    async with heartbeat.worker_singleton("generation"):
+        assert calls[0][0:4] == (
+            "set",
+            "auroom:worker_lease:generation",
+            heartbeat.WORKER_LEASE_TTL_SECONDS,
+            True,
+        )
+
+    release = next(item for item in calls if item[0] == "eval")
+    assert release[1] == 1
+    assert release[2][0] == "auroom:worker_lease:generation"
+
+
+@pytest.mark.asyncio
+async def test_worker_singleton_rejects_second_owner(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_set(*args, **kwargs):  # noqa: ANN002, ANN003
+        return False
+
+    monkeypatch.setattr(heartbeat.redis_client, "set", fake_set)
+    with pytest.raises(RuntimeError, match="already owns"):
+        async with heartbeat.worker_singleton("generation"):
+            pass
+
+
 def test_compose_and_deploy_require_worker_health() -> None:
     compose = (REPO_ROOT / 'backend' / 'docker-compose.yml').read_text()
     deploy = (REPO_ROOT / 'ops' / 'deploy_docker.sh').read_text()

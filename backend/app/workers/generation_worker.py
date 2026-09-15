@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
+import socket
 from datetime import UTC, datetime, timedelta
 from json import JSONDecodeError, loads
+from urllib.parse import urljoin, urlsplit
 from uuid import UUID, uuid4
 
 import httpx
@@ -16,7 +19,7 @@ from app.db.models.generations import Generation
 from app.db.models.projects import Project
 from app.db.session import dispose_engine, get_session_factory
 from app.domain.assets.enums import AssetPurpose, AssetType
-from app.domain.generations.enums import GenerationStatus
+from app.domain.generations.enums import GenerationOrigin, GenerationStatus
 from app.image_compositor import compose_masked_edit
 from app.image_orbit import build_orbit_animation
 from app.prompt_builders.generation import build_generation_prompt
@@ -28,7 +31,7 @@ from app.repositories.projects import ProjectRepository
 from app.services.asset_service import AssetService, LocalMediaStorage
 from app.services.credit_service import CreditService
 from app.services.generation_service import GENERATION_QUEUE_KEY
-from app.workers.heartbeat import worker_heartbeat
+from app.workers.heartbeat import worker_heartbeat, worker_singleton
 
 logger = logging.getLogger(__name__)
 GENERATION_PROCESSING_KEY = "auroom:generation_processing"
@@ -49,8 +52,10 @@ def _admin_sandbox_request(
     generation: Generation,
     project: Project,
 ) -> tuple[str, str, dict[str, object]] | None:
-    if not generation.prompt.startswith(ADMIN_SANDBOX_PROMPT_PREFIX):
+    if generation.origin != GenerationOrigin.ADMIN_SANDBOX.value:
         return None
+    if not generation.prompt.startswith(ADMIN_SANDBOX_PROMPT_PREFIX):
+        raise ValueError("Admin sandbox generation has an invalid envelope.")
     if not bool((project.context or {}).get("admin_ai_sandbox")):
         raise ValueError("Admin sandbox envelope is outside the sandbox project.")
     model_name = (generation.model_name or "").strip()
@@ -83,8 +88,10 @@ def _admin_orbit_request(
     generation: Generation,
     project: Project,
 ) -> tuple[str, str, dict[str, object], int, int] | None:
-    if not generation.prompt.startswith(ADMIN_ORBIT_PROMPT_PREFIX):
+    if generation.origin != GenerationOrigin.ADMIN_ORBIT.value:
         return None
+    if not generation.prompt.startswith(ADMIN_ORBIT_PROMPT_PREFIX):
+        raise ValueError("Admin orbit generation has an invalid envelope.")
     if not bool((project.context or {}).get("admin_ai_sandbox")):
         raise ValueError("Admin orbit envelope is outside the sandbox project.")
     if generation.input_asset_id is None:
@@ -148,32 +155,115 @@ def _questionnaire_aspect_ratio(asset: Asset | None) -> str:
     return min(QUESTIONNAIRE_ASPECT_RATIOS, key=lambda item: abs(QUESTIONNAIRE_ASPECT_RATIOS[item] - ratio))
 
 
+def _address_is_public(address: str) -> bool:
+    ip = ipaddress.ip_address(address)
+    return not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+async def _validate_remote_image_url(url: str) -> str:
+    parsed = urlsplit(url)
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        raise RuntimeError("Generated image URL must use HTTPS and be absolute")
+    if parsed.username is not None or parsed.password is not None:
+        raise RuntimeError("Generated image URL must not contain credentials")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError("Generated image URL has an invalid port") from exc
+    if port not in (None, 443):
+        raise RuntimeError("Generated image URL must use the standard HTTPS port")
+
+    hostname = parsed.hostname.rstrip(".").lower()
+    try:
+        literal = ipaddress.ip_address(hostname)
+    except ValueError:
+        try:
+            answers = await asyncio.to_thread(
+                socket.getaddrinfo,
+                hostname,
+                443,
+                type=socket.SOCK_STREAM,
+            )
+        except socket.gaierror as exc:
+            raise RuntimeError("Generated image host could not be resolved") from exc
+        addresses = {str(answer[4][0]).split("%", 1)[0] for answer in answers}
+        if not addresses or any(not _address_is_public(address) for address in addresses):
+            raise RuntimeError("Generated image host resolves to a non-public address")
+    else:
+        if not _address_is_public(str(literal)):
+            raise RuntimeError("Generated image URL points to a non-public address")
+    return url
+
+
+def _validate_connected_peer(response: httpx.Response) -> None:
+    stream = response.extensions.get("network_stream")
+    if stream is None or not hasattr(stream, "get_extra_info"):
+        raise RuntimeError("Generated image connection did not expose its peer address")
+    server_addr = stream.get_extra_info("server_addr")
+    if (
+        not isinstance(server_addr, (tuple, list))
+        or not server_addr
+        or not isinstance(server_addr[0], str)
+    ):
+        raise RuntimeError("Generated image connection peer address is unavailable")
+    address = server_addr[0].split("%", 1)[0]
+    try:
+        public = _address_is_public(address)
+    except ValueError as exc:
+        raise RuntimeError("Generated image connection peer address is invalid") from exc
+    if not public:
+        raise RuntimeError("Generated image connection reached a non-public address")
+
+
 async def _download_image(url: str, settings: Settings) -> bytes:
-    if not url.startswith("https://"):
-        raise RuntimeError("Generated image URL must use HTTPS")
     limit = settings.max_image_size_bytes
-    chunks: list[bytes] = []
-    received = 0
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0), follow_redirects=True) as client:
-        async with client.stream("GET", url) as response:
-            response.raise_for_status()
-            if not str(response.url).startswith("https://"):
-                raise RuntimeError("Generated image redirect must remain on HTTPS")
-            content_length = response.headers.get("content-length")
-            if content_length:
-                try:
-                    if int(content_length) > limit:
+    current_url = await _validate_remote_image_url(url)
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(60.0),
+        follow_redirects=False,
+        trust_env=False,
+    ) as client:
+        for redirect_count in range(6):
+            async with client.stream("GET", current_url) as response:
+                _validate_connected_peer(response)
+                if response.is_redirect:
+                    if redirect_count >= 5:
+                        raise RuntimeError("Generated image exceeded redirect limit")
+                    location = response.headers.get("location")
+                    if not location:
+                        raise RuntimeError("Generated image redirect is missing Location")
+                    current_url = await _validate_remote_image_url(
+                        urljoin(str(response.url), location)
+                    )
+                    continue
+
+                response.raise_for_status()
+                content_length = response.headers.get("content-length")
+                if content_length:
+                    try:
+                        if int(content_length) > limit:
+                            raise RuntimeError("Generated image exceeds media size limit")
+                    except ValueError:
+                        # A malformed length header is not trusted; the streamed byte limit below
+                        # remains authoritative.
+                        pass
+
+                chunks: list[bytes] = []
+                received = 0
+                async for chunk in response.aiter_bytes():
+                    received += len(chunk)
+                    if received > limit:
                         raise RuntimeError("Generated image exceeds media size limit")
-                except ValueError:
-                    # A malformed length header is not trusted; the streamed byte limit below
-                    # remains authoritative.
-                    pass
-            async for chunk in response.aiter_bytes():
-                received += len(chunk)
-                if received > limit:
-                    raise RuntimeError("Generated image exceeds media size limit")
-                chunks.append(chunk)
-    return b"".join(chunks)
+                    chunks.append(chunk)
+                return b"".join(chunks)
+    raise RuntimeError("Generated image download did not produce a response")
 
 
 async def _generate_orbit_frames(
@@ -212,6 +302,27 @@ async def _generate_orbit_frames(
     return [item[1] for item in generated], generated[-1][2] if generated else None
 
 
+async def _commit_output_or_cleanup(
+    session,
+    storage: LocalMediaStorage,
+    relative_path: str,
+) -> None:
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        target = storage.absolute_path(relative_path)
+        try:
+            if target.exists():
+                await asyncio.to_thread(target.unlink)
+        except OSError:
+            logger.exception(
+                "Could not remove orphaned generation output %s after DB failure",
+                relative_path,
+            )
+        raise
+
+
 async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -> None:
     async with get_session_factory()() as session:
         generation = await session.get(Generation, generation_id)
@@ -244,7 +355,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             if generation.input_asset_id is not None
             else None
         )
-        if project is None:
+        if project is None or project.deleted_at is not None:
             await session.rollback()
             await _mark_failed_and_refund(generation_id, "Generation project is no longer available.")
             return
@@ -263,16 +374,44 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             await _mark_failed_and_refund(generation_id, exc)
             return
 
+        if generation.origin == GenerationOrigin.LEGACY_INTERNAL.value:
+            await session.rollback()
+            await _mark_failed_and_refund(
+                generation_id,
+                "Legacy internal generation cannot be processed after the security migration.",
+            )
+            return
+
         admin_internal_generation = (
             sandbox_request is not None or orbit_request is not None
         )
         admin_repository = AdminRepository(session)
-        initial_concept_generation = generation.prompt.startswith(
+        initial_concept_generation = (
+            generation.origin == GenerationOrigin.QUESTIONNAIRE_INITIAL.value
+        )
+        questionnaire_generation = generation.origin in {
+            GenerationOrigin.QUESTIONNAIRE.value,
+            GenerationOrigin.QUESTIONNAIRE_INITIAL.value,
+        }
+        if initial_concept_generation and not generation.prompt.startswith(
             INITIAL_CONCEPT_PROMPT_PREFIX
-        )
-        questionnaire_generation = generation.prompt.startswith(
-            QUESTIONNAIRE_PROMPT_PREFIXES
-        )
+        ):
+            await session.rollback()
+            await _mark_failed_and_refund(
+                generation_id,
+                "Initial questionnaire generation has an invalid server prompt.",
+            )
+            return
+        if (
+            generation.origin == GenerationOrigin.QUESTIONNAIRE.value
+            and not generation.prompt.startswith(QUESTIONNAIRE_PROMPT_PREFIX)
+        ):
+            await session.rollback()
+            await _mark_failed_and_refund(
+                generation_id,
+                "Questionnaire generation has an invalid server prompt.",
+            )
+            return
         runtime = (
             None
             if admin_internal_generation
@@ -436,8 +575,16 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             data = composite.data
 
         async with get_session_factory()() as session:
-            generation = await session.get(Generation, generation_id)
-            if generation is None:
+            generation = await GenerationRepository(session).get_for_update(generation_id)
+            if generation is None or generation.status != GenerationStatus.PROCESSING:
+                return
+            project = await session.get(Project, generation.project_id)
+            if project is None or project.deleted_at is not None:
+                await session.rollback()
+                await _mark_failed_and_refund(
+                    generation_id,
+                    "Generation project was deleted before provider completion.",
+                )
                 return
             asset_service = AssetService(
                 AssetRepository(session),
@@ -475,7 +622,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             generation.status = GenerationStatus.COMPLETED
             generation.error = None
             generation.completed_at = datetime.now(UTC)
-            await session.commit()
+            await _commit_output_or_cleanup(
+                session,
+                asset_service.storage,
+                relative_path,
+            )
             logger.info(
                 "Generation %s completed with %s%s%s%s",
                 generation_id,
@@ -616,8 +767,9 @@ async def run_worker() -> None:
 
 async def _main() -> None:
     try:
-        async with worker_heartbeat("generation"):
-            await run_worker()
+        async with worker_singleton("generation"):
+            async with worker_heartbeat("generation"):
+                await run_worker()
     finally:
         await redis_client.aclose()
         await dispose_engine()

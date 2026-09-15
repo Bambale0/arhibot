@@ -203,6 +203,7 @@ class PublicIdeaPublicationResponse(BaseModel):
     category: str
     generation_type: GenerationType
     image_url: str | None
+    preview_url: str | None = None
     objects: list[IdeaObjectSummary]
     selected_objects: list[str]
     published_at: datetime
@@ -456,14 +457,30 @@ class BroadcastResponse(BaseModel):
 
 
 class OperationalSettingsUpdate(BaseModel):
-    auth_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
-    generation_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
-    payment_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
+    auth_rate_limit_per_minute: int = Field(default=30, ge=1, le=100_000)
+    generation_rate_limit_per_minute: int = Field(default=10, ge=1, le=100_000)
+    payment_rate_limit_per_minute: int = Field(default=10, ge=1, le=100_000)
+    registration_rate_limit_per_day: int = Field(default=20, ge=1, le=100_000)
+    yookassa_webhook_rate_limit_per_minute: int = Field(default=120, ge=1, le=100_000)
+    asset_upload_rate_limit_per_minute: int = Field(default=12, ge=1, le=100_000)
+    asset_max_retained_count_per_user: int = Field(default=200, ge=1, le=100_000)
+    asset_max_retained_bytes_per_user: int = Field(
+        default=512 * 1024 * 1024,
+        ge=1,
+        le=10_000_000_000_000,
+    )
+    generation_max_inflight_per_user: int = Field(default=2, ge=1, le=1000)
+    initial_concept_offer_limit_per_day: int = Field(default=3, ge=1, le=1000)
     starter_credits: int = Field(default=0, ge=0, le=1_000_000)
     initial_concept_credits: int = Field(default=0, ge=0, le=1_000_000)
-    media_retention_days: int | None = Field(default=None, ge=1, le=3650)
-    backup_interval_hours: int | None = Field(default=None, ge=1, le=8760)
-    backup_retention_days: int | None = Field(default=None, ge=1, le=3650)
+    media_retention_days: int = Field(default=30, ge=1, le=3650)
+    backup_interval_hours: int = Field(default=24, ge=1, le=8760)
+    backup_retention_days: int = Field(default=14, ge=1, le=3650)
+    media_min_free_bytes: int = Field(
+        default=2 * 1024 * 1024 * 1024,
+        ge=64 * 1024 * 1024,
+        le=10_000_000_000_000,
+    )
 
 
 class OperationalSettingsResponse(OperationalSettingsUpdate):

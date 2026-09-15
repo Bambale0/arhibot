@@ -5,6 +5,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -54,6 +55,7 @@ class BillingPayment(Base):
     confirmation_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     receipt_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    create_request_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     refund_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     refund_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     refund_idempotence_key: Mapped[str | None] = mapped_column(String(64), nullable=True)

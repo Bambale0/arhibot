@@ -54,6 +54,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             lastError = sessionError
             api.clearTokens()
           }
+        } else {
+          try {
+            const restored = await api.restoreSession()
+            if (restored) {
+              if (!cancelled) {
+                setUser(restored)
+                setError(null)
+              }
+              return
+            }
+          } catch (sessionError) {
+            lastError = sessionError
+            api.clearTokens()
+          }
         }
 
         const initData = telegram?.initData?.trim()

@@ -1,11 +1,17 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from sqlalchemy import select
 from app.core.cursor import decode_cursor, encode_cursor
 from app.core.errors import AppError
+from app.db.models.assets import Asset
+from app.db.models.generations import Generation
 from app.db.models.projects import Project
 from app.db.models.users import User
+from app.domain.generations.enums import GenerationStatus
+from app.repositories.credits import CreditRepository
 from app.repositories.projects import ProjectRepository
+from app.services.credit_service import CreditService
 from app.schemas.projects import (
     ProjectCreateRequest,
     ProjectListResponse,
@@ -112,6 +118,9 @@ class ProjectService:
             existing_architecture = (project.context or {}).get("architecture")
             if existing_architecture is not None and "architecture" not in updated_context:
                 updated_context["architecture"] = existing_architecture
+            existing_design_session = (project.context or {}).get("design_session")
+            if existing_design_session is not None:
+                updated_context["design_session"] = existing_design_session
             existing_questionnaire_draft = (project.context or {}).get("questionnaire_draft")
             if existing_questionnaire_draft is not None:
                 updated_context["questionnaire_draft"] = existing_questionnaire_draft
@@ -121,6 +130,65 @@ class ProjectService:
         return self.to_response(project)
 
     async def delete(self, user: User, project_id: UUID) -> None:
-        project = await self.get_owned_model(user, project_id)
-        project.deleted_at = datetime.now(UTC)
-        await self.repository.session.commit()
+        session = self.repository.session
+
+        # Keep the same lock order as generation creation: user -> project -> jobs.
+        # This closes the race where a paid job could be accepted while deletion is
+        # committing, and lets the refund ledger remain idempotent.
+        locked_user = await CreditRepository(session).get_user_for_update(user.id)
+        if locked_user is None:
+            raise AppError(
+                type="project_not_found",
+                title="Project not found",
+                status=404,
+                detail="The project does not exist or is not available to this user.",
+            )
+        project = await self.repository.get_owned(project_id, user.id, for_update=True)
+        if project is None:
+            raise AppError(
+                type="project_not_found",
+                title="Project not found",
+                status=404,
+                detail="The project does not exist or is not available to this user.",
+            )
+
+        deleted_at = datetime.now(UTC)
+        active_result = await session.execute(
+            select(Generation)
+            .where(
+                Generation.project_id == project.id,
+                Generation.status.in_(
+                    [GenerationStatus.QUEUED, GenerationStatus.PROCESSING]
+                ),
+            )
+            .with_for_update()
+        )
+        credit_service = CreditService(session)
+        for generation in active_result.scalars().all():
+            generation.status = GenerationStatus.FAILED
+            generation.error = "Project was deleted before generation completed."
+            generation.completed_at = deleted_at
+            if generation.credits_charged > 0:
+                await credit_service.apply(
+                    user_id=generation.user_id,
+                    amount=generation.credits_charged,
+                    kind="generation_refund",
+                    idempotency_key=f"generation:{generation.id}:refund",
+                    reference_type="generation",
+                    reference_id=str(generation.id),
+                    reason="Project deleted",
+                )
+
+        assets_result = await session.execute(
+            select(Asset)
+            .where(
+                Asset.project_id == project.id,
+                Asset.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+        for asset in assets_result.scalars().all():
+            asset.deleted_at = deleted_at
+
+        project.deleted_at = deleted_at
+        await session.commit()

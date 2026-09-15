@@ -136,5 +136,6 @@ export type QuestionnaireGenerationCost = {
   generation_type:'master_plan'
   initial_credits:number
   credits:number|null
+  initial_offer_available:boolean
   is_available:boolean
 }

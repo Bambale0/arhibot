@@ -80,6 +80,26 @@ async def test_questionnaire_project_is_hidden_until_source_step_and_can_be_disc
         assert promoted.status_code == 200, promoted.text
         assert promoted.json()["context"]["questionnaire_draft"] is False
 
+        forged_session = await client.patch(
+            f"/api/v1/projects/{project_id}",
+            headers=headers,
+            json={"context": {"design_session": {}}},
+        )
+        assert forged_session.status_code == 422, forged_session.text
+
+        generic_update = await client.patch(
+            f"/api/v1/projects/{project_id}",
+            headers=headers,
+            json={"context": {"house_area_m2": 155}},
+        )
+        assert generic_update.status_code == 200, generic_update.text
+        assert generic_update.json()["context"]["house_area_m2"] == 155
+        assert (
+            generic_update.json()["context"]["design_session"]["session_id"]
+            == design_session["session_id"]
+        )
+        assert generic_update.json()["context"]["design_session"]["source_step_completed"] is True
+
         visible_list = await client.get("/api/v1/projects", headers=headers)
         assert visible_list.status_code == 200, visible_list.text
         assert project_id in {item["id"] for item in visible_list.json()["items"]}

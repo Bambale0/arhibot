@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -16,7 +17,7 @@ from app.db.models.questionnaires import (
     QuestionnaireCatalogRevision,
 )
 from app.db.models.users import User
-from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.domain.generations.enums import GenerationOrigin, GenerationStatus, GenerationType
 from app.questionnaires.application_brief import build_application_brief
 from app.questionnaires.generation_prompt import (
     build_initial_concept_prompt,
@@ -160,19 +161,67 @@ class QuestionnaireService:
         settings = await self.operations.get()
         return settings.initial_concept_credits if settings else 0
 
-    async def generation_cost(self, user: User) -> QuestionnaireGenerationCostResponse:
+    async def _initial_offer_available(
+        self,
+        user: User,
+        project_id: UUID | None,
+    ) -> bool:
+        if project_id is not None:
+            await ProjectService(self.projects).get_owned_model(user, project_id)
+            if await self.generations.project_used_initial_offer(project_id):
+                return False
+
+        if user.role.value in {"admin", "superadmin"}:
+            return True
+
+        settings = await self.operations.get()
+        daily_limit = settings.initial_concept_offer_limit_per_day if settings else 3
+        used = await self.generations.count_initial_offer_attempts_since(
+            user.id,
+            datetime.now(UTC) - timedelta(days=1),
+        )
+        return used < daily_limit
+
+    async def generation_credits_override(
+        self,
+        user: User,
+        project_id: UUID,
+        object_key: str,
+    ) -> int | None:
+        if object_key != "__initial__":
+            return None
+
+        # Keep the offer decision and subsequent generation insert in one serialized
+        # per-user transaction so parallel projects cannot race past the daily budget.
+        await self.credits.get_user_for_update(user.id)
+        if await self._initial_offer_available(user, project_id):
+            return await self.initial_concept_credits(user)
+
+        price = await self.credits.get_price(GenerationType.MASTER_PLAN.value)
+        if price is None or not price.is_active:
+            return None
+        return price.credits
+
+    async def generation_cost(
+        self,
+        user: User,
+        project_id: UUID | None = None,
+    ) -> QuestionnaireGenerationCostResponse:
         initial_credits = await self.initial_concept_credits(user)
+        initial_offer_available = await self._initial_offer_available(user, project_id)
         price = await self.credits.get_price(GenerationType.MASTER_PLAN.value)
         if price is None or not price.is_active:
             return QuestionnaireGenerationCostResponse(
                 initial_credits=initial_credits,
                 credits=None,
-                is_available=True,
+                initial_offer_available=initial_offer_available,
+                is_available=initial_offer_available,
             )
         credits = 0 if user.role.value in {"admin", "superadmin"} else price.credits
         return QuestionnaireGenerationCostResponse(
             initial_credits=initial_credits,
             credits=credits,
+            initial_offer_available=initial_offer_available,
             is_available=True,
         )
 

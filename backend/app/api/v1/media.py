@@ -19,6 +19,7 @@ TELEGRAM_PREVIEW_MAX_SIDE = 2560
 TELEGRAM_PHOTO_MAX_ASPECT_RATIO = 20
 _PREVIEW_QUALITIES = (88, 82, 76, 70, 64, 58)
 _PREVIEW_SIDES = (2560, 2048, 1600, 1280)
+_FEED_PREVIEW_SEMAPHORE = asyncio.Semaphore(2)
 
 
 def _normalize_telegram_aspect(image: Image.Image) -> Image.Image:
@@ -63,9 +64,14 @@ def _telegram_preview(path: Path) -> bytes:
     raise ValueError("Telegram preview could not be reduced below the size limit")
 
 
-def _media_headers() -> dict[str, str]:
+def _media_headers(*, preview: str | None = None) -> dict[str, str]:
+    cache_control = (
+        "private, max-age=3600, immutable"
+        if preview == "feed"
+        else "private, max-age=60"
+    )
     return {
-        "Cache-Control": "private, max-age=60",
+        "Cache-Control": cache_control,
         "X-Content-Type-Options": "nosniff",
         "X-Robots-Tag": "noindex, nofollow",
         "Referrer-Policy": "no-referrer",
@@ -84,7 +90,20 @@ async def get_signed_media(
     preview: str | None = None,
 ) -> Response:
     storage = LocalMediaStorage(settings)
-    if not storage.verify_signature(media_path, expires=expires, signature=signature):
+    variant = preview if preview in {"feed", "telegram"} else None
+    if preview is not None and variant is None:
+        raise AppError(
+            type="media_preview_invalid",
+            title="Media preview invalid",
+            status=422,
+            detail="The requested media preview variant is not supported.",
+        )
+    if not storage.verify_signature(
+        media_path,
+        expires=expires,
+        signature=signature,
+        variant=variant,
+    ):
         raise AppError(
             type="media_link_invalid",
             title="Media link invalid",
@@ -121,7 +140,24 @@ async def get_signed_media(
         return Response(
             content=data,
             media_type="image/jpeg",
-            headers=_media_headers(),
+            headers=_media_headers(preview="telegram"),
+        )
+
+    if preview == "feed":
+        try:
+            async with _FEED_PREVIEW_SEMAPHORE:
+                preview_path = await storage.ensure_feed_preview(media_path)
+        except (FileNotFoundError, OSError, UnidentifiedImageError) as exc:
+            raise AppError(
+                type="media_preview_unavailable",
+                title="Media preview unavailable",
+                status=422,
+                detail="This media cannot be prepared for the Ideas feed.",
+            ) from exc
+        return FileResponse(
+            preview_path,
+            media_type="image/webp",
+            headers=_media_headers(preview="feed"),
         )
 
     media_type = guess_type(path.name)[0] or "application/octet-stream"

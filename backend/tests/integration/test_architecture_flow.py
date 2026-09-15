@@ -146,6 +146,13 @@ async def test_architecture_package_survives_project_context_updates() -> None:
             "warm_stone"
         )
 
+        forged_generic_architecture = await client.patch(
+            f"/api/v1/projects/{project_id}",
+            headers=headers,
+            json={"context": {"architecture": _architecture_payload()}},
+        )
+        assert forged_generic_architecture.status_code == 422, forged_generic_architecture.text
+
         plan = await client.get(
             f"/api/v1/projects/{project_id}/architecture/plan.svg", headers=headers
         )

@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.domain.generations.enums import GenerationOrigin, GenerationStatus, GenerationType
 
 
 class Generation(Base):
@@ -17,6 +17,7 @@ class Generation(Base):
     __table_args__ = (
         Index("ix_generations_user_created", "user_id", "created_at"),
         Index("ix_generations_project_created", "project_id", "created_at"),
+        Index("ix_generations_project_origin_created", "project_id", "origin", "created_at"),
         Index("ix_generations_status_created", "status", "created_at"),
         Index("ix_generations_telegram_delivery", "telegram_delivery_status", "completed_at"),
     )
@@ -51,6 +52,9 @@ class Generation(Base):
         nullable=False,
         default=GenerationStatus.QUEUED,
         server_default=GenerationStatus.QUEUED.value,
+    )
+    origin: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=GenerationOrigin.GENERIC.value, server_default=GenerationOrigin.GENERIC.value
     )
     prompt: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     credits_charged: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")

@@ -1,16 +1,35 @@
 import '../telegram-fullscreen.css'
 
+function FullscreenIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+      <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+      <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
+      <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+    </svg>
+  )
+}
+
 export function TelegramFullscreenButton() {
-  if (!window.Telegram?.WebApp) return null
+  const telegram = window.Telegram?.WebApp
+  if (!telegram?.requestFullscreen) return null
+  const webApp = telegram
 
   function requestFullscreen() {
-    const telegram = window.Telegram?.WebApp
-    if (!telegram) return
     try {
-      telegram.expand?.()
-      telegram.requestFullscreen?.()
+      webApp.expand?.()
+      webApp.requestFullscreen?.()
     } catch {
-      // Older Telegram clients may only support expand().
+      // Telegram clients can reject fullscreen transiently; keep the app usable.
     }
   }
 
@@ -22,8 +41,7 @@ export function TelegramFullscreenButton() {
       aria-label="Открыть на весь экран"
       onClick={requestFullscreen}
     >
-      <span aria-hidden="true">⛶</span>
-      <span>На весь экран</span>
+      <FullscreenIcon />
     </button>
   )
 }
