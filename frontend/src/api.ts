@@ -118,12 +118,22 @@ async function refreshSession(): Promise<void> {
   return refreshPromise
 }
 
+async function clearBrowserRefreshCookie(): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/auth/logout`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    })
+  } catch { /* best-effort cookie cleanup */ }
+}
+
 export async function restoreSession(): Promise<User | null> {
   try {
     await refreshSession()
     return await getMe()
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
+      await clearBrowserRefreshCookie()
       clearTokens()
       return null
     }
