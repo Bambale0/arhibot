@@ -40,6 +40,9 @@ def test_public_nginx_denies_internal_docs_and_has_security_headers() -> None:
     assert inner.count("proxy_set_header X-Real-IP $auroom_real_ip;") >= 3
     assert "client_max_body_size 1m;" in inner
     assert "location = /api/v1/assets" in inner
+    assert "limit_conn_zone $auroom_real_ip zone=auroom_upload_conn:10m;" in inner
+    assert "limit_conn auroom_upload_conn 2;" in inner
+    assert "limit_conn_status 429;" in inner
 
 
 def test_supply_chain_dependencies_are_immutable_or_monitored() -> None:
