@@ -18,10 +18,10 @@ class OperationalSettings(Base):
     generation_rate_limit_per_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
     payment_rate_limit_per_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
     registration_rate_limit_per_day: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, default=20, server_default="20"
+        Integer, nullable=True, server_default="20"
     )
     yookassa_webhook_rate_limit_per_minute: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, default=120, server_default="120"
+        Integer, nullable=True, server_default="120"
     )
     starter_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     initial_concept_credits: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
