@@ -31,6 +31,15 @@ def test_public_nginx_denies_internal_docs_and_has_security_headers() -> None:
     ):
         assert f'add_header {header}' in nginx
     assert "script-src 'self' https://telegram.org" in nginx
+    assert "client_max_body_size 1m;" in nginx
+    assert "location = /api/v1/assets" in nginx
+    assert "client_max_body_size 21m;" in nginx
+
+    inner = (REPO_ROOT / 'backend' / 'deploy' / 'nginx.conf').read_text()
+    assert "map $http_x_real_ip $auroom_real_ip" in inner
+    assert inner.count("proxy_set_header X-Real-IP $auroom_real_ip;") >= 3
+    assert "client_max_body_size 1m;" in inner
+    assert "location = /api/v1/assets" in inner
 
 
 def test_supply_chain_dependencies_are_immutable_or_monitored() -> None:
