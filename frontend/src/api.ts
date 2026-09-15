@@ -38,8 +38,10 @@ const LEGACY_ACCESS_KEY = 'archiai.access_token'
 const LEGACY_REFRESH_KEY = 'archiai.refresh_token'
 
 function migrateLegacyTokens() {
-  if (!localStorage.getItem(ACCESS_KEY) && localStorage.getItem(LEGACY_ACCESS_KEY)) localStorage.setItem(ACCESS_KEY, localStorage.getItem(LEGACY_ACCESS_KEY) || '')
+  const previousAccess = localStorage.getItem(ACCESS_KEY) || localStorage.getItem(LEGACY_ACCESS_KEY)
+  if (!sessionStorage.getItem(ACCESS_KEY) && previousAccess) sessionStorage.setItem(ACCESS_KEY, previousAccess)
   if (!localStorage.getItem(REFRESH_KEY) && localStorage.getItem(LEGACY_REFRESH_KEY)) localStorage.setItem(REFRESH_KEY, localStorage.getItem(LEGACY_REFRESH_KEY) || '')
+  localStorage.removeItem(ACCESS_KEY)
   localStorage.removeItem(LEGACY_ACCESS_KEY)
   localStorage.removeItem(LEGACY_REFRESH_KEY)
 }
@@ -55,9 +57,21 @@ export class ApiError extends Error {
 }
 
 type RequestOptions = RequestInit & { auth?: boolean; retryAuth?: boolean }
-function saveTokens(pair: TokenPair) { localStorage.setItem(ACCESS_KEY, pair.access_token); localStorage.setItem(REFRESH_KEY, pair.refresh_token) }
-export function clearTokens() { localStorage.removeItem(ACCESS_KEY); localStorage.removeItem(REFRESH_KEY); localStorage.removeItem(LEGACY_ACCESS_KEY); localStorage.removeItem(LEGACY_REFRESH_KEY) }
-export function hasStoredSession() { return Boolean(localStorage.getItem(ACCESS_KEY) || localStorage.getItem(REFRESH_KEY)) }
+function saveTokens(pair: TokenPair) {
+  sessionStorage.setItem(ACCESS_KEY, pair.access_token)
+  // New browser sessions keep refresh credentials only in the HttpOnly cookie.
+  // Keep the localStorage key solely as a one-time migration source for old clients.
+  localStorage.removeItem(ACCESS_KEY)
+  localStorage.removeItem(REFRESH_KEY)
+}
+export function clearTokens() {
+  sessionStorage.removeItem(ACCESS_KEY)
+  localStorage.removeItem(ACCESS_KEY)
+  localStorage.removeItem(REFRESH_KEY)
+  localStorage.removeItem(LEGACY_ACCESS_KEY)
+  localStorage.removeItem(LEGACY_REFRESH_KEY)
+}
+export function hasStoredSession() { return Boolean(sessionStorage.getItem(ACCESS_KEY) || localStorage.getItem(REFRESH_KEY)) }
 
 async function parseError(response: Response): Promise<ApiError> {
   let body: Record<string, unknown> = {}
@@ -79,24 +93,19 @@ type BrowserLockManager = {
 }
 
 async function refreshSession(): Promise<void> {
-  const observedAccessToken = localStorage.getItem(ACCESS_KEY)
-  if (!localStorage.getItem(REFRESH_KEY)) throw new ApiError(401, 'Сессия закончилась')
   if (!refreshPromise) {
     refreshPromise = (async () => {
       const rotate = async () => {
-        // localStorage is shared between tabs. If another tab refreshed while this
-        // tab was waiting for the browser lock, reuse its access token instead of
-        // replaying the now-consumed refresh token and revoking the whole family.
-        const currentAccessToken = localStorage.getItem(ACCESS_KEY)
-        if (currentAccessToken && currentAccessToken !== observedAccessToken) return
-
-        const token = localStorage.getItem(REFRESH_KEY)
-        if (!token) throw new ApiError(401, 'Сессия закончилась')
-        const response = await fetch(`${API_BASE}/auth/refresh`, {
+        const legacyToken = localStorage.getItem(REFRESH_KEY)
+        const options: RequestInit = {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refresh_token: token }),
-        })
+          credentials: 'same-origin',
+        }
+        if (legacyToken) {
+          options.headers = { 'Content-Type': 'application/json' }
+          options.body = JSON.stringify({ refresh_token: legacyToken })
+        }
+        const response = await fetch(`${API_BASE}/auth/refresh`, options)
         if (!response.ok) throw await parseError(response)
         saveTokens((await response.json()) as TokenPair)
       }
@@ -109,13 +118,26 @@ async function refreshSession(): Promise<void> {
   return refreshPromise
 }
 
+export async function restoreSession(): Promise<User | null> {
+  try {
+    await refreshSession()
+    return await getMe()
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      clearTokens()
+      return null
+    }
+    throw error
+  }
+}
+
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { auth = true, retryAuth = true, headers, ...rest } = options
   const finalHeaders = new Headers(headers)
-  const accessToken = localStorage.getItem(ACCESS_KEY)
+  const accessToken = sessionStorage.getItem(ACCESS_KEY)
   if (auth && accessToken) finalHeaders.set('Authorization', `Bearer ${accessToken}`)
-  const response = await fetch(`${API_BASE}${path}`, { ...rest, headers: finalHeaders })
-  if (response.status === 401 && auth && retryAuth && localStorage.getItem(REFRESH_KEY)) {
+  const response = await fetch(`${API_BASE}${path}`, { credentials: 'same-origin', ...rest, headers: finalHeaders })
+  if (response.status === 401 && auth && retryAuth) {
     try { await refreshSession(); return request<T>(path, { ...options, retryAuth: false }) }
     catch (error) { clearTokens(); throw error }
   }
@@ -134,8 +156,13 @@ export async function loginTelegram(initData: string): Promise<TokenPair> {
 }
 export function getMe() { return request<User>('/me') }
 export async function logout() {
-  const refreshToken = localStorage.getItem(REFRESH_KEY)
-  try { if (refreshToken) await request('/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: refreshToken }) }) }
+  const legacyRefreshToken = localStorage.getItem(REFRESH_KEY)
+  const options: RequestOptions = { method: 'POST', auth: false, retryAuth: false }
+  if (legacyRefreshToken) {
+    options.headers = { 'Content-Type': 'application/json' }
+    options.body = JSON.stringify({ refresh_token: legacyRefreshToken })
+  }
+  try { await request('/auth/logout', options) }
   finally { clearTokens() }
 }
 
