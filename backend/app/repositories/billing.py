@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import exists, or_, select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.admin import BillingPlan
@@ -73,14 +73,10 @@ class BillingRepository:
         )
         return bool(result.scalar())
 
-    async def has_provider_refund(self, refund_id: str, payment_id: str | None = None) -> bool:
-        condition = BillingPayment.refund_id == refund_id
-        if payment_id:
-            condition = or_(
-                condition,
-                BillingPayment.yookassa_payment_id == payment_id,
-            )
-        result = await self.session.execute(select(exists().where(condition)))
+    async def has_provider_refund(self, refund_id: str) -> bool:
+        result = await self.session.execute(
+            select(exists().where(BillingPayment.refund_id == refund_id))
+        )
         return bool(result.scalar())
 
     async def get_by_provider_id_for_update(self, provider_id: str) -> BillingPayment | None:
