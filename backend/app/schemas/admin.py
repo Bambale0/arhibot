@@ -456,11 +456,11 @@ class BroadcastResponse(BaseModel):
 
 
 class OperationalSettingsUpdate(BaseModel):
-    auth_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
-    generation_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
-    payment_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
-    registration_rate_limit_per_day: int | None = Field(default=None, ge=1, le=100_000)
-    yookassa_webhook_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
+    auth_rate_limit_per_minute: int = Field(default=30, ge=1, le=100_000)
+    generation_rate_limit_per_minute: int = Field(default=10, ge=1, le=100_000)
+    payment_rate_limit_per_minute: int = Field(default=10, ge=1, le=100_000)
+    registration_rate_limit_per_day: int = Field(default=20, ge=1, le=100_000)
+    yookassa_webhook_rate_limit_per_minute: int = Field(default=120, ge=1, le=100_000)
     asset_upload_rate_limit_per_minute: int = Field(default=12, ge=1, le=100_000)
     asset_max_retained_count_per_user: int = Field(default=200, ge=1, le=100_000)
     asset_max_retained_bytes_per_user: int = Field(
@@ -468,6 +468,8 @@ class OperationalSettingsUpdate(BaseModel):
         ge=1,
         le=10_000_000_000_000,
     )
+    generation_max_inflight_per_user: int = Field(default=2, ge=1, le=1000)
+    initial_concept_offer_limit_per_day: int = Field(default=3, ge=1, le=1000)
     starter_credits: int = Field(default=0, ge=0, le=1_000_000)
     initial_concept_credits: int = Field(default=0, ge=0, le=1_000_000)
     media_retention_days: int | None = Field(default=None, ge=1, le=3650)
