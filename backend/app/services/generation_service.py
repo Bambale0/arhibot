@@ -93,7 +93,7 @@ class GenerationService:
             )
 
         project = await self.projects.get_owned(
-            payload.project_id, user.id, for_update=before_commit is not None
+            payload.project_id, user.id, for_update=True
         )
         if not project:
             raise AppError(
