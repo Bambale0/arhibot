@@ -51,12 +51,7 @@ async def register_user(
     source = request_identity(request)
     await limiter.enforce("auth", f"register-ip:{source}")
     await limiter.enforce("auth", f"register-email:{payload.email.strip().lower()}")
-    await limiter.enforce_window(
-        "register-day",
-        source,
-        limit=settings.registration_daily_limit_per_ip,
-        window_seconds=86_400,
-    )
+    await limiter.enforce_registration_daily(source)
     _disable_auth_response_caching(response)
     return await _service(session, settings).register(
         payload.email, payload.password, payload.display_name
