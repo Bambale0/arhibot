@@ -57,7 +57,7 @@ async function json(route:Route,data:unknown,status=200){await route.fulfill({st
 
 test.beforeEach(async ({page})=>{
   resetState()
-  await page.addInitScript(()=>{localStorage.setItem('auroom.access_token','e2e');localStorage.setItem('auroom.refresh_token','e2e-refresh')})
+  await page.addInitScript(()=>{sessionStorage.setItem('auroom.access_token','e2e')})
   await page.route('**/api/v1/**',async route=>{
     const req=route.request(), path=new URL(req.url()).pathname, method=req.method()
     if(path.endsWith('/me')&&method==='GET') return json(route,user)
