@@ -47,6 +47,7 @@ class IdeaRepository:
         self,
         *,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[tuple[IdeaPublication, Generation, Asset]]:
         result = await self.session.execute(
             select(IdeaPublication, Generation, Asset)
@@ -62,6 +63,7 @@ class IdeaRepository:
                 IdeaPublication.sort_order.asc(),
                 IdeaPublication.created_at.desc(),
             )
+            .offset(offset)
             .limit(limit)
         )
         return [(publication, generation, asset) for publication, generation, asset in result.all()]
