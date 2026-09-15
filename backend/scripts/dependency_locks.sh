@@ -24,6 +24,7 @@ compile_runtime() {
     --strip-extras \
     --no-header \
     --resolver=backtracking \
+    --upgrade \
     --rebuild \
     --pip-args="--no-cache-dir" \
     --index-url=https://pypi.org/simple
@@ -38,6 +39,7 @@ compile_build() {
     --strip-extras \
     --no-header \
     --resolver=backtracking \
+    --upgrade \
     --rebuild \
     --pip-args="--no-cache-dir" \
     --index-url=https://pypi.org/simple \
