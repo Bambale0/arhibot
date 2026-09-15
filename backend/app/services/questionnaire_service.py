@@ -16,7 +16,7 @@ from app.db.models.questionnaires import (
     QuestionnaireCatalogRevision,
 )
 from app.db.models.users import User
-from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.domain.generations.enums import GenerationOrigin, GenerationStatus, GenerationType
 from app.questionnaires.application_brief import build_application_brief
 from app.questionnaires.generation_prompt import (
     build_initial_concept_prompt,
@@ -159,6 +159,25 @@ class QuestionnaireService:
             return 0
         settings = await self.operations.get()
         return settings.initial_concept_credits if settings else 0
+
+    async def generation_credits_override(
+        self,
+        user: User,
+        project_id: UUID,
+        object_key: str,
+    ) -> int | None:
+        if object_key != "__initial__":
+            return None
+        introductory_used = await self.generations.project_has_origin(
+            project_id,
+            GenerationOrigin.QUESTIONNAIRE_INITIAL.value,
+        )
+        if not introductory_used:
+            return await self.initial_concept_credits(user)
+        price = await self.credits.get_price(GenerationType.MASTER_PLAN.value)
+        if price is None or not price.is_active:
+            return None
+        return price.credits
 
     async def generation_cost(self, user: User) -> QuestionnaireGenerationCostResponse:
         initial_credits = await self.initial_concept_credits(user)
