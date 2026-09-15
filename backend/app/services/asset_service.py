@@ -178,6 +178,9 @@ class AssetService:
         purpose: AssetUploadPurpose,
         project_id: UUID | None,
     ) -> AssetResponse:
+        # Lock the owner before the project so project deletion and upload admission
+        # always acquire rows in the same order.
+        await self.repository.lock_owner(user.id)
         if project_id is not None:
             project = await self.project_repository.get_owned(
                 project_id, user.id, for_update=True
@@ -195,7 +198,6 @@ class AssetService:
         # Serialize quota checks for one user so parallel uploads cannot race past
         # the retained-media budget. Soft-deleted rows still count until the file
         # is physically removed by retention cleanup because they still consume disk.
-        await self.repository.lock_owner(user.id)
         operations = await OperationalSettingsRepository(self.repository.session).get()
         max_count = (
             operations.asset_max_retained_count_per_user if operations is not None else 200
