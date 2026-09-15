@@ -32,6 +32,8 @@ def test_ci_regenerates_and_audits_the_lock() -> None:
     assert 'Verify Python dependency locks are current' in ci
     assert './scripts/dependency_locks.sh CHECK' in ci
     assert '--no-header' in lock_script
+    assert '--rebuild' in lock_script
+    assert '--pip-args="--no-cache-dir"' in lock_script
     assert '--build-deps-for=wheel' in lock_script
     assert 'cmp requirements.lock' in lock_script
     assert 'cmp requirements-build.lock' in lock_script
