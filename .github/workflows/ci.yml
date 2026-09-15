@@ -55,7 +55,7 @@ jobs:
       - name: Validate operations scripts
         working-directory: .
         run: |
-          bash -n ops/deploy_docker.sh ops/backup_runtime.sh ops/restore_runtime.sh ops/runtime_housekeeping.sh ops/install_host_nginx.sh backend/scripts/dependency_locks.sh
+          bash -n ops/deploy_docker.sh ops/backup_runtime.sh ops/export_offsite_backup.sh ops/fetch_offsite_backup.sh ops/restore_runtime.sh ops/runtime_housekeeping.sh ops/install_host_nginx.sh backend/scripts/dependency_locks.sh
           python -m py_compile ops/runtime_preflight.py
 
       - name: Validate Docker Compose
