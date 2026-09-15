@@ -66,7 +66,7 @@ async function json(route:Route,data:unknown,status=200){
 async function prepare(page:Page, ideas:unknown[] = []) {
   await page.addInitScript(() => {
     sessionStorage.setItem('auroom.access_token','fullscreen-e2e')
-        window.Telegram = { WebApp: { initData:'' } }
+    window.Telegram = { WebApp: { initData:'', requestFullscreen:() => {} } }
   })
   await page.route('**/api/v1/**',async route => {
     const request=route.request(), path=new URL(request.url()).pathname, method=request.method()
@@ -93,14 +93,26 @@ async function installFullscreenCounters(page:Page) {
 }
 
 test('fullscreen control stays visible on Ideas where AppFrame topbar is hidden',async({page})=>{
+  await page.setViewportSize({width:1024,height:720})
   await prepare(page)
   await page.goto('/?section=ideas')
   const button=page.getByRole('button',{name:'Открыть на весь экран'})
   await expect(button).toBeVisible()
+  await expect(button.locator('svg')).toHaveCount(1)
+  const box=await button.boundingBox()
+  expect(box?.width).toBe(40)
+  expect(box?.height).toBe(40)
   await installFullscreenCounters(page)
   await button.click()
   await expect.poll(() => page.evaluate(() => (window as unknown as { __expandCalls:number }).__expandCalls)).toBe(1)
   await expect.poll(() => page.evaluate(() => (window as unknown as { __fullscreenCalls:number }).__fullscreenCalls)).toBe(1)
+})
+
+test('fullscreen control is hidden on mobile Telegram viewports',async({page})=>{
+  await page.setViewportSize({width:390,height:844})
+  await prepare(page)
+  await page.goto('/?section=ideas')
+  await expect(page.locator('.telegram-fullscreen-button')).toBeHidden()
 })
 
 test('Ideas slideshow requests only active and neighboring previews',async({page})=>{
@@ -139,6 +151,7 @@ test('Ideas slideshow requests only active and neighboring previews',async({page
 })
 
 test('fullscreen control stays visible inside standalone questionnaire flow',async({page})=>{
+  await page.setViewportSize({width:1024,height:720})
   await prepare(page)
   await page.goto(`/?project=${projectId}`)
   await expect(page.getByText('Заполните параметры всех объектов')).toBeVisible()
