@@ -468,12 +468,22 @@ class BillingService:
         provider = YooKassaProvider(self.settings)
         if event in {"payment.succeeded", "payment.canceled", "payment.waiting_for_capture"}:
             if not await self.repository.has_provider_payment(provider_id):
-                return
+                raise AppError(
+                    type="billing_webhook_object_not_ready",
+                    title="Billing webhook object not ready",
+                    status=503,
+                    detail="The referenced payment is not available locally yet.",
+                )
             remote = await provider.get_payment(provider_id)
             await self.apply_remote(remote)
         elif event == "refund.succeeded":
             if not await self.repository.has_provider_refund(provider_id):
-                return
+                raise AppError(
+                    type="billing_webhook_object_not_ready",
+                    title="Billing webhook object not ready",
+                    status=503,
+                    detail="The referenced refund is not available locally yet.",
+                )
             remote_refund = await provider.get_refund(provider_id)
             await self.apply_refund_remote(remote_refund)
 
