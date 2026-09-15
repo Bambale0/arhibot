@@ -112,6 +112,9 @@ class ProjectService:
             existing_architecture = (project.context or {}).get("architecture")
             if existing_architecture is not None and "architecture" not in updated_context:
                 updated_context["architecture"] = existing_architecture
+            existing_design_session = (project.context or {}).get("design_session")
+            if existing_design_session is not None:
+                updated_context["design_session"] = existing_design_session
             existing_questionnaire_draft = (project.context or {}).get("questionnaire_draft")
             if existing_questionnaire_draft is not None:
                 updated_context["questionnaire_draft"] = existing_questionnaire_draft
