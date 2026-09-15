@@ -20,7 +20,11 @@ WORKER_LEASE_REFRESH_SECONDS = 10
 
 
 def _normalized_worker_name(worker_name: str) -> str:
-    normalized = _normalized_worker_name(worker_name)
+    normalized = worker_name.strip().lower().replace("_", "-")
+    if not normalized or any(
+        char not in "abcdefghijklmnopqrstuvwxyz0123456789-" for char in normalized
+    ):
+        raise ValueError("Invalid worker name")
     return normalized
 
 
