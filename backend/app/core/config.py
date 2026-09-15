@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     )
 
     app_env: str = "local"
+    runtime_role: Literal[
+        "api",
+        "bot",
+        "generation_worker",
+        "broadcast_worker",
+        "maintenance",
+        "renderer_worker",
+    ] = "api"
     app_name: str = "AuRoom API"
     release_sha: str = "unknown"
     api_v1_prefix: str = "/api/v1"
@@ -117,7 +125,7 @@ class Settings(BaseSettings):
             raise ValueError("YooKassa circuit breaker settings must be positive")
         if not 1024 <= self.yookassa_webhook_max_body_bytes <= 1_048_576:
             raise ValueError("YOOKASSA_WEBHOOK_MAX_BODY_BYTES must be between 1 KiB and 1 MiB")
-        if self.is_production:
+        if self.is_production and self.runtime_role == "api":
             insecure = {
                 "local-only-change-me-access-secret-32-bytes",
                 "local-only-change-me-refresh-secret-32-bytes",
@@ -140,6 +148,13 @@ class Settings(BaseSettings):
                     parsed = urlsplit(value)
                     if parsed.scheme != "https" or not parsed.netloc:
                         raise ValueError(f"{name} must use HTTPS in production")
+        if self.is_production and self.runtime_role == "bot":
+            if not (self.telegram_bot_token or "").strip():
+                raise ValueError("Production bot requires TELEGRAM_BOT_TOKEN")
+            webapp = (self.telegram_webapp_url or "").strip()
+            parsed = urlsplit(webapp)
+            if parsed.scheme != "https" or not parsed.netloc:
+                raise ValueError("Production bot requires an HTTPS TELEGRAM_WEBAPP_URL")
         return self
 
 
