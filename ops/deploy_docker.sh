@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 unset DOCKER_HOST DOCKER_CONTEXT
 
@@ -92,6 +93,12 @@ on_exit() {
 trap on_exit EXIT
 
 mkdir -p "${app_dir}" "${release_root}" "${backup_dir}"
+command -v flock >/dev/null || { echo "flock is required for AuRoom deploy" >&2; exit 1; }
+if [[ "${AUROOM_RUNTIME_LOCK_HELD:-0}" != "1" ]]; then
+  exec 9>"${app_dir}/.runtime-mutation.lock"
+  flock -n 9 || { echo "Another AuRoom runtime mutation is already in progress" >&2; exit 75; }
+  export AUROOM_RUNTIME_LOCK_HELD=1
+fi
 [[ -f "${app_dir}/backend/.env" ]] || {
   echo "Missing ${app_dir}/backend/.env" >&2
   exit 1
