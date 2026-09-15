@@ -10,7 +10,7 @@ from app.core.redis import redis_client
 from app.db.models.generations import Generation
 from app.db.models.projects import Project
 from app.db.models.users import User
-from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.domain.generations.enums import GenerationOrigin, GenerationStatus, GenerationType
 from app.domain.users.enums import UserRole
 from app.repositories.assets import AssetRepository
 from app.repositories.credits import CreditRepository
@@ -25,6 +25,12 @@ from app.services.rate_limit_service import RateLimitService
 GENERATION_QUEUE_KEY = "auroom:generation_queue"
 REFERENCE_REQUIRED_TYPES = {GenerationType.FACADE, GenerationType.INTERIOR}
 FREE_GENERATION_ROLES = {UserRole.ADMIN, UserRole.SUPERADMIN}
+RESERVED_INTERNAL_PROMPT_PREFIXES = (
+    "AUROOM_RENDER_SPEC_V1",
+    "AUROOM_INITIAL_CONCEPT_V1",
+    "AUROOM_ADMIN_SANDBOX_V1",
+    "AUROOM_ADMIN_ORBIT_V1",
+)
 
 
 class GenerationService:
@@ -46,8 +52,19 @@ class GenerationService:
         before_commit: Callable[[Generation, Project], None] | None = None,
         skip_pricing: bool = False,
         credits_override: int | None = None,
+        origin: GenerationOrigin = GenerationOrigin.GENERIC,
     ) -> GenerationResponse:
         await RateLimitService(self.session).enforce("generation", str(user.id))
+        normalized_prompt = payload.prompt.strip()
+        if origin == GenerationOrigin.GENERIC and normalized_prompt.startswith(
+            RESERVED_INTERNAL_PROMPT_PREFIXES
+        ):
+            raise AppError(
+                type="reserved_generation_prompt",
+                title="Reserved generation prompt",
+                status=422,
+                detail="This prompt prefix is reserved for server-managed generation flows.",
+            )
         if not (self.settings.nexus_api_key or "").strip():
             raise AppError(
                 type="generation_provider_not_configured",
@@ -111,7 +128,8 @@ class GenerationService:
             input_asset_id=asset.id if asset else None,
             type=payload.type,
             status=GenerationStatus.QUEUED,
-            prompt=payload.prompt.strip(),
+            origin=origin.value,
+            prompt=normalized_prompt,
             credits_charged=credits_charged,
             composition_mode=payload.composition_mode,
             edit_region=(
@@ -174,6 +192,13 @@ class GenerationService:
                 title="Generation not found",
                 status=404,
                 detail="The generation does not exist or is not available to this user.",
+            )
+        if source.origin != GenerationOrigin.GENERIC.value:
+            raise AppError(
+                type="generation_repeat_not_allowed",
+                title="Generation cannot be repeated here",
+                status=409,
+                detail="Server-managed generations must be repeated through their product workflow.",
             )
         return await self.create(
             user,
@@ -247,7 +272,11 @@ class GenerationService:
             output_asset=output_asset,
             type=generation.type,
             status=generation.status,
-            prompt=generation.prompt,
+            prompt=(
+                generation.prompt
+                if generation.origin == GenerationOrigin.GENERIC.value
+                else ""
+            ),
             credits_charged=generation.credits_charged,
             model_name=generation.model_name,
             fallback_used=generation.fallback_used,
