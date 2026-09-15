@@ -459,6 +459,8 @@ class OperationalSettingsUpdate(BaseModel):
     auth_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
     generation_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
     payment_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
+    registration_rate_limit_per_day: int | None = Field(default=None, ge=1, le=100_000)
+    yookassa_webhook_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
     starter_credits: int = Field(default=0, ge=0, le=1_000_000)
     initial_concept_credits: int = Field(default=0, ge=0, le=1_000_000)
     media_retention_days: int | None = Field(default=None, ge=1, le=3650)
