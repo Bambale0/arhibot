@@ -17,6 +17,7 @@ class GenerationStatus(StrEnum):
 
 class GenerationOrigin(StrEnum):
     GENERIC = "generic"
+    LEGACY_INTERNAL = "legacy_internal"
     QUESTIONNAIRE = "questionnaire"
     QUESTIONNAIRE_INITIAL = "questionnaire_initial"
     ADMIN_SANDBOX = "admin_sandbox"
