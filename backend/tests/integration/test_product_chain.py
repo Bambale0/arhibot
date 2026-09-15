@@ -263,6 +263,102 @@ async def test_asset_upload_retained_quota_survives_soft_delete() -> None:
 
 
 @pytest.mark.asyncio
+async def test_project_delete_refunds_active_generation_and_hides_media() -> None:
+    from app.db.models.assets import Asset
+    from app.db.models.generations import Generation
+    from app.domain.generations.enums import GenerationStatus
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _, admin_headers = await _register_admin(client)
+        tokens, headers = await _register_user(client, display_name="Delete Lifecycle User")
+        user_id = tokens["user"]["id"]
+
+        runtime = await client.put(
+            "/api/v1/admin/generation",
+            headers=admin_headers,
+            json={
+                "primary_model": "integration-image-model",
+                "fallback_model": None,
+                "primary_params": {},
+                "fallback_params": {},
+                "mode_params": {},
+            },
+        )
+        assert runtime.status_code == 200, runtime.text
+        prompt = await client.put(
+            "/api/v1/admin/prompts/floor_plan",
+            headers=admin_headers,
+            json={"template": "Delete lifecycle {user_prompt}"},
+        )
+        assert prompt.status_code == 200, prompt.text
+        price = await client.put(
+            "/api/v1/admin/generation-prices/floor_plan",
+            headers=admin_headers,
+            json={"credits": 2, "is_active": True},
+        )
+        assert price.status_code == 200, price.text
+        credit = await client.post(
+            f"/api/v1/admin/users/{user_id}/credits",
+            headers=admin_headers,
+            json={"delta": 2, "reason": "delete lifecycle budget"},
+        )
+        assert credit.status_code == 200, credit.text
+
+        project = await client.post(
+            "/api/v1/projects", headers=headers, json={"name": "Delete lifecycle", "context": {}}
+        )
+        assert project.status_code == 201, project.text
+        project_id = project.json()["id"]
+
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        )
+        uploaded = await client.post(
+            "/api/v1/assets",
+            headers=headers,
+            files={"file": ("delete.png", png, "image/png")},
+            data={"purpose": "generation_input", "project_id": project_id},
+        )
+        assert uploaded.status_code == 201, uploaded.text
+        asset_id = uploaded.json()["id"]
+
+        created = await client.post(
+            "/api/v1/generations",
+            headers=headers,
+            json={
+                "project_id": project_id,
+                "input_asset_id": asset_id,
+                "type": "floor_plan",
+                "prompt": "queued before deletion",
+            },
+        )
+        assert created.status_code == 202, created.text
+        generation_id = created.json()["id"]
+        assert created.json()["credits_charged"] == 2
+
+        deleted = await client.delete(f"/api/v1/projects/{project_id}", headers=headers)
+        assert deleted.status_code == 204, deleted.text
+        assert (await client.get(f"/api/v1/projects/{project_id}", headers=headers)).status_code == 404
+        assert (await client.get(f"/api/v1/generations/{generation_id}", headers=headers)).status_code == 404
+        assert (await client.get(f"/api/v1/assets/{asset_id}", headers=headers)).status_code == 404
+
+        me = await client.get("/api/v1/me", headers=headers)
+        assert me.status_code == 200, me.text
+        assert me.json()["credits_balance"] == 2
+
+        async with get_session_factory()() as session:
+            generation = await session.get(Generation, UUID(generation_id))
+            asset = await session.get(Asset, UUID(asset_id))
+            assert generation is not None
+            assert generation.status == GenerationStatus.FAILED
+            assert generation.error == "Project was deleted before generation completed."
+            assert asset is not None and asset.deleted_at is not None
+
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, generation_id)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("role", [UserRole.ADMIN, UserRole.SUPERADMIN])
 async def test_admin_generation_is_free_and_writes_no_credit_movement(role: UserRole) -> None:
     transport = ASGITransport(app=app)
