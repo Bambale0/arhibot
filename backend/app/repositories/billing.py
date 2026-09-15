@@ -1,4 +1,3 @@
-from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import exists, select
@@ -55,7 +54,6 @@ class BillingRepository:
         *,
         user_id: UUID,
         package_code: str,
-        since: datetime,
     ) -> BillingPayment | None:
         result = await self.session.execute(
             select(BillingPayment)
@@ -64,7 +62,6 @@ class BillingRepository:
                 BillingPayment.package_code == package_code,
                 BillingPayment.yookassa_payment_id.is_(None),
                 BillingPayment.status.in_(["creating", "uncertain"]),
-                BillingPayment.created_at >= since,
             )
             .order_by(BillingPayment.created_at.desc())
             .limit(1)
