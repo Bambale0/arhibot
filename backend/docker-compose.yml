@@ -241,7 +241,7 @@ services:
     environment:
       POSTGRES_DB: app
       POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-local-only-postgres-password-change-me}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -259,11 +259,13 @@ services:
 
   redis:
     image: redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
-    command: ["redis-server", "--appendonly", "yes"]
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-local-only-redis-password-change-me}"
+    command: ["sh", "-ec", "exec redis-server --appendonly yes --requirepass \"$REDIS_PASSWORD\""]
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$REDIS_PASSWORD\" redis-cli ping >/dev/null"]
       interval: 5s
       timeout: 3s
       retries: 10
