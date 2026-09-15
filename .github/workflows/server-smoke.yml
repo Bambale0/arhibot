@@ -95,6 +95,34 @@ jobs:
           curl -fsS http://127.0.0.1:18000/metrics | grep '^auroom_build_info' >/dev/null || { echo "Internal metrics missing build info" >&2; exit 1; }
           curl -fsS http://127.0.0.1:18080/ | grep -q '<div id="root"></div>'
 
+          # Prove the trusted host-proxy client IP survives the inner Nginx hop.
+          # The auth limiter hashes request_identity(), so one synthetic request
+          # must increment exactly the bucket for the supplied X-Real-IP value.
+          seconds=$(date +%S)
+          if (( 10#${seconds} >= 55 )); then sleep 6; fi
+          probe_ip="198.51.100.77"
+          probe_digest=$(printf '%s' "${probe_ip}" | sha256sum | cut -c1-24)
+          probe_bucket=$(python3 -c 'import time; print(int(time.time() // 60))')
+          probe_key="auroom:rate:auth:${probe_digest}:${probe_bucket}"
+          before_raw=$("${compose[@]}" exec -T redis redis-cli --raw GET "${probe_key}" 2>/dev/null || true)
+          before=${before_raw:-0}
+          [[ "${before}" =~ ^[0-9]+$ ]] || before=0
+          probe_status=$(curl -sS -o /dev/null -w '%{http_code}'             -H "X-Real-IP: ${probe_ip}"             -H 'Content-Type: application/json'             --data '{"email":"proxy-probe@example.invalid","password":"not-a-real-password"}'             http://127.0.0.1:18080/api/v1/auth/login)
+          [[ "${probe_status}" == "401" || "${probe_status}" == "429" ]] || {
+            echo "Unexpected auth probe status: ${probe_status}" >&2
+            exit 1
+          }
+          after_raw=$("${compose[@]}" exec -T redis redis-cli --raw GET "${probe_key}" 2>/dev/null || true)
+          after=${after_raw:-0}
+          [[ "${after}" =~ ^[0-9]+$ ]] || {
+            echo "Client-IP rate bucket was not created for ${probe_ip}" >&2
+            exit 1
+          }
+          (( after == before + 1 )) || {
+            echo "Trusted client IP was not preserved through inner Nginx: before=${before} after=${after}" >&2
+            exit 1
+          }
+
           raw_media_status=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/uploads/auroom-private-media-probe)
           [[ "${raw_media_status}" == "404" ]] || {
             echo "Raw /uploads access must be disabled, got HTTP ${raw_media_status}" >&2
