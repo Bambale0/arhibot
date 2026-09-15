@@ -87,7 +87,7 @@ test('admin publishes a new questionnaire catalog revision from the control plan
     if(path.endsWith('/admin/payments')) return json(route,[])
     if(path.endsWith('/admin/broadcasts')) return json(route,[])
     if(path.endsWith('/admin/telegram-content')) return json(route,{configured:false,bot_name:null,short_description:null,description:null,start_text:null,open_button_text:null,start_command_description:null,app_command_description:null,updated_at:null})
-    if(path.endsWith('/admin/operations')) return json(route,{auth_rate_limit_per_minute:null,generation_rate_limit_per_minute:null,payment_rate_limit_per_minute:null,registration_rate_limit_per_day:20,yookassa_webhook_rate_limit_per_minute:120,asset_upload_rate_limit_per_minute:12,asset_max_retained_count_per_user:200,asset_max_retained_bytes_per_user:536870912,starter_credits:0,initial_concept_credits:0,media_retention_days:null,backup_interval_hours:null,backup_retention_days:null,updated_at:null})
+    if(path.endsWith('/admin/operations')) return json(route,{auth_rate_limit_per_minute:30,generation_rate_limit_per_minute:10,payment_rate_limit_per_minute:10,registration_rate_limit_per_day:20,yookassa_webhook_rate_limit_per_minute:120,asset_upload_rate_limit_per_minute:12,asset_max_retained_count_per_user:200,asset_max_retained_bytes_per_user:536870912,generation_max_inflight_per_user:2,initial_concept_offer_limit_per_day:3,starter_credits:0,initial_concept_credits:0,media_retention_days:null,backup_interval_hours:null,backup_retention_days:null,updated_at:null})
     if(path.endsWith('/admin/audit')) return json(route,[])
     return json(route,{type:'mock_unhandled',detail:`${method} ${path}`},404)
   })
