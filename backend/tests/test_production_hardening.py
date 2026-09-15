@@ -41,15 +41,8 @@ async def test_email_auth_rate_limits_source_and_account(
         async def enforce(self, kind: str, identity: str) -> None:
             calls.append(("enforce", kind, identity))
 
-        async def enforce_window(
-            self,
-            namespace: str,
-            identity: str,
-            *,
-            limit: int,
-            window_seconds: int,
-        ) -> None:
-            calls.append(("window", namespace, identity, limit, window_seconds))
+        async def enforce_registration_daily(self, identity: str) -> None:
+            calls.append(("registration-daily", identity))
 
     class FakeAuth:
         async def register(self, email: str, password: str, display_name: str):  # noqa: ANN001
@@ -61,7 +54,7 @@ async def test_email_auth_rate_limits_source_and_account(
     monkeypatch.setattr(auth_api, "RateLimitService", FakeLimiter)
     monkeypatch.setattr(auth_api, "_service", lambda session, settings: FakeAuth())
 
-    settings = Settings(registration_daily_limit_per_ip=3)
+    settings = Settings()
     response = Response()
     await auth_api.register_user(
         RegisterRequest(
@@ -76,7 +69,7 @@ async def test_email_auth_rate_limits_source_and_account(
     )
     assert ("enforce", "auth", "register-ip:203.0.113.10") in calls
     assert ("enforce", "auth", "register-email:user@example.com") in calls
-    assert ("window", "register-day", "203.0.113.10", 3, 86_400) in calls
+    assert ("registration-daily", "203.0.113.10") in calls
 
     calls.clear()
     await auth_api.login_user(
