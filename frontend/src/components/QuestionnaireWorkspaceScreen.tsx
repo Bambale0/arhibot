@@ -263,11 +263,11 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   useEffect(() => {
     let stopped = false
-    getQuestionnaireGenerationCost()
+    getQuestionnaireGenerationCost(project.id)
       .then((cost) => { if (!stopped) setGenerationCost(cost) })
       .catch(() => { if (!stopped) setGenerationCost(null) })
     return () => { stopped = true }
-  }, [])
+  }, [project.id])
 
   const definitions = useMemo(() => new Map((catalog?.questionnaires || []).map((item) => [item.key, item])), [catalog])
   const current = session?.current_object ? definitions.get(session.current_object) || null : null
@@ -441,7 +441,11 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   function initialGenerationCostLabel() {
     if (!generationCost) return 'Стоимость уточняется'
     if (!generationCost.is_available) return 'Генерация временно недоступна'
-    return generationCost.initial_credits === 0 ? 'Бесплатно' : `${generationCost.initial_credits} кр.`
+    const credits = generationCost.initial_offer_available
+      ? generationCost.initial_credits
+      : generationCost.credits
+    if (credits === null) return 'Генерация временно недоступна'
+    return credits === 0 ? 'Бесплатно' : `${credits} кр.`
   }
 
   async function addObject(key:string) {
@@ -689,6 +693,9 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     setRenderOutput(null)
     try {
       const queued = await createQuestionnaireGeneration(project.id)
+      void getQuestionnaireGenerationCost(project.id)
+        .then(setGenerationCost)
+        .catch(() => setGenerationCost(null))
       const queuedState = { ...next, initial_generation_id:queued.id }
       setSession(queuedState)
       syncProject(queuedState)
