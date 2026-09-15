@@ -150,10 +150,24 @@ class BillingService:
         payment = await self.repository.get_recent_unresolved_create_for_update(
             user_id=user.id,
             package_code=package_code,
-            since=datetime.now(UTC) - timedelta(hours=23),
         )
 
         if payment is not None:
+            if payment.created_at < datetime.now(UTC) - timedelta(hours=23):
+                payment.status = "uncertain"
+                payment.provider_error = (
+                    "Unresolved provider create exceeded the safe idempotency replay window"
+                )
+                await self.session.commit()
+                raise AppError(
+                    type="payment_reconciliation_required",
+                    title="Payment requires reconciliation",
+                    status=503,
+                    detail=(
+                        "An earlier payment attempt is outside the safe automatic retry window. "
+                        "Contact support before starting another payment for this package."
+                    ),
+                )
             snapshot = payment.create_request_snapshot
             if not isinstance(snapshot, dict):
                 payment.status = "uncertain"
