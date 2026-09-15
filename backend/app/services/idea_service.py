@@ -151,8 +151,11 @@ class IdeaService:
         offset: int = 0,
     ) -> list[PublicIdeaPublicationResponse]:
         result: list[PublicIdeaPublicationResponse] = []
-        saved_ids = await self.repository.saved_publication_ids(user.id)
         rows = await self.repository.list_public_media_rows(limit=limit, offset=offset)
+        saved_ids = await self.repository.saved_publication_ids(
+            user.id,
+            [publication.id for publication, _generation, _asset in rows],
+        )
         for publication, generation, asset in rows:
             response = await self._publication_response(
                 publication,
