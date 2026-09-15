@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -31,6 +32,9 @@ from app.schemas.questionnaires import DesignSession, QuestionnaireProjectStartR
 from app.services.asset_service import LocalMediaStorage
 from app.services.questionnaire_project_service import QuestionnaireProjectService
 from app.services.questionnaire_service import QuestionnaireService
+
+
+logger = logging.getLogger(__name__)
 
 
 def _answer_text(value: object) -> str:
@@ -70,6 +74,23 @@ class IdeaService:
     async def _image_url(self, generation: Generation) -> str | None:
         image_url, _preview_url = await self._image_urls(generation)
         return image_url
+
+    async def _prewarm_feed_preview(self, generation: Generation) -> None:
+        if generation.output_asset_id is None:
+            return
+        asset = await self.session.get(Asset, generation.output_asset_id)
+        if asset is None or asset.deleted_at is not None:
+            return
+        try:
+            await self.storage.ensure_feed_preview(asset.storage_path)
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            # Preview generation is only a cache optimization. The signed original
+            # remains the authoritative fallback if cache preparation fails.
+            logger.warning(
+                "Could not prewarm Ideas feed preview for generation %s: %s",
+                generation.id,
+                exc,
+            )
 
     async def _publication_response(
         self,
@@ -123,11 +144,15 @@ class IdeaService:
         )
 
     async def list_public(
-        self, user: User, *, limit: int = 50
+        self,
+        user: User,
+        *,
+        limit: int = 50,
+        offset: int = 0,
     ) -> list[PublicIdeaPublicationResponse]:
         result: list[PublicIdeaPublicationResponse] = []
         saved_ids = await self.repository.saved_publication_ids(user.id)
-        rows = await self.repository.list_public_media_rows(limit=limit)
+        rows = await self.repository.list_public_media_rows(limit=limit, offset=offset)
         for publication, generation, asset in rows:
             response = await self._publication_response(
                 publication,
@@ -362,6 +387,7 @@ class IdeaService:
                     status=404,
                     detail="The generated result image is no longer available.",
                 )
+            await self._prewarm_feed_preview(generation)
             existing.owner_published = True
             await self.session.commit()
             await self.session.refresh(existing)
@@ -392,6 +418,7 @@ class IdeaService:
                 detail="The generated result image is no longer available.",
             )
 
+        await self._prewarm_feed_preview(generation)
         publication = IdeaPublication(
             generation_id=generation.id,
             published_by_user_id=user.id,
