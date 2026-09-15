@@ -45,9 +45,14 @@ services:
       com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     build: .
     command: ["python", "-m", "app.telegram_bot.main"]
-    env_file:
-      - .env
     environment:
+      APP_ENV: "${APP_ENV:-local}"
+      RUNTIME_ROLE: "bot"
+      API_V1_PREFIX: "${API_V1_PREFIX:-/api/v1}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_WEBAPP_URL: "${TELEGRAM_WEBAPP_URL:-}"
+      BOT_INTERNAL_API_BASE_URL: "${BOT_INTERNAL_API_BASE_URL:-http://api:8000}"
       RELEASE_SHA: "${AUROOM_RELEASE_SHA:-unknown}"
     depends_on:
       - api
