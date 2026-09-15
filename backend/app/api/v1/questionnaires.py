@@ -97,10 +97,11 @@ async def save_questionnaire_session(
 async def get_questionnaire_generation_cost(
     user: CurrentUser,
     session: DbSession,
+    project_id: UUID | None = None,
 ) -> QuestionnaireGenerationCostResponse:
-    # credits is the live paid master-plan price used by refinements.
-    # initial_credits is the separately configurable first-concept offer.
-    return await QuestionnaireService(session).generation_cost(user)
+    # credits is the live paid master-plan price used by refinements and repeat concepts.
+    # initial_credits is the separately configurable one-time first-concept offer.
+    return await QuestionnaireService(session).generation_cost(user, project_id)
 
 
 @router.post(
