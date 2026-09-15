@@ -35,13 +35,16 @@ Not applicable: documentation-only change. Existing authorization and production
 4. ✅ Read `Bambale0/skills` implementation and code-review guidance.
 5. ✅ Add explicit AuRoom rule requiring documentation maintenance before/after code changes and mandatory whole-affected-surface review after every code intervention.
 6. ✅ Add this live execution ledger before further repository implementation work.
-7. ⏳ Run CI for the final documentation commit.
-8. ⏳ Review the final docs diff against both repository standards and the requested governance contract.
-9. ⏳ Merge PR #86 only after exact-head CI is green and review has no unresolved high-severity findings.
+7. ⚠️ CI run #503 executed on `d66c43a...`: Backend integration and Frontend build passed; Backend tests stopped at dependency-lock verification because regenerated `requirements.lock` differs from the committed lock.
+8. ✅ Review the final governance docs diff against both repository standards and the requested governance contract: no P0/P1 findings; only `AGENTS.md` and `CONTEXT.md` are changed and no Start-specific product rules were imported.
+9. 🔄 Investigate the dependency-lock drift from the current `dev` baseline in an isolated checkout. If the drift is deterministic, regenerate only the generated lock artifact, review the resolved dependency delta/security impact, and rerun exact-head CI.
+10. ⏳ Merge PR #86 only after exact-head CI is green and review has no unresolved high-severity findings.
 
 ### Verification evidence
 - PR #86 initially contained exactly one changed file (`AGENTS.md`) and no runtime changes before the explicit documentation-stewardship addition.
-- Final exact-head CI/review/merge evidence will be recorded here before this feature is closed.
+- CI run #503 (`d66c43a...`): Backend integration ✅; Frontend build/typecheck/critical mobile E2E ✅; Backend tests ❌ at `Verify Python dependency locks are current` before compile/unit tests. The failure reports `requirements.lock` drift at byte 19276 / line 250.
+- Governance review: Standards axis — 0 findings; Spec/product-contract axis — 0 findings. The change preserves AuRoom-specific rules, copies only the generic Start preflight block, and explicitly adds mandatory documentation stewardship + whole-affected-surface review.
+- Final exact-head CI/merge evidence will be recorded after resolving the baseline lock drift.
 
 ### Follow-ups
 After PR #86 is merged, resume `feat/control-plane-business-rules` only by first writing a fresh Active Feature Execution audit for that implementation and then addressing the P0/P1 findings from the full code review.
