@@ -317,14 +317,16 @@ export type AdminTelegramContent = {
 }
 
 export type AdminOperationalSettings = {
-  auth_rate_limit_per_minute: number | null
-  generation_rate_limit_per_minute: number | null
-  payment_rate_limit_per_minute: number | null
-  registration_rate_limit_per_day: number | null
-  yookassa_webhook_rate_limit_per_minute: number | null
+  auth_rate_limit_per_minute: number
+  generation_rate_limit_per_minute: number
+  payment_rate_limit_per_minute: number
+  registration_rate_limit_per_day: number
+  yookassa_webhook_rate_limit_per_minute: number
   asset_upload_rate_limit_per_minute: number
   asset_max_retained_count_per_user: number
   asset_max_retained_bytes_per_user: number
+  generation_max_inflight_per_user: number
+  initial_concept_offer_limit_per_day: number
   starter_credits: number
   initial_concept_credits: number
   media_retention_days: number | null
