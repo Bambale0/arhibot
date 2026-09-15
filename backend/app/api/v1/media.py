@@ -66,7 +66,7 @@ def _telegram_preview(path: Path) -> bytes:
 
 def _media_headers(*, preview: str | None = None) -> dict[str, str]:
     cache_control = (
-        "private, max-age=900, stale-while-revalidate=60"
+        "private, max-age=3600, immutable"
         if preview == "feed"
         else "private, max-age=60"
     )
