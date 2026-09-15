@@ -65,9 +65,8 @@ async function json(route:Route,data:unknown,status=200){
 
 async function prepare(page:Page) {
   await page.addInitScript(() => {
-    localStorage.setItem('auroom.access_token','fullscreen-e2e')
-    localStorage.setItem('auroom.refresh_token','fullscreen-e2e-refresh')
-    window.Telegram = { WebApp: { initData:'' } }
+    sessionStorage.setItem('auroom.access_token','fullscreen-e2e')
+        window.Telegram = { WebApp: { initData:'' } }
   })
   await page.route('**/api/v1/**',async route => {
     const request=route.request(), path=new URL(request.url()).pathname, method=request.method()
