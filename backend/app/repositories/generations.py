@@ -44,20 +44,37 @@ class GenerationRepository:
         )
         return int(result.scalar_one() or 0)
 
-    async def count_origin_since(
+    async def count_initial_offer_attempts_since(
         self,
         user_id: UUID,
-        origin: str,
         since: datetime,
     ) -> int:
         result = await self.session.execute(
             select(func.count(Generation.id)).where(
                 Generation.user_id == user_id,
-                Generation.origin == origin,
                 Generation.created_at >= since,
+                or_(
+                    Generation.origin == "questionnaire_initial",
+                    Generation.prompt.startswith("AUROOM_INITIAL_CONCEPT_V1"),
+                ),
             )
         )
         return int(result.scalar_one() or 0)
+
+    async def project_used_initial_offer(self, project_id: UUID) -> bool:
+        result = await self.session.execute(
+            select(
+                exists().where(
+                    Generation.project_id == project_id,
+                    or_(
+                        Generation.origin == "questionnaire_initial",
+                        Generation.prompt.startswith("AUROOM_INITIAL_CONCEPT_V1"),
+                    ),
+                )
+            )
+        )
+        return bool(result.scalar())
+
 
     async def project_has_origin(self, project_id: UUID, origin: str) -> bool:
         result = await self.session.execute(
