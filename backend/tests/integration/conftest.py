@@ -19,8 +19,8 @@ async def reset_async_clients_between_tests():
             settings.registration_rate_limit_per_day = 100_000
             settings.yookassa_webhook_rate_limit_per_minute = 100_000
             settings.asset_upload_rate_limit_per_minute = 100_000
-            settings.generation_max_inflight_per_user = 100_000
-            settings.initial_concept_offer_limit_per_day = 100_000
+            settings.generation_max_inflight_per_user = 1_000
+            settings.initial_concept_offer_limit_per_day = 1_000
             await session.commit()
     yield
     await redis_client.aclose()
