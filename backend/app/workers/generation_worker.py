@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
+import socket
 from datetime import UTC, datetime, timedelta
 from json import JSONDecodeError, loads
+from urllib.parse import urljoin, urlsplit
 from uuid import UUID, uuid4
 
 import httpx
@@ -152,32 +155,90 @@ def _questionnaire_aspect_ratio(asset: Asset | None) -> str:
     return min(QUESTIONNAIRE_ASPECT_RATIOS, key=lambda item: abs(QUESTIONNAIRE_ASPECT_RATIOS[item] - ratio))
 
 
+def _address_is_public(address: str) -> bool:
+    ip = ipaddress.ip_address(address)
+    return not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+async def _validate_remote_image_url(url: str) -> str:
+    parsed = urlsplit(url)
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        raise RuntimeError("Generated image URL must be absolute HTTPS")
+    if parsed.username is not None or parsed.password is not None:
+        raise RuntimeError("Generated image URL must not contain credentials")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError("Generated image URL has an invalid port") from exc
+    if port not in (None, 443):
+        raise RuntimeError("Generated image URL must use the standard HTTPS port")
+
+    hostname = parsed.hostname.rstrip(".").lower()
+    try:
+        literal = ipaddress.ip_address(hostname)
+    except ValueError:
+        try:
+            answers = await asyncio.to_thread(
+                socket.getaddrinfo,
+                hostname,
+                443,
+                type=socket.SOCK_STREAM,
+            )
+        except socket.gaierror as exc:
+            raise RuntimeError("Generated image host could not be resolved") from exc
+        addresses = {str(answer[4][0]).split("%", 1)[0] for answer in answers}
+        if not addresses or any(not _address_is_public(address) for address in addresses):
+            raise RuntimeError("Generated image host resolves to a non-public address")
+    else:
+        if not _address_is_public(str(literal)):
+            raise RuntimeError("Generated image URL points to a non-public address")
+    return url
+
+
 async def _download_image(url: str, settings: Settings) -> bytes:
-    if not url.startswith("https://"):
-        raise RuntimeError("Generated image URL must use HTTPS")
     limit = settings.max_image_size_bytes
-    chunks: list[bytes] = []
-    received = 0
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0), follow_redirects=True) as client:
-        async with client.stream("GET", url) as response:
-            response.raise_for_status()
-            if not str(response.url).startswith("https://"):
-                raise RuntimeError("Generated image redirect must remain on HTTPS")
-            content_length = response.headers.get("content-length")
-            if content_length:
-                try:
-                    if int(content_length) > limit:
+    current_url = await _validate_remote_image_url(url)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0), follow_redirects=False) as client:
+        for redirect_count in range(6):
+            async with client.stream("GET", current_url) as response:
+                if response.is_redirect:
+                    if redirect_count >= 5:
+                        raise RuntimeError("Generated image exceeded redirect limit")
+                    location = response.headers.get("location")
+                    if not location:
+                        raise RuntimeError("Generated image redirect is missing Location")
+                    current_url = await _validate_remote_image_url(
+                        urljoin(str(response.url), location)
+                    )
+                    continue
+
+                response.raise_for_status()
+                content_length = response.headers.get("content-length")
+                if content_length:
+                    try:
+                        if int(content_length) > limit:
+                            raise RuntimeError("Generated image exceeds media size limit")
+                    except ValueError:
+                        # A malformed length header is not trusted; the streamed byte limit below
+                        # remains authoritative.
+                        pass
+
+                chunks: list[bytes] = []
+                received = 0
+                async for chunk in response.aiter_bytes():
+                    received += len(chunk)
+                    if received > limit:
                         raise RuntimeError("Generated image exceeds media size limit")
-                except ValueError:
-                    # A malformed length header is not trusted; the streamed byte limit below
-                    # remains authoritative.
-                    pass
-            async for chunk in response.aiter_bytes():
-                received += len(chunk)
-                if received > limit:
-                    raise RuntimeError("Generated image exceeds media size limit")
-                chunks.append(chunk)
-    return b"".join(chunks)
+                    chunks.append(chunk)
+                return b"".join(chunks)
+    raise RuntimeError("Generated image download did not produce a response")
 
 
 async def _generate_orbit_frames(
