@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.generations import Generation
@@ -32,6 +32,17 @@ class GenerationRepository:
             select(Generation).where(Generation.id == generation_id).with_for_update()
         )
         return result.scalar_one_or_none()
+
+    async def project_has_origin(self, project_id: UUID, origin: str) -> bool:
+        result = await self.session.execute(
+            select(
+                exists().where(
+                    Generation.project_id == project_id,
+                    Generation.origin == origin,
+                )
+            )
+        )
+        return bool(result.scalar())
 
 
     async def list_pending_telegram_deliveries(
