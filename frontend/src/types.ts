@@ -32,6 +32,8 @@ export type ProjectContext = {
   questionnaire_draft?: boolean | null
 }
 
+export type ProjectContextWrite = Omit<ProjectContext, 'architecture' | 'design_session' | 'questionnaire_draft'>
+
 export type Project = {
   id: string
   name: string
