@@ -147,15 +147,16 @@ jobs:
         working-directory: .
         run: |
           set -Eeuo pipefail
-          docker run -d --name auroom-chaos-redis -p 127.0.0.1::6379 redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576 >/dev/null
+          chaos_password='ci-chaos-redis-password-change-me'
+          docker run -d --name auroom-chaos-redis -p 127.0.0.1::6379 redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576 redis-server --requirepass "${chaos_password}" >/dev/null
           trap 'docker rm -f auroom-chaos-redis >/dev/null 2>&1 || true' EXIT
           for attempt in $(seq 1 20); do
-            docker exec auroom-chaos-redis redis-cli ping >/dev/null 2>&1 && break
+            docker exec -e REDISCLI_AUTH="${chaos_password}" auroom-chaos-redis redis-cli ping >/dev/null 2>&1 && break
             sleep 0.25
           done
           chaos_port=$(docker port auroom-chaos-redis 6379/tcp | sed -E 's/.*:([0-9]+)$/\1/' | head -n1)
           [[ "${chaos_port}" =~ ^[0-9]+$ ]] || { echo "Could not resolve chaos Redis port" >&2; exit 1; }
-          export REDIS_URL="redis://127.0.0.1:${chaos_port}/0"
+          export REDIS_URL="redis://:${chaos_password}@127.0.0.1:${chaos_port}/0"
           export REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS=1
           export REDIS_SOCKET_TIMEOUT_SECONDS=1
           python backend/scripts/redis_failure_probe.py expect-up 2
