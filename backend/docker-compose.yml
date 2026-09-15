@@ -62,7 +62,6 @@ services:
       - ALL
     networks:
       - app
-      - data
 
 
   worker:
