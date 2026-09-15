@@ -14,6 +14,7 @@ from app.db.models.admin import IdeaTemplate
 from app.db.models.assets import Asset
 from app.db.models.generations import Generation
 from app.db.session import dispose_engine, get_session_factory
+from app.domain.generations.enums import GenerationStatus
 from app.repositories.operations import OperationalSettingsRepository
 from app.services.asset_service import LocalMediaStorage
 from app.services.questionnaire_project_service import QuestionnaireProjectService
@@ -28,23 +29,48 @@ CLEANUP_BATCH_SIZE = 100
 QUESTIONNAIRE_DRAFT_RETENTION_HOURS = 24
 
 
-async def _is_referenced(session, asset_id) -> bool:
-    generation_ref = await session.execute(
-        select(Generation.id)
+async def _prepare_asset_for_cleanup(session, asset_id) -> bool:
+    """Detach terminal history refs while preserving active/admin-published media."""
+
+    idea_ref = await session.execute(
+        select(IdeaTemplate.id).where(IdeaTemplate.image_asset_id == asset_id).limit(1)
+    )
+    if idea_ref.scalar_one_or_none() is not None:
+        return False
+
+    media_rows = await session.execute(
+        select(IdeaTemplate.media_items).where(IdeaTemplate.media_items != [])
+    )
+    asset_id_text = str(asset_id)
+    for media_items in media_rows.scalars().all():
+        if any(str(item.get("asset_id") or "") == asset_id_text for item in (media_items or [])):
+            return False
+
+    generation_refs = await session.execute(
+        select(Generation)
         .where(
             or_(
                 Generation.input_asset_id == asset_id,
                 Generation.output_asset_id == asset_id,
             )
         )
-        .limit(1)
+        .with_for_update()
     )
-    if generation_ref.scalar_one_or_none() is not None:
-        return True
-    idea_ref = await session.execute(
-        select(IdeaTemplate.id).where(IdeaTemplate.image_asset_id == asset_id).limit(1)
-    )
-    return idea_ref.scalar_one_or_none() is not None
+    rows = list(generation_refs.scalars().all())
+    if any(
+        row.status in {GenerationStatus.QUEUED, GenerationStatus.PROCESSING}
+        for row in rows
+    ):
+        return False
+
+    for row in rows:
+        if row.input_asset_id == asset_id:
+            row.input_asset_id = None
+        if row.output_asset_id == asset_id:
+            row.output_asset_id = None
+    if rows:
+        await session.flush()
+    return True
 
 
 async def cleanup_media_once() -> int:
@@ -64,7 +90,7 @@ async def cleanup_media_once() -> int:
             .limit(CLEANUP_BATCH_SIZE)
         )
         for asset in result.scalars().all():
-            if await _is_referenced(session, asset.id):
+            if not await _prepare_asset_for_cleanup(session, asset.id):
                 continue
             path: Path = storage.absolute_path(asset.storage_path)
             try:
