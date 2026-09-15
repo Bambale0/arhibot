@@ -118,9 +118,11 @@ class LocalMediaStorage:
     ) -> str:
         ttl = max(300, int(ttl_seconds or self.url_ttl_seconds))
         now = int(time.time())
-        # Bucket expiry so refreshing the feed does not manufacture a different
-        # URL every second and defeat the browser cache.
-        expires = ((now // ttl) + 2) * ttl
+        # Use an hourly-or-longer bucket so routine feed refreshes keep the same
+        # preview URL. The response itself is cached for only 15 minutes, while
+        # the signed low-resolution preview remains valid long enough to reuse it.
+        bucket_seconds = max(3600, ttl)
+        expires = ((now // bucket_seconds) + 2) * bucket_seconds
         self.absolute_path(relative_path)
         signature = self._signature(relative_path, expires)
         encoded_path = quote(relative_path, safe="/")
