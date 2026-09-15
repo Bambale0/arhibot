@@ -421,6 +421,90 @@ async def test_admin_generation_is_free_and_writes_no_credit_movement(role: User
 
 
 @pytest.mark.asyncio
+async def test_payment_create_retry_reuses_uncertain_idempotence_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        tokens, headers = await _register_admin(client)
+        user_id = tokens["user"]["id"]
+        plan_code = f"retry-{uuid4().hex[:10]}"
+        remote_payment_id = f"pay-{uuid4().hex}"
+        tariff = await client.post(
+            "/api/v1/admin/tariffs",
+            headers=headers,
+            json={
+                "code": plan_code,
+                "name": "Retry-safe pack",
+                "credits": 5,
+                "amount": "90.00",
+                "currency": "RUB",
+                "is_active": True,
+                "sort_order": 0,
+            },
+        )
+        assert tariff.status_code == 201, tariff.text
+
+        attempt_keys: list[str] = []
+        local_ids: list[str] = []
+
+        async def create_payment(
+            self,
+            *,
+            amount,
+            currency,
+            description,
+            return_url,
+            metadata,
+            idempotence_key,
+            receipt=None,
+        ):  # noqa: ANN001, ARG001
+            attempt_keys.append(idempotence_key)
+            local_ids.append(metadata["billing_payment_id"])
+            if len(attempt_keys) == 1:
+                raise YooKassaError("provider response lost", ambiguous=True)
+            return YooKassaPayment(
+                id=remote_payment_id,
+                status="pending",
+                amount=Decimal("90.00"),
+                currency="RUB",
+                metadata=metadata,
+                confirmation_url="https://payments.example.test/retry-safe",
+            )
+
+        monkeypatch.setattr(YooKassaProvider, "create_payment", create_payment)
+
+        first = await client.post(
+            "/api/v1/billing/payments",
+            headers=headers,
+            json={"package_code": plan_code},
+        )
+        assert first.status_code == 503, first.text
+        assert first.json()["type"] == "payment_provider_uncertain"
+
+        second = await client.post(
+            "/api/v1/billing/payments",
+            headers=headers,
+            json={"package_code": plan_code},
+        )
+        assert second.status_code == 201, second.text
+        assert second.json()["confirmation_url"] == "https://payments.example.test/retry-safe"
+        assert len(attempt_keys) == 2
+        assert attempt_keys[0] == attempt_keys[1]
+        assert local_ids[0] == local_ids[1] == second.json()["id"]
+
+        payments = await client.get("/api/v1/admin/payments", headers=headers)
+        assert payments.status_code == 200, payments.text
+        matching = [
+            item
+            for item in payments.json()
+            if item["user_id"] == user_id and item["package_code"] == plan_code
+        ]
+        assert len(matching) == 1
+        assert matching[0]["yookassa_payment_id"] == remote_payment_id
+
+
+@pytest.mark.asyncio
 async def test_yookassa_payment_webhook_credits_once_and_full_refund(monkeypatch: pytest.MonkeyPatch) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
