@@ -252,7 +252,7 @@ No new telemetry is required for this client-only interaction. The fullscreen UI
 
 1. [x] Audit current Telegram fullscreen and Ideas feed implementation.
 2. [x] Add behavior-first E2E expectations for mobile toggle, three-finger gesture, and work viewer.
-3. [ ] Implement the fullscreen toggle/gesture and Ideas viewer.
-4. [ ] Run focused frontend E2E plus typecheck/build.
-5. [ ] Review the exact PR diff and exact-SHA CI result.
+3. [x] Implement the fullscreen toggle/gesture and Ideas viewer.
+4. [x] Run frontend typecheck, production build, and Playwright E2E in CI; frontend job green with 18/18 E2E passing.
+5. [x] Review the exact PR diff and exact-SHA CI result (CI run #35134139926 green on `96154943f480f14da4436dd5e1863f41f08e1571`).
 6. [ ] Merge to `dev` only after required checks are green.
