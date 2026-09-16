@@ -150,7 +150,7 @@ jobs:
           api_pid=$!
           trap 'kill "${api_pid}" >/dev/null 2>&1 || true' EXIT
           for attempt in $(seq 1 40); do
-            if curl -fsS http://127.0.0.1:18001/health/ready >/dev/null 2>&1; then
+            if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:18001/health/ready >/dev/null 2>&1; then
               break
             fi
             if ! kill -0 "${api_pid}" >/dev/null 2>&1; then
@@ -159,11 +159,11 @@ jobs:
             fi
             sleep 0.25
           done
-          curl -fsS http://127.0.0.1:18001/health/ready >/dev/null
+          curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:18001/health/ready >/dev/null
 
           load_email="load-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.com"
           auth_payload=$(LOAD_EMAIL="${load_email}" python -c 'import json,os; print(json.dumps({"email": os.environ["LOAD_EMAIL"], "password": "load-probe-password-2026", "display_name": "CI Load Probe"}))')
-          auth_response=$(curl -fsS \
+          auth_response=$(curl -fsS --connect-timeout 2 --max-time 10 \
             -H 'Content-Type: application/json' \
             -d "${auth_payload}" \
             http://127.0.0.1:18001/api/v1/auth/register)
