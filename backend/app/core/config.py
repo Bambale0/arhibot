@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
     log_level: str = "INFO"
 
+    otel_traces_enabled: bool = False
+    otel_exporter_otlp_traces_endpoint: str = "http://jaeger:4318/v1/traces"
+    otel_trace_sample_ratio: float = 0.25
+
     database_url: str = "postgresql+asyncpg://app:app@localhost:5432/app"
     redis_url: str = "redis://localhost:6379/0"
     redis_socket_connect_timeout_seconds: float = 2.0
@@ -97,6 +101,14 @@ class Settings(BaseSettings):
             raise ValueError("TELEGRAM_INIT_DATA_TTL_SECONDS must be at least 60")
         if self.redis_socket_connect_timeout_seconds <= 0 or self.redis_socket_timeout_seconds <= 0:
             raise ValueError("Redis socket timeouts must be greater than zero")
+        if not 0 < self.otel_trace_sample_ratio <= 1:
+            raise ValueError("OTEL_TRACE_SAMPLE_RATIO must be greater than 0 and at most 1")
+        if self.otel_traces_enabled:
+            parsed_otel = urlsplit(self.otel_exporter_otlp_traces_endpoint)
+            if parsed_otel.scheme not in {"http", "https"} or not parsed_otel.netloc:
+                raise ValueError("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must be an absolute HTTP(S) URL")
+            if parsed_otel.username is not None or parsed_otel.password is not None:
+                raise ValueError("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must not contain credentials")
         if not 60 <= self.media_url_ttl_seconds <= 3600:
             raise ValueError("MEDIA_URL_TTL_SECONDS must be between 60 and 3600")
         if self.max_image_size_bytes < 1_048_576:
