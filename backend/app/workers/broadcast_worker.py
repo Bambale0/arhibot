@@ -7,6 +7,7 @@ from uuid import UUID
 
 from app.core.config import get_settings
 from app.core.redis import redis_client
+from app.core.tracing import configure_tracing, get_tracer, shutdown_tracing
 from app.db.models.broadcasts import BroadcastDelivery
 from app.db.session import dispose_engine, get_session_factory
 from app.repositories.broadcasts import BroadcastRepository
@@ -226,16 +227,25 @@ async def run_worker() -> None:
             if raw_id is None:
                 await asyncio.sleep(1)
                 continue
-            try:
-                await _process_campaign(UUID(raw_id), api)
-            except Exception:
-                # Keep the campaign reserved on unexpected infrastructure errors.
-                # Startup recovery will return it to the queue without losing recipients.
-                logger.exception("Reserved broadcast %s crashed before a safe checkpoint", raw_id)
-                await asyncio.sleep(2)
-                await _recover_interrupted_work()
-            else:
-                await _ack_campaign(raw_id)
+            tracer = get_tracer(__name__)
+            with tracer.start_as_current_span(
+                "broadcast.process",
+                attributes={
+                    "broadcast.campaign_id": raw_id,
+                    "messaging.system": "redis",
+                    "messaging.destination.name": BROADCAST_QUEUE_KEY,
+                },
+            ):
+                try:
+                    await _process_campaign(UUID(raw_id), api)
+                except Exception:
+                    # Keep the campaign reserved on unexpected infrastructure errors.
+                    # Startup recovery will return it to the queue without losing recipients.
+                    logger.exception("Reserved broadcast %s crashed before a safe checkpoint", raw_id)
+                    await asyncio.sleep(2)
+                    await _recover_interrupted_work()
+                else:
+                    await _ack_campaign(raw_id)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -244,6 +254,8 @@ async def run_worker() -> None:
 
 
 async def _main() -> None:
+    settings = get_settings()
+    configure_tracing(settings)
     try:
         async with worker_singleton("broadcast"):
             async with worker_heartbeat("broadcast"):
@@ -251,6 +263,7 @@ async def _main() -> None:
     finally:
         await redis_client.aclose()
         await dispose_engine()
+        shutdown_tracing()
 
 
 if __name__ == "__main__":
