@@ -231,6 +231,8 @@ def test_postgres_failure_probe_is_bounded_and_ci_exercises_recovery() -> None:
     assert 'docker unpause auroom-chaos-postgres' in ci
     assert 'postgres_failure_probe.py expect-down 3' in ci
     assert 'postgres_failure_probe.py expect-up 2' in ci
+    assert 'postgres_ready=0' in ci
+    assert 'Chaos PostgreSQL TCP endpoint never became usable' in ci
 
 def test_persistent_observability_stack_is_private_and_pinned() -> None:
     import json
