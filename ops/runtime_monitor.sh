@@ -118,8 +118,25 @@ fi
 if ! curl -fsS --connect-timeout 3 --max-time 8 http://127.0.0.1:18080/health/live >/dev/null; then
   fail "edge liveness failed"
 fi
+if ! curl -fsS --connect-timeout 3 --max-time 8 http://127.0.0.1:19090/-/ready >/dev/null; then
+  fail "Prometheus readiness failed"
+fi
+if ! curl -fsS --connect-timeout 3 --max-time 8 http://127.0.0.1:13000/api/health >/dev/null; then
+  fail "Grafana health failed"
+fi
+if ! curl -fsS --connect-timeout 3 --max-time 8 http://127.0.0.1:13133/status >/dev/null; then
+  fail "Jaeger health failed"
+fi
 
-for service in api bot worker broadcast-worker maintenance frontend nginx postgres redis; do
+prometheus_api_up=$(curl -fsSG --connect-timeout 3 --max-time 8 \
+  --data-urlencode 'query=up{job="auroom-api"}' \
+  http://127.0.0.1:19090/api/v1/query \
+  | python3 -c 'import json,sys; p=json.load(sys.stdin); rows=p.get("data",{}).get("result",[]); print(1 if rows and rows[0].get("value",["","0"])[1] == "1" else 0)' \
+  2>/dev/null || echo 0)
+metrics+=("prometheus_api_up=${prometheus_api_up}")
+[[ "${prometheus_api_up}" == "1" ]] || fail "Prometheus is not scraping AuRoom API"
+
+for service in api bot worker broadcast-worker maintenance frontend nginx postgres redis prometheus grafana jaeger; do
   container_id=$(compose ps -q "${service}" 2>/dev/null || true)
   if [[ -z "${container_id}" ]]; then
     fail "missing container ${service}"
