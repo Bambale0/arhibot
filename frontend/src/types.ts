@@ -61,6 +61,7 @@ export type Asset = {
   width: number
   height: number
   url: string
+  preview_url?: string | null
   created_at: string
 }
 
