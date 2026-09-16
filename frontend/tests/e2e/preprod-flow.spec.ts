@@ -266,12 +266,12 @@ test('house terrace floor options follow selected storeys in the UI',async({page
 })
 
 
-test('fullscreen control stays hidden in the mobile product flow',async({page})=>{
+test('fullscreen control stays available in the mobile product flow',async({page})=>{
   await page.addInitScript(()=>{
     window.Telegram = { WebApp: { initData:'', requestFullscreen:()=>{} } }
   })
   await page.goto('/')
-  await expect(page.locator('.telegram-fullscreen-button')).toBeHidden()
+  await expect(page.getByRole('button',{name:'Открыть на весь экран'})).toBeVisible()
 })
 
 

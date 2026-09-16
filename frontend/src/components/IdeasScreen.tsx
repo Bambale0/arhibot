@@ -60,6 +60,7 @@ function WorkCard({
   onSave,
   onShare,
   onStart,
+  onOpen,
   active,
   shouldLoadImage,
 }: {
@@ -71,6 +72,7 @@ function WorkCard({
   onSave: () => void
   onShare: () => void
   onStart: () => void
+  onOpen: () => void
   active: boolean
   shouldLoadImage: boolean
 }) {
@@ -98,6 +100,7 @@ function WorkCard({
     </div>
 
     <div className={`idea-work-stage ${imageReady ? 'media-ready' : 'media-pending'}`}>
+      <button type="button" className="idea-work-open" aria-label="Открыть работу на весь экран" onClick={onOpen} />
       {imageUrl && shouldLoadImage ? (
         <img
           src={imageUrl}
@@ -141,6 +144,46 @@ function WorkCard({
   </article>
 }
 
+function FullscreenWorkViewer({ idea, onClose }: { idea: Idea; onClose: () => void }) {
+  const [usePreview, setUsePreview] = useState(false)
+  const imageUrl = usePreview ? idea.preview_url : (idea.image_url || idea.preview_url)
+
+  useEffect(() => {
+    setUsePreview(false)
+  }, [idea.id])
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [onClose])
+
+  return <div
+    className="idea-work-viewer"
+    role="dialog"
+    aria-modal="true"
+    aria-label={idea.title}
+    onClick={(event) => { if (event.target === event.currentTarget) onClose() }}
+  >
+    <button type="button" className="idea-work-viewer-close" aria-label="Закрыть полноэкранный просмотр" onClick={onClose}>×</button>
+    {imageUrl ? <img
+      src={imageUrl}
+      alt={idea.title}
+      decoding="async"
+      onError={() => {
+        if (!usePreview && idea.preview_url && idea.preview_url !== imageUrl) setUsePreview(true)
+      }}
+    /> : <div className="idea-work-viewer-empty">Работа временно недоступна</div>}
+  </div>
+}
+
 export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (project: Project, selectedObjects: string[]) => void }) {
   const [ideas, setIdeas] = useState<Idea[]>([])
   const [loading, setLoading] = useState(true)
@@ -149,6 +192,7 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
   const [searchOpen, setSearchOpen] = useState(false)
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set())
   const [startingId, setStartingId] = useState<string | null>(null)
+  const [openIdea, setOpenIdea] = useState<Idea | null>(null)
   const [activeIndex, setActiveIndex] = useState(0)
   const [nextOffset, setNextOffset] = useState(0)
   const [hasMore, setHasMore] = useState(false)
@@ -365,9 +409,11 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
             onSave={() => void toggleSaved(idea)}
             onShare={() => void shareIdea(idea)}
             onStart={() => void startFromIdea(idea)}
+            onOpen={() => setOpenIdea(idea)}
           />
         </div>)}
       </div>
     ) : <div className="ideas-feed-status"><div className="empty-inline"><p>{query ? 'По этому запросу ничего не найдено.' : 'Пока нет опубликованных работ.'}</p></div></div>}
+    {openIdea && <FullscreenWorkViewer idea={openIdea} onClose={() => setOpenIdea(null)} />}
   </section>
 }

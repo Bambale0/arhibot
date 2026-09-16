@@ -3,13 +3,13 @@
   top: max(12px, calc(env(safe-area-inset-top) + 4px));
   right: max(14px, calc(env(safe-area-inset-right) + 14px));
   z-index: 120;
-  width: 40px;
-  height: 40px;
-  min-width: 40px;
-  min-height: 40px;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
   padding: 0;
   border: 1px solid rgba(255, 255, 255, .16);
-  border-radius: 12px;
+  border-radius: 11px;
   display: grid;
   place-items: center;
   background: rgba(37, 39, 36, .88);
@@ -22,8 +22,8 @@
 }
 
 .telegram-fullscreen-button svg {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
 }
 
 .telegram-fullscreen-button:hover {
@@ -44,7 +44,19 @@
 
 @media (max-width: 767px) {
   .telegram-fullscreen-button {
-    display: none;
+    top: auto;
+    right: max(10px, calc(env(safe-area-inset-right) + 10px));
+    bottom: max(82px, calc(env(safe-area-inset-bottom) + 78px));
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    min-height: 34px;
+    border-radius: 10px;
+  }
+
+  .telegram-fullscreen-button svg {
+    width: 16px;
+    height: 16px;
   }
 }
 

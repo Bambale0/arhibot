@@ -217,3 +217,42 @@ The crash probe uses the existing worker heartbeat check output. Storm tests ass
 5. [x] Update operations documentation.
 6. [ ] Run exact-SHA CI and review findings.
 7. [ ] Merge to `dev` after all checks are green.
+
+## Active work — Telegram fullscreen and Ideas work viewer
+
+- Baseline `dev`: `04fdf9b524fdf929d1630c947d2ff06075f8f8dd`.
+- The Telegram fullscreen control is already mounted globally, but it only enters fullscreen and its CSS hides it below 768 px.
+- The Ideas feed is image-based and currently has no dedicated full-viewport viewer for a published work.
+- The existing 360° drone-orbit experiment from PR #76 is admin-only, creates an animated WebP from image-to-image orbit frames, and remains separate from the public Ideas flow. This slice does not reintroduce public 3D.
+
+### User outcome
+
+A Telegram Mini App user can enter or leave fullscreen with either a compact control or a three-finger gesture, and can tap a work in Ideas to inspect the generated image in a dedicated full-screen viewer.
+
+### Acceptance criteria
+
+1. Keep a compact fullscreen toggle available on mobile and desktop Telegram clients that support `requestFullscreen`.
+2. Toggle both directions using `requestFullscreen` / `exitFullscreen` and synchronize UI state from Telegram's `fullscreenChanged` event.
+3. A three-finger touch gesture toggles the same fullscreen action without affecting normal one-finger feed scrolling.
+4. Tapping a work image in Ideas opens a viewport-covering dialog that prefers the original generation asset, has an explicit close action, supports Escape, and restores body scrolling on close.
+5. Unsupported Telegram clients keep the existing graceful fallback: no fullscreen control and no runtime error.
+6. No backend, database, billing, generation-provider, or public 3D contract changes are introduced.
+7. Existing feed preview-window performance behavior remains covered.
+
+### No-hardcode / configuration decisions
+
+- Fullscreen capability and state come from the Telegram WebApp API; no product configuration is introduced.
+- The viewer uses the existing `image_url` / `preview_url` Idea contract and does not add a parallel media source.
+
+### Observability
+
+No new telemetry is required for this client-only interaction. The fullscreen UI mirrors Telegram's authoritative `isFullscreen` state after `fullscreenChanged`.
+
+### Execution plan
+
+1. [x] Audit current Telegram fullscreen and Ideas feed implementation.
+2. [x] Add behavior-first E2E expectations for mobile toggle, three-finger gesture, and work viewer.
+3. [x] Implement the fullscreen toggle/gesture and Ideas viewer.
+4. [x] Run frontend typecheck, production build, and Playwright E2E in CI; frontend job green with 18/18 E2E passing.
+5. [x] Review the exact PR diff and exact-SHA CI result (CI run #35134139926 green on `96154943f480f14da4436dd5e1863f41f08e1571`).
+6. [ ] Merge to `dev` only after required checks are green.
