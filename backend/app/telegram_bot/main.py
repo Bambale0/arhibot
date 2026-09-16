@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 import httpx
 
 from app.core.config import get_settings
+from app.core.tracing import configure_tracing, shutdown_tracing
 
 logger = logging.getLogger(__name__)
 CONTENT_REFRESH_SECONDS = 30
@@ -428,6 +429,7 @@ def run_polling() -> None:
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    configure_tracing(settings)
 
     api = TelegramBotApi(token)
     content_url = (
@@ -502,4 +504,7 @@ def run_polling() -> None:
 
 
 if __name__ == "__main__":
-    run_polling()
+    try:
+        run_polling()
+    finally:
+        shutdown_tracing()
