@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    service: auroom
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: auroom-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]
+
+  - job_name: jaeger
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["jaeger:8888"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
