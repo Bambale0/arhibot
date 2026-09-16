@@ -138,5 +138,39 @@ The probe prints mode, completed operations, error count/rate, elapsed time, thr
 3. [x] Add authenticated read/write CI execution.
 4. [x] Add safety/contract tests and script compilation.
 5. [x] Update operations documentation.
-6. [ ] Run CI on the exact PR SHA and review findings.
-7. [ ] Merge to `dev` only after green checks.
+6. [x] Run CI on the exact PR SHA and review findings (PR #92 CI #709 green; post-merge CI #710 green).
+7. [x] Merge to `dev` only after green checks (squash `491f971423e66810469329afc8ef94b93ff447cb`).
+
+
+## Active work — worker crash and provider storm recovery
+
+- Baseline `dev`: `491f971423e66810469329afc8ef94b93ff447cb`.
+- Redis and PostgreSQL pause/recovery probes are green in CI.
+- Generation/broadcast workers already use reserve/ack recovery and singleton leases, but CI does not currently prove the lease/heartbeat path recovers after an ungraceful process death.
+- Provider retry/circuit behavior has unit coverage for individual transient failures; this slice adds a sustained simulated failure storm so retry budgets and circuit opening remain bounded.
+
+### User outcome
+
+An ungracefully killed worker cannot create a second concurrent lease, and a replacement can safely start after the stale lease expires. Provider failure storms stay bounded and fail fast after the circuit opens.
+
+### Acceptance criteria
+
+1. Add a minimal CI-only worker lease/heartbeat process that uses the same production worker primitives.
+2. CI proves healthy start, SIGKILL, stale-lease split-brain protection, TTL expiry, and healthy replacement.
+3. Add deterministic 5xx/429 storm tests around the shared resilience circuit/retry layer.
+4. No live provider, production queue, payment or customer data is touched.
+5. Existing CI, database/Redis recovery and load gates remain green.
+
+### Observability
+
+The crash probe uses the existing worker heartbeat check output. Storm tests assert bounded call counts and explicit circuit-open behavior.
+
+### Execution plan
+
+1. [x] Audit worker singleton/heartbeat and provider resilience paths.
+2. [ ] Add worker crash probe process.
+3. [ ] Add SIGKILL/recovery CI gate.
+4. [ ] Add provider storm regression tests.
+5. [ ] Update operations documentation.
+6. [ ] Run exact-SHA CI and review findings.
+7. [ ] Merge to `dev` after all checks are green.
