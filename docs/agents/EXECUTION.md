@@ -134,9 +134,9 @@ The probe prints mode, completed operations, error count/rate, elapsed time, thr
 ### Execution plan
 
 1. [x] Audit auth/project contracts and CI integration environment.
-2. [ ] Add guarded HTTP load probe.
-3. [ ] Add authenticated read/write CI execution.
-4. [ ] Add safety/contract tests and script compilation.
-5. [ ] Update operations documentation.
+2. [x] Add guarded HTTP load probe.
+3. [x] Add authenticated read/write CI execution.
+4. [x] Add safety/contract tests and script compilation.
+5. [x] Update operations documentation.
 6. [ ] Run CI on the exact PR SHA and review findings.
 7. [ ] Merge to `dev` only after green checks.
