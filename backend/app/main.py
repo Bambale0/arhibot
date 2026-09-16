@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.core.errors import install_exception_handlers
 from app.core.logging import configure_logging
 from app.core.redis import redis_client
+from app.core.tracing import configure_tracing, shutdown_tracing
 from app.db.session import dispose_engine
 from app.version import __version__
 
@@ -21,9 +22,12 @@ configure_logging(settings)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    yield
-    await redis_client.aclose()
-    await dispose_engine()
+    try:
+        yield
+    finally:
+        await redis_client.aclose()
+        await dispose_engine()
+        shutdown_tracing()
 
 
 documentation_enabled = not settings.is_production
@@ -55,3 +59,4 @@ app.add_middleware(RequestIdMiddleware)
 install_exception_handlers(app)
 app.include_router(health_router)
 app.include_router(api_v1_router, prefix=settings.api_v1_prefix)
+configure_tracing(settings, app=app)
