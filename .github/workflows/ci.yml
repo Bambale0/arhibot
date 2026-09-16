@@ -237,7 +237,15 @@ jobs:
           chaos_port=$(docker port auroom-chaos-postgres 5432/tcp | sed -E 's/.*:([0-9]+)$/\1/' | head -n1)
           [[ "${chaos_port}" =~ ^[0-9]+$ ]] || { echo "Could not resolve chaos PostgreSQL port" >&2; exit 1; }
           export DATABASE_URL="postgresql+asyncpg://app:${chaos_password}@127.0.0.1:${chaos_port}/app"
-          python backend/scripts/postgres_failure_probe.py expect-up 2
+          postgres_ready=0
+          for attempt in $(seq 1 20); do
+            if python backend/scripts/postgres_failure_probe.py expect-up 2; then
+              postgres_ready=1
+              break
+            fi
+            sleep 0.25
+          done
+          (( postgres_ready == 1 )) || { echo "Chaos PostgreSQL TCP endpoint never became usable" >&2; exit 1; }
           docker pause auroom-chaos-postgres >/dev/null
           python backend/scripts/postgres_failure_probe.py expect-down 3
           docker unpause auroom-chaos-postgres >/dev/null
