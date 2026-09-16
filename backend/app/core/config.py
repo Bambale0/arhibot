@@ -109,6 +109,14 @@ class Settings(BaseSettings):
                 raise ValueError("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must be an absolute HTTP(S) URL")
             if parsed_otel.username is not None or parsed_otel.password is not None:
                 raise ValueError("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must not contain credentials")
+            if (
+                self.is_production
+                and parsed_otel.scheme != "https"
+                and (parsed_otel.hostname or "").lower() not in {"jaeger", "localhost", "127.0.0.1", "::1"}
+            ):
+                raise ValueError(
+                    "Production OTLP trace export must use HTTPS unless it targets the private local Jaeger service"
+                )
         if not 60 <= self.media_url_ttl_seconds <= 3600:
             raise ValueError("MEDIA_URL_TTL_SECONDS must be between 60 and 3600")
         if self.max_image_size_bytes < 1_048_576:
