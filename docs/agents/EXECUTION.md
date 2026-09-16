@@ -30,7 +30,7 @@ Home becomes a fast working dashboard: last project first, three clear next acti
 ### Performance / observability
 
 - Project metadata only is loaded for the project summary.
-- At most one accepted scene asset is fetched for the last-project preview.
+- At most one accepted scene asset is fetched for the last-project preview, and Home uses its signed feed-preview URL rather than the original generation image.
 - Home requests exactly three Ideas and uses their preview asset when available.
 - No new telemetry surface is required; API failures remain visible and retryable.
 
@@ -39,8 +39,8 @@ Home becomes a fast working dashboard: last project first, three clear next acti
 1. [x] Audit Home, Ideas, API contracts, responsive styles and relevant frontend/performance skills.
 2. [x] Implement dashboard layout and navigation on a feature branch.
 3. [x] Add responsive styling, lightweight owned-asset preview URLs and Playwright regression coverage.
-4. [in progress] Open PR to `dev`, run exact-SHA CI and review findings.
-5. [pending] Record verification evidence and follow-ups.
+4. [x] Open PR #99 to `dev`; CI #728 passed on `86987e5a0e0fba3287a5f3ae313d4d8648d4d0cd` (Backend tests, Backend integration, Frontend build; Playwright 17/17).
+5. [in progress] Re-verify the ledger-only head commit, merge to `dev`, and confirm the resulting integration state.
 
 
 ## Active work — production recovery readiness
