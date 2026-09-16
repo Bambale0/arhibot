@@ -72,7 +72,7 @@ export function ProjectsScreen({
       if (sceneAssetId) {
         try {
           const asset = await api.getAsset(sceneAssetId)
-          setPreviewUrl(asset.url)
+          setPreviewUrl(asset.preview_url || null)
         } catch {
           // The project remains usable even when an old preview asset was deleted.
         }
