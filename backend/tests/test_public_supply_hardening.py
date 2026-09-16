@@ -196,3 +196,22 @@ def test_production_disables_fastapi_docs_and_openapi() -> None:
         timeout=15,
     )
     assert result.returncode == 0, result.stderr
+
+def test_isolated_restore_drill_never_targets_live_runtime() -> None:
+    drill = (REPO_ROOT / 'ops' / 'verify_restore_isolated.sh').read_text()
+
+    assert 'docker run --rm -d' in drill
+    assert '--network "container:${drill_name}"' in drill
+    assert 'pg_restore -U app -d app --no-owner --no-privileges' in drill
+    assert 'alembic upgrade head' in drill
+    assert 'sha256sum -c SHA256SUMS' in drill
+    assert 'tar -tzf' in drill
+    assert 'docker stop "${drill_name}"' in drill
+
+    # The drill must remain isolated from the live data path.
+    assert 'DROP DATABASE' not in drill
+    assert 'compose stop' not in drill
+    assert 'restore_runtime.sh' not in drill
+    assert '/data/media/*' not in drill
+    assert 'docker volume rm' not in drill
+
