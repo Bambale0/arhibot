@@ -22,3 +22,18 @@ def test_required_integration_gate_contains_real_redis_failure_probe() -> None:
     assert 'Controlled Redis pause/recovery probe' in ci
     assert 'docker pause auroom-chaos-redis' in ci
     assert 'redis_failure_probe.py expect-down 3' in ci
+
+def test_required_integration_gate_contains_worker_sigkill_recovery_probe() -> None:
+    ci = (REPO_ROOT / '.github' / 'workflows' / 'ci.yml').read_text()
+    probe = (REPO_ROOT / 'backend' / 'scripts' / 'worker_crash_probe.py').read_text()
+
+    assert 'Controlled worker SIGKILL recovery probe' in ci
+    assert 'kill -9 "${first_pid}"' in ci
+    assert 'already owns the singleton lease' in ci
+    assert 'sleep 47' in ci
+    assert 'Worker SIGKILL recovery probe passed' in ci
+
+    assert 'worker_singleton' in probe
+    assert 'worker_heartbeat' in probe
+    assert 'state=ready' in probe
+

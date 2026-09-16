@@ -106,3 +106,79 @@ async def test_long_retry_after_is_not_retried_early(monkeypatch: pytest.MonkeyP
     assert response.status_code == 429
     assert calls == 1
     assert sleeps == []
+
+@pytest.mark.asyncio
+async def test_retryable_5xx_storm_opens_circuit_and_bounds_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    sleeps: list[float] = []
+
+    async def request() -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503)
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr('app.core.resilience.asyncio.sleep', fake_sleep)
+    monkeypatch.setattr('app.core.resilience.random.uniform', lambda _a, _b: 1.0)
+    breaker = CircuitBreaker('storm', failure_threshold=3, recovery_seconds=30)
+
+    response = await request_with_resilience(
+        request,
+        dependency='storm',
+        operation='five_xx_storm',
+        breaker=breaker,
+        policy=RetryPolicy(max_attempts=20, base_delay_seconds=0.01, max_delay_seconds=0.1),
+    )
+
+    assert response.status_code == 503
+    assert calls == 3
+    assert sleeps == [0.01, 0.02]
+    assert breaker.state == 'open'
+
+    with pytest.raises(CircuitOpenError):
+        await request_with_resilience(
+            request,
+            dependency='storm',
+            operation='five_xx_storm',
+            breaker=breaker,
+            policy=RetryPolicy(max_attempts=20),
+        )
+    assert calls == 3
+
+
+@pytest.mark.asyncio
+async def test_429_storm_opens_circuit_without_unbounded_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    sleeps: list[float] = []
+
+    async def request() -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(429)
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr('app.core.resilience.asyncio.sleep', fake_sleep)
+    monkeypatch.setattr('app.core.resilience.random.uniform', lambda _a, _b: 1.0)
+    breaker = CircuitBreaker('rate-limit-storm', failure_threshold=4, recovery_seconds=30)
+
+    response = await request_with_resilience(
+        request,
+        dependency='rate-limit-storm',
+        operation='rate_limit_storm',
+        breaker=breaker,
+        policy=RetryPolicy(max_attempts=25, base_delay_seconds=0.01, max_delay_seconds=0.1),
+    )
+
+    assert response.status_code == 429
+    assert calls == 4
+    assert sleeps == [0.01, 0.02, 0.04]
+    assert breaker.state == 'open'
+

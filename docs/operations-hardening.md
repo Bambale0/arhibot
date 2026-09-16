@@ -74,6 +74,10 @@ The probe refuses non-loopback targets by default. A remote read requires `--all
 
 CI runs the probe over a real Uvicorn TCP listener with a disposable authenticated user for both read traffic and reversible Project writes. This is a bounded regression gate, not a long-duration capacity certification. Provider-backed soak testing remains a separate staging exercise because it consumes external AI capacity and can incur provider cost.
 
+### Controlled crash and dependency failure probes
+
+Backend integration CI deliberately pauses and resumes isolated Redis/PostgreSQL instances, then verifies bounded failure detection and recovery through the application's real client paths. It also SIGKILLs a worker process that owns the production singleton lease/heartbeat primitives, verifies a replacement cannot overlap while the stale lease is alive, waits for lease expiry, and proves a clean replacement becomes healthy. Provider resilience tests simulate sustained HTTP 429/5xx storms and assert retry counts remain bounded and the shared circuit breaker opens rather than hammering the dependency.
+
 ## Public surface and supply chain
 
 Production disables FastAPI Swagger/ReDoc/OpenAPI HTTP routes and the public host Nginx explicitly returns 404 for docs, OpenAPI and metrics. The HTTPS ingress sets HSTS, nosniff, a strict referrer policy, a conservative permissions policy and a Telegram-compatible CSP; Nginx version disclosure is disabled. Deploy applies the canonical host Nginx config with backup, syntax validation, reload verification and rollback on failure.
@@ -88,4 +92,4 @@ To update the Python locks after an intentional dependency change, install backe
 - persistent telemetry storage/dashboards and distributed tracing; the API now exposes internal Prometheus-compatible RED/runtime metrics, while the runtime watchdog covers immediate operational alerts;
 - long-duration soak/capacity testing with generation-provider latency is still required in staging; CI now has a bounded authenticated TCP load gate covering reads and reversible Project writes without external provider cost;
 - blue-green/canary or another zero-downtime release strategy;
-- broader controlled failure-injection still needs process-kill coverage and larger provider-storm scenarios; Redis and PostgreSQL pause/recovery are exercised in CI, while provider 429/5xx retry/circuit behavior has deterministic test coverage.
+- controlled failure-injection now covers Redis/PostgreSQL pause-recovery, worker SIGKILL singleton/heartbeat recovery, and sustained simulated provider 429/5xx storms; continue extending these probes when new stateful workers or providers are introduced.
