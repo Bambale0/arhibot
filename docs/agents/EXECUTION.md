@@ -1,5 +1,48 @@
 # Agent Execution Ledger
 
+## Active work — lightweight home dashboard
+
+- Baseline `dev`: `6cb63950d1c552f42c7a683ca2a7e75374a8b015`.
+- Existing Home renders the complete Project grid by default; Ideas already has a separate full feed and optimized preview URLs.
+- Reusable contracts: `listProjects`, `getAsset`, `listIdeas`, accepted questionnaire `scene_asset_id`, canonical Create flow and existing app-section navigation.
+
+### User outcome
+
+Home becomes a fast working dashboard: last project first, three clear next actions, compact access to all projects, and only three lightweight inspiration previews with a path to the full Ideas feed.
+
+### Acceptance criteria
+
+1. The full Project grid is not rendered on Home by default.
+2. The most recently updated Project is the primary card and can be continued.
+3. Quick actions expose “Новый проект”, “Проект по фото участка” and “Новый вариант”.
+4. “Мои проекты” reports the real loaded count and reveals the compact project list only on demand.
+5. “Вдохновение” renders at most three server-backed Ideas, prefers `preview_url`, uses lazy image loading, and opens the full Ideas feed.
+6. Loading, empty and retryable error states remain usable.
+7. No production fake data, new business configuration, migrations or authorization changes are introduced.
+8. Frontend regression coverage and exact-commit CI verify the change.
+
+### No-hardcode / configuration decisions
+
+- All Project and Idea content stays API-backed.
+- The plot-photo shortcut enters the canonical Create flow; the existing source-photo step remains authoritative.
+- “Новый вариант” reopens the last Project, where the existing questionnaire/refinement workflow owns generation behavior.
+
+### Performance / observability
+
+- Project metadata only is loaded for the project summary.
+- At most one accepted scene asset is fetched for the last-project preview.
+- Home requests exactly three Ideas and uses their preview asset when available.
+- No new telemetry surface is required; API failures remain visible and retryable.
+
+### Execution plan
+
+1. [x] Audit Home, Ideas, API contracts, responsive styles and relevant frontend/performance skills.
+2. [in progress] Implement dashboard layout and navigation on a feature branch.
+3. [pending] Add responsive styling and Playwright regression coverage.
+4. [pending] Open PR to `dev`, run exact-SHA CI and review findings.
+5. [pending] Record verification evidence and follow-ups.
+
+
 ## Active work — production recovery readiness
 
 - Baseline `dev`: `d2fa5dc16b4a68d48a793c74584ef3618257ee6d`.
