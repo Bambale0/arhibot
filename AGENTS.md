@@ -396,6 +396,7 @@ When repository tools/connectors are available:
 When connected repository access is unavailable but normal Git access works, prepare current local copies before touching the target project:
 
 ```bash
+set -Eeuo pipefail
 mkdir -p /root
 
 sync_repo() {
