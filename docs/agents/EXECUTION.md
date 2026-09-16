@@ -215,11 +215,11 @@ Prometheus stores HTTP rate/errors/duration, queue depth, worker heartbeat age, 
 ### Execution plan
 
 1. [x] Audit existing metrics, request IDs, Compose networks/resources and host capacity.
-2. [ ] Add OTel runtime dependencies and tracing setup.
-3. [ ] Add Prometheus, Grafana and Jaeger pinned services/config/provisioning.
-4. [ ] Add dashboard and tracing/security contract tests.
-5. [ ] Regenerate deterministic Python dependency locks.
-6. [ ] Update deployment/server smoke/runtime monitor and operations docs.
+2. [x] Add OTel runtime dependencies and tracing setup.
+3. [x] Add Prometheus, Grafana and Jaeger pinned services/config/provisioning.
+4. [x] Add dashboard and tracing/security contract tests.
+5. [x] Regenerate deterministic Python dependency locks.
+6. [x] Update deployment/server smoke/runtime monitor and operations docs.
 7. [ ] Run exact-SHA CI and review findings.
 8. [ ] Merge to `dev` only after green checks.
 9. [ ] Verify exact-SHA deploy, server smoke, Prometheus target, Grafana health and Jaeger trace ingestion.
