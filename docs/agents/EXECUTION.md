@@ -58,7 +58,7 @@ The drill prints the backup path, restored Alembic revision before/after migrati
 6. [x] Update operations documentation.
 7. [x] Run CI and review findings (PR #90 CI #699 green; post-merge CI #700 green).
 8. [x] Merge to `dev` only after green checks (squash `4a6e5998bdb7d055cfa87d9e440fa7ae36e14669`).
-9. [ ] Re-run the repository script against the deployed environment after merge.
+9. [x] Re-run the repository script against deployed `4a6e5998bdb7d055cfa87d9e440fa7ae36e14669`: latest backup `20260916T042915Z` restored in isolation, Alembic head `20260915_0036`, PASS.
 10. [ ] Off-site backup setup remains follow-up pending remote/provider configuration.
 
 
