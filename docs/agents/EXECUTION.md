@@ -168,9 +168,9 @@ The crash probe uses the existing worker heartbeat check output. Storm tests ass
 ### Execution plan
 
 1. [x] Audit worker singleton/heartbeat and provider resilience paths.
-2. [ ] Add worker crash probe process.
-3. [ ] Add SIGKILL/recovery CI gate.
-4. [ ] Add provider storm regression tests.
-5. [ ] Update operations documentation.
+2. [x] Add worker crash probe process.
+3. [x] Add SIGKILL/recovery CI gate.
+4. [x] Add provider storm regression tests.
+5. [x] Update operations documentation.
 6. [ ] Run exact-SHA CI and review findings.
 7. [ ] Merge to `dev` after all checks are green.
