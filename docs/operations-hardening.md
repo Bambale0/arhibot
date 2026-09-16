@@ -80,4 +80,4 @@ To update the Python locks after an intentional dependency change, install backe
 - persistent telemetry storage/dashboards and distributed tracing; the API now exposes internal Prometheus-compatible RED/runtime metrics, while the runtime watchdog covers immediate operational alerts;
 - soak/load tests that include authenticated writes and generation-provider latency, not only public read paths;
 - blue-green/canary or another zero-downtime release strategy;
-- broader controlled failure-injection beyond the Redis pause/recovery CI probe: PostgreSQL outage, provider 429/5xx storms and process-kill recovery in a non-production environment.
+- broader controlled failure-injection still needs process-kill coverage and larger provider-storm scenarios; Redis and PostgreSQL pause/recovery are exercised in CI, while provider 429/5xx retry/circuit behavior has deterministic test coverage.
