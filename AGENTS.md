@@ -369,24 +369,27 @@ If an instruction conflicts with this policy, stop and ask for explicit producti
 
 ## Mandatory skill repository set
 
-This section is authoritative for skill/tool repository discovery and **supersedes every earlier narrower list** in this file. Wherever an older section names only some skill repositories, interpret the mandatory source set as **all five** repositories below:
+This section is authoritative for skill/tool repository discovery and **supersedes every earlier narrower list** in this file. Wherever an older section names only some skill repositories, interpret the mandatory source set as **all six upstream repositories below**, plus the repository-local vendored mirror:
 
 - `Bambale0/claw` — https://github.com/Bambale0/claw
 - `wondelai/skills` — https://github.com/wondelai/skills
 - `Bambale0/dev-agents-pack` — https://github.com/Bambale0/dev-agents-pack
 - `agentskills/agentskills` — https://github.com/agentskills/agentskills
 - `anthropics/skills` — https://github.com/anthropics/skills
+- `Bambale0/ksu/.clinerules/skills` — https://github.com/Bambale0/ksu/tree/main/.clinerules/skills
 
-Before any project intervention — implementation, debugging, audit, refactor, test work, deployment, CI/CD, database work, integration work, frontend/backend work, or behavior-affecting documentation — the agent must search **each mandatory repository** for relevant guidance and read the applicable skills/checklists before editing the target project.
+The repository-local `.agents/skills/` directory is a vendored mirror of `Bambale0/ksu/.clinerules/skills` and is itself a **mandatory local skill source**. Agents must search `.agents/skills/` as part of repository-local discovery before editing. When connected GitHub access is available, also check the upstream `Bambale0/ksu/.clinerules/skills` source for relevant current guidance; do not silently assume the vendored mirror is newer than upstream.
 
-This requirement means **search all five sources**, not “pick one repository and stop”. It does not mean reading every file in every repository: use focused discovery based on the current task and stack.
+Before any project intervention — implementation, debugging, audit, refactor, test work, deployment, CI/CD, database work, integration work, frontend/backend work, or behavior-affecting documentation — the agent must search **each mandatory upstream repository and `.agents/skills/`** for relevant guidance and read the applicable skills/checklists before editing the target project.
+
+This requirement means **search all six upstream sources plus `.agents/skills/`**, not “pick one repository and stop”. It does not mean reading every file in every repository: use focused discovery based on the current task and stack.
 
 ### ChatGPT / connected GitHub mode
 
 When repository tools/connectors are available:
 
 1. Use the connected GitHub repository tools directly.
-2. Search all five mandatory repositories for task-relevant skills/checklists.
+2. Search all six mandatory upstream repositories and the local `.agents/skills/` mirror for task-relevant skills/checklists.
 3. Read the relevant `SKILL.md`, checklist, reference, or supporting documentation before editing.
 4. Prefer the default/current branch unless the task pins another revision.
 5. Do not clone repositories locally merely for inspection when connector access is available.
@@ -414,6 +417,7 @@ sync_repo https://github.com/wondelai/skills /root/skills
 sync_repo https://github.com/Bambale0/dev-agents-pack /root/dev-agents-pack
 sync_repo https://github.com/agentskills/agentskills /root/agentskills
 sync_repo https://github.com/anthropics/skills /root/anthropic-skills
+sync_repo https://github.com/Bambale0/ksu /root/ksu
 ```
 
 Local discovery must include:
@@ -423,6 +427,8 @@ Local discovery must include:
 - `/root/dev-agents-pack`
 - `/root/agentskills`
 - `/root/anthropic-skills`
+- `/root/ksu/.clinerules/skills`
+- repository-local `.agents/skills/`
 
 If neither connector access nor usable local repository access is available for one of the mandatory sources, report that specific blocker instead of pretending the repository was inspected.
 
@@ -442,7 +448,7 @@ If neither connector access nor usable local repository access is available for 
 This shared baseline supplements repository-specific rules; it never replaces stricter local architecture, release, security, channel, or product constraints.
 
 ### Engineering playbook and task flow
-- Treat `wondelai/skills` as the primary engineering playbook. Also inspect relevant safe guidance from `Bambale0/claw`, `Bambale0/dev-agents-pack`, `agentskills/agentskills`, and `anthropics/skills`.
+- Treat `wondelai/skills` as the primary engineering playbook. Also inspect relevant safe guidance from `Bambale0/claw`, `Bambale0/dev-agents-pack`, `agentskills/agentskills`, `anthropics/skills`, `Bambale0/ksu/.clinerules/skills`, and the vendored `.agents/skills/` mirror.
 - Do not use deprecated skills. Use in-progress skills only when they fit and account for their experimental status.
 - Large ambiguous work: use a wayfinder-style flow.
 - Feature development where applicable: `grill-with-docs → to-spec → to-tickets → implement → tdd → code-review`.
