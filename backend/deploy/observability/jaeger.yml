@@ -34,8 +34,8 @@ extensions:
       primary_store:
         badger:
           directories:
-            keys: /var/lib/jaeger/keys
-            values: /var/lib/jaeger/values
+            keys: /tmp/jaeger/keys
+            values: /tmp/jaeger/values
           ephemeral: false
           ttl:
             spans: 168h
