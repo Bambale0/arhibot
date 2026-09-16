@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Response, status
@@ -53,8 +53,17 @@ async def list_projects(
     session: DbSession,
     cursor: str | None = Query(default=None, description="Opaque cursor from the previous page."),
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    sort: Annotated[
+        Literal["created", "updated"],
+        Query(description="Project ordering: creation time or last update time."),
+    ] = "created",
 ) -> ProjectListResponse:
-    return await ProjectService(ProjectRepository(session)).list(user, cursor=cursor, limit=limit)
+    return await ProjectService(ProjectRepository(session)).list(
+        user,
+        cursor=cursor,
+        limit=limit,
+        sort=sort,
+    )
 
 
 @router.get(
