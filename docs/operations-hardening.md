@@ -66,6 +66,14 @@ Compose applies environment-overridable CPU, memory, PID and json-file log-rotat
 
 `ops/runtime_monitor.sh` runs from root cron every 15 minutes. It checks HTTP readiness, release SHA parity, Docker health, worker heartbeats, stale processing generations, filesystem usage and runtime-backup age. State transitions to WARN/FAIL and recovery back to OK are sent once to active Telegram admins; unchanged state is not re-sent every cycle. Thresholds are environment-overridable.
 
+### Bounded authenticated load probe
+
+`backend/scripts/http_load_probe.py` measures concurrent authenticated HTTP traffic against an API v1 endpoint and reports throughput, error rate and p50/p95/p99 latency. Read mode calls only `GET /me`; `project-write` mode creates temporary Projects and immediately soft-deletes them. It never starts Generations, payments, broadcasts or provider calls.
+
+The probe refuses non-loopback targets by default. A remote read requires `--allow-remote`; remote Project writes require both `--allow-remote` and `--allow-remote-writes`. Supply the bearer token through `AUROOM_LOAD_TOKEN`, not a command-line argument, so it is not exposed in process listings or shell history.
+
+CI runs the probe over a real Uvicorn TCP listener with a disposable authenticated user for both read traffic and reversible Project writes. This is a bounded regression gate, not a long-duration capacity certification. Provider-backed soak testing remains a separate staging exercise because it consumes external AI capacity and can incur provider cost.
+
 ## Public surface and supply chain
 
 Production disables FastAPI Swagger/ReDoc/OpenAPI HTTP routes and the public host Nginx explicitly returns 404 for docs, OpenAPI and metrics. The HTTPS ingress sets HSTS, nosniff, a strict referrer policy, a conservative permissions policy and a Telegram-compatible CSP; Nginx version disclosure is disabled. Deploy applies the canonical host Nginx config with backup, syntax validation, reload verification and rollback on failure.
@@ -78,6 +86,6 @@ To update the Python locks after an intentional dependency change, install backe
 
 - encrypted off-site backups are still required; the isolated restore drill is implemented, but the deployment environment must still choose/configure the remote and define RPO/RTO;
 - persistent telemetry storage/dashboards and distributed tracing; the API now exposes internal Prometheus-compatible RED/runtime metrics, while the runtime watchdog covers immediate operational alerts;
-- soak/load tests that include authenticated writes and generation-provider latency, not only public read paths;
+- long-duration soak/capacity testing with generation-provider latency is still required in staging; CI now has a bounded authenticated TCP load gate covering reads and reversible Project writes without external provider cost;
 - blue-green/canary or another zero-downtime release strategy;
 - broader controlled failure-injection still needs process-kill coverage and larger provider-storm scenarios; Redis and PostgreSQL pause/recovery are exercised in CI, while provider 429/5xx retry/circuit behavior has deterministic test coverage.
