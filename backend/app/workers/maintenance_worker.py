@@ -10,6 +10,7 @@ from sqlalchemy import or_, select
 
 from app.core.config import get_settings
 from app.core.redis import redis_client
+from app.core.tracing import configure_tracing, get_tracer, shutdown_tracing
 from app.db.models.admin import IdeaPublication, IdeaTemplate
 from app.db.models.assets import Asset
 from app.db.models.generations import Generation
@@ -196,13 +197,18 @@ async def run_worker() -> None:
 
 
 async def _main() -> None:
+    settings = get_settings()
+    configure_tracing(settings)
     try:
         async with worker_singleton("maintenance"):
             async with worker_heartbeat("maintenance"):
-                await run_worker()
+                tracer = get_tracer(__name__)
+                with tracer.start_as_current_span("maintenance.run"):
+                    await run_worker()
     finally:
         await redis_client.aclose()
         await dispose_engine()
+        shutdown_tracing()
 
 
 if __name__ == "__main__":
