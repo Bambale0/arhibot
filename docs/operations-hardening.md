@@ -34,6 +34,16 @@ If a deploy fails before migrations complete, the deploy script may restore the 
 
 `ops/restore_runtime.sh ... RESTORE` is destructive and requires explicit operator approval. After restoring the database and media, it migrates the restored database forward to the code currently installed on disk before bringing the stack back up.
 
+Before relying on a snapshot, run the non-destructive isolated restore drill:
+
+```bash
+bash ops/verify_restore_isolated.sh /root/arhibot /root/arhibot/backups/runtime/<snapshot>
+```
+
+The drill verifies checksums and the media archive, restores `postgres.dump` into an ephemeral PostgreSQL container with no host port or production volume attached, runs the currently deployed API image's Alembic migrations to head, checks the migrated revision, prints safe row-count diagnostics, and removes the temporary container when finished. It does not stop production services, connect to the live database, or overwrite live media.
+
+This drill proves that the local artifact is restorable. It is not an off-site durability guarantee. Encrypted off-site export still requires host-only `.backup.env` values for `AUROOM_OFFSITE_BACKUP_REMOTE` and `AUROOM_BACKUP_AGE_RECIPIENT`, plus the `age` and `rclone` binaries. Provider credentials and the age private identity must never be committed to the repository or injected into application containers.
+
 ## Disk steady state
 
 Deploy refuses to start at 90% filesystem usage and warns at 80%. `ops/runtime_housekeeping.sh` is read-only by default:
@@ -66,7 +76,7 @@ To update the Python locks after an intentional dependency change, install backe
 
 ## Still required before a production-grade promotion
 
-- encrypted off-site backups plus periodic isolated restore drills; choose the storage provider from the deployment environment and define RPO/RTO first;
+- encrypted off-site backups are still required; the isolated restore drill is implemented, but the deployment environment must still choose/configure the remote and define RPO/RTO;
 - persistent telemetry storage/dashboards and distributed tracing; the API now exposes internal Prometheus-compatible RED/runtime metrics, while the runtime watchdog covers immediate operational alerts;
 - soak/load tests that include authenticated writes and generation-provider latency, not only public read paths;
 - blue-green/canary or another zero-downtime release strategy;
