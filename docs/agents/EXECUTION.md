@@ -1,5 +1,50 @@
 # Agent Execution Ledger
 
+## Active work — home dashboard updated ordering fix
+
+- Baseline `dev`: `04fdf9b`.
+- PR #99 merged a lightweight Home dashboard but selected “Ваш последний проект” by sorting only the first 50 projects returned by `GET /projects`.
+- Root cause: backend project pagination defaults to `created_at desc`, so a project created earlier than the first page but updated recently could never be selected by Home.
+
+### User outcome
+
+Home reliably shows and opens the most recently updated visible project, even for users with more than 50 projects.
+
+### Acceptance criteria
+
+1. Existing `GET /projects` behavior remains backward-compatible by default.
+2. `GET /projects?sort=updated` returns visible owned projects ordered by `updated_at desc, id desc` with matching cursor pagination.
+3. Home uses server-side updated ordering instead of client-side sorting a truncated page.
+4. Regression coverage proves the backend query uses `updated_at` pagination and the Home request asks for `sort=updated`.
+5. The updated ordering has database index support.
+
+### No-hardcode / configuration decisions
+
+- No business-managed data, tariffs, AI settings, prompts or runtime policy are introduced.
+- The new `sort` query parameter is an API contract value, not operator-managed configuration.
+
+### Execution plan
+
+1. [x] Verify PR #99 review finding against repository code.
+2. [x] Add failing backend regression for updated-at project listing.
+3. [x] Add backend `sort=updated` support and index migration.
+4. [x] Add failing frontend regression for Home requesting updated ordering.
+5. [x] Wire Home to `sort=updated`.
+6. [x] Run focused and broader verification.
+
+### Verification
+
+- `python3.12 -m pytest -q tests/test_project_listing.py` — 1 passed.
+- `python3.12 -m pytest -q tests/test_project_listing.py tests/test_mvp_projects_assets.py::test_cursor_round_trip tests/test_mvp_projects_assets.py::test_invalid_cursor_has_api_error` — 3 passed.
+- `TELEGRAM_BOT_TOKEN= python3.12 -m pytest -q -m 'not integration'` — 195 passed, 11 skipped. The unmodified local `backend/.env` contains a Telegram token, so the same suite without that override fails the existing config test that expects a missing token.
+- `python3.12 -m py_compile app/api/v1/projects.py app/db/models/projects.py app/repositories/projects.py app/services/project_service.py alembic/versions/20260916_0037_project_updated_sort_index.py tests/test_project_listing.py` — passed.
+- `python3.12 -m compileall -q app tests` — passed.
+- `npm run typecheck` — passed.
+- `npm run build` — passed.
+- `npx playwright test tests/e2e/preprod-flow.spec.ts --grep "home is a lightweight"` — 1 passed.
+- `git diff --check` — passed.
+
+
 ## Active work — lightweight home dashboard
 
 - Baseline `dev`: `6cb63950d1c552f42c7a683ca2a7e75374a8b015`.

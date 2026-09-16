@@ -16,6 +16,7 @@ class Project(Base):
     __tablename__ = "projects"
     __table_args__ = (
         Index("ix_projects_user_created", "user_id", "created_at"),
+        Index("ix_projects_user_updated", "user_id", "updated_at"),
         Index("ix_projects_user_deleted", "user_id", "deleted_at"),
     )
 
