@@ -174,3 +174,88 @@ The crash probe uses the existing worker heartbeat check output. Storm tests ass
 5. [x] Update operations documentation.
 6. [ ] Run exact-SHA CI and review findings.
 7. [ ] Merge to `dev` after all checks are green.
+
+
+## Active work — frontend production UX audit
+
+- Baseline `dev`: `642e8d34faf66891eb873e045ed3f37fe97d5d6a`.
+- Working branch: `audit/frontend-production-ux-20260916`.
+- The React/Vite client currently has one Playwright project (`mobile-chromium`, iPhone 13),
+  four E2E spec files, and no dedicated unit-test, accessibility, visual-regression, desktop,
+  Safari/WebKit, or measured Core Web Vitals gate.
+- Chrome DevTools MCP is unavailable in the current agent environment; browser measurements will
+  use repository Playwright tooling and locally available Lighthouse/browser tooling where
+  possible, and unavailable measurements will be reported rather than inferred.
+- The pre-existing untracked `dev-agents-pack/` directory is outside this work and must remain
+  untouched.
+
+### User outcome
+
+AuRoom's web and Telegram Mini App frontend behaves as a finished production product across its
+critical user and admin journeys: actions are responsive and guarded, asynchronous states are
+clear and recoverable, navigation is robust, layouts are usable from 320 px through desktop, and
+the most important behavior is locked down with automated browser coverage.
+
+### Acceptance criteria
+
+1. Inventory every reachable screen, route/query entry point, form, and interactive control, then
+   exercise critical user/admin flows including loading, empty, error, retry, refresh, back, and
+   repeat-action cases.
+2. Classify findings P0–P3 and fix reproducible P0/P1 issues plus safe, evidence-backed P2/P3
+   issues without broad visual rewrites or hardcoded business configuration.
+3. Preserve server-authoritative auth, ownership, questionnaire semantics, billing behavior, and
+   database-managed operator configuration.
+4. Add behavior-focused regression coverage at public UI/API seams for every changed behavior.
+5. Verify responsive/touch/keyboard/accessibility behavior at representative mobile, tablet, and
+   desktop sizes; capture screenshots for critical states where practical.
+6. Measure bundle/network/render behavior with available local tools, establish a baseline before
+   optimization, and report any metric that cannot be measured.
+7. Run frontend typecheck/build/E2E plus affected backend/integration checks and migrations before
+   completion; do not deploy or promote to production.
+
+### No-hardcode / configuration decisions
+
+- Tariffs, ideas, questionnaire content, generation settings, public copy, and operational policy
+  continue to come from authenticated backend APIs and the database-backed control plane.
+- Frontend constants may describe protocol/UI invariants only; no mutable business values or
+  environment-specific production URLs will be introduced.
+- Secrets remain environment-managed and must not enter browser code, fixtures, logs, screenshots,
+  or reports.
+
+### Risks and dependencies
+
+- Provider-backed generation and real payment completion have cost and external side effects, so
+  automated audit flows must use contract-faithful mocks or disposable local integration data.
+- Real iOS Safari and Telegram native WebView are not present in this Linux environment; WebKit
+  emulation and Telegram API mocks can reduce but not eliminate that verification gap.
+- Existing brand guidance and questionnaire UX guidance disagree on the primary accent; changes
+  must preserve the approved black-and-gold brand unless repository evidence establishes a newer
+  product decision.
+
+### Observability
+
+Browser checks capture uncaught exceptions, console errors, failed requests, duplicate mutations,
+and visible user feedback. Any new client telemetry must reuse the existing backend metrics/logging
+contract and avoid secrets or unnecessary personal data.
+
+### Test seams
+
+- React application entry/query routing with mocked HTTP contracts.
+- Public form and button behavior observed through Playwright roles and visible outcomes.
+- API client timeout/auth/error mapping through existing exported client functions.
+- FastAPI integration seams only where the root cause or changed contract is server-side.
+- Production Vite output for bundle size and deployability checks.
+
+### Execution plan
+
+1. [x] Sync and inspect all five mandatory guidance repositories; read applicable QA, UX,
+   diagnostics, testing, performance, and frontend guidance.
+2. [x] Capture repository baseline, branch, dirty state, architecture/docs/config/test/CI inventory.
+3. [ ] Run baseline typecheck/build/E2E and construct an interaction/screen/API matrix.
+4. [ ] Perform browser reconnaissance across critical mobile/desktop states with console/network
+   capture, screenshots, accessibility and responsive checks.
+5. [ ] Convert reproducible findings into failing behavior tests and apply minimal vertical fixes.
+6. [ ] Re-run focused checks after each slice, then the full frontend/backend/migration suite.
+7. [ ] Perform a clean-session final user/admin pass, review the full diff against standards and
+   this task, and record final evidence plus remaining gaps.
+8. [ ] Commit the reviewable change set and open a PR targeting `dev`; do not merge or deploy.

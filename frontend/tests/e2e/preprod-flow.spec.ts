@@ -100,6 +100,11 @@ test('canonical create flow supports refinement and own unpublish without techni
   await expect(page.getByText('Что проектируем?')).toBeVisible()
   await expect(page.getByText('4 функции AuRoom')).toHaveCount(0)
   await page.getByText('Мебель и площадки',{exact:true}).click(); await page.getByText('Лавочка',{exact:true}).click(); await page.getByLabel('Размер участка, соток').fill('8'); await page.getByRole('button',{name:'Начать проект'}).click()
+  await expect(page).toHaveURL(new RegExp(`project=${projectId}`))
+  await page.goBack()
+  await expect(page.getByText('Что проектируем?')).toBeVisible()
+  await page.goForward()
+  await expect(page.getByRole('heading',{name:'Загрузите фото участка'})).toBeVisible()
   await page.getByRole('button',{name:'Продолжить без фото'}).click(); await page.getByRole('button',{name:'Лавочка',exact:true}).click()
   await page.getByText('Деревянная со спинкой',{exact:true}).click(); await page.getByText('Слева от дома',{exact:true}).click()
   await expect(page.getByText('Эскиз лавочки вам подходит?')).toBeVisible(); expect(generationCount).toBe(1)
@@ -223,6 +228,7 @@ test('house terrace floor options follow selected storeys in the UI',async({page
 
 
 test('fullscreen control stays hidden in the mobile product flow',async({page})=>{
+  await page.setViewportSize({width:390,height:844})
   await page.addInitScript(()=>{
     window.Telegram = { WebApp: { initData:'', requestFullscreen:()=>{} } }
   })

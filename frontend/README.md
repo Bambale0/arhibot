@@ -60,6 +60,7 @@ npm run build
 ```
 
 `VITE_API_BASE_URL` по умолчанию `/api/v1`.
+`VITE_API_TIMEOUT_MS` ограничивает ожидание одного HTTP-запроса; значение по умолчанию — 20000 мс.
 
 ## Telegram Mini App
 

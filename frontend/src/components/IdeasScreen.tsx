@@ -77,6 +77,7 @@ function WorkCard({
   const summary = idea.objects.flatMap((object) => object.answers.map((item) => ({ ...item, objectTitle: object.title })))
   const [previewFailed, setPreviewFailed] = useState(false)
   const [imageReady, setImageReady] = useState(false)
+  const [imageFailed, setImageFailed] = useState(false)
   const imageUrl = idea.preview_url
     ? (previewFailed ? (active ? idea.image_url : null) : idea.preview_url)
     : (active ? idea.image_url : null)
@@ -85,11 +86,15 @@ function WorkCard({
   useEffect(() => {
     setPreviewFailed(false)
     setImageReady(false)
+    setImageFailed(false)
   }, [idea.id, idea.image_url, idea.preview_url])
 
   useEffect(() => {
     setImageReady(false)
   }, [imageUrl])
+
+  const shouldRenderImage = Boolean(imageUrl) && shouldLoadImage && !imageFailed
+  const shouldRenderUnavailable = !shouldRenderImage && imageFailed && hasMedia
   return <article id={`idea-${idea.id}`} className="idea-feed-card idea-work-card" data-idea-id={idea.id}>
     <div className="idea-feed-copy">
       <div className="idea-feed-kicker"><span>Идеи AuRoom</span><b>{index + 1} / {total}</b></div>
@@ -98,9 +103,9 @@ function WorkCard({
     </div>
 
     <div className={`idea-work-stage ${imageReady ? 'media-ready' : 'media-pending'}`}>
-      {imageUrl && shouldLoadImage ? (
+      {shouldRenderImage ? (
         <img
-          src={imageUrl}
+          src={imageUrl ?? undefined}
           alt={idea.title}
           loading="eager"
           decoding="async"
@@ -110,12 +115,14 @@ function WorkCard({
           onError={() => {
             if (idea.preview_url && !previewFailed) {
               setPreviewFailed(true)
+              setImageReady(false)
               return
             }
             setImageReady(false)
+            setImageFailed(true)
           }}
         />
-      ) : hasMedia ? <div className="idea-work-image-placeholder" aria-hidden="true" /> : <div className="idea-work-empty">Работа временно недоступна</div>}
+      ) : shouldRenderUnavailable ? <div className="idea-work-empty">Изображение временно недоступно</div> : hasMedia ? <div className="idea-work-image-placeholder" aria-hidden="true" /> : <div className="idea-work-empty">Работа временно недоступна</div>}
       <div className="idea-work-actions">
         <button type="button" disabled={saving} className={idea.is_saved ? 'active' : ''} aria-label={idea.is_saved ? 'Убрать из сохранённых' : 'Сохранить'} onClick={onSave}><BookmarkIcon filled={idea.is_saved}/></button>
         <button type="button" aria-label="Поделиться" onClick={onShare}><ShareIcon /></button>
@@ -153,6 +160,9 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
   const [nextOffset, setNextOffset] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [initialLoadFailed, setInitialLoadFailed] = useState(false)
+  const [reloadVersion, setReloadVersion] = useState(0)
+  const [shareNotice, setShareNotice] = useState<string | null>(null)
   const feedRef = useRef<HTMLDivElement>(null)
   const pageRequestInFlight = useRef(false)
   const searchHydrated = useRef(false)
@@ -165,6 +175,7 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
     sharedScrollDone.current = false
     setLoading(true)
     setError(null)
+    setInitialLoadFailed(false)
     setActiveIndex(0)
     setNextOffset(0)
     setHasMore(false)
@@ -202,13 +213,16 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
           })()
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Не удалось загрузить работы')
+        if (!cancelled) {
+          setInitialLoadFailed(true)
+          setError(err instanceof Error ? err.message : 'Не удалось загрузить работы')
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }
     })()
     return () => { cancelled = true }
-  }, [sharedIdeaId])
+  }, [reloadVersion, sharedIdeaId])
 
   useEffect(() => {
     if (loading || !sharedIdeaId || sharedScrollDone.current) return
@@ -318,9 +332,15 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
   const shareIdea = useCallback(async (idea: Idea) => {
     const url = ideaShareUrl(idea.id)
     const shareData = { title: idea.title, text: `${idea.title} · ${idea.category}`, url }
+    setShareNotice(null)
     try {
       if (navigator.share) await navigator.share(shareData)
-      else if (navigator.clipboard) await navigator.clipboard.writeText(`${shareData.text}\n${url}`)
+      else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(`${shareData.text}\n${url}`)
+        setShareNotice('Ссылка скопирована.')
+      } else {
+        setError('Браузер не поддерживает отправку ссылки.')
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return
       setError('Не удалось поделиться работой.')
@@ -350,7 +370,8 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
       </div>
     </header>
 
-    {error && <div className="ideas-floating-error banner-error">{error}<button type="button" onClick={() => setError(null)}>Закрыть</button></div>}
+    {error && <div className="ideas-floating-error banner-error" role="alert"><span>{error}</span>{initialLoadFailed ? <button type="button" onClick={() => setReloadVersion((value) => value + 1)}>Повторить</button> : <button type="button" onClick={() => setError(null)}>Закрыть</button>}</div>}
+    {shareNotice && <div className="ideas-floating-notice" role="status"><span>{shareNotice}</span><button type="button" onClick={() => setShareNotice(null)}>Закрыть</button></div>}
     {loading ? <div className="ideas-feed-status"><div className="idea-feed-skeleton" /></div> : filtered.length ? (
       <div className="ideas-feed" ref={feedRef} aria-busy={loadingMore}>
         {filtered.map((idea, index) => <div className="idea-feed-snap" key={idea.id} data-feed-index={index}>

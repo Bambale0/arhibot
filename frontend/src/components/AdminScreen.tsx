@@ -78,6 +78,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null)
 
   async function reload() {
+    setLoading(true)
     setError(null)
     try {
       const [o, t, bs, i, apps, qc, g, gp, p, u, tx, pay, b, tg, ops, a] = await Promise.all([
@@ -127,10 +128,10 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
     <main className="admin-shell">
       <header className="admin-header">
         <div><span className="eyebrow">AUROOM CONTROL PLANE</span><h1>Веб-админка</h1><p>Тарифы, экономика, AI, контент и операционные действия — без правок кода.</p></div>
-        <div className="admin-header-actions"><button className="secondary-button" onClick={() => void reload()}>Обновить</button><button className="secondary-button" onClick={onClose}>← В приложение</button></div>
+        <div className="admin-header-actions"><button className="secondary-button" disabled={loading} onClick={() => void reload()}>{loading ? 'Обновляем…' : 'Обновить'}</button><button className="secondary-button" onClick={onClose}>← В приложение</button></div>
       </header>
       {overview && <div className="admin-provider-row"><StatusDot ok={overview.yookassa_configured} label="YooKassa"/><StatusDot ok={overview.nexus_configured} label="Nexus"/><StatusDot ok={overview.telegram_configured} label="Telegram"/></div>}
-      {error && <div className="banner-error">{error}<button onClick={() => setError(null)}>Закрыть</button></div>}
+      {error && <div className="banner-error" role="alert"><span>{error}</span><span className="banner-actions"><button type="button" onClick={() => void reload()}>Повторить</button><button type="button" onClick={() => setError(null)}>Закрыть</button></span></div>}
       <nav className="admin-tabs">
         {([
           ['tariffs','Тарифы и касса'], ['ideas','Идеи'], ['applications','Заявки'], ['questionnaires','Опросники'], ['generation','AI и стоимость'], ['users','Пользователи и кредиты'],
@@ -634,7 +635,7 @@ function CreditEditor({ user, onChanged, onError }: { user: AdminUser; onChanged
 
 function PaymentsPanel({items,onItems,onError}:{items:AdminPayment[];onItems:(v:AdminPayment[])=>void;onError:(v:string|null)=>void}){
   const [busy,setBusy]=useState<string|null>(null)
-  async function action(item:AdminPayment,kind:'sync'|'refund'){setBusy(item.id);onError(null);try{const saved=kind==='sync'?await api.adminReconcilePayment(item.id):await api.adminRefundPayment(item.id);onItems(items.map(x=>x.id===saved.id?saved:x))}catch(err){onError(errorText(err))}finally{setBusy(null)}}
+  async function action(item:AdminPayment,kind:'sync'|'refund'){if(kind==='refund'&&!window.confirm(`Вернуть ${formatMoney(item.amount,item.currency)} и списать ${item.credits} кредитов?`))return;setBusy(item.id);onError(null);try{const saved=kind==='sync'?await api.adminReconcilePayment(item.id):await api.adminRefundPayment(item.id);onItems(items.map(x=>x.id===saved.id?saved:x))}catch(err){onError(errorText(err))}finally{setBusy(null)}}
   return <section className="admin-panel"><div className="admin-panel-title"><div><h2>Платежи</h2><p>Reconciliation и полный возврат выполняются сервером через YooKassa.</p></div></div><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Дата</th><th>Пакет</th><th>Сумма</th><th>Кредиты</th><th>Статус</th><th>Чек</th><th/></tr></thead><tbody>{items.map(item=><tr key={item.id}><td>{formatDate(item.created_at)}</td><td><strong>{item.package_code}</strong><small>{item.yookassa_payment_id||item.id}</small></td><td>{formatMoney(item.amount,item.currency)}</td><td>{item.credits}</td><td>{item.status}{item.refund_status?` / refund: ${item.refund_status}`:''}{item.provider_error&&<small className="admin-error-text">{item.provider_error}</small>}</td><td>{item.receipt_email||'—'}</td><td><button disabled={busy!==null} onClick={()=>void action(item,'sync')}>Сверить</button>{item.status==='succeeded'&&item.refund_status!=='succeeded'&&<button disabled={busy!==null} onClick={()=>void action(item,'refund')}>{item.refund_status==='uncertain'?'Повторить возврат':'Возврат'}</button>}</td></tr>)}</tbody></table></div></section>
 }
 
@@ -644,7 +645,11 @@ function BroadcastsPanel({items,onItems,onError}:{items:AdminBroadcast[];onItems
   const [scheduled,setScheduled]=useState('')
   const [busy,setBusy]=useState<string|null>(null)
   async function create(){if(!text.trim())return;setBusy('create');try{const iso=scheduled?new Date(scheduled).toISOString():null;const saved=await api.adminCreateBroadcast(text.trim(),segment,iso);onItems([saved,...items]);setText('');setScheduled('')}catch(err){onError(errorText(err))}finally{setBusy(null)}}
-  async function action(item:AdminBroadcast,kind:'send'|'retry'|'cancel'){setBusy(item.id);try{const saved=kind==='send'?await api.adminSendBroadcast(item.id):kind==='retry'?await api.adminRetryBroadcast(item.id):await api.adminCancelBroadcast(item.id);onItems(items.map(x=>x.id===saved.id?saved:x))}catch(err){onError(errorText(err))}finally{setBusy(null)}}
+  async function action(item:AdminBroadcast,kind:'send'|'retry'|'cancel'){
+    const prompt=kind==='send'?`Поставить рассылку «${item.text.slice(0,80)}» в очередь?`:kind==='retry'?'Повторить отправку всем получателям с ошибкой?':'Отменить эту рассылку?'
+    if(!window.confirm(prompt))return
+    setBusy(item.id);try{const saved=kind==='send'?await api.adminSendBroadcast(item.id):kind==='retry'?await api.adminRetryBroadcast(item.id):await api.adminCancelBroadcast(item.id);onItems(items.map(x=>x.id===saved.id?saved:x))}catch(err){onError(errorText(err))}finally{setBusy(null)}
+  }
   return <section className="admin-panel"><div className="admin-panel-title"><div><h2>Рассылки</h2><p>Очередь, сегменты, расписание и повторы работают через отдельный worker.</p></div></div><div className="admin-broadcast-compose"><textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Сообщение пользователям Telegram"/><div className="admin-broadcast-options"><select value={segment} onChange={e=>setSegment(e.target.value as BroadcastSegment)}><option value="all">Все активные</option><option value="with_credits">С кредитами</option><option value="without_credits">Без кредитов</option></select><input type="datetime-local" value={scheduled} onChange={e=>setScheduled(e.target.value)}/><button className="primary-button" disabled={busy!==null||!text.trim()} onClick={()=>void create()}>{scheduled?'Запланировать':'Создать'}</button></div></div><div className="admin-card-list">{items.map(item=><article className="admin-list-card" key={item.id}><div><strong>{item.text}</strong><span>{item.segment} · {item.status} · {item.sent_count}/{item.recipient_count} · ошибок {item.failed_count}</span><p>{item.scheduled_at?`Запланировано: ${formatDate(item.scheduled_at)}`:item.sent_at?`Завершено: ${formatDate(item.sent_at)}`:`Создано: ${formatDate(item.created_at)}`}</p></div><div>{!['sent','canceled','scheduled'].includes(item.status)&&<button disabled={busy!==null} onClick={()=>void action(item,'send')}>В очередь</button>}{item.status==='scheduled'&&<span className="status-pill">Запланирована</span>}{item.failed_count>0&&<button disabled={busy!==null} onClick={()=>void action(item,'retry')}>Повторить ошибки</button>}{!['sent','canceled'].includes(item.status)&&<button disabled={busy!==null} onClick={()=>void action(item,'cancel')}>Отменить</button>}</div></article>)}</div></section>
 }
 

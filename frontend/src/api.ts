@@ -36,6 +36,8 @@ const ACCESS_KEY = 'auroom.access_token'
 const REFRESH_KEY = 'auroom.refresh_token'
 const LEGACY_ACCESS_KEY = 'archiai.access_token'
 const LEGACY_REFRESH_KEY = 'archiai.refresh_token'
+const configuredTimeout = Number(import.meta.env.VITE_API_TIMEOUT_MS || 20_000)
+const API_TIMEOUT_MS = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 20_000
 
 function migrateLegacyTokens() {
   const previousAccess = localStorage.getItem(ACCESS_KEY) || localStorage.getItem(LEGACY_ACCESS_KEY)
@@ -83,7 +85,48 @@ async function parseError(response: Response): Promise<ApiError> {
   if (response.status === 401 && tokenError) {
     return new ApiError(response.status, 'Сессия истекла. Откройте приложение заново.', detail, errorType)
   }
-  return new ApiError(response.status, detail || title, detail, errorType)
+  const message = response.status === 401
+    ? 'Не удалось подтвердить вход. Проверьте данные или откройте приложение заново.'
+    : response.status === 403
+      ? 'Недостаточно прав для этого действия.'
+      : response.status === 404
+        ? 'Запрошенные данные не найдены или больше недоступны.'
+        : response.status === 408
+          ? 'Сервер отвечает слишком долго. Повторите попытку.'
+          : response.status === 409
+            ? 'Действие нельзя выполнить в текущем состоянии. Обновите данные и попробуйте снова.'
+            : response.status === 413
+              ? 'Файл слишком большой. Выберите файл меньшего размера.'
+              : response.status === 422
+                ? 'Проверьте введённые данные и попробуйте снова.'
+                : response.status === 429
+                  ? 'Слишком много запросов. Подождите немного и повторите попытку.'
+                  : response.status >= 500
+                    ? 'Сервис временно недоступен. Повторите попытку.'
+                    : 'Не удалось выполнить запрос. Повторите попытку.'
+  return new ApiError(response.status, message, detail || title, errorType)
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}) {
+  const controller = new AbortController()
+  let timedOut = false
+  const abortFromCaller = () => controller.abort(init.signal?.reason)
+  if (init.signal?.aborted) abortFromCaller()
+  else init.signal?.addEventListener('abort', abortFromCaller, { once: true })
+  const timeout = window.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, API_TIMEOUT_MS)
+  try {
+    return await fetch(input, { ...init, signal: controller.signal })
+  } catch (error) {
+    if (timedOut) throw new ApiError(408, 'Сервер отвечает слишком долго. Повторите попытку.')
+    if (init.signal?.aborted) throw error
+    throw new ApiError(0, 'Не удалось связаться с сервером. Проверьте соединение и повторите попытку.')
+  } finally {
+    window.clearTimeout(timeout)
+    init.signal?.removeEventListener('abort', abortFromCaller)
+  }
 }
 
 let refreshPromise: Promise<void> | null = null
@@ -105,7 +148,7 @@ async function refreshSession(): Promise<void> {
           options.headers = { 'Content-Type': 'application/json' }
           options.body = JSON.stringify({ refresh_token: legacyToken })
         }
-        const response = await fetch(`${API_BASE}/auth/refresh`, options)
+        const response = await fetchWithTimeout(`${API_BASE}/auth/refresh`, options)
         if (!response.ok) throw await parseError(response)
         saveTokens((await response.json()) as TokenPair)
       }
@@ -120,7 +163,7 @@ async function refreshSession(): Promise<void> {
 
 async function clearBrowserRefreshCookie(): Promise<void> {
   try {
-    await fetch(`${API_BASE}/auth/logout`, {
+    await fetchWithTimeout(`${API_BASE}/auth/logout`, {
       method: 'POST',
       credentials: 'same-origin',
     })
@@ -146,7 +189,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const finalHeaders = new Headers(headers)
   const accessToken = sessionStorage.getItem(ACCESS_KEY)
   if (auth && accessToken) finalHeaders.set('Authorization', `Bearer ${accessToken}`)
-  const response = await fetch(`${API_BASE}${path}`, { credentials: 'same-origin', ...rest, headers: finalHeaders })
+  const response = await fetchWithTimeout(`${API_BASE}${path}`, { credentials: 'same-origin', ...rest, headers: finalHeaders })
   if (response.status === 401 && auth && retryAuth) {
     try { await refreshSession(); return request<T>(path, { ...options, retryAuth: false }) }
     catch (error) { clearTokens(); throw error }
