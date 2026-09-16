@@ -37,9 +37,9 @@ Home becomes a fast working dashboard: last project first, three clear next acti
 ### Execution plan
 
 1. [x] Audit Home, Ideas, API contracts, responsive styles and relevant frontend/performance skills.
-2. [in progress] Implement dashboard layout and navigation on a feature branch.
-3. [pending] Add responsive styling and Playwright regression coverage.
-4. [pending] Open PR to `dev`, run exact-SHA CI and review findings.
+2. [x] Implement dashboard layout and navigation on a feature branch.
+3. [x] Add responsive styling, lightweight owned-asset preview URLs and Playwright regression coverage.
+4. [in progress] Open PR to `dev`, run exact-SHA CI and review findings.
 5. [pending] Record verification evidence and follow-ups.
 
 
