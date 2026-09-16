@@ -116,7 +116,7 @@ rm -rf "${candidate}"
 mkdir -p "${candidate}"
 tar -xzf "${archive}" -C "${candidate}"
 python3 -m compileall -q "${candidate}/backend/app" "${candidate}/backend/scripts"
-bash -n "${candidate}/ops/backup_runtime.sh" "${candidate}/ops/export_offsite_backup.sh" "${candidate}/ops/fetch_offsite_backup.sh" "${candidate}/ops/restore_runtime.sh" "${candidate}/ops/runtime_housekeeping.sh" "${candidate}/ops/runtime_monitor.sh" "${candidate}/ops/install_host_nginx.sh"
+bash -n "${candidate}/ops/backup_runtime.sh" "${candidate}/ops/export_offsite_backup.sh" "${candidate}/ops/fetch_offsite_backup.sh" "${candidate}/ops/restore_runtime.sh" "${candidate}/ops/verify_restore_isolated.sh" "${candidate}/ops/runtime_housekeeping.sh" "${candidate}/ops/runtime_monitor.sh" "${candidate}/ops/install_host_nginx.sh"
 python3 -m py_compile "${candidate}/ops/runtime_preflight.py"
 
 # The public development host is internet-facing; fail closed before touching code, DB, or containers.
