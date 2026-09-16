@@ -93,6 +93,43 @@ jobs:
             [[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:18000/${path}")" == "404" ]] || { echo "Production API exposed /${path}" >&2; exit 1; }
           done
           curl -fsS http://127.0.0.1:18000/metrics | grep '^auroom_build_info' >/dev/null || { echo "Internal metrics missing build info" >&2; exit 1; }
+
+          curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:19090/-/ready >/dev/null || { echo "Prometheus is not ready" >&2; exit 1; }
+          curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:13000/api/health >/dev/null || { echo "Grafana is not healthy" >&2; exit 1; }
+          curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:13133/status >/dev/null || { echo "Jaeger is not healthy" >&2; exit 1; }
+
+          prometheus_api_up=$(curl -fsSG --connect-timeout 2 --max-time 5 \
+            --data-urlencode 'query=up{job="auroom-api"}' \
+            http://127.0.0.1:19090/api/v1/query \
+            | python3 -c 'import json,sys; p=json.load(sys.stdin); rows=p.get("data",{}).get("result",[]); print(1 if rows and rows[0].get("value",["","0"])[1] == "1" else 0)')
+          [[ "${prometheus_api_up}" == "1" ]] || { echo "Prometheus is not scraping the API" >&2; exit 1; }
+
+          # Force one sampled parent so this check is deterministic even when the
+          # production root sampler is below 100%.
+          trace_id=11111111111111111111111111111111
+          curl -fsS \
+            -H "traceparent: 00-${trace_id}-2222222222222222-01" \
+            http://127.0.0.1:18000/health/version >/dev/null
+          jaeger_trace_seen=0
+          for attempt in $(seq 1 20); do
+            if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:16686/api/services \
+              | python3 -c 'import json,sys; p=json.load(sys.stdin); raise SystemExit(0 if "auroom-api" in (p.get("data") or []) else 1)'; then
+              jaeger_trace_seen=1
+              break
+            fi
+            sleep 1
+          done
+          (( jaeger_trace_seen == 1 )) || { echo "Jaeger did not ingest an AuRoom API trace" >&2; exit 1; }
+
+          for binding in 'prometheus:9090:127.0.0.1:19090' 'grafana:3000:127.0.0.1:13000' 'jaeger:16686:127.0.0.1:16686' 'jaeger:13133:127.0.0.1:13133'; do
+            service=${binding%%:*}
+            remainder=${binding#*:}
+            port=${remainder%%:*}
+            expected=${remainder#*:}
+            actual=$("${compose[@]}" port "${service}" "${port}" 2>/dev/null | head -n1)
+            [[ "${actual}" == "${expected}" ]] || { echo "Unsafe observability bind for ${service}:${port}: ${actual:-missing}" >&2; exit 1; }
+          done
+
           curl -fsS http://127.0.0.1:18080/ | grep -q '<div id="root"></div>'
 
           # Prove the trusted host-proxy client IP survives the inner Nginx hop.
@@ -248,7 +285,7 @@ jobs:
             exit 1
           fi
 
-          for service in api bot maintenance worker broadcast-worker frontend nginx postgres redis; do
+          for service in api bot maintenance worker broadcast-worker frontend nginx postgres redis prometheus grafana jaeger; do
             container_id=$("${compose[@]}" ps -q "${service}")
             [[ -n "${container_id}" ]] || { echo "Missing container: ${service}" >&2; exit 1; }
             running=$(docker inspect -f '{{.State.Running}}' "${container_id}")
@@ -278,5 +315,5 @@ jobs:
             exit 1
           fi
 
-          echo "Development API, public Mini App URL, Telegram menu button, questionnaire catalog, project contexts, frontend and workers match release ${expected_sha}; 3D renderer is disabled"
+          echo "Development API, public Mini App URL, Telegram menu button, questionnaire catalog, frontend, workers and observability stack match release ${expected_sha}; Prometheus scrapes the API, Jaeger ingests traces, and 3D renderer is disabled"
           REMOTE
