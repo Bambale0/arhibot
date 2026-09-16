@@ -56,7 +56,46 @@ The drill prints the backup path, restored Alembic revision before/after migrati
 4. [x] Add a repeatable isolated restore-drill script.
 5. [x] Add regression/contract coverage.
 6. [x] Update operations documentation.
-7. [ ] Run CI and review findings.
-8. [ ] Merge to `dev` only after green checks.
+7. [x] Run CI and review findings (PR #90 CI #699 green; post-merge CI #700 green).
+8. [x] Merge to `dev` only after green checks (squash `4a6e5998bdb7d055cfa87d9e440fa7ae36e14669`).
 9. [ ] Re-run the repository script against the deployed environment after merge.
 10. [ ] Off-site backup setup remains follow-up pending remote/provider configuration.
+
+
+## Active work — PostgreSQL failure recovery
+
+- Baseline `dev`: `4a6e5998bdb7d055cfa87d9e440fa7ae36e14669`.
+- Existing Redis controlled pause/recovery probe is green in CI.
+- PostgreSQL readiness is covered by normal integration setup, but there is no bounded failure/recovery probe that proves the application client fails promptly while the database is unavailable and reconnects after recovery.
+- Provider 429/5xx retry/circuit behavior already has deterministic unit coverage; this slice is intentionally limited to the missing database transport failure injection.
+
+### User outcome
+
+A database outage in a non-production verification environment fails fast within the configured client timeout and the same application connection layer recovers after PostgreSQL returns.
+
+### Acceptance criteria
+
+1. Add a bounded PostgreSQL probe analogous to the existing Redis failure probe.
+2. CI starts an isolated PostgreSQL container, proves the probe succeeds, pauses the container, proves a bounded failure, resumes it, and proves recovery.
+3. The probe must use the application's SQLAlchemy engine/config path rather than a standalone database client.
+4. No production host, database, credentials, or data are touched.
+5. Existing integration and Redis recovery gates remain green.
+
+### No-hardcode / configuration decisions
+
+- Probe timing comes from explicit command arguments and the existing `DATABASE_URL`/SQLAlchemy runtime configuration.
+- CI-only PostgreSQL credentials remain test values.
+- No operator-managed production behavior is introduced.
+
+### Observability
+
+The probe reports expected state, actual connectivity, elapsed seconds, and error class without printing the database URL or password.
+
+### Execution plan
+
+1. [x] Audit current resilience helpers, database engine path, Redis failure probe and CI integration job.
+2. [ ] Add the PostgreSQL failure probe.
+3. [ ] Add controlled pause/recovery CI coverage.
+4. [ ] Add script contract coverage and ops syntax validation.
+5. [ ] Run CI on the exact PR SHA and review findings.
+6. [ ] Merge to `dev` only after green checks.
