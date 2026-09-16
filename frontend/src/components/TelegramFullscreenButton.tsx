@@ -49,11 +49,14 @@ export function TelegramFullscreenButton() {
     try {
       const active = webApp.isFullscreen ?? isFullscreen
       if (active) {
-        webApp.exitFullscreen?.()
+        if (!webApp.exitFullscreen) return
+        webApp.exitFullscreen()
+        setIsFullscreen(false)
         return
       }
       webApp.expand?.()
       webApp.requestFullscreen()
+      setIsFullscreen(true)
     } catch {
       // Telegram can reject fullscreen transiently; the Mini App stays usable.
     }
