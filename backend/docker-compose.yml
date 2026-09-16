@@ -339,6 +339,8 @@ services:
 
 
   prometheus:
+    labels:
+      com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     image: prom/prometheus:v3.13.3@sha256:6976aa8a60fec930796ce5772b8d12da7a318a5daa8d40d69c5c7819a05eeed7
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -368,6 +370,8 @@ services:
       - observability
 
   jaeger:
+    labels:
+      com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     image: jaegertracing/jaeger:2.21.0@sha256:3d0ac795ff98aa04d1be04311d2dac6c25b4bfc8322dc02e53bc5b170c5018c3
     command: ["--config", "/etc/jaeger/config.yaml"]
     ports:
@@ -395,6 +399,8 @@ services:
       - observability
 
   grafana:
+    labels:
+      com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
     ports:
       - "127.0.0.1:13000:3000"
