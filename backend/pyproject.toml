@@ -24,6 +24,12 @@ dependencies = [
   "Pillow>=11.3,<13.0",
   "shapely>=2.1,<3.0",
   "prometheus-client>=0.22,<1.0",
+  "opentelemetry-sdk>=1.37,<2.0",
+  "opentelemetry-exporter-otlp-proto-http>=1.37,<2.0",
+  "opentelemetry-instrumentation-fastapi>=0.58b0,<1.0",
+  "opentelemetry-instrumentation-httpx>=0.58b0,<1.0",
+  "opentelemetry-instrumentation-sqlalchemy>=0.58b0,<1.0",
+  "opentelemetry-instrumentation-redis>=0.58b0,<1.0",
 ]
 
 [project.optional-dependencies]
