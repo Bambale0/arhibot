@@ -559,6 +559,13 @@ textarea:focus-visible {
   color: #090b09;
 }
 .idea-use-button:disabled { opacity: .55; cursor: wait; }
+.ideas-search button,
+.idea-work-actions button,
+.idea-use-button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.idea-use-button { height: 44px; }
 
 .idea-work-summary { border-top-color: var(--brand-line); }
 .idea-work-summary summary { color: #b9ae97; }
@@ -616,7 +623,11 @@ textarea:focus-visible {
   .idea-feed-copy h1 { font-size: clamp(30px, 9.2vw, 38px); }
   .idea-work-stage { border-radius: 4px; }
   .idea-work-actions button {
+    width: 44px;
+    height: 44px;
     border-radius: 6px;
     background: rgba(7, 13, 12, .9);
   }
+  .ideas-search button { width: 44px; height: 44px; }
+  .idea-use-button { height: 44px; min-height: 44px; }
 }

@@ -23,14 +23,14 @@ export function AppFrame({ active, onNavigate, children }: { active: AppSection;
         <div className="topbar-user">
           <div className="avatar">{user?.display_name?.slice(0, 1).toUpperCase() || 'A'}</div>
           <span className="desktop-user-name">{user?.display_name}</span>
-          <button className="icon-button subtle" title="Выйти" onClick={() => void signOut()}><LogOutIcon /></button>
+          <button className="icon-button subtle" title="Выйти" aria-label="Выйти" onClick={() => void signOut()}><LogOutIcon /></button>
         </div>
       </header>}
       {children}
       <nav className="bottom-nav" aria-label="Основная навигация">
         {items.map((item) => {
           const Icon = item.icon
-          return <button key={item.id} className={active === item.id ? 'active' : ''} onClick={() => onNavigate(item.id)}><Icon /><span>{item.label}</span></button>
+          return <button key={item.id} className={active === item.id ? 'active' : ''} aria-current={active === item.id ? 'page' : undefined} onClick={() => onNavigate(item.id)}><Icon /><span>{item.label}</span></button>
         })}
       </nav>
     </main>

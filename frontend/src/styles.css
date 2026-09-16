@@ -14,7 +14,7 @@ svg { width:20px; height:20px; }
 .primary-button:hover:not(:disabled) { transform:translateY(-1px); background:#111310; }
 .primary-button:disabled { opacity:.5; cursor:not-allowed; box-shadow:none; }
 .secondary-button { background:#ebe7df; color:var(--ink); }
-.icon-button { width:40px; height:40px; border:0; border-radius:11px; background:#ece8e0; display:grid; place-items:center; cursor:pointer; }
+.icon-button { width:44px; height:44px; border:0; border-radius:11px; background:#ece8e0; display:grid; place-items:center; cursor:pointer; }
 .icon-button.subtle { background:transparent; }
 .icon-button.danger { color:#9a3f32; background:rgba(255,255,255,.9); }
 .inline-error,.banner-error { color:#8c3c30; background:#f7e3df; border:1px solid #edc7c0; border-radius:11px; padding:11px 13px; font-size:13px; }

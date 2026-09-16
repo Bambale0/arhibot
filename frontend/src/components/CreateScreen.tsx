@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getQuestionnaireCatalog, startQuestionnaireProject as startQuestionnaireProjectApi } from '../questionnaireApi'
 import type { QuestionnaireCatalog } from '../questionnaireTypes'
 import type { Project } from '../types'
@@ -15,17 +15,22 @@ export function CreateScreen({ onOpenQuestionnaire }: {
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
+  const catalogRequest = useRef(0)
 
-  useEffect(() => {
-    let cancelled = false
+  const loadCatalog = useCallback(async () => {
+    const request = ++catalogRequest.current
     setCatalogLoading(true)
     setCatalogError(null)
-    void getQuestionnaireCatalog()
-      .then((loadedCatalog) => { if (!cancelled) setCatalog(loadedCatalog) })
-      .catch((err) => { if (!cancelled) setCatalogError(err instanceof Error ? err.message : 'Не удалось загрузить опросники') })
-      .finally(() => { if (!cancelled) setCatalogLoading(false) })
-    return () => { cancelled = true }
+    await getQuestionnaireCatalog()
+      .then((loadedCatalog) => { if (request === catalogRequest.current) setCatalog(loadedCatalog) })
+      .catch((err) => { if (request === catalogRequest.current) setCatalogError(err instanceof Error ? err.message : 'Не удалось загрузить опросники') })
+      .finally(() => { if (request === catalogRequest.current) setCatalogLoading(false) })
   }, [])
+
+  useEffect(() => {
+    void loadCatalog()
+    return () => { catalogRequest.current += 1 }
+  }, [loadCatalog])
 
   const definitions = useMemo(() => new Map((catalog?.questionnaires || []).map((item) => [item.key, item])), [catalog])
   const section = catalog?.sections.find((item) => item.key === activeSection) || null
@@ -57,7 +62,7 @@ export function CreateScreen({ onOpenQuestionnaire }: {
   }
 
   return <section className="page-content create-page questionnaire-create">
-    {catalogError && <div className="banner-error">{catalogError}</div>}
+    {catalogError && <div className="banner-error" role="alert"><span>{catalogError}</span><button type="button" onClick={() => void loadCatalog()}>Повторить</button></div>}
     {catalogLoading ? <div className="create-loading">Загружаем варианты…</div> : !catalog ? <div className="create-loading">Варианты проектирования сейчас недоступны.</div> : activeSection && section ? <>
       <button className="create-back" type="button" onClick={() => setActiveSection(null)}><BackIcon />Все разделы</button>
       <div className="page-heading-row create-step-heading"><div><h1>{section.title}</h1><p>Выберите один или несколько объектов. Выбор можно дополнить из других разделов.</p></div></div>
