@@ -66,6 +66,37 @@ jobs:
           docker compose --project-directory backend -f backend/docker-compose.yml config --quiet
           docker compose --project-directory backend -f backend/docker-compose.yml build api frontend
 
+      - name: Validate observability configuration
+        working-directory: .
+        run: |
+          set -Eeuo pipefail
+          python -m json.tool backend/deploy/observability/grafana-dashboard-auroom.json >/dev/null
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          for path in (
+              Path("backend/deploy/observability/prometheus.yml"),
+              Path("backend/deploy/observability/alerts.yml"),
+              Path("backend/deploy/observability/jaeger.yml"),
+              Path("backend/deploy/observability/grafana-datasources.yml"),
+              Path("backend/deploy/observability/grafana-dashboards.yml"),
+          ):
+              payload = yaml.safe_load(path.read_text())
+              if not isinstance(payload, dict):
+                  raise SystemExit(f"{path} must contain a YAML object")
+          PY
+          docker run --rm \
+            --entrypoint /bin/promtool \
+            -v "$PWD/backend/deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            -v "$PWD/backend/deploy/observability/alerts.yml:/etc/prometheus/alerts.yml:ro" \
+            prom/prometheus:v3.13.3@sha256:6976aa8a60fec930796ce5772b8d12da7a318a5daa8d40d69c5c7819a05eeed7 \
+            check config /etc/prometheus/prometheus.yml
+          docker run --rm \
+            -v "$PWD/backend/deploy/observability/jaeger.yml:/etc/jaeger/config.yaml:ro" \
+            jaegertracing/jaeger:2.21.0@sha256:3d0ac795ff98aa04d1be04311d2dac6c25b4bfc8322dc02e53bc5b170c5018c3 \
+            validate --config /etc/jaeger/config.yaml
+
       - name: Unit and contract tests
         run: pytest -q -m 'not integration'
 
