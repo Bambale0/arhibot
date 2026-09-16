@@ -56,7 +56,7 @@ jobs:
         working-directory: .
         run: |
           bash -n ops/deploy_docker.sh ops/backup_runtime.sh ops/export_offsite_backup.sh ops/fetch_offsite_backup.sh ops/restore_runtime.sh ops/verify_restore_isolated.sh ops/runtime_housekeeping.sh ops/install_host_nginx.sh backend/scripts/dependency_locks.sh
-          python -m py_compile ops/runtime_preflight.py
+          python -m py_compile ops/runtime_preflight.py backend/scripts/redis_failure_probe.py backend/scripts/postgres_failure_probe.py
 
       - name: Validate Docker Compose
         working-directory: .
@@ -170,6 +170,41 @@ jobs:
             sleep 0.25
           done
           echo "Redis did not recover after controlled pause" >&2
+          exit 1
+
+
+      - name: Controlled PostgreSQL pause/recovery probe
+        working-directory: .
+        run: |
+          set -Eeuo pipefail
+          chaos_password='ci-chaos-postgres-password-change-me'
+          docker run -d --name auroom-chaos-postgres \
+            -e POSTGRES_DB=app \
+            -e POSTGRES_USER=app \
+            -e POSTGRES_PASSWORD="${chaos_password}" \
+            -p 127.0.0.1::5432 \
+            postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685 >/dev/null
+          trap 'docker rm -f auroom-chaos-postgres >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if docker exec auroom-chaos-postgres pg_isready -U app -d app >/dev/null 2>&1; then
+              break
+            fi
+            sleep 0.25
+          done
+          chaos_port=$(docker port auroom-chaos-postgres 5432/tcp | sed -E 's/.*:([0-9]+)$/\1/' | head -n1)
+          [[ "${chaos_port}" =~ ^[0-9]+$ ]] || { echo "Could not resolve chaos PostgreSQL port" >&2; exit 1; }
+          export DATABASE_URL="postgresql+asyncpg://app:${chaos_password}@127.0.0.1:${chaos_port}/app"
+          python backend/scripts/postgres_failure_probe.py expect-up 2
+          docker pause auroom-chaos-postgres >/dev/null
+          python backend/scripts/postgres_failure_probe.py expect-down 3
+          docker unpause auroom-chaos-postgres >/dev/null
+          for attempt in $(seq 1 20); do
+            if python backend/scripts/postgres_failure_probe.py expect-up 2; then
+              exit 0
+            fi
+            sleep 0.25
+          done
+          echo "PostgreSQL did not recover after controlled pause" >&2
           exit 1
 
   frontend:
