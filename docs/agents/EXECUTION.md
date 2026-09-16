@@ -97,5 +97,46 @@ The probe reports expected state, actual connectivity, elapsed seconds, and erro
 2. [x] Add the PostgreSQL failure probe.
 3. [x] Add controlled pause/recovery CI coverage.
 4. [x] Add script contract coverage and ops syntax validation.
-5. [ ] Run CI on the exact PR SHA and review findings.
-6. [ ] Merge to `dev` only after green checks.
+5. [x] Run CI on the exact PR SHA and review findings (PR #91 CI #703 green; post-merge CI #704 green).
+6. [x] Merge to `dev` only after green checks (squash `7a98578a76019336489f22b1f9f888859678878e`; deploy #71 and server smoke #211 green).
+
+
+## Active work — authenticated load readiness
+
+- Baseline `dev`: `7a98578a76019336489f22b1f9f888859678878e`.
+- Existing CI covers unit, integration, migrations, Redis/PostgreSQL failure recovery and browser E2E, but it does not currently drive bounded concurrent authenticated HTTP traffic through a running API process.
+- Production/provider-cost generation calls are explicitly out of scope for automated load CI; this slice targets safe authenticated reads and reversible Project writes.
+
+### User outcome
+
+AuRoom has a repeatable bounded load probe that measures real HTTP/auth/database behavior under concurrent authenticated traffic without spending credits or calling the image-generation provider.
+
+### Acceptance criteria
+
+1. Add an async HTTP load probe with latency percentiles, throughput and error-rate output.
+2. Default mode is authenticated read-only traffic.
+3. Project-write mode creates temporary Projects and immediately soft-deletes them; it must not create Generations, payments, broadcasts or provider calls.
+4. Remote targets are refused unless explicitly allowed; remote writes require a second explicit opt-in.
+5. CI starts the real FastAPI app over TCP, registers a temporary user, runs concurrent authenticated read traffic and Project create/delete traffic, and enforces bounded error/latency thresholds.
+6. No production credentials or external provider calls are used.
+
+### No-hardcode / configuration decisions
+
+- Bearer token is supplied through `AUROOM_LOAD_TOKEN`, never a CLI argument or source constant.
+- Target URL, request count, concurrency and thresholds are explicit CLI inputs.
+- CI uses disposable test credentials and the migrated CI PostgreSQL/Redis services.
+- Provider-backed generation load remains a separate staging soak because it has cost/capacity implications.
+
+### Observability
+
+The probe prints mode, completed operations, error count/rate, elapsed time, throughput and p50/p95/p99 latency. Individual bearer tokens and response bodies are never logged.
+
+### Execution plan
+
+1. [x] Audit auth/project contracts and CI integration environment.
+2. [ ] Add guarded HTTP load probe.
+3. [ ] Add authenticated read/write CI execution.
+4. [ ] Add safety/contract tests and script compilation.
+5. [ ] Update operations documentation.
+6. [ ] Run CI on the exact PR SHA and review findings.
+7. [ ] Merge to `dev` only after green checks.
