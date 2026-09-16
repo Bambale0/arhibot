@@ -16,6 +16,10 @@ services:
     env_file:
       - .env
     environment:
+      RUNTIME_ROLE: "api"
+      OTEL_TRACES_ENABLED: "${OTEL_TRACES_ENABLED:-true}"
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://jaeger:4318/v1/traces}"
+      OTEL_TRACE_SAMPLE_RATIO: "${OTEL_TRACE_SAMPLE_RATIO:-0.25}"
       RELEASE_SHA: "${AUROOM_RELEASE_SHA:-unknown}"
     expose:
       - "8000"
@@ -50,6 +54,9 @@ services:
       RUNTIME_ROLE: "bot"
       API_V1_PREFIX: "${API_V1_PREFIX:-/api/v1}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      OTEL_TRACES_ENABLED: "${OTEL_TRACES_ENABLED:-true}"
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://jaeger:4318/v1/traces}"
+      OTEL_TRACE_SAMPLE_RATIO: "${OTEL_TRACE_SAMPLE_RATIO:-0.25}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       TELEGRAM_WEBAPP_URL: "${TELEGRAM_WEBAPP_URL:-}"
       BOT_INTERNAL_API_BASE_URL: "${BOT_INTERNAL_API_BASE_URL:-http://api:8000}"
@@ -78,6 +85,9 @@ services:
       APP_ENV: "${APP_ENV:-local}"
       RUNTIME_ROLE: "generation_worker"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      OTEL_TRACES_ENABLED: "${OTEL_TRACES_ENABLED:-true}"
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://jaeger:4318/v1/traces}"
+      OTEL_TRACE_SAMPLE_RATIO: "${OTEL_TRACE_SAMPLE_RATIO:-0.25}"
       DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://app:local-only-postgres-password-change-me@postgres:5432/app}"
       REDIS_URL: "${REDIS_URL:-redis://:local-only-redis-password-change-me@redis:6379/0}"
       REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: "${REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS:-2}"
@@ -160,6 +170,9 @@ services:
       APP_ENV: "${APP_ENV:-local}"
       RUNTIME_ROLE: "broadcast_worker"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      OTEL_TRACES_ENABLED: "${OTEL_TRACES_ENABLED:-true}"
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://jaeger:4318/v1/traces}"
+      OTEL_TRACE_SAMPLE_RATIO: "${OTEL_TRACE_SAMPLE_RATIO:-0.25}"
       DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://app:local-only-postgres-password-change-me@postgres:5432/app}"
       REDIS_URL: "${REDIS_URL:-redis://:local-only-redis-password-change-me@redis:6379/0}"
       REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: "${REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS:-2}"
@@ -200,6 +213,9 @@ services:
       APP_ENV: "${APP_ENV:-local}"
       RUNTIME_ROLE: "maintenance"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      OTEL_TRACES_ENABLED: "${OTEL_TRACES_ENABLED:-true}"
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://jaeger:4318/v1/traces}"
+      OTEL_TRACE_SAMPLE_RATIO: "${OTEL_TRACE_SAMPLE_RATIO:-0.25}"
       DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://app:local-only-postgres-password-change-me@postgres:5432/app}"
       REDIS_URL: "${REDIS_URL:-redis://:local-only-redis-password-change-me@redis:6379/0}"
       REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: "${REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS:-2}"
@@ -321,13 +337,106 @@ services:
     networks:
       - data
 
+
+  prometheus:
+    image: prom/prometheus:v3.13.3@sha256:6976aa8a60fec930796ce5772b8d12da7a318a5daa8d40d69c5c7819a05eeed7
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=2GB
+    ports:
+      - "127.0.0.1:19090:9090"
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - api
+      - jaeger
+    mem_limit: "${AUROOM_PROMETHEUS_MEMORY_LIMIT:-384m}"
+    cpus: "${AUROOM_PROMETHEUS_CPU_LIMIT:-0.30}"
+    pids_limit: ${AUROOM_PROMETHEUS_PIDS_LIMIT:-128}
+    logging: *default-logging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - app
+      - observability
+
+  jaeger:
+    image: jaegertracing/jaeger:2.21.0@sha256:3d0ac795ff98aa04d1be04311d2dac6c25b4bfc8322dc02e53bc5b170c5018c3
+    command: ["--config", "/etc/jaeger/config.yaml"]
+    ports:
+      - "127.0.0.1:16686:16686"
+      - "127.0.0.1:13133:13133"
+    expose:
+      - "4317"
+      - "4318"
+      - "8888"
+      - "16686"
+    volumes:
+      - ./deploy/observability/jaeger.yml:/etc/jaeger/config.yaml:ro
+      - jaeger_data:/tmp
+    mem_limit: "${AUROOM_JAEGER_MEMORY_LIMIT:-320m}"
+    cpus: "${AUROOM_JAEGER_CPU_LIMIT:-0.30}"
+    pids_limit: ${AUROOM_JAEGER_PIDS_LIMIT:-128}
+    logging: *default-logging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - app
+      - observability
+
+  grafana:
+    image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
+    ports:
+      - "127.0.0.1:13000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_ALLOW_ORG_CREATE: "false"
+      GF_SECURITY_ALLOW_EMBEDDING: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/observability/grafana-datasources.yml:/etc/grafana/provisioning/datasources/auroom.yml:ro
+      - ./deploy/observability/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/auroom.yml:ro
+      - ./deploy/observability/grafana-dashboard-auroom.json:/etc/grafana/dashboards/auroom-runtime.json:ro
+    depends_on:
+      - prometheus
+      - jaeger
+    mem_limit: "${AUROOM_GRAFANA_MEMORY_LIMIT:-384m}"
+    cpus: "${AUROOM_GRAFANA_CPU_LIMIT:-0.30}"
+    pids_limit: ${AUROOM_GRAFANA_PIDS_LIMIT:-128}
+    logging: *default-logging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - observability
+
 volumes:
   postgres_data:
   redis_data:
   media_data:
+  prometheus_data:
+  grafana_data:
+  jaeger_data:
 
 networks:
   edge:
   app:
+  observability:
+    internal: true
   data:
     internal: true
