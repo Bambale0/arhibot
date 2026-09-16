@@ -215,3 +215,20 @@ def test_isolated_restore_drill_never_targets_live_runtime() -> None:
     assert '/data/media/*' not in drill
     assert 'docker volume rm' not in drill
 
+def test_postgres_failure_probe_is_bounded_and_ci_exercises_recovery() -> None:
+    probe = (REPO_ROOT / 'backend' / 'scripts' / 'postgres_failure_probe.py').read_text()
+    ci = (REPO_ROOT / '.github' / 'workflows' / 'ci.yml').read_text()
+
+    assert 'get_engine' in probe
+    assert 'asyncio.wait_for' in probe
+    assert 'dispose_engine' in probe
+    assert 'SELECT 1' in probe
+    assert 'DATABASE_URL' not in probe
+    assert 'password' not in probe.lower()
+
+    assert 'Controlled PostgreSQL pause/recovery probe' in ci
+    assert 'docker pause auroom-chaos-postgres' in ci
+    assert 'docker unpause auroom-chaos-postgres' in ci
+    assert 'postgres_failure_probe.py expect-down 3' in ci
+    assert 'postgres_failure_probe.py expect-up 2' in ci
+
