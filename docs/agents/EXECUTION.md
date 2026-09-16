@@ -174,3 +174,52 @@ The crash probe uses the existing worker heartbeat check output. Storm tests ass
 5. [x] Update operations documentation.
 6. [ ] Run exact-SHA CI and review findings.
 7. [ ] Merge to `dev` after all checks are green.
+
+
+## Active work — persistent observability
+
+- Baseline `dev`: `8b08a50e48ae9086d9ee6d2a447903bfaf6fa57a`.
+- Current API already exports internal Prometheus-compatible RED/runtime metrics and propagates `X-Request-ID`; public ingress deliberately returns 404 for `/metrics`.
+- Metrics currently have no persistent TSDB, operator dashboard, or trace store.
+- Host baseline before this slice: ~3.8 GiB RAM, ~2.6 GiB available, root filesystem ~63% used; current app containers remain well below configured memory ceilings.
+- Selected single-node observability stack for the current host: Prometheus 3.13.3 LTS, Grafana 13.2.1, Jaeger 2.21.0 with persistent Badger. All images will be digest-pinned.
+- Grafana must remain bound to loopback only; Prometheus/Jaeger ingestion/query ports remain internal Docker networks.
+
+### User outcome
+
+Operators get persistent request/runtime metrics, a pre-provisioned AuRoom dashboard, and searchable distributed traces for API/database/Redis/outbound HTTP paths without exposing telemetry publicly.
+
+### Acceptance criteria
+
+1. Add persistent Prometheus storage scraping the internal API `/metrics` endpoint.
+2. Add Grafana with provisioned Prometheus and Jaeger data sources plus an AuRoom RED/runtime dashboard; expose only on `127.0.0.1`.
+3. Add Jaeger v2 with persistent Badger trace storage and finite retention.
+4. Instrument FastAPI, SQLAlchemy, Redis and HTTPX with OpenTelemetry using role-specific service names and release metadata.
+5. Trace export failures must never break user requests or worker jobs.
+6. Observability containers must have resource/PID/log limits and health checks where supported.
+7. Public Nginx must continue returning 404 for metrics and expose no observability UI.
+8. CI validates config, provisioning files, dependency locks, trace instrumentation contract and Compose rendering.
+9. Dev deploy and server smoke verify the observability stack is healthy on the exact merged SHA.
+
+### Configuration / secrets
+
+- OTLP endpoint and tracing enablement are infrastructure configuration, not business data.
+- No telemetry backend credential is required because Jaeger is reachable only on private Docker networks.
+- Grafana is loopback-only and provisioned as anonymous Viewer; no public unauthenticated endpoint is introduced.
+- No customer prompt bodies, auth headers, tokens, request bodies or signed media query strings are added as span attributes.
+
+### Observability plan
+
+Prometheus stores HTTP rate/errors/duration, queue depth, worker heartbeat age, generation state/age/failures and build identity. OpenTelemetry exports sampled spans to Jaeger over private OTLP/HTTP. Grafana joins both data sources.
+
+### Execution plan
+
+1. [x] Audit existing metrics, request IDs, Compose networks/resources and host capacity.
+2. [ ] Add OTel runtime dependencies and tracing setup.
+3. [ ] Add Prometheus, Grafana and Jaeger pinned services/config/provisioning.
+4. [ ] Add dashboard and tracing/security contract tests.
+5. [ ] Regenerate deterministic Python dependency locks.
+6. [ ] Update deployment/server smoke/runtime monitor and operations docs.
+7. [ ] Run exact-SHA CI and review findings.
+8. [ ] Merge to `dev` only after green checks.
+9. [ ] Verify exact-SHA deploy, server smoke, Prometheus target, Grafana health and Jaeger trace ingestion.
