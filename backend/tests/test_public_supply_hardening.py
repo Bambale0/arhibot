@@ -232,3 +232,72 @@ def test_postgres_failure_probe_is_bounded_and_ci_exercises_recovery() -> None:
     assert 'postgres_failure_probe.py expect-down 3' in ci
     assert 'postgres_failure_probe.py expect-up 2' in ci
 
+def test_persistent_observability_stack_is_private_and_pinned() -> None:
+    import json
+
+    compose = (REPO_ROOT / 'backend' / 'docker-compose.yml').read_text()
+    prometheus = (REPO_ROOT / 'backend' / 'deploy' / 'observability' / 'prometheus.yml').read_text()
+    alerts = (REPO_ROOT / 'backend' / 'deploy' / 'observability' / 'alerts.yml').read_text()
+    jaeger = (REPO_ROOT / 'backend' / 'deploy' / 'observability' / 'jaeger.yml').read_text()
+    datasources = (
+        REPO_ROOT / 'backend' / 'deploy' / 'observability' / 'grafana-datasources.yml'
+    ).read_text()
+    dashboard = json.loads(
+        (
+            REPO_ROOT
+            / 'backend'
+            / 'deploy'
+            / 'observability'
+            / 'grafana-dashboard-auroom.json'
+        ).read_text()
+    )
+
+    for image in ('prom/prometheus:', 'grafana/grafana:', 'jaegertracing/jaeger:'):
+        line = next(line for line in compose.splitlines() if f'image: {image}' in line)
+        assert '@sha256:' in line
+
+    assert '127.0.0.1:19090:9090' in compose
+    assert '127.0.0.1:13000:3000' in compose
+    assert '127.0.0.1:16686:16686' in compose
+    assert '127.0.0.1:13133:13133' in compose
+    assert '4318:4318' not in compose
+    assert '4317:4317' not in compose
+    assert 'observability:\n    internal: true' in compose
+    assert 'prometheus_data:' in compose
+    assert 'grafana_data:' in compose
+    assert 'jaeger_data:' in compose
+
+    assert 'targets: ["api:8000"]' in prometheus
+    assert 'targets: ["jaeger:8888"]' in prometheus
+    assert 'AuRoomApi5xxRateHigh' in alerts
+    assert 'AuRoomGenerationProcessingStale' in alerts
+
+    assert 'badger:' in jaeger
+    assert 'ephemeral: false' in jaeger
+    assert 'spans: 168h' in jaeger
+    assert 'endpoint: 0.0.0.0:4318' in jaeger
+    assert 'endpoint: 0.0.0.0:13133' in jaeger
+
+    assert 'uid: auroom-prometheus' in datasources
+    assert 'uid: auroom-jaeger' in datasources
+    assert dashboard['uid'] == 'auroom-runtime'
+    assert dashboard['title'] == 'AuRoom Runtime'
+
+
+def test_tracing_is_enabled_only_on_private_otlp_endpoint_by_compose() -> None:
+    compose = (REPO_ROOT / 'backend' / 'docker-compose.yml').read_text()
+    tracing = (REPO_ROOT / 'backend' / 'app' / 'core' / 'tracing.py').read_text()
+
+    assert 'OTEL_TRACES_ENABLED: "${OTEL_TRACES_ENABLED:-true}"' in compose
+    assert (
+        'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: '
+        '"${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://jaeger:4318/v1/traces}"'
+    ) in compose
+    assert 'BatchSpanProcessor' in tracing
+    assert 'FastAPIInstrumentor' in tracing
+    assert 'SQLAlchemyInstrumentor' in tracing
+    assert 'RedisInstrumentor' in tracing
+    assert 'HTTPXClientInstrumentor' in tracing
+    assert '/api/v1/media/.*' in tracing
+    assert 'Signed media links' in tracing
+
