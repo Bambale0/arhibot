@@ -117,6 +117,9 @@ async def run(args: argparse.Namespace) -> int:
         return 2
 
     remote = not _is_loopback(base_url)
+    if remote and parsed.scheme != "https":
+        print("Refusing a remote load target without HTTPS", file=sys.stderr)
+        return 2
     if remote and not args.allow_remote:
         print("Refusing a remote load target without --allow-remote", file=sys.stderr)
         return 2
