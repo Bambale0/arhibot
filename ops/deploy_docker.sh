@@ -216,8 +216,45 @@ done
 if (( health_passed == 0 )); then
   echo "HTTP health check failed" >&2
   compose ps >&2 || true
-  compose logs --tail 100 api nginx frontend worker broadcast-worker maintenance 2>&1 \
+  compose logs --tail 100 api nginx frontend worker broadcast-worker maintenance prometheus grafana jaeger 2>&1 \
     | sed -E 's/(token|password|secret|api[_-]?key)=([^[:space:]]+)/\1=[REDACTED]/Ig' >&2 || true
+  exit 1
+fi
+
+echo "Waiting for observability stack"
+observability_passed=0
+for attempt in $(seq 1 40); do
+  if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:19090/-/ready >/dev/null 2>&1 && \
+     curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:13000/api/health >/dev/null 2>&1 && \
+     curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:13133/status >/dev/null 2>&1; then
+    observability_passed=1
+    break
+  fi
+  sleep 2
+done
+if (( observability_passed == 0 )); then
+  echo "Observability stack health check failed" >&2
+  compose ps >&2 || true
+  compose logs --tail 120 prometheus grafana jaeger api 2>&1 \
+    | sed -E 's/(token|password|secret|api[_-]?key)=([^[:space:]]+)/\1=[REDACTED]/Ig' >&2 || true
+  exit 1
+fi
+
+prometheus_target_passed=0
+for attempt in $(seq 1 20); do
+  target_up=$(curl -fsSG --connect-timeout 2 --max-time 5 \
+    --data-urlencode 'query=up{job="auroom-api"}' \
+    http://127.0.0.1:19090/api/v1/query \
+    | python3 -c 'import json,sys; p=json.load(sys.stdin); rows=p.get("data",{}).get("result",[]); print(1 if rows and rows[0].get("value",["","0"])[1] == "1" else 0)' \
+    2>/dev/null || echo 0)
+  if [[ "${target_up}" == "1" ]]; then
+    prometheus_target_passed=1
+    break
+  fi
+  sleep 2
+done
+if (( prometheus_target_passed == 0 )); then
+  echo "Prometheus is not scraping the AuRoom API" >&2
   exit 1
 fi
 
@@ -227,7 +264,7 @@ reported_release_sha=$(curl -fsS http://127.0.0.1:18000/health/version | python3
   exit 1
 }
 
-for service in bot worker broadcast-worker maintenance; do
+for service in bot worker broadcast-worker maintenance prometheus grafana jaeger; do
   service_id=$(compose ps -q "${service}")
   if [[ -z "${service_id}" ]] || [[ "$(docker inspect -f '{{.State.Running}}' "${service_id}" 2>/dev/null || true)" != "true" ]]; then
     echo "${service} container is not running" >&2
