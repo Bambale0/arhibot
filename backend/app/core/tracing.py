@@ -30,9 +30,15 @@ def _safe_url(raw: object) -> str | None:
         parsed = urlsplit(str(raw))
     except ValueError:
         return None
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return None
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", "", ""))
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    netloc = host if port is None else f"{host}:{port}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path or "/", "", ""))
 
 
 def _httpx_request_hook(span, request_info) -> None:
