@@ -53,9 +53,9 @@ The drill prints the backup path, restored Alembic revision before/after migrati
 1. [x] Audit current recovery scripts, runtime backup cadence, latest snapshot and monitor output.
 2. [x] Run existing `restore_runtime.sh ... VERIFY` against the latest backup.
 3. [x] Perform one manual isolated PostgreSQL restore and forward migration to current head.
-4. [ ] Add a repeatable isolated restore-drill script.
-5. [ ] Add regression/contract coverage.
-6. [ ] Update operations documentation.
+4. [x] Add a repeatable isolated restore-drill script.
+5. [x] Add regression/contract coverage.
+6. [x] Update operations documentation.
 7. [ ] Run CI and review findings.
 8. [ ] Merge to `dev` only after green checks.
 9. [ ] Re-run the repository script against the deployed environment after merge.
