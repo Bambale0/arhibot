@@ -63,6 +63,26 @@ def test_tracing_settings_validate_ratio_and_endpoint() -> None:
             otel_exporter_otlp_traces_endpoint="https://user:pass@example.test/v1/traces",
         )
 
+    with pytest.raises(ValidationError, match="Production OTLP trace export must use HTTPS"):
+        Settings(
+            app_env="production",
+            otel_traces_enabled=True,
+            otel_exporter_otlp_traces_endpoint="http://example.test/v1/traces",
+            jwt_secret="x" * 32,
+            refresh_token_secret="y" * 32,
+            media_signing_secret="z" * 32,
+        )
+
+    settings = Settings(
+        app_env="production",
+        otel_traces_enabled=True,
+        otel_exporter_otlp_traces_endpoint="http://jaeger:4318/v1/traces",
+        jwt_secret="x" * 32,
+        refresh_token_secret="y" * 32,
+        media_signing_secret="z" * 32,
+    )
+    assert settings.otel_traces_enabled is True
+
 
 def test_no_active_span_has_no_trace_id() -> None:
     assert current_trace_id() is None
