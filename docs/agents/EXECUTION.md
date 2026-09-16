@@ -94,8 +94,8 @@ The probe reports expected state, actual connectivity, elapsed seconds, and erro
 ### Execution plan
 
 1. [x] Audit current resilience helpers, database engine path, Redis failure probe and CI integration job.
-2. [ ] Add the PostgreSQL failure probe.
-3. [ ] Add controlled pause/recovery CI coverage.
-4. [ ] Add script contract coverage and ops syntax validation.
+2. [x] Add the PostgreSQL failure probe.
+3. [x] Add controlled pause/recovery CI coverage.
+4. [x] Add script contract coverage and ops syntax validation.
 5. [ ] Run CI on the exact PR SHA and review findings.
 6. [ ] Merge to `dev` only after green checks.
