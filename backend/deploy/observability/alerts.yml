@@ -1,0 +1,51 @@
+groups:
+  - name: auroom-runtime
+    rules:
+      - alert: AuRoomApi5xxRateHigh
+        expr: |
+          (
+            sum(rate(auroom_http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(auroom_http_requests_total[5m])), 0.001)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: AuRoom API 5xx rate is above 5%
+
+      - alert: AuRoomApiP95LatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(auroom_http_request_duration_seconds_bucket[5m]))
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: AuRoom API p95 latency is above 2 seconds
+
+      - alert: AuRoomWorkerHeartbeatStale
+        expr: auroom_worker_heartbeat_age_seconds > 45
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: AuRoom worker heartbeat is stale
+
+      - alert: AuRoomGenerationProcessingStale
+        expr: auroom_generation_oldest_age_seconds{status="processing"} > 600
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: AuRoom generation has been processing for more than 10 minutes
+
+      - alert: JaegerSpanExportFailures
+        expr: increase(otelcol_exporter_send_failed_spans[10m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Jaeger failed to persist one or more spans
