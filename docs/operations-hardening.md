@@ -78,6 +78,28 @@ CI runs the probe over a real Uvicorn TCP listener with a disposable authenticat
 
 Backend integration CI deliberately pauses and resumes isolated Redis/PostgreSQL instances, then verifies bounded failure detection and recovery through the application's real client paths. It also SIGKILLs a worker process that owns the production singleton lease/heartbeat primitives, verifies a replacement cannot overlap while the stale lease is alive, waits for lease expiry, and proves a clean replacement becomes healthy. Provider resilience tests simulate sustained HTTP 429/5xx storms and assert retry counts remain bounded and the shared circuit breaker opens rather than hammering the dependency.
 
+
+## Persistent observability
+
+AuRoom runs a private single-host observability stack alongside the application:
+
+- Prometheus stores internal API/runtime metrics for 15 days with a 2 GiB TSDB ceiling and evaluates the checked-in AuRoom alert rules.
+- Grafana provisions the AuRoom Prometheus and Jaeger data sources plus the `AuRoom Runtime` dashboard. Its HTTP port is bound only to `127.0.0.1:13000`; anonymous access is Viewer-only and is not exposed through public Nginx.
+- Jaeger v2 receives OTLP traces on the private Docker application network and persists them in Badger for 7 days. Its query UI and health endpoint are bound only to loopback.
+- FastAPI, SQLAlchemy, Redis and HTTPX are instrumented with OpenTelemetry. Generation and broadcast jobs also create explicit job spans. Service names include the runtime role and spans carry release metadata.
+- HTTP trace URLs are sanitized before export: credentials, query strings and fragments are removed. Redis trace attributes keep the command name only, never command arguments or values. Signed media endpoints are excluded from server tracing.
+- Trace export uses a background batch processor with a bounded queue and timeout. Telemetry backend failures are therefore observable but do not sit on the synchronous user-request path.
+
+The deployment and runtime monitor fail closed if Prometheus, Grafana or Jaeger is unavailable, and server smoke proves Prometheus is scraping the API and Jaeger has ingested a deterministically sampled AuRoom API trace.
+
+For operator access, use SSH port forwarding instead of publishing the UIs:
+
+```bash
+ssh -L 13000:127.0.0.1:13000 -L 19090:127.0.0.1:19090 -L 16686:127.0.0.1:16686 <server>
+```
+
+Then Grafana is available at `http://127.0.0.1:13000`, Prometheus at `http://127.0.0.1:19090`, and Jaeger at `http://127.0.0.1:16686`. Telemetry volumes are operational data and are intentionally not part of the customer DB/media disaster-recovery backup.
+
 ## Public surface and supply chain
 
 Production disables FastAPI Swagger/ReDoc/OpenAPI HTTP routes and the public host Nginx explicitly returns 404 for docs, OpenAPI and metrics. The HTTPS ingress sets HSTS, nosniff, a strict referrer policy, a conservative permissions policy and a Telegram-compatible CSP; Nginx version disclosure is disabled. Deploy applies the canonical host Nginx config with backup, syntax validation, reload verification and rollback on failure.
@@ -89,7 +111,6 @@ To update the Python locks after an intentional dependency change, install backe
 ## Still required before a production-grade promotion
 
 - encrypted off-site backups are still required; the isolated restore drill is implemented, but the deployment environment must still choose/configure the remote and define RPO/RTO;
-- persistent telemetry storage/dashboards and distributed tracing; the API now exposes internal Prometheus-compatible RED/runtime metrics, while the runtime watchdog covers immediate operational alerts;
 - long-duration soak/capacity testing with generation-provider latency is still required in staging; CI now has a bounded authenticated TCP load gate covering reads and reversible Project writes without external provider cost;
 - blue-green/canary or another zero-downtime release strategy;
 - controlled failure-injection now covers Redis/PostgreSQL pause-recovery, worker SIGKILL singleton/heartbeat recovery, and sustained simulated provider 429/5xx storms; continue extending these probes when new stateful workers or providers are introduced.
