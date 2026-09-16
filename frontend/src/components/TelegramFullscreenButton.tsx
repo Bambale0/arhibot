@@ -30,11 +30,15 @@ function FullscreenIcon({ active }: { active: boolean }) {
 export function TelegramFullscreenButton() {
   const webApp = window.Telegram?.WebApp
   const [isFullscreen, setIsFullscreen] = useState(() => Boolean(webApp?.isFullscreen))
-  const lastThreeFingerToggleAt = useRef(0)
+  const fullscreenState = useRef(isFullscreen)
 
   useEffect(() => {
     if (!webApp?.requestFullscreen) return
-    const syncFullscreen = () => setIsFullscreen(Boolean(webApp.isFullscreen))
+    const syncFullscreen = () => {
+      const active = Boolean(webApp.isFullscreen)
+      fullscreenState.current = active
+      setIsFullscreen(active)
+    }
     syncFullscreen()
     webApp.onEvent?.('fullscreenChanged', syncFullscreen)
     webApp.onEvent?.('fullscreenFailed', syncFullscreen)
@@ -47,28 +51,26 @@ export function TelegramFullscreenButton() {
   const toggleFullscreen = useCallback(() => {
     if (!webApp?.requestFullscreen) return
     try {
-      const active = webApp.isFullscreen ?? isFullscreen
-      if (active) {
+      if (fullscreenState.current) {
         if (!webApp.exitFullscreen) return
         webApp.exitFullscreen()
+        fullscreenState.current = false
         setIsFullscreen(false)
         return
       }
       webApp.expand?.()
       webApp.requestFullscreen()
+      fullscreenState.current = true
       setIsFullscreen(true)
     } catch {
       // Telegram can reject fullscreen transiently; the Mini App stays usable.
     }
-  }, [isFullscreen, webApp])
+  }, [webApp])
 
   useEffect(() => {
     if (!webApp?.requestFullscreen) return
     const handleThreeFingerTouch = (event: TouchEvent) => {
       if (event.touches.length !== 3) return
-      const now = Date.now()
-      if (now - lastThreeFingerToggleAt.current < 500) return
-      lastThreeFingerToggleAt.current = now
       toggleFullscreen()
     }
     document.addEventListener('touchstart', handleThreeFingerTouch, { passive: true })
