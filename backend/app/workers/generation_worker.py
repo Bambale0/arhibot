@@ -218,6 +218,23 @@ def _flyover_prompt(extra_prompt: str) -> str:
     return prompt
 
 
+def _flyover_video_dimensions(
+    model_name: str,
+    params: dict[str, object],
+) -> tuple[int, int]:
+    long_side, short_side = (
+        (1920, 1080)
+        if model_name.endswith("-1080p")
+        else (1280, 720)
+    )
+    aspect_ratio = str(params.get("aspect_ratio") or "16:9")
+    if aspect_ratio == "9:16":
+        return short_side, long_side
+    if aspect_ratio == "1:1":
+        return short_side, short_side
+    return long_side, short_side
+
+
 def _questionnaire_aspect_ratio(asset: Asset | None) -> str:
     if asset is None or not asset.width or not asset.height:
         return "16:9"
@@ -751,8 +768,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 extension = "mp4"
                 mime_type = "video/mp4"
                 asset_type = AssetType.VIDEO
-                width = 0
-                height = 0
+                width, height = _flyover_video_dimensions(model_name, primary_params)
                 original_filename = "auroom-drone-flyover.mp4"
             else:
                 image = asset_service._validate_image(data)
