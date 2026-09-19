@@ -84,7 +84,8 @@ async function json(route:Route, data:unknown, status=200) {
 }
 
 // Regression: persisted history must survive a full Mini App reload.
-test('admin AI history survives reload and an older still can be reused for 360', async ({ page }) => {
+test('admin AI history survives reload and an older still can launch a GIF flyover', async ({ page }) => {
+  let submittedFlyover:Record<string,unknown>|null=null
   await page.addInitScript(() => {
     sessionStorage.setItem('auroom.access_token','e2e')
       })
@@ -106,6 +107,10 @@ test('admin AI history survives reload and an older still can be reused for 360'
       updated_at:now,
     })
     if(path.endsWith('/admin/generation/sandbox/history')) return json(route,history)
+    if(path.endsWith('/admin/generation/flyover-gif')&&method==='POST') {
+      submittedFlyover=req.postDataJSON() as Record<string,unknown>
+      return json(route,{...olderStill,id:'55555555-5555-4555-8555-555555555555',status:'queued',output_asset:null,started_at:null,completed_at:null})
+    }
     if(path.endsWith('/admin/generation')) return json(route,{
       primary_model:'nano-banana-pro',
       fallback_model:'gpt-image-2',
@@ -142,6 +147,7 @@ test('admin AI history survives reload and an older still can be reused for 360'
   await expect(page.getByText('Newest still prompt',{exact:true})).toBeVisible()
   await expect(page.getByText('Older still prompt',{exact:true})).toBeVisible()
   await expect(page.getByText('Warm orbit',{exact:true})).toBeVisible()
+  await expect(page.getByText(/Legacy 360°/)).toBeVisible()
   await expect(page.getByLabel('Primary timeout, сек')).toHaveValue('90')
 
   await page.reload()
@@ -149,8 +155,22 @@ test('admin AI history survives reload and an older still can be reused for 360'
   await expect(page.getByText('Older still prompt',{exact:true})).toBeVisible()
 
   const olderCard=page.locator('article').filter({hasText:'Older still prompt'})
-  await olderCard.getByRole('button',{name:'Использовать для 360°'}).click()
-  await expect(olderCard.getByRole('button',{name:'Выбран для 360°'})).toBeVisible()
+  await olderCard.getByRole('button',{name:'Использовать для пролёта'}).click()
+  await expect(olderCard.getByRole('button',{name:'Выбран для пролёта'})).toBeVisible()
   await expect(page.getByLabel('Nexus model ID')).toHaveValue('gpt-image-2')
   await expect(page.getByLabel('Prompt')).toHaveValue('Older still prompt')
+  await expect(page.getByRole('heading',{name:'Bird flyover GIF'})).toBeVisible()
+  await expect(page.getByLabel('Ключевых кадров')).toHaveValue('6')
+  await expect(page.getByLabel('Промежуточных кадров')).toHaveValue('3')
+  await expect(page.getByLabel('мс / кадр')).toHaveValue('120')
+  await expect(page.getByText('5 image-вызовов · 0 video-вызовов',{exact:false})).toBeVisible()
+  await page.getByRole('button',{name:'Собрать GIF-пролёт'}).click()
+  await expect.poll(()=>submittedFlyover).not.toBeNull()
+  expect(submittedFlyover).toMatchObject({
+    source_generation_id:olderStill.id,
+    model_name:'gpt-image-2',
+    keyframe_count:6,
+    inbetween_frames:3,
+    frame_duration_ms:120,
+  })
 })

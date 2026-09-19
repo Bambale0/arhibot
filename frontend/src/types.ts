@@ -216,12 +216,14 @@ export type AdminIdea = Idea & {
 
 
 export type AdminAiHistoryItem = {
-  kind: 'sandbox' | 'orbit'
+  kind: 'sandbox' | 'orbit' | 'flyover_gif'
   generation: Generation
   prompt: string
   params: Record<string, unknown>
   frame_count: number | null
   frame_duration_ms: number | null
+  keyframe_count: number | null
+  inbetween_frames: number | null
 }
 
 export type AdminGenerationSettings = {

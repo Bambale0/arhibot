@@ -418,12 +418,13 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   const [sandboxParams,setSandboxParams]=useState('{}')
   const [sandboxBusy,setSandboxBusy]=useState(false)
   const [sandboxGeneration,setSandboxGeneration]=useState<Generation|null>(null)
-  const [orbitPrompt,setOrbitPrompt]=useState('')
-  const [orbitParams,setOrbitParams]=useState('{}')
-  const [orbitFrames,setOrbitFrames]=useState('8')
-  const [orbitDuration,setOrbitDuration]=useState('180')
-  const [orbitBusy,setOrbitBusy]=useState(false)
-  const [orbitGeneration,setOrbitGeneration]=useState<Generation|null>(null)
+  const [flyoverPrompt,setFlyoverPrompt]=useState('')
+  const [flyoverParams,setFlyoverParams]=useState('{}')
+  const [flyoverKeyframes,setFlyoverKeyframes]=useState('6')
+  const [flyoverInbetweens,setFlyoverInbetweens]=useState('3')
+  const [flyoverDuration,setFlyoverDuration]=useState('120')
+  const [flyoverBusy,setFlyoverBusy]=useState(false)
+  const [flyoverGeneration,setFlyoverGeneration]=useState<Generation|null>(null)
   const [sandboxHistory,setSandboxHistory]=useState<AdminAiHistoryItem[]>([])
   const [historyLoading,setHistoryLoading]=useState(true)
 
@@ -470,19 +471,19 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   }, [sandboxGeneration?.id, sandboxGeneration?.status, onError])
 
   useEffect(() => {
-    if (!orbitGeneration || !['queued','processing'].includes(orbitGeneration.status)) return
+    if (!flyoverGeneration || !['queued','processing'].includes(flyoverGeneration.status)) return
     let cancelled = false
     const timer = window.setInterval(() => {
-      void api.getGeneration(orbitGeneration.id)
+      void api.getGeneration(flyoverGeneration.id)
         .then((generation) => {
           if (cancelled) return
-          setOrbitGeneration(generation)
+          setFlyoverGeneration(generation)
           if (!['queued','processing'].includes(generation.status)) void refreshSandboxHistory()
         })
         .catch((err) => { if (!cancelled) onError(errorText(err)) })
     }, 1500)
     return () => { cancelled = true; window.clearInterval(timer) }
-  }, [orbitGeneration?.id, orbitGeneration?.status, onError])
+  }, [flyoverGeneration?.id, flyoverGeneration?.status, onError])
 
   async function saveSettings(){
     const timeout=Number(primaryTimeout)
@@ -514,31 +515,35 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
     }catch(err){onError(errorText(err))}
     finally{setSandboxBusy(false)}
   }
-  async function runOrbit(){
+  async function runFlyover(){
     if (!sandboxGeneration?.output_asset || sandboxGeneration.status !== 'completed') return
-    const frameCount=Number(orbitFrames)
-    const frameDuration=Number(orbitDuration)
-    if (!Number.isInteger(frameCount)||frameCount<6||frameCount>12||!Number.isInteger(frameDuration)||frameDuration<80||frameDuration>1000) return
-    setOrbitBusy(true);onError(null)
+    const keyframeCount=Number(flyoverKeyframes)
+    const inbetweenFrames=Number(flyoverInbetweens)
+    const frameDuration=Number(flyoverDuration)
+    if (!Number.isInteger(keyframeCount)||keyframeCount<4||keyframeCount>8){onError('Ключевых кадров должно быть от 4 до 8');return}
+    if (!Number.isInteger(inbetweenFrames)||inbetweenFrames<0||inbetweenFrames>5){onError('Промежуточных кадров должно быть от 0 до 5');return}
+    if (!Number.isInteger(frameDuration)||frameDuration<60||frameDuration>500){onError('Длительность кадра должна быть от 60 до 500 мс');return}
+    setFlyoverBusy(true);onError(null)
     try{
       const modelName=sandboxGeneration.model_name||sandboxModel.trim()
       if(!modelName) throw new Error('У исходного Sandbox результата нет model ID')
-      const created=await api.adminCreateGenerationOrbit({
+      const created=await api.adminCreateGenerationFlyoverGif({
         source_generation_id:sandboxGeneration.id,
         model_name:modelName,
-        prompt:orbitPrompt.trim(),
-        params:parseSandboxParams(orbitParams),
-        frame_count:frameCount,
+        prompt:flyoverPrompt.trim(),
+        params:parseSandboxParams(flyoverParams),
+        keyframe_count:keyframeCount,
+        inbetween_frames:inbetweenFrames,
         frame_duration_ms:frameDuration,
       })
-      setOrbitGeneration(created)
+      setFlyoverGeneration(created)
       void refreshSandboxHistory()
     }catch(err){onError(errorText(err))}
-    finally{setOrbitBusy(false)}
+    finally{setFlyoverBusy(false)}
   }
   async function savePrice(mode: GenerationMode, value: number, active: boolean){try{const saved=await api.adminUpdateGenerationPrice(mode,value,active);onPrices([...prices.filter(x=>x.generation_type!==mode),saved])}catch(err){onError(errorText(err))}}
   return <section className="admin-panel"><div className="admin-panel-title"><div><h2>AI, стоимость и промпты</h2><p>Модели, параметры, стоимость кредитов и prompt templates управляются из БД.</p></div></div>
-    <div className="admin-form-grid"><label>Primary model<input value={primary} onChange={e=>setPrimary(e.target.value)}/></label><label>Fallback model<input value={fallback} onChange={e=>setFallback(e.target.value)}/></label><label>Primary timeout, сек<input type="number" min="30" max="600" value={primaryTimeout} onChange={e=>setPrimaryTimeout(e.target.value)}/><small>После этого времени production переключается на fallback. Sandbox и 360° не затрагиваются.</small></label><label className="admin-span-2">Primary params<textarea className="admin-code" value={primaryParams} onChange={e=>setPrimaryParams(e.target.value)}/></label><label className="admin-span-2">Fallback params<textarea className="admin-code" value={fallbackParams} onChange={e=>setFallbackParams(e.target.value)}/></label><label className="admin-span-2">Параметры по сценариям<textarea className="admin-code" value={modeParams} onChange={e=>setModeParams(e.target.value)}/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={()=>void saveSettings()}>Сохранить AI</button></div></div>
+    <div className="admin-form-grid"><label>Primary model<input value={primary} onChange={e=>setPrimary(e.target.value)}/></label><label>Fallback model<input value={fallback} onChange={e=>setFallback(e.target.value)}/></label><label>Primary timeout, сек<input type="number" min="30" max="600" value={primaryTimeout} onChange={e=>setPrimaryTimeout(e.target.value)}/><small>После этого времени production переключается на fallback. Sandbox и GIF-пролёт не затрагиваются.</small></label><label className="admin-span-2">Primary params<textarea className="admin-code" value={primaryParams} onChange={e=>setPrimaryParams(e.target.value)}/></label><label className="admin-span-2">Fallback params<textarea className="admin-code" value={fallbackParams} onChange={e=>setFallbackParams(e.target.value)}/></label><label className="admin-span-2">Параметры по сценариям<textarea className="admin-code" value={modeParams} onChange={e=>setModeParams(e.target.value)}/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={()=>void saveSettings()}>Сохранить AI</button></div></div>
     <div className="admin-subpanel">
       <div className="admin-panel-title"><div><h3>AI Sandbox</h3><p>Одноразовый админский тест Nexus. Model ID, prompt и params применяются только к этому запуску: primary/fallback клиентов не меняются, кредиты не списываются.</p></div></div>
       <div className="admin-form-grid">
@@ -553,24 +558,25 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
         <div><small>{formatDate(sandboxGeneration.completed_at||sandboxGeneration.started_at||sandboxGeneration.created_at)}</small></div>
       </article></div>}
       {sandboxGeneration?.status==='completed'&&sandboxGeneration.output_asset&&<div className="admin-subpanel">
-        <div className="admin-panel-title"><div><h3>360° drone-orbit experiment</h3><p>Берём этот Sandbox render как первый кадр, генерируем остальные ракурсы image-to-image и локально собираем зацикленный animated WebP. Видео-модель не вызывается.</p></div></div>
+        <div className="admin-panel-title"><div><h3>Bird flyover GIF</h3><p>Дешёвый пролёт без video-модели: каждый следующий keyframe строится из предыдущего image-to-image кадра, затем локально добавляются промежуточные кадры и собирается GIF.</p></div></div>
         <div className="admin-form-grid">
-          <label>Кадров<input type="number" min="6" max="12" value={orbitFrames} onChange={e=>setOrbitFrames(e.target.value)}/></label>
-          <label>мс / кадр<input type="number" min="80" max="1000" value={orbitDuration} onChange={e=>setOrbitDuration(e.target.value)}/></label>
-          <label className="admin-span-2">Доп. инструкция<textarea value={orbitPrompt} onChange={e=>setOrbitPrompt(e.target.value)} placeholder="Например: сохраняй мягкий вечерний свет"/></label>
-          <label className="admin-span-2">Orbit model params (JSON)<textarea className="admin-code" value={orbitParams} onChange={e=>setOrbitParams(e.target.value)}/></label>
-          <div className="admin-span-2"><small>{Math.max(0,(Number(orbitFrames)||0)-1)} новых image-вызовов + исходный кадр · 0 video-вызовов · 0 кредитов AuRoom</small></div>
-          <div className="admin-form-actions"><button type="button" className="secondary-button" disabled={orbitBusy} onClick={()=>void runOrbit()}>{orbitBusy?'Собираем…':'Собрать 360° loop'}</button></div>
+          <label>Ключевых кадров<input type="number" min="4" max="8" value={flyoverKeyframes} onChange={e=>setFlyoverKeyframes(e.target.value)}/></label>
+          <label>Промежуточных кадров<input type="number" min="0" max="5" value={flyoverInbetweens} onChange={e=>setFlyoverInbetweens(e.target.value)}/></label>
+          <label>мс / кадр<input type="number" min="60" max="500" value={flyoverDuration} onChange={e=>setFlyoverDuration(e.target.value)}/></label>
+          <label className="admin-span-2">Доп. инструкция<textarea value={flyoverPrompt} onChange={e=>setFlyoverPrompt(e.target.value)} placeholder="Например: сохраняй мягкий вечерний свет"/></label>
+          <label className="admin-span-2">Flyover model params (JSON)<textarea className="admin-code" value={flyoverParams} onChange={e=>setFlyoverParams(e.target.value)}/></label>
+          <div className="admin-span-2"><small>{Math.max(0,(Number(flyoverKeyframes)||0)-1)} image-вызовов · 0 video-вызовов · исходный кадр включён · 0 кредитов AuRoom</small></div>
+          <div className="admin-form-actions"><button type="button" className="secondary-button" disabled={flyoverBusy} onClick={()=>void runFlyover()}>{flyoverBusy?'Собираем пролёт…':'Собрать GIF-пролёт'}</button></div>
         </div>
-        {orbitGeneration&&<div className="admin-card-list"><article className="admin-list-card admin-idea-card">
-          {orbitGeneration.output_asset&&<img src={orbitGeneration.output_asset.url} alt="360 degree drone orbit loop"/>}
-          <div><strong>360° loop · {orbitGeneration.model_name||sandboxGeneration.model_name}</strong><span>Статус: {orbitGeneration.status}</span><p>Формат результата: animated WebP · списано кредитов: {orbitGeneration.credits_charged}</p>{orbitGeneration.error&&<p>{orbitGeneration.error}</p>}</div>
-          <div><small>{formatDate(orbitGeneration.completed_at||orbitGeneration.started_at||orbitGeneration.created_at)}</small></div>
+        {flyoverGeneration&&<div className="admin-card-list"><article className="admin-list-card admin-idea-card">
+          {flyoverGeneration.output_asset&&<img src={flyoverGeneration.output_asset.url} alt="Bird flyover GIF"/>}
+          <div><strong>Bird flyover GIF · {flyoverGeneration.model_name||sandboxGeneration.model_name}</strong><span>Статус: {flyoverGeneration.status}</span><p>Формат результата: GIF · списано кредитов: {flyoverGeneration.credits_charged}</p>{flyoverGeneration.error&&<p>{flyoverGeneration.error}</p>}</div>
+          <div><small>{formatDate(flyoverGeneration.completed_at||flyoverGeneration.started_at||flyoverGeneration.created_at)}</small></div>
         </article></div>}
       </div>}
     </div>
     <div className="admin-subpanel">
-      <div className="admin-panel-title"><div><h3>История AI Sandbox</h3><p>Последние still и 360° прогоны сохраняются после обновления страницы. Готовый still можно снова выбрать источником для orbit.</p></div><button type="button" className="secondary-button" onClick={()=>void refreshSandboxHistory()}>Обновить историю</button></div>
+      <div className="admin-panel-title"><div><h3>История AI Sandbox</h3><p>Still, новые GIF-пролёты и старые 360° WebP сохраняются после обновления страницы. Готовый still можно снова выбрать источником для пролёта.</p></div><button type="button" className="secondary-button" onClick={()=>void refreshSandboxHistory()}>Обновить историю</button></div>
       {historyLoading
         ? <small>Загружаем историю…</small>
         : sandboxHistory.length===0
@@ -582,9 +588,9 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
                 : null
               const selected=item.kind==='sandbox'&&sandboxGeneration?.id===generation.id
               return <article className="admin-list-card admin-idea-card" key={generation.id}>
-                {generation.output_asset&&<img src={generation.output_asset.url} alt={item.kind==='orbit'?'360 degree orbit history':'AI Sandbox history result'}/>}
-                <div><strong>{item.kind==='orbit'?'360° orbit':'Sandbox still'} · {generation.model_name||'model —'}</strong><span>{generation.status}{durationSeconds!==null?' · '+durationSeconds+' с':''}</span><p>{item.prompt||'Без дополнительного prompt'}</p><small>params: {JSON.stringify(item.params)}{item.kind==='orbit'&&item.frame_count?' · '+item.frame_count+' кадров · '+item.frame_duration_ms+' мс':''}</small>{generation.error&&<p>{generation.error}</p>}</div>
-                <div><small>{formatDate(generation.completed_at||generation.started_at||generation.created_at)}</small>{item.kind==='sandbox'&&generation.status==='completed'&&generation.output_asset&&<button type="button" className="secondary-button" disabled={selected} onClick={()=>{setSandboxGeneration(generation);setSandboxModel(generation.model_name||'');setSandboxPrompt(item.prompt);setSandboxParams(JSON.stringify(item.params,null,2));setOrbitGeneration(null)}}>{selected?'Выбран для 360°':'Использовать для 360°'}</button>}</div>
+                {generation.output_asset&&<img src={generation.output_asset.url} alt={item.kind==='orbit'?'Legacy 360 degree orbit history':item.kind==='flyover_gif'?'Bird flyover GIF history':'AI Sandbox history result'}/>}
+                <div><strong>{item.kind==='flyover_gif'?'Bird flyover GIF':item.kind==='orbit'?'Legacy 360° WebP':'Sandbox still'} · {generation.model_name||'model —'}</strong><span>{generation.status}{durationSeconds!==null?' · '+durationSeconds+' с':''}</span><p>{item.prompt||'Без дополнительного prompt'}</p><small>params: {JSON.stringify(item.params)}{item.kind==='flyover_gif'&&item.keyframe_count?' · '+item.keyframe_count+' keyframes · '+item.inbetween_frames+' промежуточных · '+item.frame_duration_ms+' мс':item.kind==='orbit'&&item.frame_count?' · '+item.frame_count+' кадров · '+item.frame_duration_ms+' мс':''}</small>{generation.error&&<p>{generation.error}</p>}</div>
+                <div><small>{formatDate(generation.completed_at||generation.started_at||generation.created_at)}</small>{item.kind==='sandbox'&&generation.status==='completed'&&generation.output_asset&&<button type="button" className="secondary-button" disabled={selected} onClick={()=>{setSandboxGeneration(generation);setSandboxModel(generation.model_name||'');setSandboxPrompt(item.prompt);setSandboxParams(JSON.stringify(item.params,null,2));setFlyoverGeneration(null)}}>{selected?'Выбран для пролёта':'Использовать для пролёта'}</button>}</div>
               </article>
             })}</div>}
     </div>
