@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     nexus_api_key: str | None = None
     nexus_base_url: str = "https://nexusapi.dev"
     nexus_task_timeout_seconds: int = 180
+    nexus_video_task_timeout_seconds: int = 600
     nexus_poll_interval_seconds: float = 2.0
     nexus_http_connect_timeout_seconds: float = 5.0
     nexus_http_read_timeout_seconds: float = 30.0
@@ -76,6 +77,7 @@ class Settings(BaseSettings):
     media_signing_secret: str | None = None
     media_url_ttl_seconds: int = 900
     max_image_size_bytes: int = 20 * 1024 * 1024
+    max_video_size_bytes: int = 100 * 1024 * 1024
     max_image_pixels: int = 80_000_000
     max_model_size_bytes: int = 80 * 1024 * 1024
 
@@ -101,12 +103,16 @@ class Settings(BaseSettings):
             raise ValueError("MEDIA_URL_TTL_SECONDS must be between 60 and 3600")
         if self.max_image_size_bytes < 1_048_576:
             raise ValueError("MAX_IMAGE_SIZE_BYTES must be at least 1 MiB")
+        if self.max_video_size_bytes < 5 * 1024 * 1024:
+            raise ValueError("MAX_VIDEO_SIZE_BYTES must be at least 5 MiB")
         if self.max_image_pixels < 1_000_000:
             raise ValueError("MAX_IMAGE_PIXELS must be at least 1,000,000")
         if self.max_model_size_bytes < 1_048_576:
             raise ValueError("MAX_MODEL_SIZE_BYTES must be at least 1 MiB")
         if self.nexus_task_timeout_seconds < 30:
             raise ValueError("NEXUS_TASK_TIMEOUT_SECONDS must be at least 30")
+        if self.nexus_video_task_timeout_seconds < 60:
+            raise ValueError("NEXUS_VIDEO_TASK_TIMEOUT_SECONDS must be at least 60")
         if self.nexus_poll_interval_seconds < 0.5:
             raise ValueError("NEXUS_POLL_INTERVAL_SECONDS must be at least 0.5")
         if self.nexus_http_connect_timeout_seconds <= 0 or self.nexus_http_read_timeout_seconds <= 0:
