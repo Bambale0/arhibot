@@ -836,12 +836,7 @@ async def _reconcile_database_jobs(settings: Settings) -> None:
     queued_raw = await redis_client.lrange(GENERATION_QUEUE_KEY, 0, -1)
     processing_raw = await redis_client.lrange(GENERATION_PROCESSING_KEY, 0, -1)
     redis_ids = {str(value) for value in [*queued_raw, *processing_raw]}
-    stale_before = datetime.now(UTC) - timedelta(
-        seconds=max(
-            int(settings.nexus_task_timeout_seconds),
-            int(settings.nexus_video_task_timeout_seconds),
-        ) + 60
-    )
+    now = datetime.now(UTC)
     recovered: list[str] = []
 
     async with get_session_factory()() as session:
@@ -856,6 +851,14 @@ async def _reconcile_database_jobs(settings: Settings) -> None:
             if raw_id in redis_ids:
                 continue
             if generation.status == GenerationStatus.PROCESSING:
+                provider_timeout = (
+                    settings.nexus_video_task_timeout_seconds
+                    if generation.origin == GenerationOrigin.ADMIN_FLYOVER.value
+                    else settings.nexus_task_timeout_seconds
+                )
+                stale_before = now - timedelta(
+                    seconds=max(int(provider_timeout) + 60, 300)
+                )
                 if generation.started_at is not None and generation.started_at > stale_before:
                     continue
                 generation.status = GenerationStatus.QUEUED
