@@ -69,6 +69,7 @@ Backend:
 MEDIA_ROOT=/data/media
 MEDIA_PUBLIC_BASE_URL=http://localhost:8000
 MAX_IMAGE_SIZE_BYTES=20971520
+MAX_VIDEO_SIZE_BYTES=104857600
 MAX_MODEL_SIZE_BYTES=83886080
 MAX_IMAGE_PIXELS=80000000
 ```
@@ -241,3 +242,10 @@ queued -> processing -> completed | failed
 ```
 
 Provider получает публичные asset URLs, а готовые изображения backend скачивает в тот же локальный media storage и регистрирует как `generation_output` assets.
+
+
+## Admin drone flyover
+
+Admin AI Sandbox supports a separate image-to-video experiment for cinematic architectural flyovers. A completed Sandbox still is passed once to a supported Nexus motion model and the worker stores the provider result as MP4. The server owns the flight prompt and explicitly forbids turntable/orbit motion, cuts, geometry morphing, and redesign.
+
+The old animated-WebP orbit pipeline remains readable for legacy history, but the webadmin creation flow uses the MP4 flyover path.
