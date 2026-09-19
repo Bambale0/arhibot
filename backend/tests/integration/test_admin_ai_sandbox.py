@@ -186,6 +186,103 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
         assert len(sandbox_entries) == 1
         assert sandbox_entries[0]["details"]["model_name"] == "nexus/experimental-image"
 
+        flyover_denied = await client.post(
+            "/api/v1/admin/generation/flyover-gif",
+            headers=user_headers,
+            json={
+                "source_generation_id": str(generation_id),
+                "model_name": "nexus/flyover-image-model",
+                "prompt": "",
+                "params": {"guidance": 4},
+                "keyframe_count": 6,
+                "inbetween_frames": 3,
+                "frame_duration_ms": 120,
+            },
+        )
+        assert flyover_denied.status_code == 403, flyover_denied.text
+
+        flyover_created = await client.post(
+            "/api/v1/admin/generation/flyover-gif",
+            headers=admin_headers,
+            json={
+                "source_generation_id": str(generation_id),
+                "model_name": "nexus/flyover-image-model",
+                "prompt": "Keep the warm sunset mood",
+                "params": {"guidance": 4},
+                "keyframe_count": 6,
+                "inbetween_frames": 3,
+                "frame_duration_ms": 120,
+            },
+        )
+        assert flyover_created.status_code == 202, flyover_created.text
+        flyover_body = flyover_created.json()
+        flyover_id = UUID(flyover_body["id"])
+        assert flyover_body["credits_charged"] == 0
+        assert flyover_body["model_name"] == "nexus/flyover-image-model"
+
+        async with get_session_factory()() as session:
+            flyover_row = await session.get(Generation, flyover_id)
+            assert flyover_row is not None
+            assert flyover_row.origin == "admin_flyover_gif"
+            assert flyover_row.telegram_delivery_status == "skipped"
+            assert flyover_row.prompt.startswith("AUROOM_ADMIN_FLYOVER_GIF_V1\n")
+
+        provider_calls.clear()
+
+        async def fake_flyover_generate(self, **kwargs):  # noqa: ANN001, ARG001
+            provider_calls.append(kwargs)
+            index = len(provider_calls)
+            return NexusImageResult(
+                task_id=f"flyover-task-{index}",
+                image_url=f"https://cdn.example.test/flyover-{index}.png",
+            )
+
+        async def fake_flyover_download(url, settings):  # noqa: ANN001, ARG001
+            index = int(url.rsplit("-", 1)[1].split(".", 1)[0])
+            return _png(index)
+
+        monkeypatch.setattr(NexusImageProvider, "generate", fake_flyover_generate)
+        monkeypatch.setattr(generation_worker, "_download_image", fake_flyover_download)
+
+        await generation_worker.process_generation(flyover_id, get_settings())
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(flyover_id))
+
+        assert len(provider_calls) == 5
+        assert provider_calls[0]["model_name"] == "nexus/flyover-image-model"
+        assert provider_calls[0]["model_params"] == {"guidance": 4}
+        assert provider_calls[0]["image_url"]
+        for index in range(1, len(provider_calls)):
+            assert provider_calls[index]["image_url"] == (
+                f"https://cdn.example.test/flyover-{index}.png"
+            )
+        assert "bird" in provider_calls[0]["prompt"].lower()
+        assert "forward" in provider_calls[0]["prompt"].lower()
+        assert "turntable" in provider_calls[0]["prompt"].lower()
+        assert "Keep the warm sunset mood" in provider_calls[0]["prompt"]
+        assert "roof" in provider_calls[2]["prompt"].lower()
+        assert "exit" in provider_calls[-1]["prompt"].lower()
+
+        flyover_completed = await client.get(
+            f"/api/v1/generations/{flyover_id}",
+            headers=admin_headers,
+        )
+        assert flyover_completed.status_code == 200, flyover_completed.text
+        flyover_completed_body = flyover_completed.json()
+        assert flyover_completed_body["status"] == "completed"
+        assert flyover_completed_body["credits_charged"] == 0
+        assert flyover_completed_body["output_asset"]["mime_type"] == "image/gif"
+        assert flyover_completed_body["output_asset"]["original_filename"] == (
+            "auroom-bird-flyover.gif"
+        )
+
+        flyover_media = await client.get(flyover_completed_body["output_asset"]["url"])
+        assert flyover_media.status_code == 200, flyover_media.text
+        with Image.open(BytesIO(flyover_media.content)) as animation:
+            assert animation.format == "GIF"
+            assert animation.is_animated is True
+            assert animation.n_frames == 21
+            assert "loop" not in animation.info
+
 
         orbit_denied = await client.post(
             "/api/v1/admin/generation/orbit",
@@ -348,7 +445,12 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
         )
         assert history_response.status_code == 200, history_response.text
         history = history_response.json()
-        assert [item["kind"] for item in history] == ["sandbox", "orbit", "sandbox"]
+        assert [item["kind"] for item in history] == [
+            "sandbox",
+            "orbit",
+            "flyover_gif",
+            "sandbox",
+        ]
         duplicate_history = history[0]
         assert duplicate_history["generation"]["id"] == str(duplicate_generation_id)
         assert duplicate_history["prompt"] == "Duplicate hidden project"
@@ -362,7 +464,16 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
         assert orbit_history["frame_count"] == 6
         assert orbit_history["frame_duration_ms"] == 160
 
-        sandbox_history = history[2]
+        flyover_history = history[2]
+        assert flyover_history["generation"]["id"] == str(flyover_id)
+        assert flyover_history["generation"]["prompt"] == "Keep the warm sunset mood"
+        assert flyover_history["prompt"] == "Keep the warm sunset mood"
+        assert flyover_history["params"] == {"guidance": 4}
+        assert flyover_history["keyframe_count"] == 6
+        assert flyover_history["inbetween_frames"] == 3
+        assert flyover_history["frame_duration_ms"] == 120
+
+        sandbox_history = history[3]
         assert sandbox_history["generation"]["id"] == str(generation_id)
         assert sandbox_history["generation"]["prompt"] == (
             "Photorealistic compact house on a landscaped plot"
