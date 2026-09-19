@@ -53,7 +53,7 @@ export type ProjectList = {
 export type Asset = {
   id: string
   project_id: string | null
-  type: 'image'
+  type: 'image' | 'video'
   purpose: 'generation_input' | 'project_reference' | 'generation_output'
   original_filename: string | null
   mime_type: string
@@ -216,12 +216,13 @@ export type AdminIdea = Idea & {
 
 
 export type AdminAiHistoryItem = {
-  kind: 'sandbox' | 'orbit'
+  kind: 'sandbox' | 'orbit' | 'flyover'
   generation: Generation
   prompt: string
   params: Record<string, unknown>
   frame_count: number | null
   frame_duration_ms: number | null
+  duration_seconds: number | null
 }
 
 export type AdminGenerationSettings = {
