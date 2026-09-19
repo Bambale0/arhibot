@@ -256,3 +256,53 @@ No new telemetry is required for this client-only interaction. The fullscreen UI
 4. [x] Run frontend typecheck, production build, and Playwright E2E in CI; frontend job green with 18/18 E2E passing.
 5. [x] Review the exact PR diff and exact-SHA CI result (CI run #35134139926 green on `96154943f480f14da4436dd5e1863f41f08e1571`).
 6. [ ] Merge to `dev` only after required checks are green.
+
+
+## Active work — admin GIF bird flyover
+
+- Baseline `dev`: `5ee840c1d7232a5ababc98555b504840cced9799`.
+- Superseded video PR #105 is closed and will not be merged.
+- Root cause of the bad current animation: `_generate_orbit_frames` fans all image-to-image calls out from the same source still and uses azimuth/360° prompts, then `build_orbit_animation` merely stitches those unrelated views.
+- Reusable pieces: Admin AI Sandbox source/history, Nexus image generation, signed source URLs, Pillow, worker queue, existing generation audit/history and animated-image storage.
+
+### User outcome
+
+The operator gets a low-cost GIF that reads as a bird/drone camera flight over the house rather than a turntable: approach, closer aerial pass, roof pass, move beyond the house, gentle rising exit.
+
+### Acceptance criteria
+
+1. Active admin action is a GIF bird flyover, not video and not a 360° orbit.
+2. Default 6 total keyframes consume exactly 5 new image-generation calls and zero video calls.
+3. Keyframes are generated sequentially; each new provider call references the immediately previous provider result URL.
+4. Server-owned motion prompts preserve exact architecture/site and explicitly forbid circular orbit/turntable spin, redesign, morphing and object movement.
+5. Pillow adds bounded local in-between frames and encodes a valid animated GIF; no external interpolation/video dependency is added.
+6. Default smoothing is 3 in-between frames and 120 ms/frame; keyframes/smoothing/duration remain bounded admin inputs.
+7. Result is persisted as an image asset with `image/gif`; no asset/video schema migration is introduced.
+8. Old `admin_orbit` results remain readable in history but new orbit creation is removed from the main admin UI.
+9. Credits remain zero and Telegram delivery remains skipped for this admin experiment.
+10. Unit, integration, frontend and exact-SHA CI gates must be green before merge.
+
+### No-hardcode / configuration decisions
+
+- Model ID remains an operator-selected admin input for the experiment.
+- Flyover path stages are protocol behavior owned by server code, not business-editable configuration.
+- Cost is visible from `keyframe_count - 1`; no video model or video timeout/size config is introduced.
+- No database migration is required.
+
+### Risks and test seams
+
+- Sequential image-to-image reduces temporal discontinuity but can accumulate architecture drift; prompts and live quality review remain necessary.
+- Simple local blends smooth transitions but are not optical flow; small camera increments are required to avoid ghosting.
+- Tests must prove sequential source chaining, call count, prompt path semantics, GIF frame count/format and legacy orbit history compatibility.
+
+### Execution plan
+
+1. [x] Inspect `AGENTS.md`, repo `.agents` skills, mandatory external skill repositories, current orbit worker, admin contracts, animation helper and tests.
+2. [x] Close superseded video PR #105 and create clean branch `fix/admin-gif-bird-flyover-20260919` from current `dev`.
+3. [x] Save detailed implementation plan at `docs/superpowers/plans/2026-09-19-admin-gif-bird-flyover.md`.
+4. [ ] RED: add GIF assembler, API/history, sequential-provider and admin UI tests.
+5. [ ] GREEN: implement Pillow GIF assembler and flyover API/provenance.
+6. [ ] GREEN: implement sequential worker and GIF persistence.
+7. [ ] GREEN: replace active orbit UI with Bird flyover GIF controls/history.
+8. [ ] Update docs and run exact-SHA CI.
+9. [ ] Review diff, merge to `dev`, verify post-merge CI.
