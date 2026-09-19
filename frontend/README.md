@@ -37,6 +37,7 @@ Demo/sandbox generation в production-клиенте не используетс
 
 - тарифами и фискальными настройками YooKassa;
 - стоимостью генераций, AI-моделями, параметрами и prompt templates;
+- AI Sandbox и дешёвым Bird flyover GIF: последовательные image-to-image keyframes + локальная интерполяция, без video-модели; legacy 360° WebP остаются только в истории;
 - модерацией и порядком опубликованных пользователями работ в Ideas;
 - пользователями и credit ledger;
 - платежами, reconciliation и полным refund;
