@@ -256,3 +256,35 @@ No new telemetry is required for this client-only interaction. The fullscreen UI
 4. [x] Run frontend typecheck, production build, and Playwright E2E in CI; frontend job green with 18/18 E2E passing.
 5. [x] Review the exact PR diff and exact-SHA CI result (CI run #35134139926 green on `96154943f480f14da4436dd5e1863f41f08e1571`).
 6. [ ] Merge to `dev` only after required checks are green.
+
+
+## Active work — real architectural drone flyover video
+
+- Baseline `dev`: `5ee840c1d7232a5ababc98555b504840cced9799`.
+- The existing admin orbit experiment creates independent image-to-image views and stitches them into animated WebP. That architecture cannot produce the requested continuous bird/drone flight.
+- The active replacement path will use one Nexus image-to-video task from the completed Sandbox still. Legacy orbit rows remain readable in history but the admin UI will no longer promote creation of new orbit WebP loops.
+
+### User outcome
+
+An operator can turn a completed architectural still into a single continuous MP4 drone flyover: elevated approach, smooth pass over/across the house, and a gentle exit while preserving the exact architecture and site.
+
+### Acceptance criteria
+
+1. Add admin-only `POST /admin/generation/flyover` using a completed Admin AI Sandbox still as the source.
+2. Use one Nexus image-to-video task, never independent orbit frames, for the active flyover path.
+3. Server-owned prompt explicitly requests continuous drone translation/parallax and forbids in-place 360 spin, cuts, morphing, redesign, or object motion.
+4. Persist the result as `video/mp4` with video asset semantics and no image feed preview.
+5. Keep credits at zero and skip Telegram delivery for this admin experiment.
+6. Preserve legacy `orbit` history/results without offering the broken orbit builder as the main admin action.
+7. Admin UI renders the completed flyover in a native video player.
+8. Provider/video timeout and media-size limits are explicit and bounded.
+9. Unit, integration, migration, frontend typecheck/build, and relevant E2E gates are green before merge.
+
+### Execution plan
+
+1. [x] Audit current orbit worker, Nexus provider, asset/media contracts, and official Nexus image-to-video contract.
+2. [x] Add failing provider/admin contract tests and verify expected red CI (#746).
+3. [ ] Implement video provider path, flyover provenance/API, MP4 storage, and migration.
+4. [ ] Replace orbit builder UI with flyover controls/player while retaining legacy history.
+5. [ ] Extend integration coverage through completed MP4 result and audit/history.
+6. [ ] Run exact-SHA CI, review diff, and merge only after full green.
