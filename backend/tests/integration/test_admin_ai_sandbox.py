@@ -404,6 +404,18 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
         assert orbit_entries[0]["details"]["source_generation_id"] == str(generation_id)
         assert orbit_entries[0]["details"]["frame_count"] == 6
 
+        flyover_entries = [
+            item
+            for item in final_audit.json()
+            if item["action"] == "generation.flyover_gif.create"
+            and item["entity_id"] == str(flyover_id)
+        ]
+        assert len(flyover_entries) == 1
+        assert flyover_entries[0]["details"]["source_generation_id"] == str(generation_id)
+        assert flyover_entries[0]["details"]["keyframe_count"] == 6
+        assert flyover_entries[0]["details"]["inbetween_frames"] == 3
+        assert flyover_entries[0]["details"]["frame_duration_ms"] == 120
+
 
         # A concurrent first-use race can leave more than one hidden sandbox project.
         # History must aggregate all matching projects rather than hide one branch.
