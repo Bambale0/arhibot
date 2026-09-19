@@ -256,3 +256,45 @@ No new telemetry is required for this client-only interaction. The fullscreen UI
 4. [x] Run frontend typecheck, production build, and Playwright E2E in CI; frontend job green with 18/18 E2E passing.
 5. [x] Review the exact PR diff and exact-SHA CI result (CI run #35134139926 green on `96154943f480f14da4436dd5e1863f41f08e1571`).
 6. [ ] Merge to `dev` only after required checks are green.
+
+
+## Active work — low-cost bird flyover GIF
+
+- Baseline `dev`: `5ee840c1d7232a5ababc98555b504840cced9799`.
+- Customer clarification: keep the deliverable as GIF/animated image for cost; the defect is the current 360° turntable camera path, not the output container.
+- Root cause: current `admin_orbit` generates independent views around a circle from one source image, then stitches them. That cannot read as continuous bird flight and amplifies inter-frame geometry drift.
+- Implementation plan: `docs/superpowers/plans/2026-09-19-bird-flyover-gif.md`.
+
+### User outcome
+
+An admin can turn a completed AI Sandbox still into a low-cost bird/drone flyover GIF: the camera approaches from above, passes over/across the house, and exits beyond it. No video model is invoked.
+
+### Acceptance criteria
+
+1. Keep the output animated image/GIF; 0 video calls.
+2. Generate 6 sequential keyframes by default; each generated keyframe becomes the next provider reference.
+3. Use a fixed non-circular flyover trajectory and explicitly forbid 360 orbit/turntable/morph/redesign.
+4. Add 3 locally interpolated in-between frames per transition by default.
+5. Persist final output as `image/gif`; legacy orbit WebP stays readable in history.
+6. Keep AuRoom credits at 0 and Telegram delivery skipped for the admin experiment.
+7. Replace the active 360 builder UI with flyover GIF controls; public feed/client generation remains untouched.
+8. Exact-head backend/integration/frontend CI must be green before integration.
+
+### No-hardcode / configuration decisions
+
+- Camera trajectory is server-owned product logic, not operator-provided provider fields.
+- Keyframe count, in-between count and duration are bounded request parameters with safe defaults.
+- Existing Nexus image-generation adapter remains the only provider path; no image-to-video model/config is added.
+
+### Execution plan
+
+1. [x] Read repo `.agents` planning/TDD/debugging/verification skills and inspect the existing orbit implementation.
+2. [x] Write and commit the implementation plan before code.
+3. [ ] Add failing GIF interpolation/encoding tests and verify RED.
+4. [ ] Implement local GIF builder and verify GREEN.
+5. [ ] Add failing admin flyover-gif API/history tests and verify RED.
+6. [ ] Implement admin request/provenance/API.
+7. [ ] Add failing sequential worker assertions and verify RED.
+8. [ ] Implement previous-frame chaining, transient cleanup and final GIF assembly.
+9. [ ] Add failing admin UI E2E and implement the flyover controls.
+10. [ ] Run exact-head CI, diff review, update ledger, and prepare PR.
