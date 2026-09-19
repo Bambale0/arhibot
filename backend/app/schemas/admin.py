@@ -279,13 +279,48 @@ class AdminAiOrbitCreate(BaseModel):
         return self
 
 
+class AdminAiFlyoverGifCreate(BaseModel):
+    source_generation_id: UUID
+    model_name: str = Field(min_length=1, max_length=120)
+    prompt: str = Field(default="", max_length=2000)
+    params: dict[str, Any] = Field(default_factory=dict)
+    keyframe_count: int = Field(default=6, ge=4, le=8)
+    inbetween_frames: int = Field(default=3, ge=0, le=5)
+    frame_duration_ms: int = Field(default=90, ge=50, le=500)
+
+    @field_validator("model_name")
+    @classmethod
+    def strip_flyover_model(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
+
+    @field_validator("prompt")
+    @classmethod
+    def strip_flyover_prompt(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def protect_provider_fields(self) -> "AdminAiFlyoverGifCreate":
+        reserved = {"model_name", "prompt", "image_url", "image_urls"}
+        conflict = reserved.intersection(self.params)
+        if conflict:
+            raise ValueError(
+                f"Flyover params cannot override provider fields: {', '.join(sorted(conflict))}"
+            )
+        return self
+
+
 class AdminAiHistoryItem(BaseModel):
-    kind: Literal["sandbox", "orbit"]
+    kind: Literal["sandbox", "orbit", "flyover_gif"]
     generation: GenerationResponse
     prompt: str
     params: dict[str, Any] = Field(default_factory=dict)
     frame_count: int | None = None
     frame_duration_ms: int | None = None
+    keyframe_count: int | None = None
+    inbetween_frames: int | None = None
 
 
 class GenerationRuntimeUpdate(BaseModel):
