@@ -58,3 +58,33 @@ def test_nexus_model_params_cannot_override_prompt_model_or_reference() -> None:
     assert params["prompt"] == "canonical prompt"
     assert params["image_urls"] == ["https://media.example.com/base.png"]
     assert params["steps"] == 24
+
+
+def test_nexus_video_params_bind_start_image_for_kling_motion() -> None:
+    params = NexusImageProvider._build_video_params(
+        model_name="kling-v2.6-motion-1080p",
+        prompt="smooth architectural drone flyover",
+        image_url="https://media.example.com/base.png",
+        duration_seconds=8,
+        model_params={
+            "model_name": "forged-model",
+            "prompt": "forged prompt",
+            "image_url": "https://evil.example.com/other.png",
+            "duration": 5,
+            "aspect_ratio": "16:9",
+        },
+    )
+
+    assert params["model_name"] == "kling-v2.6-motion-1080p"
+    assert params["prompt"] == "smooth architectural drone flyover"
+    assert params["image_url"] == "https://media.example.com/base.png"
+    assert params["duration"] == 8
+    assert params["aspect_ratio"] == "16:9"
+
+
+def test_nexus_extracts_completed_video_url() -> None:
+    url = NexusImageProvider._extract_video_url(
+        {"status": "completed"},
+        {"video_url": "https://cdn.example.com/flyover.mp4"},
+    )
+    assert url == "https://cdn.example.com/flyover.mp4"
