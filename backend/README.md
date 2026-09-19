@@ -241,3 +241,16 @@ queued -> processing -> completed | failed
 ```
 
 Provider получает публичные asset URLs, а готовые изображения backend скачивает в тот же локальный media storage и регистрирует как `generation_output` assets.
+
+
+## Admin bird flyover GIF
+
+В AI Sandbox администратор может превратить готовый still-render в дешёвый bird/drone flyover без video-модели:
+
+1. исходный still считается первым keyframe;
+2. worker последовательно создаёт следующие keyframes через существующий Nexus image-generation path;
+3. каждый новый keyframe становится reference image для следующего, поэтому камера движется по одной траектории, а не собирает независимые 360° ракурсы;
+4. между соседними keyframes Pillow локально строит промежуточные blended frames;
+5. итог сохраняется как `image/gif`.
+
+Дефолтный preset: 6 keyframes, 3 локальных промежуточных кадра на переход, 90 мс на итоговый кадр. Серверный prompt задаёт approach → roof pass → beyond-house → exit и запрещает 360° orbit/turntable, morphing и redesign. Старые animated WebP orbit-результаты остаются читаемыми в истории, но новый admin action их больше не создаёт.
