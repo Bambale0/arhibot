@@ -15,10 +15,22 @@ from app.core.resilience import (
 )
 
 
+SUPPORTED_FLYOVER_VIDEO_MODELS = frozenset({
+    "kling-v2.6-motion-720p",
+    "kling-v2.6-motion-1080p",
+})
+
+
 @dataclass(frozen=True, slots=True)
 class NexusImageResult:
     task_id: str
     image_url: str
+
+
+@dataclass(frozen=True, slots=True)
+class NexusVideoResult:
+    task_id: str
+    video_url: str
 
 
 class NexusProviderError(RuntimeError):
@@ -34,6 +46,7 @@ class NexusImageProvider:
             raise NexusProviderError("NEXUS_API_KEY is not configured", retryable=False)
         self.base_url = settings.nexus_base_url.rstrip("/")
         self.timeout_seconds = settings.nexus_task_timeout_seconds
+        self.video_timeout_seconds = settings.nexus_video_task_timeout_seconds
         self.poll_interval_seconds = settings.nexus_poll_interval_seconds
         self.breaker = get_circuit_breaker(
             'nexus',
@@ -180,6 +193,178 @@ class NexusImageProvider:
                 f"Nexus task timed out after {effective_timeout:g}s",
                 retryable=True,
             )
+
+    async def generate_video(
+        self,
+        *,
+        model_name: str,
+        prompt: str,
+        image_url: str,
+        duration_seconds: int,
+        model_params: dict[str, object] | None,
+        idempotency_key: str,
+    ) -> NexusVideoResult:
+        deadline = monotonic() + self.video_timeout_seconds
+        params = self._build_video_params(
+            model_name=model_name,
+            prompt=prompt,
+            image_url=image_url,
+            duration_seconds=duration_seconds,
+            model_params=model_params,
+        )
+
+        headers = {**self.headers, "Idempotency-Key": idempotency_key}
+        async with httpx.AsyncClient(timeout=self.http_timeout) as client:
+            try:
+                response = await request_with_resilience(
+                    lambda: client.post(
+                        f"{self.base_url}/generate",
+                        headers=headers,
+                        json={"params": params},
+                    ),
+                    dependency="nexus",
+                    operation="create_video_generation",
+                    breaker=self.breaker,
+                    policy=self.retry_policy,
+                    deadline_monotonic=deadline,
+                )
+            except CircuitOpenError as exc:
+                raise NexusProviderError("Nexus is temporarily unavailable", retryable=False) from exc
+            except (httpx.HTTPError, TimeoutError) as exc:
+                raise NexusProviderError("Nexus video generation request failed", retryable=True) from exc
+
+            if response.status_code >= 400:
+                detail = self._safe_error(response)
+                retryable = response.status_code >= 500 or response.status_code in {408, 429}
+                raise NexusProviderError(
+                    f"Nexus video create failed ({response.status_code}): {detail}",
+                    retryable=retryable,
+                )
+
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise NexusProviderError(
+                    "Nexus returned an invalid video create-task response",
+                    retryable=True,
+                ) from exc
+            immediate_url = self._extract_video_url(payload, payload.get("result") or {})
+            task_id = str(payload.get("task_id") or "").strip()
+            if immediate_url:
+                return NexusVideoResult(task_id=task_id or "sync", video_url=immediate_url)
+            if not task_id:
+                raise NexusProviderError(
+                    "Nexus video response did not include task_id or video URL",
+                    retryable=True,
+                )
+
+            while monotonic() < deadline:
+                await asyncio.sleep(self.poll_interval_seconds)
+                try:
+                    task_response = await request_with_resilience(
+                        lambda: client.get(
+                            f"{self.base_url}/tasks/{task_id}",
+                            headers=self.headers,
+                        ),
+                        dependency="nexus",
+                        operation="poll_video_generation",
+                        breaker=self.breaker,
+                        policy=self.retry_policy,
+                        deadline_monotonic=deadline,
+                    )
+                except CircuitOpenError as exc:
+                    raise NexusProviderError("Nexus is temporarily unavailable", retryable=False) from exc
+                except TimeoutError as exc:
+                    raise NexusProviderError(
+                        f"Nexus video polling timed out after {self.video_timeout_seconds:g}s",
+                        retryable=True,
+                    ) from exc
+                except httpx.HTTPError as exc:
+                    raise NexusProviderError("Nexus video polling failed", retryable=True) from exc
+
+                if task_response.status_code >= 400:
+                    detail = self._safe_error(task_response)
+                    retryable = (
+                        task_response.status_code >= 500
+                        or task_response.status_code in {408, 429}
+                    )
+                    raise NexusProviderError(
+                        f"Nexus video polling failed ({task_response.status_code}): {detail}",
+                        retryable=retryable,
+                    )
+
+                try:
+                    task = task_response.json()
+                except ValueError as exc:
+                    raise NexusProviderError(
+                        "Nexus returned an invalid video task-status response",
+                        retryable=True,
+                    ) from exc
+                status = str(task.get("status") or "").lower()
+                if status == "completed":
+                    result = task.get("result") or {}
+                    video_url = self._extract_video_url(task, result)
+                    if not video_url:
+                        raise NexusProviderError(
+                            "Nexus video task completed without video URL",
+                            retryable=True,
+                        )
+                    return NexusVideoResult(task_id=task_id, video_url=video_url)
+                if status == "failed":
+                    error = task.get("error") or "provider video task failed"
+                    raise NexusProviderError(
+                        f"Nexus video task failed: {error}",
+                        retryable=True,
+                    )
+
+            raise NexusProviderError(
+                f"Nexus video task timed out after {self.video_timeout_seconds:g}s",
+                retryable=True,
+            )
+
+    @staticmethod
+    def _build_video_params(
+        *,
+        model_name: str,
+        prompt: str,
+        image_url: str,
+        duration_seconds: int,
+        model_params: dict[str, object] | None,
+    ) -> dict[str, object]:
+        if model_name not in SUPPORTED_FLYOVER_VIDEO_MODELS:
+            raise ValueError(f"Unsupported flyover video model: {model_name}")
+        if not 5 <= duration_seconds <= 10:
+            raise ValueError("Flyover video duration must be between 5 and 10 seconds.")
+        reserved = {
+            "model_name",
+            "prompt",
+            "image_url",
+            "image_urls",
+            "start_image_url",
+            "end_image_url",
+            "duration",
+        }
+        params = {
+            key: value
+            for key, value in (model_params or {}).items()
+            if key not in reserved
+        }
+        params["model_name"] = model_name
+        params["prompt"] = prompt
+        params["image_url"] = image_url
+        params["duration"] = duration_seconds
+        return params
+
+    @staticmethod
+    def _extract_video_url(task: dict, result: object) -> str | None:
+        candidates: list[object] = []
+        if isinstance(result, dict):
+            candidates.append(result.get("video_url"))
+        candidates.append(task.get("video_url"))
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
+                return candidate
+        return None
 
     @staticmethod
     def _build_params(
