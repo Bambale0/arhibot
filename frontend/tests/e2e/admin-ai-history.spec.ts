@@ -84,7 +84,8 @@ async function json(route:Route, data:unknown, status=200) {
 }
 
 // Regression: persisted history must survive a full Mini App reload.
-test('admin AI history survives reload and an older still can be reused for 360', async ({ page }) => {
+test('admin AI history survives reload and an older still can launch a real flyover', async ({ page }) => {
+  let submittedFlyover:Record<string,unknown>|null=null
   await page.addInitScript(() => {
     sessionStorage.setItem('auroom.access_token','e2e')
       })
@@ -106,6 +107,10 @@ test('admin AI history survives reload and an older still can be reused for 360'
       updated_at:now,
     })
     if(path.endsWith('/admin/generation/sandbox/history')) return json(route,history)
+    if(path.endsWith('/admin/generation/flyover')&&method==='POST') {
+      submittedFlyover=req.postDataJSON() as Record<string,unknown>
+      return json(route,{...olderStill,id:'55555555-5555-4555-8555-555555555555',status:'queued',output_asset:null,started_at:null,completed_at:null})
+    }
     if(path.endsWith('/admin/generation')) return json(route,{
       primary_model:'nano-banana-pro',
       fallback_model:'gpt-image-2',
@@ -149,8 +154,18 @@ test('admin AI history survives reload and an older still can be reused for 360'
   await expect(page.getByText('Older still prompt',{exact:true})).toBeVisible()
 
   const olderCard=page.locator('article').filter({hasText:'Older still prompt'})
-  await olderCard.getByRole('button',{name:'Использовать для 360°'}).click()
-  await expect(olderCard.getByRole('button',{name:'Выбран для 360°'})).toBeVisible()
+  await olderCard.getByRole('button',{name:'Использовать для пролёта'}).click()
+  await expect(olderCard.getByRole('button',{name:'Выбран для пролёта'})).toBeVisible()
   await expect(page.getByLabel('Nexus model ID')).toHaveValue('gpt-image-2')
   await expect(page.getByLabel('Prompt')).toHaveValue('Older still prompt')
+  await expect(page.getByRole('heading',{name:'Drone flyover video'})).toBeVisible()
+  await expect(page.getByLabel('Video model')).toHaveValue('kling-v2.6-motion-1080p')
+  await page.getByRole('button',{name:'Сгенерировать пролёт'}).click()
+  await expect.poll(()=>submittedFlyover).not.toBeNull()
+  expect(submittedFlyover).toMatchObject({
+    source_generation_id:olderStill.id,
+    model_name:'kling-v2.6-motion-1080p',
+    duration_seconds:8,
+    params:{aspect_ratio:'16:9'},
+  })
 })
