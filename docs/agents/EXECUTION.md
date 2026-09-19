@@ -290,11 +290,11 @@ An admin can turn a completed AI Sandbox still into a low-cost bird/drone flyove
 
 1. [x] Read repo `.agents` planning/TDD/debugging/verification skills and inspect the existing orbit implementation.
 2. [x] Write and commit the implementation plan before code.
-3. [ ] Add failing GIF interpolation/encoding tests and verify RED.
-4. [ ] Implement local GIF builder and verify GREEN.
-5. [ ] Add failing admin flyover-gif API/history tests and verify RED.
-6. [ ] Implement admin request/provenance/API.
-7. [ ] Add failing sequential worker assertions and verify RED.
-8. [ ] Implement previous-frame chaining, transient cleanup and final GIF assembly.
-9. [ ] Add failing admin UI E2E and implement the flyover controls.
-10. [ ] Run exact-head CI, diff review, update ledger, and prepare PR.
+3. [x] Add failing GIF interpolation/encoding tests and verify RED (CI #785: missing `build_flyover_gif`).
+4. [x] Implement local GIF builder and verify GREEN (CI #786 full green).
+5. [x] Add failing admin flyover-gif API/history tests and verify RED (CI #787: endpoint 404).
+6. [x] Implement admin request/provenance/API; integration contract passes.
+7. [x] Add failing sequential worker assertions and verify RED (CI #792: 0 provider calls).
+8. [x] Implement previous-frame chaining, transient cleanup and final GIF assembly; integration passed on exact head.
+9. [x] Add failing admin UI E2E (CI #794: old 360 button) and implement flyover controls.
+10. [ ] Run final exact-head CI, diff review, update ledger, and prepare PR. Backend tests/integration are green on CI #797; its frontend job was blocked before typecheck by an external npm audit 400 and is being revalidated on the fresh docs head.
