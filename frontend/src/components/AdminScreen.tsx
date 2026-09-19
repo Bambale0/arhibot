@@ -564,6 +564,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
           <div><small>{formatDate(flyoverGeneration.completed_at||flyoverGeneration.started_at||flyoverGeneration.created_at)}</small></div>
         </article></div>}
       </div>}
+    </div>
     <div className="admin-subpanel">
       <div className="admin-panel-title"><div><h3>История AI Sandbox</h3><p>Still, новые flyover-видео и старые legacy 360° WebP сохраняются после обновления страницы. Готовый still можно снова выбрать источником для пролёта.</p></div><button type="button" className="secondary-button" onClick={()=>void refreshSandboxHistory()}>Обновить историю</button></div>
       {historyLoading
