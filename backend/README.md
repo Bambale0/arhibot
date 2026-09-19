@@ -241,3 +241,18 @@ queued -> processing -> completed | failed
 ```
 
 Provider получает публичные asset URLs, а готовые изображения backend скачивает в тот же локальный media storage и регистрирует как `generation_output` assets.
+
+
+## Admin Bird flyover GIF
+
+Webadmin AI Sandbox can turn a completed Sandbox still into a low-cost animated bird/drone flyover without a video provider.
+
+Pipeline:
+
+1. the completed Sandbox still is keyframe 0;
+2. the worker generates the remaining keyframes sequentially with Nexus image-to-image;
+3. every new provider call uses the immediately previous provider result URL as its image reference;
+4. server-owned prompts move the camera forward through an approach, roof pass, beyond-house pass and rising exit while preserving the exact architecture/site;
+5. Pillow inserts local blended in-between frames and saves the result as `image/gif`.
+
+Default admin preset: 6 total keyframes, 3 local in-between frames per transition, 120 ms per GIF frame. This means 5 new image-generation calls and zero video-generation calls. The legacy 360° animated-WebP orbit endpoint/history remains readable for old runs but is no longer the primary admin creation flow.
