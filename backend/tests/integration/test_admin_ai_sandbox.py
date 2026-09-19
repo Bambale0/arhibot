@@ -221,6 +221,74 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
             assert flyover_row.telegram_delivery_status == "skipped"
             assert flyover_row.prompt.startswith("AUROOM_ADMIN_FLYOVER_GIF_V1\n")
 
+        provider_calls.clear()
+
+        async def fake_flyover_generate(self, **kwargs):  # noqa: ANN001, ARG001
+            provider_calls.append(kwargs)
+            index = len(provider_calls)
+            return NexusImageResult(
+                task_id=f"flyover-task-{index}",
+                image_url=f"https://cdn.example.test/flyover-{index}.png",
+            )
+
+        async def fake_flyover_download(url, settings):  # noqa: ANN001, ARG001
+            index = int(url.rsplit("-", 1)[1].split(".", 1)[0])
+            return _png(index)
+
+        monkeypatch.setattr(NexusImageProvider, "generate", fake_flyover_generate)
+        monkeypatch.setattr(generation_worker, "_download_image", fake_flyover_download)
+
+        await generation_worker.process_generation(flyover_id, get_settings())
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(flyover_id))
+
+        assert len(provider_calls) == 5
+        assert {call["model_name"] for call in provider_calls} == {
+            "nexus/flyover-image-model"
+        }
+        assert {call["model_params"]["guidance"] for call in provider_calls} == {4}
+        assert "/tmp/flyover/" not in provider_calls[0]["image_url"]
+        assert all(
+            "/api/v1/media/tmp/flyover/" in call["image_url"]
+            for call in provider_calls[1:]
+        )
+        assert len({call["image_url"] for call in provider_calls}) == 5
+
+        assert "approach" in provider_calls[0]["prompt"].lower()
+        assert "roof" in provider_calls[2]["prompt"].lower()
+        assert "beyond" in provider_calls[3]["prompt"].lower()
+        assert "exit" in provider_calls[4]["prompt"].lower()
+        assert all(
+            "no 360 orbit" in call["prompt"].lower()
+            and "turntable" in call["prompt"].lower()
+            and "preserve the exact house" in call["prompt"].lower()
+            for call in provider_calls
+        )
+        assert "Keep the warm sunset mood" in provider_calls[-1]["prompt"]
+
+        flyover_completed = await client.get(
+            f"/api/v1/generations/{flyover_id}",
+            headers=admin_headers,
+        )
+        assert flyover_completed.status_code == 200, flyover_completed.text
+        flyover_completed_body = flyover_completed.json()
+        assert flyover_completed_body["status"] == "completed"
+        assert flyover_completed_body["credits_charged"] == 0
+        assert flyover_completed_body["model_name"] == "nexus/flyover-image-model"
+        assert flyover_completed_body["output_asset"]["mime_type"] == "image/gif"
+
+        flyover_media = await client.get(flyover_completed_body["output_asset"]["url"])
+        assert flyover_media.status_code == 200, flyover_media.text
+        with Image.open(BytesIO(flyover_media.content)) as animation:
+            assert animation.format == "GIF"
+            assert animation.is_animated is True
+            assert animation.n_frames == 21
+
+        temp_root = (
+            generation_worker.LocalMediaStorage(get_settings())
+            .absolute_path(f"tmp/flyover/{flyover_id}")
+        )
+        assert temp_root.exists() is False
+
 
         orbit_denied = await client.post(
             "/api/v1/admin/generation/orbit",
