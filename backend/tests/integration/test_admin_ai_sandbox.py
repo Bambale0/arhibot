@@ -24,7 +24,7 @@ from app.db.session import get_session_factory  # noqa: E402
 from app.domain.generations.enums import GenerationType  # noqa: E402
 from app.domain.users.enums import UserRole  # noqa: E402
 from app.main import app  # noqa: E402
-from app.providers.nexus import NexusImageProvider, NexusImageResult  # noqa: E402
+from app.providers.nexus import NexusImageProvider, NexusImageResult, NexusVideoResult  # noqa: E402
 from app.services.generation_service import GENERATION_QUEUE_KEY  # noqa: E402
 from app.workers import generation_worker  # noqa: E402
 
@@ -38,6 +38,11 @@ def _png(index: int = 0) -> bytes:
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def _mp4() -> bytes:
+    # Minimal ISO BMFF-shaped payload for storage/download contract tests.
+    return b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"flyover-video"
 
 
 async def _register(
@@ -222,6 +227,53 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
             assert flyover_row.telegram_delivery_status == "skipped"
             assert flyover_row.prompt.startswith("AUROOM_ADMIN_FLYOVER_V1\n")
 
+        provider_calls.clear()
+
+        async def fake_flyover_generate(self, **kwargs):  # noqa: ANN001, ARG001
+            provider_calls.append(kwargs)
+            return NexusVideoResult(
+                task_id="flyover-task",
+                video_url="https://cdn.example.test/flyover.mp4",
+            )
+
+        async def fake_flyover_download(url, settings):  # noqa: ANN001, ARG001
+            assert url == "https://cdn.example.test/flyover.mp4"
+            return _mp4()
+
+        monkeypatch.setattr(NexusImageProvider, "generate_video", fake_flyover_generate)
+        monkeypatch.setattr(generation_worker, "_download_video", fake_flyover_download)
+
+        flyover_id = UUID(flyover_body["id"])
+        await generation_worker.process_generation(flyover_id, get_settings())
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(flyover_id))
+
+        assert len(provider_calls) == 1
+        flyover_call = provider_calls[0]
+        assert flyover_call["model_name"] == "kling-v2.6-motion-1080p"
+        assert flyover_call["image_url"]
+        assert flyover_call["duration_seconds"] == 8
+        assert flyover_call["model_params"] == {"aspect_ratio": "16:9"}
+        assert "single continuous photorealistic architectural drone flyover" in flyover_call["prompt"]
+        assert "No 360 orbit" in flyover_call["prompt"]
+        assert "Keep the exact warm sunset lighting" in flyover_call["prompt"]
+
+        flyover_completed = await client.get(
+            f"/api/v1/generations/{flyover_id}",
+            headers=admin_headers,
+        )
+        assert flyover_completed.status_code == 200, flyover_completed.text
+        flyover_completed_body = flyover_completed.json()
+        assert flyover_completed_body["status"] == "completed"
+        assert flyover_completed_body["credits_charged"] == 0
+        assert flyover_completed_body["output_asset"]["type"] == "video"
+        assert flyover_completed_body["output_asset"]["mime_type"] == "video/mp4"
+        assert flyover_completed_body["output_asset"]["preview_url"] is None
+
+        flyover_media = await client.get(flyover_completed_body["output_asset"]["url"])
+        assert flyover_media.status_code == 200, flyover_media.text
+        assert flyover_media.headers["content-type"].startswith("video/mp4")
+        assert flyover_media.content == _mp4()
+
 
         orbit_denied = await client.post(
             "/api/v1/admin/generation/orbit",
@@ -343,6 +395,16 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
         assert orbit_entries[0]["details"]["source_generation_id"] == str(generation_id)
         assert orbit_entries[0]["details"]["frame_count"] == 6
 
+        flyover_entries = [
+            item
+            for item in final_audit.json()
+            if item["action"] == "generation.flyover.create"
+            and item["entity_id"] == str(flyover_id)
+        ]
+        assert len(flyover_entries) == 1
+        assert flyover_entries[0]["details"]["source_generation_id"] == str(generation_id)
+        assert flyover_entries[0]["details"]["duration_seconds"] == 8
+
 
         # A concurrent first-use race can leave more than one hidden sandbox project.
         # History must aggregate all matching projects rather than hide one branch.
@@ -384,7 +446,7 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
         )
         assert history_response.status_code == 200, history_response.text
         history = history_response.json()
-        assert [item["kind"] for item in history] == ["sandbox", "orbit", "sandbox"]
+        assert [item["kind"] for item in history] == ["sandbox", "orbit", "flyover", "sandbox"]
         duplicate_history = history[0]
         assert duplicate_history["generation"]["id"] == str(duplicate_generation_id)
         assert duplicate_history["prompt"] == "Duplicate hidden project"
@@ -398,7 +460,16 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
         assert orbit_history["frame_count"] == 6
         assert orbit_history["frame_duration_ms"] == 160
 
-        sandbox_history = history[2]
+        flyover_history = history[2]
+        assert flyover_history["generation"]["id"] == str(flyover_id)
+        assert flyover_history["generation"]["prompt"] == "Keep the exact warm sunset lighting"
+        assert flyover_history["prompt"] == "Keep the exact warm sunset lighting"
+        assert flyover_history["params"] == {"aspect_ratio": "16:9"}
+        assert flyover_history["duration_seconds"] == 8
+        assert flyover_history["frame_count"] is None
+        assert flyover_history["frame_duration_ms"] is None
+
+        sandbox_history = history[3]
         assert sandbox_history["generation"]["id"] == str(generation_id)
         assert sandbox_history["generation"]["prompt"] == (
             "Photorealistic compact house on a landscaped plot"
@@ -412,6 +483,7 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
         }
         assert sandbox_history["frame_count"] is None
         assert sandbox_history["frame_duration_ms"] is None
+        assert sandbox_history["duration_seconds"] is None
 
         limited_history = await client.get(
             "/api/v1/admin/generation/sandbox/history?limit=1",
