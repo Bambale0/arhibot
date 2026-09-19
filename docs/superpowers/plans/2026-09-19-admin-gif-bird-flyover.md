@@ -36,21 +36,21 @@
 - Produces: `build_flyover_gif(frame_bytes: list[bytes], *, inbetween_frames: int, duration_ms: int, max_pixels: int, max_side: int = 960) -> FlyoverGif`
 - `FlyoverGif` contains `data: bytes`, `width: int`, `height: int`, `frame_count: int`.
 
-- [ ] **Step 1: Write the failing GIF assembler tests**
+- [x] **Step 1: Write the failing GIF assembler tests**
 
 Cover: valid animated GIF signature/format, frame count formula `1 + (keyframes - 1) * (inbetween + 1)`, bounded dimensions, mixed input sizes, invalid/empty frames, invalid smoothing/duration, and no infinite GIF loop metadata.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `cd backend && pytest -q tests/test_image_flyover.py`
 
 Expected: FAIL because `app.image_flyover` does not exist.
 
-- [ ] **Step 3: Implement minimal Pillow assembler**
+- [x] **Step 3: Implement minimal Pillow assembler**
 
 Normalize frames to RGB and one target size, insert `Image.blend` frames between adjacent keyframes, quantize/save as GIF without a `loop=0` infinite-loop setting, and return metadata.
 
-- [ ] **Step 4: Run tests and verify GREEN**
+- [x] **Step 4: Run tests and verify GREEN**
 
 Run: `cd backend && pytest -q tests/test_image_flyover.py`
 
@@ -72,21 +72,21 @@ Expected: PASS.
 - Provenance: `GenerationOrigin.ADMIN_FLYOVER_GIF = "admin_flyover_gif"`.
 - Envelope prefix: `AUROOM_ADMIN_FLYOVER_GIF_V1\n`.
 
-- [ ] **Step 1: Add failing integration expectations**
+- [x] **Step 1: Add failing integration expectations**
 
 Assert regular users receive 403; completed Admin Sandbox still is required; creation is 202 with zero credits, Telegram delivery skipped and the new origin/prefix; history exposes `kind="flyover_gif"` and smoothing metadata.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run the focused integration test with the repository's PostgreSQL/Redis integration environment.
 
 Expected: 404 for the new endpoint / missing origin behavior.
 
-- [ ] **Step 3: Implement the minimal route/schema/service contract**
+- [x] **Step 3: Implement the minimal route/schema/service contract**
 
 Validate bounds: keyframes 4–8, in-betweens 0–5, duration 60–500 ms. Protect provider-owned params from operator override. Preserve old orbit endpoint/history for backward compatibility.
 
-- [ ] **Step 4: Verify GREEN for contract creation/history**
+- [x] **Step 4: Verify GREEN for contract creation/history**
 
 Run the focused integration test again.
 
@@ -100,19 +100,19 @@ Run the focused integration test again.
 - Consumes: flyover envelope from Task 2 and `build_flyover_gif` from Task 1.
 - Produces: GIF output asset with `type=image`, `mime_type=image/gif`, `original_filename=auroom-bird-flyover.gif`.
 
-- [ ] **Step 1: Add failing sequential-provider assertions**
+- [x] **Step 1: Add failing sequential-provider assertions**
 
 For 6 total keyframes, assert exactly 5 Nexus image calls. First call uses the Sandbox asset signed URL. Every later call uses the immediately prior Nexus result URL. Calls are sequential, not `asyncio.gather`. Prompts describe progressive flyover stages and explicitly reject turntable/orbit behavior.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run the focused integration test and confirm the current orbit implementation fails because it fans out from one source URL.
 
-- [ ] **Step 3: Implement sequential generation**
+- [x] **Step 3: Implement sequential generation**
 
 Parse the server envelope, iterate keyframes in order, generate/download one frame at a time, advance `reference_url = result.image_url`, assemble `[original, ...generated]` with `build_flyover_gif`, and persist GIF metadata without passing it through public JPEG/PNG/WebP upload validation.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Assert final downloadable media is GIF and animated, provider task ID is the last keyframe task, credits remain zero, and no video provider path/config is introduced.
 
@@ -128,19 +128,19 @@ Assert final downloadable media is GIF and animated, provider task ID is the las
 - Produces: `adminCreateGenerationFlyoverGif(...)`.
 - Admin history kinds: `sandbox | orbit | flyover_gif`.
 
-- [ ] **Step 1: Write failing Playwright expectations**
+- [x] **Step 1: Write failing Playwright expectations**
 
 The screen shows “Bird flyover GIF”, defaults 6 keyframes / 3 in-betweens / 120 ms, states “5 image calls · 0 video calls”, posts to `/admin/generation/flyover-gif`, previews the result with `<img>`, and labels old orbit records as legacy.
 
-- [ ] **Step 2: Verify RED in CI/front-end test environment**
+- [x] **Step 2: Verify RED in CI/front-end test environment**
 
 Expected: current UI still exposes “360° drone-orbit experiment”.
 
-- [ ] **Step 3: Implement minimal admin UI**
+- [x] **Step 3: Implement minimal admin UI**
 
 Reuse the existing visual structure and history polling. Remove new-orbit creation controls from the active UI; retain old orbit history rendering.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run typecheck/build and the focused Playwright test.
 
@@ -154,18 +154,18 @@ Run typecheck/build and the focused Playwright test.
 **Interfaces:**
 - Documents the real cost model: `keyframe_count - 1` image calls, zero video calls.
 
-- [ ] **Step 1: Update docs and ledger with final behavior**
+- [x] **Step 1: Update docs and ledger with final behavior**
 
 Document GIF output, sequential references, default cost profile, legacy orbit compatibility and no video dependency.
 
-- [ ] **Step 2: Run full repository CI on the exact PR head**
+- [x] **Step 2: Run full repository CI on the exact PR head**
 
 Required gates: backend tests, backend integration/migrations/recovery probes, frontend typecheck/build/critical Playwright.
 
-- [ ] **Step 3: Review PR diff**
+- [x] **Step 3: Review PR diff**
 
 Confirm no video model/config/migration code leaked in from superseded PR #105; no secrets; no unrelated changes.
 
-- [ ] **Step 4: Merge only after green exact-SHA CI**
+- [x] **Step 4: Merge only after green exact-SHA CI**
 
 Use squash merge to `dev` and verify post-merge CI.
