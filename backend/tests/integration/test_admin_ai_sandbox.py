@@ -186,6 +186,42 @@ async def test_admin_ai_sandbox_forces_selected_model_without_credits_or_runtime
         assert len(sandbox_entries) == 1
         assert sandbox_entries[0]["details"]["model_name"] == "nexus/experimental-image"
 
+        flyover_denied = await client.post(
+            "/api/v1/admin/generation/flyover",
+            headers=user_headers,
+            json={
+                "source_generation_id": str(generation_id),
+                "model_name": "kling-v2.6-motion-1080p",
+                "prompt": "",
+                "params": {"aspect_ratio": "16:9"},
+                "duration_seconds": 8,
+            },
+        )
+        assert flyover_denied.status_code == 403, flyover_denied.text
+
+        flyover_created = await client.post(
+            "/api/v1/admin/generation/flyover",
+            headers=admin_headers,
+            json={
+                "source_generation_id": str(generation_id),
+                "model_name": "kling-v2.6-motion-1080p",
+                "prompt": "Keep the exact warm sunset lighting",
+                "params": {"aspect_ratio": "16:9"},
+                "duration_seconds": 8,
+            },
+        )
+        assert flyover_created.status_code == 202, flyover_created.text
+        flyover_body = flyover_created.json()
+        assert flyover_body["credits_charged"] == 0
+        assert flyover_body["model_name"] == "kling-v2.6-motion-1080p"
+
+        async with get_session_factory()() as session:
+            flyover_row = await session.get(Generation, UUID(flyover_body["id"]))
+            assert flyover_row is not None
+            assert flyover_row.origin == "admin_flyover"
+            assert flyover_row.telegram_delivery_status == "skipped"
+            assert flyover_row.prompt.startswith("AUROOM_ADMIN_FLYOVER_V1\n")
+
 
         orbit_denied = await client.post(
             "/api/v1/admin/generation/orbit",
