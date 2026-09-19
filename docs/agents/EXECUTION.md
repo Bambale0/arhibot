@@ -300,9 +300,9 @@ The operator gets a low-cost GIF that reads as a bird/drone camera flight over t
 1. [x] Inspect `AGENTS.md`, repo `.agents` skills, mandatory external skill repositories, current orbit worker, admin contracts, animation helper and tests.
 2. [x] Close superseded video PR #105 and create clean branch `fix/admin-gif-bird-flyover-20260919` from current `dev`.
 3. [x] Save detailed implementation plan at `docs/superpowers/plans/2026-09-19-admin-gif-bird-flyover.md`.
-4. [ ] RED: add GIF assembler, API/history, sequential-provider and admin UI tests.
-5. [ ] GREEN: implement Pillow GIF assembler and flyover API/provenance.
-6. [ ] GREEN: implement sequential worker and GIF persistence.
-7. [ ] GREEN: replace active orbit UI with Bird flyover GIF controls/history.
-8. [ ] Update docs and run exact-SHA CI.
-9. [ ] Review diff, merge to `dev`, verify post-merge CI.
+4. [x] RED: added GIF assembler, API/history, sequential-provider and admin UI tests; CI #769 confirmed behavioral failures on missing endpoint/old UI.
+5. [x] GREEN: implemented Pillow GIF assembler and flyover API/provenance.
+6. [x] GREEN: implemented sequential worker chaining and GIF persistence.
+7. [x] GREEN: replaced active orbit UI with Bird flyover GIF controls/history.
+8. [in progress] Documentation updated; implementation CI #779 is green on `7f9ebef6bebe799724e511d8186bd8c532ae5d1f` (backend tests, backend integration/recovery probes, frontend build/E2E).
+9. [ ] Run exact-SHA CI on the documentation-complete head, review diff, merge to `dev`, verify post-merge CI.
