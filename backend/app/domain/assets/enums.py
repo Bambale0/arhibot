@@ -3,6 +3,7 @@ from enum import StrEnum
 
 class AssetType(StrEnum):
     IMAGE = "image"
+    VIDEO = "video"
 
 
 class AssetUploadPurpose(StrEnum):
