@@ -22,3 +22,4 @@ class GenerationOrigin(StrEnum):
     QUESTIONNAIRE_INITIAL = "questionnaire_initial"
     ADMIN_SANDBOX = "admin_sandbox"
     ADMIN_ORBIT = "admin_orbit"
+    ADMIN_FLYOVER = "admin_flyover"
