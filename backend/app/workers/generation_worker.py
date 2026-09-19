@@ -39,6 +39,7 @@ QUESTIONNAIRE_PROMPT_PREFIX = "AUROOM_RENDER_SPEC_V1"
 INITIAL_CONCEPT_PROMPT_PREFIX = "AUROOM_INITIAL_CONCEPT_V1"
 ADMIN_SANDBOX_PROMPT_PREFIX = "AUROOM_ADMIN_SANDBOX_V1\n"
 ADMIN_ORBIT_PROMPT_PREFIX = "AUROOM_ADMIN_ORBIT_V1\n"
+ADMIN_FLYOVER_PROMPT_PREFIX = "AUROOM_ADMIN_FLYOVER_V1\n"
 QUESTIONNAIRE_PROMPT_PREFIXES = (
     QUESTIONNAIRE_PROMPT_PREFIX,
     INITIAL_CONCEPT_PROMPT_PREFIX,
@@ -142,6 +143,75 @@ def _orbit_frame_prompt(extra_prompt: str, *, index: int, frame_count: int) -> s
         f"This frame is {index + 1} of {frame_count}; camera azimuth is approximately "
         f"{azimuth} degrees clockwise from the reference view. "
         "Do not add, remove, redesign or relocate anything. No text, labels or borders."
+    )
+    if extra_prompt:
+        prompt += f" Additional operator instruction: {extra_prompt}"
+    return prompt
+
+
+def _admin_flyover_request(
+    generation: Generation,
+    project: Project,
+) -> tuple[str, str, dict[str, object], int] | None:
+    if generation.origin != GenerationOrigin.ADMIN_FLYOVER.value:
+        return None
+    if not generation.prompt.startswith(ADMIN_FLYOVER_PROMPT_PREFIX):
+        raise ValueError("Admin flyover generation has an invalid envelope.")
+    if not bool((project.context or {}).get("admin_ai_sandbox")):
+        raise ValueError("Admin flyover envelope is outside the sandbox project.")
+    if generation.input_asset_id is None:
+        raise ValueError("Admin flyover source image is missing.")
+
+    model_name = (generation.model_name or "").strip()
+    if not model_name:
+        raise ValueError("Admin flyover model is missing.")
+
+    raw_payload = generation.prompt.removeprefix(ADMIN_FLYOVER_PROMPT_PREFIX)
+    try:
+        payload = loads(raw_payload)
+    except JSONDecodeError as exc:
+        raise ValueError("Admin flyover envelope is invalid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Admin flyover envelope must be an object.")
+
+    prompt = payload.get("prompt", "")
+    if not isinstance(prompt, str):
+        raise ValueError("Admin flyover prompt must be a string.")
+    params = payload.get("params", {})
+    if not isinstance(params, dict):
+        raise ValueError("Admin flyover params must be an object.")
+    conflict = {
+        "model_name",
+        "prompt",
+        "image_url",
+        "image_urls",
+        "start_image_url",
+        "end_image_url",
+        "duration",
+    }.intersection(params)
+    if conflict:
+        raise ValueError(
+            f"Admin flyover params cannot override provider fields: {', '.join(sorted(conflict))}"
+        )
+    duration_seconds = payload.get("duration_seconds")
+    if not isinstance(duration_seconds, int) or not 5 <= duration_seconds <= 10:
+        raise ValueError("Admin flyover duration must be between 5 and 10 seconds.")
+    return model_name, prompt.strip(), params, duration_seconds
+
+
+def _flyover_prompt(extra_prompt: str) -> str:
+    prompt = (
+        "Create one single continuous photorealistic architectural drone flyover from the "
+        "exact reference image. The camera starts at an elevated three-quarter aerial view "
+        "with the property readable, flies smoothly forward and slightly downward toward the "
+        "house, passes above and diagonally across the roof with natural parallax, then "
+        "continues beyond the house and gently rises for the exit. Move the camera through "
+        "space; do not spin in place. Preserve the exact house and site geometry, roof shape, "
+        "windows, doors, materials, object count, landscaping, lighting, weather and season. "
+        "No 360 orbit, no circular turntable, no cuts, no time-lapse, no zoom-only motion, "
+        "no object animation, no morphing, no redesign, no added or removed structures. "
+        "Keep the horizon stable, lens consistent, motion slow and cinematic, and drone "
+        "acceleration/deceleration physically smooth."
     )
     if extra_prompt:
         prompt += f" Additional operator instruction: {extra_prompt}"
@@ -266,6 +336,51 @@ async def _download_image(url: str, settings: Settings) -> bytes:
     raise RuntimeError("Generated image download did not produce a response")
 
 
+async def _download_video(url: str, settings: Settings) -> bytes:
+    limit = settings.max_video_size_bytes
+    current_url = await _validate_remote_image_url(url)
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(60.0),
+        follow_redirects=False,
+        trust_env=False,
+    ) as client:
+        for redirect_count in range(6):
+            async with client.stream("GET", current_url) as response:
+                _validate_connected_peer(response)
+                if response.is_redirect:
+                    if redirect_count >= 5:
+                        raise RuntimeError("Generated video exceeded redirect limit")
+                    location = response.headers.get("location")
+                    if not location:
+                        raise RuntimeError("Generated video redirect is missing Location")
+                    current_url = await _validate_remote_image_url(
+                        urljoin(str(response.url), location)
+                    )
+                    continue
+
+                response.raise_for_status()
+                content_length = response.headers.get("content-length")
+                if content_length:
+                    try:
+                        if int(content_length) > limit:
+                            raise RuntimeError("Generated video exceeds media size limit")
+                    except ValueError:
+                        pass
+
+                chunks: list[bytes] = []
+                received = 0
+                async for chunk in response.aiter_bytes():
+                    received += len(chunk)
+                    if received > limit:
+                        raise RuntimeError("Generated video exceeds media size limit")
+                    chunks.append(chunk)
+                data = b"".join(chunks)
+                if len(data) < 12 or data[4:8] != b"ftyp":
+                    raise RuntimeError("Generated video is not a valid MP4 file")
+                return data
+    raise RuntimeError("Generated video download did not produce a response")
+
+
 async def _generate_orbit_frames(
     *,
     provider: NexusImageProvider,
@@ -369,6 +484,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         try:
             sandbox_request = _admin_sandbox_request(generation, project)
             orbit_request = _admin_orbit_request(generation, project)
+            flyover_request = _admin_flyover_request(generation, project)
         except ValueError as exc:
             await session.rollback()
             await _mark_failed_and_refund(generation_id, exc)
@@ -383,7 +499,9 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             return
 
         admin_internal_generation = (
-            sandbox_request is not None or orbit_request is not None
+            sandbox_request is not None
+            or orbit_request is not None
+            or flyover_request is not None
         )
         admin_repository = AdminRepository(session)
         initial_concept_generation = (
@@ -450,7 +568,14 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         source_url = (
             asset_service.storage.signed_url(
                 input_asset.storage_path,
-                ttl_seconds=max(settings.media_url_ttl_seconds, settings.nexus_task_timeout_seconds + 120),
+                ttl_seconds=max(
+                    settings.media_url_ttl_seconds,
+                    (
+                        settings.nexus_video_task_timeout_seconds
+                        if flyover_request is not None
+                        else settings.nexus_task_timeout_seconds
+                    ) + 120,
+                ),
             )
             if input_asset is not None
             else None
@@ -468,6 +593,16 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 _orbit_frame_count,
                 _orbit_frame_duration_ms,
             ) = orbit_request
+            fallback_model = None
+            fallback_params = {}
+            primary_timeout_seconds = None
+        elif flyover_request is not None:
+            (
+                primary_model,
+                prompt,
+                primary_params,
+                _flyover_duration_seconds,
+            ) = flyover_request
             fallback_model = None
             fallback_params = {}
             primary_timeout_seconds = None
@@ -506,7 +641,23 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
     fallback_used = False
     provider_task_id: str | None = None
     try:
-        if orbit_request is not None:
+        video_output = False
+        if flyover_request is not None:
+            if source_url is None:
+                raise RuntimeError("Flyover generation requires a source image.")
+            _, flyover_extra_prompt, flyover_params, duration_seconds = flyover_request
+            result = await provider.generate_video(
+                model_name=model_name,
+                prompt=_flyover_prompt(flyover_extra_prompt),
+                image_url=source_url,
+                duration_seconds=duration_seconds,
+                model_params=flyover_params,
+                idempotency_key=f"auroom-{generation_id}-flyover",
+            )
+            provider_task_id = result.task_id
+            data = await _download_video(result.video_url, settings)
+            video_output = True
+        elif orbit_request is not None:
             if source_url is None or input_storage_path is None:
                 raise RuntimeError("Orbit generation requires a source image.")
             _, orbit_prompt, orbit_params, frame_count, frame_duration_ms = orbit_request
@@ -557,6 +708,8 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 )
             provider_task_id = result.task_id
             data = await _download_image(result.image_url, settings)
+        if video_output and composition_mode == "masked_edit":
+            raise RuntimeError("Flyover video cannot use masked edit composition.")
         if composition_mode == "masked_edit":
             if input_storage_path is None or edit_region is None:
                 raise RuntimeError(
@@ -591,27 +744,43 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 ProjectRepository(session),
                 settings,
             )
-            image = asset_service._validate_image(data)
             asset_id = uuid4()
             now = datetime.now(UTC)
-            relative_path = f"users/{generation.user_id}/{now:%Y/%m}/{asset_id}.{image.extension}"
-            await asset_service.storage.write(relative_path, image.data)
+            if video_output:
+                media_data = data
+                extension = "mp4"
+                mime_type = "video/mp4"
+                asset_type = AssetType.VIDEO
+                width = 0
+                height = 0
+                original_filename = "auroom-drone-flyover.mp4"
+            else:
+                image = asset_service._validate_image(data)
+                media_data = image.data
+                extension = image.extension
+                mime_type = image.mime_type
+                asset_type = AssetType.IMAGE
+                width = image.width
+                height = image.height
+                original_filename = (
+                    f"auroom-orbit.{image.extension}"
+                    if orbit_request is not None
+                    else f"auroom-{generation.type.value}.{image.extension}"
+                )
+            relative_path = f"users/{generation.user_id}/{now:%Y/%m}/{asset_id}.{extension}"
+            await asset_service.storage.write(relative_path, media_data)
 
             output = Asset(
                 id=asset_id,
                 user_id=generation.user_id,
                 project_id=generation.project_id,
-                type=AssetType.IMAGE,
+                type=asset_type,
                 purpose=AssetPurpose.GENERATION_OUTPUT,
-                original_filename=(
-                    f"auroom-orbit.{image.extension}"
-                    if orbit_request is not None
-                    else f"auroom-{generation.type.value}.{image.extension}"
-                ),
-                mime_type=image.mime_type,
-                size_bytes=len(image.data),
-                width=image.width,
-                height=image.height,
+                original_filename=original_filename,
+                mime_type=mime_type,
+                size_bytes=len(media_data),
+                width=width,
+                height=height,
                 storage_path=relative_path,
             )
             session.add(output)
@@ -628,12 +797,13 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 relative_path,
             )
             logger.info(
-                "Generation %s completed with %s%s%s%s",
+                "Generation %s completed with %s%s%s%s%s",
                 generation_id,
                 model_name,
                 " (fallback)" if fallback_used else "",
                 " (masked composite)" if composition_mode == "masked_edit" else "",
                 " (orbit loop)" if orbit_request is not None else "",
+                " (drone flyover video)" if flyover_request is not None else "",
             )
     except Exception as exc:
         logger.exception("Generation %s failed", generation_id)
@@ -651,7 +821,10 @@ async def _reconcile_database_jobs(settings: Settings) -> None:
     processing_raw = await redis_client.lrange(GENERATION_PROCESSING_KEY, 0, -1)
     redis_ids = {str(value) for value in [*queued_raw, *processing_raw]}
     stale_before = datetime.now(UTC) - timedelta(
-        seconds=max(int(settings.nexus_task_timeout_seconds) + 60, 300)
+        seconds=max(
+            int(settings.nexus_task_timeout_seconds),
+            int(settings.nexus_video_task_timeout_seconds),
+        ) + 60
     )
     recovered: list[str] = []
 
