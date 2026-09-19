@@ -4,12 +4,15 @@ import asyncio
 import ipaddress
 import logging
 import socket
+import shutil
+from io import BytesIO
 from datetime import UTC, datetime, timedelta
 from json import JSONDecodeError, loads
 from urllib.parse import urljoin, urlsplit
 from uuid import UUID, uuid4
 
 import httpx
+from PIL import Image, UnidentifiedImageError
 from sqlalchemy import select
 
 from app.core.config import Settings, get_settings
@@ -21,7 +24,7 @@ from app.db.session import dispose_engine, get_session_factory
 from app.domain.assets.enums import AssetPurpose, AssetType
 from app.domain.generations.enums import GenerationOrigin, GenerationStatus
 from app.image_compositor import compose_masked_edit
-from app.image_orbit import build_orbit_animation
+from app.image_orbit import build_flyover_gif, build_orbit_animation
 from app.prompt_builders.generation import build_generation_prompt
 from app.providers.nexus import NexusImageProvider, NexusProviderError
 from app.repositories.admin import AdminRepository
@@ -39,6 +42,7 @@ QUESTIONNAIRE_PROMPT_PREFIX = "AUROOM_RENDER_SPEC_V1"
 INITIAL_CONCEPT_PROMPT_PREFIX = "AUROOM_INITIAL_CONCEPT_V1"
 ADMIN_SANDBOX_PROMPT_PREFIX = "AUROOM_ADMIN_SANDBOX_V1\n"
 ADMIN_ORBIT_PROMPT_PREFIX = "AUROOM_ADMIN_ORBIT_V1\n"
+ADMIN_FLYOVER_GIF_PROMPT_PREFIX = "AUROOM_ADMIN_FLYOVER_GIF_V1\n"
 QUESTIONNAIRE_PROMPT_PREFIXES = (
     QUESTIONNAIRE_PROMPT_PREFIX,
     INITIAL_CONCEPT_PROMPT_PREFIX,
@@ -146,6 +150,188 @@ def _orbit_frame_prompt(extra_prompt: str, *, index: int, frame_count: int) -> s
     if extra_prompt:
         prompt += f" Additional operator instruction: {extra_prompt}"
     return prompt
+
+
+def _admin_flyover_gif_request(
+    generation: Generation,
+    project: Project,
+) -> tuple[str, str, dict[str, object], int, int, int] | None:
+    if generation.origin != GenerationOrigin.ADMIN_FLYOVER_GIF.value:
+        return None
+    if not generation.prompt.startswith(ADMIN_FLYOVER_GIF_PROMPT_PREFIX):
+        raise ValueError("Admin flyover GIF generation has an invalid envelope.")
+    if not bool((project.context or {}).get("admin_ai_sandbox")):
+        raise ValueError("Admin flyover GIF envelope is outside the sandbox project.")
+    if generation.input_asset_id is None:
+        raise ValueError("Admin flyover GIF source image is missing.")
+
+    model_name = (generation.model_name or "").strip()
+    if not model_name:
+        raise ValueError("Admin flyover GIF model is missing.")
+
+    raw_payload = generation.prompt.removeprefix(ADMIN_FLYOVER_GIF_PROMPT_PREFIX)
+    try:
+        payload = loads(raw_payload)
+    except JSONDecodeError as exc:
+        raise ValueError("Admin flyover GIF envelope is invalid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Admin flyover GIF envelope must be an object.")
+
+    prompt = payload.get("prompt", "")
+    if not isinstance(prompt, str):
+        raise ValueError("Admin flyover GIF prompt must be a string.")
+    params = payload.get("params", {})
+    if not isinstance(params, dict):
+        raise ValueError("Admin flyover GIF params must be an object.")
+    conflict = RESERVED_PROVIDER_PARAMS.intersection(params)
+    if conflict:
+        raise ValueError(
+            "Admin flyover GIF params cannot override provider fields: "
+            + ", ".join(sorted(conflict))
+        )
+
+    keyframe_count = payload.get("keyframe_count")
+    inbetween_frames = payload.get("inbetween_frames")
+    frame_duration_ms = payload.get("frame_duration_ms")
+    if not isinstance(keyframe_count, int) or not 4 <= keyframe_count <= 8:
+        raise ValueError("Admin flyover GIF keyframe count must be between 4 and 8.")
+    if not isinstance(inbetween_frames, int) or not 0 <= inbetween_frames <= 5:
+        raise ValueError("Admin flyover GIF in-between frame count is invalid.")
+    if not isinstance(frame_duration_ms, int) or not 50 <= frame_duration_ms <= 500:
+        raise ValueError("Admin flyover GIF frame duration is invalid.")
+    return (
+        model_name,
+        prompt.strip(),
+        params,
+        keyframe_count,
+        inbetween_frames,
+        frame_duration_ms,
+    )
+
+
+def _flyover_frame_prompt(
+    extra_prompt: str,
+    *,
+    index: int,
+    keyframe_count: int,
+) -> str:
+    progress = index / max(1, keyframe_count - 1)
+    if progress <= 0.25:
+        stage = (
+            "APPROACH: move the camera forward from the elevated establishing view and "
+            "slightly lower it toward the property."
+        )
+    elif progress <= 0.45:
+        stage = (
+            "CLOSE APPROACH: continue forward and slightly lower, making the house larger "
+            "with natural foreground/background parallax."
+        )
+    elif progress <= 0.65:
+        stage = (
+            "ROOF PASS: pass smoothly above and diagonally across the roof while continuing "
+            "forward through space."
+        )
+    elif progress <= 0.85:
+        stage = (
+            "BEYOND-HOUSE PASS: continue beyond the roofline so the house moves naturally "
+            "behind the camera path."
+        )
+    else:
+        stage = (
+            "EXIT: keep moving beyond the house and gently rise, ending with the property "
+            "still readable behind the flight path."
+        )
+
+    prompt = (
+        "Create the next keyframe of one continuous photorealistic architectural bird/drone "
+        "flyover using the reference image as the immediately previous camera position. "
+        f"{stage} "
+        "Preserve the exact house and site geometry, object count, dimensions, roof shape, "
+        "windows, doors, materials, landscaping, lighting, weather, season and all design "
+        "details. Move only the camera. Keep lens, horizon and exposure consistent. "
+        "No 360 orbit. No turntable spin. No circular camera path. No zoom-only motion. "
+        "No cuts, no morphing, no redesign, no added or removed structures, no text or labels."
+    )
+    if extra_prompt:
+        prompt += f" Additional operator instruction: {extra_prompt}"
+    return prompt
+
+
+def _generated_keyframe_extension(data: bytes, *, max_pixels: int) -> str:
+    try:
+        with Image.open(BytesIO(data)) as image:
+            width, height = image.size
+            image_format = str(image.format or "").upper()
+    except (UnidentifiedImageError, OSError, SyntaxError) as exc:
+        raise ValueError("Flyover keyframe is not a valid image.") from exc
+    if width <= 0 or height <= 0 or width * height > max_pixels:
+        raise ValueError("Flyover keyframe dimensions are not supported.")
+    extensions = {"JPEG": "jpg", "PNG": "png", "WEBP": "webp"}
+    extension = extensions.get(image_format)
+    if extension is None:
+        raise ValueError("Flyover keyframe format is not supported.")
+    return extension
+
+
+async def _cleanup_flyover_temp(
+    storage: LocalMediaStorage,
+    generation_id: UUID,
+) -> None:
+    temp_dir = storage.absolute_path(f"tmp/flyover/{generation_id}")
+    if temp_dir.exists():
+        await asyncio.to_thread(shutil.rmtree, temp_dir)
+
+
+async def _generate_flyover_keyframes(
+    *,
+    provider: NexusImageProvider,
+    generation_id: UUID,
+    model_name: str,
+    prompt: str,
+    params: dict[str, object],
+    source_url: str,
+    keyframe_count: int,
+    settings: Settings,
+) -> tuple[list[bytes], str | None]:
+    storage = LocalMediaStorage(settings)
+    current_reference_url = source_url
+    generated_frames: list[bytes] = []
+    last_task_id: str | None = None
+    try:
+        for index in range(1, keyframe_count):
+            result = await provider.generate(
+                model_name=model_name,
+                prompt=_flyover_frame_prompt(
+                    prompt,
+                    index=index,
+                    keyframe_count=keyframe_count,
+                ),
+                image_url=current_reference_url,
+                model_params=params,
+                idempotency_key=f"auroom-{generation_id}-flyover-{index}",
+            )
+            frame_data = await _download_image(result.image_url, settings)
+            extension = _generated_keyframe_extension(
+                frame_data,
+                max_pixels=settings.max_image_pixels,
+            )
+            relative_path = (
+                f"tmp/flyover/{generation_id}/keyframe-{index}.{extension}"
+            )
+            await storage.write(relative_path, frame_data)
+            current_reference_url = storage.signed_url(
+                relative_path,
+                ttl_seconds=max(
+                    settings.media_url_ttl_seconds,
+                    settings.nexus_task_timeout_seconds + 120,
+                ),
+            )
+            generated_frames.append(frame_data)
+            last_task_id = result.task_id
+        return generated_frames, last_task_id
+    except Exception:
+        await _cleanup_flyover_temp(storage, generation_id)
+        raise
 
 
 def _questionnaire_aspect_ratio(asset: Asset | None) -> str:
@@ -369,6 +555,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         try:
             sandbox_request = _admin_sandbox_request(generation, project)
             orbit_request = _admin_orbit_request(generation, project)
+            flyover_gif_request = _admin_flyover_gif_request(generation, project)
         except ValueError as exc:
             await session.rollback()
             await _mark_failed_and_refund(generation_id, exc)
@@ -383,7 +570,9 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             return
 
         admin_internal_generation = (
-            sandbox_request is not None or orbit_request is not None
+            sandbox_request is not None
+            or orbit_request is not None
+            or flyover_gif_request is not None
         )
         admin_repository = AdminRepository(session)
         initial_concept_generation = (
@@ -471,6 +660,18 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             fallback_model = None
             fallback_params = {}
             primary_timeout_seconds = None
+        elif flyover_gif_request is not None:
+            (
+                primary_model,
+                prompt,
+                primary_params,
+                _flyover_keyframe_count,
+                _flyover_inbetween_frames,
+                _flyover_frame_duration_ms,
+            ) = flyover_gif_request
+            fallback_model = None
+            fallback_params = {}
+            primary_timeout_seconds = None
         else:
             assert runtime is not None
             prompt = (
@@ -506,7 +707,43 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
     fallback_used = False
     provider_task_id: str | None = None
     try:
-        if orbit_request is not None:
+        if flyover_gif_request is not None:
+            if source_url is None or input_storage_path is None:
+                raise RuntimeError("Flyover GIF generation requires a source image.")
+            (
+                _,
+                flyover_prompt,
+                flyover_params,
+                keyframe_count,
+                inbetween_frames,
+                frame_duration_ms,
+            ) = flyover_gif_request
+            storage = LocalMediaStorage(settings)
+            base_path = storage.absolute_path(input_storage_path)
+            base_data = await asyncio.to_thread(base_path.read_bytes)
+            try:
+                generated_frames, provider_task_id = await _generate_flyover_keyframes(
+                    provider=provider,
+                    generation_id=generation_id,
+                    model_name=model_name,
+                    prompt=flyover_prompt,
+                    params=flyover_params,
+                    source_url=source_url,
+                    keyframe_count=keyframe_count,
+                    settings=settings,
+                )
+                data = await asyncio.to_thread(
+                    build_flyover_gif,
+                    [base_data, *generated_frames],
+                    duration_ms=frame_duration_ms,
+                    inbetween_frames=inbetween_frames,
+                    max_pixels=settings.max_image_pixels,
+                )
+                if len(data) > settings.max_image_size_bytes:
+                    raise RuntimeError("Flyover GIF exceeds media size limit.")
+            finally:
+                await _cleanup_flyover_temp(storage, generation_id)
+        elif orbit_request is not None:
             if source_url is None or input_storage_path is None:
                 raise RuntimeError("Orbit generation requires a source image.")
             _, orbit_prompt, orbit_params, frame_count, frame_duration_ms = orbit_request
@@ -591,11 +828,36 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 ProjectRepository(session),
                 settings,
             )
-            image = asset_service._validate_image(data)
             asset_id = uuid4()
             now = datetime.now(UTC)
-            relative_path = f"users/{generation.user_id}/{now:%Y/%m}/{asset_id}.{image.extension}"
-            await asset_service.storage.write(relative_path, image.data)
+            if flyover_gif_request is not None:
+                try:
+                    with Image.open(BytesIO(data)) as animation:
+                        width, height = animation.size
+                        if str(animation.format or "").upper() != "GIF":
+                            raise RuntimeError("Flyover output is not a GIF.")
+                except (UnidentifiedImageError, OSError, SyntaxError) as exc:
+                    raise RuntimeError("Flyover output is not a valid GIF.") from exc
+                extension = "gif"
+                mime_type = "image/gif"
+                output_data = data
+                original_filename = "auroom-bird-flyover.gif"
+            else:
+                image = asset_service._validate_image(data)
+                extension = image.extension
+                mime_type = image.mime_type
+                output_data = image.data
+                width = image.width
+                height = image.height
+                original_filename = (
+                    f"auroom-orbit.{image.extension}"
+                    if orbit_request is not None
+                    else f"auroom-{generation.type.value}.{image.extension}"
+                )
+            relative_path = (
+                f"users/{generation.user_id}/{now:%Y/%m}/{asset_id}.{extension}"
+            )
+            await asset_service.storage.write(relative_path, output_data)
 
             output = Asset(
                 id=asset_id,
@@ -603,15 +865,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 project_id=generation.project_id,
                 type=AssetType.IMAGE,
                 purpose=AssetPurpose.GENERATION_OUTPUT,
-                original_filename=(
-                    f"auroom-orbit.{image.extension}"
-                    if orbit_request is not None
-                    else f"auroom-{generation.type.value}.{image.extension}"
-                ),
-                mime_type=image.mime_type,
-                size_bytes=len(image.data),
-                width=image.width,
-                height=image.height,
+                original_filename=original_filename,
+                mime_type=mime_type,
+                size_bytes=len(output_data),
+                width=width,
+                height=height,
                 storage_path=relative_path,
             )
             session.add(output)
@@ -628,12 +886,13 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 relative_path,
             )
             logger.info(
-                "Generation %s completed with %s%s%s%s",
+                "Generation %s completed with %s%s%s%s%s",
                 generation_id,
                 model_name,
                 " (fallback)" if fallback_used else "",
                 " (masked composite)" if composition_mode == "masked_edit" else "",
                 " (orbit loop)" if orbit_request is not None else "",
+                " (bird flyover GIF)" if flyover_gif_request is not None else "",
             )
     except Exception as exc:
         logger.exception("Generation %s failed", generation_id)
