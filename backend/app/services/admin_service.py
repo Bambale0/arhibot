@@ -65,9 +65,9 @@ def _parse_admin_ai_envelope(
     try:
         payload = loads(prompt.removeprefix(prefix))
     except (JSONDecodeError, TypeError):
-        return "", {}, None, None, None, None
+        return "", {}, None, None, None
     if not isinstance(payload, dict):
-        return "", {}, None, None
+        return "", {}, None, None, None
 
     operator_prompt = payload.get("prompt")
     params = payload.get("params")
