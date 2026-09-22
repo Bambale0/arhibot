@@ -344,12 +344,16 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
       (entries) => {
         const visible = entries
           .filter((entry) => entry.isIntersecting)
-          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0]
-        if (!visible || visible.intersectionRatio < 0.45) return
+          .sort((left, right) => right.intersectionRect.height - left.intersectionRect.height)[0]
+        if (!visible) return
+        // Long titles/parameters can make a card taller than the feed. Compare
+        // visibility with the viewport, so these cards can still become active.
+        const visibleHeight = Math.min(visible.boundingClientRect.height, root.clientHeight)
+        if (visible.intersectionRect.height < visibleHeight * 0.45) return
         const nextIndex = Number((visible.target as HTMLElement).dataset.feedIndex)
         if (Number.isInteger(nextIndex)) setActiveIndex(nextIndex)
       },
-      { root, threshold: [0.45, 0.6, 0.8] },
+      { root, threshold: Array.from({ length: 21 }, (_, index) => index / 20) },
     )
     nodes.forEach((node) => observer.observe(node))
     return () => observer.disconnect()
@@ -406,7 +410,7 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
   }
 
   return <section className="ideas-page-concept">
-    <header className="ideas-concept-topbar">
+    <header className={`ideas-concept-topbar ${searchOpen ? 'search-open' : ''}`}>
       <span className="wordmark"><span className="wordmark-dot" />AuRoom</span>
       <div className={`ideas-search ${searchOpen ? 'open' : ''}`}>
         {searchOpen && <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Поиск работ" aria-label="Поиск работ" />}

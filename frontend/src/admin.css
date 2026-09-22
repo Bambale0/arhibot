@@ -92,3 +92,7 @@
 
 /* prefers-reduced-motion */
 @media(prefers-reduced-motion:reduce){.admin-panel,.admin-tabs button,.admin-list-card,.admin-form-grid,.admin-price-card{-webkit-transition:none!important;transition:none!important}}
+
+.admin-panel-title { align-items:flex-start; flex-wrap:wrap; }
+.admin-panel-title > div { min-width:0; flex:1 1 240px; }
+.admin-panel-title > .status-pill { flex:0 0 auto; }

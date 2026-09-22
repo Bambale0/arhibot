@@ -14,7 +14,12 @@ class CreditRepository:
         self.session = session
 
     async def get_user_for_update(self, user_id: UUID) -> User | None:
-        result = await self.session.execute(select(User).where(User.id == user_id).with_for_update())
+        # Authentication may have loaded this User before another transaction
+        # changed the balance. Locking must also refresh the identity-map value.
+        result = await self.session.execute(
+            select(User).where(User.id == user_id).with_for_update()
+            .execution_options(populate_existing=True)
+        )
         return result.scalar_one_or_none()
 
     async def get_by_idempotency_key(self, key: str) -> CreditTransaction | None:

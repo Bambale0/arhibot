@@ -23,7 +23,7 @@ class BillingRepository:
     async def get_settings(self, *, for_update: bool = False) -> BillingSettings | None:
         stmt = select(BillingSettings).where(BillingSettings.id == 1)
         if for_update:
-            stmt = stmt.with_for_update()
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -65,7 +65,7 @@ class BillingRepository:
             )
             .order_by(BillingPayment.created_at.desc())
             .limit(1)
-            .with_for_update()
+            .with_for_update().execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
@@ -83,7 +83,7 @@ class BillingRepository:
 
     async def get_payment_for_update(self, payment_id: UUID) -> BillingPayment | None:
         result = await self.session.execute(
-            select(BillingPayment).where(BillingPayment.id == payment_id).with_for_update()
+            select(BillingPayment).where(BillingPayment.id == payment_id).with_for_update().execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
@@ -103,7 +103,7 @@ class BillingRepository:
         result = await self.session.execute(
             select(BillingPayment)
             .where(BillingPayment.yookassa_payment_id == provider_id)
-            .with_for_update()
+            .with_for_update().execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
@@ -111,13 +111,13 @@ class BillingRepository:
         result = await self.session.execute(
             select(BillingPayment)
             .where(BillingPayment.refund_id == refund_id)
-            .with_for_update()
+            .with_for_update().execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
     async def get_by_id_for_update(self, payment_id: UUID) -> BillingPayment | None:
         result = await self.session.execute(
-            select(BillingPayment).where(BillingPayment.id == payment_id).with_for_update()
+            select(BillingPayment).where(BillingPayment.id == payment_id).with_for_update().execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 

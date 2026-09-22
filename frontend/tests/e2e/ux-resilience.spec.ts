@@ -308,3 +308,40 @@ test('admin initial load has a retry path and refund requires confirmation', asy
   await page.waitForTimeout(100)
   expect(broadcastRequests).toBe(0)
 })
+
+
+test('logout clears credentials before a delayed server response', async ({ page }) => {
+  await authenticate(page)
+  await routeNavigationData(page)
+  let release!: () => void
+  const pending = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/api/v1/auth/logout', async route => { await pending; await json(route, {}) })
+  await page.goto('/')
+  await page.locator('header').getByRole('button', { name: 'Выйти', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Вход', exact: true })).toBeVisible()
+  expect(await page.evaluate(() => sessionStorage.getItem('auroom.access_token'))).toBeNull()
+  release()
+})
+
+test('late refresh cannot restore credentials after logout', async ({ page }) => {
+  await authenticate(page)
+  await routeNavigationData(page)
+  let release!: () => void
+  let started!: () => void
+  const pending = new Promise<void>(resolve => { release = resolve })
+  const refreshing = new Promise<void>(resolve => { started = resolve })
+  await page.route('**/api/v1/billing', route => json(route, { type: 'invalid_access_token' }, 401))
+  await page.route('**/api/v1/auth/refresh', async route => {
+    started(); await pending
+    await json(route, { access_token: 'late-refresh', user })
+  })
+  await page.route('**/api/v1/auth/logout', route => json(route, {}))
+  await page.goto('/?section=profile')
+  await refreshing
+  await page.locator('header').getByRole('button', { name: 'Выйти', exact: true }).click()
+  release()
+  await expect(page.getByRole('heading', { name: 'Вход', exact: true })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem('auroom.access_token'))).toBeNull()
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Вход', exact: true })).toBeVisible()
+})

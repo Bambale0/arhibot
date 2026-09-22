@@ -102,7 +102,7 @@ The drill prints the backup path, restored Alembic revision before/after migrati
 7. [x] Run CI and review findings (PR #90 CI #699 green; post-merge CI #700 green).
 8. [x] Merge to `dev` only after green checks (squash `4a6e5998bdb7d055cfa87d9e440fa7ae36e14669`).
 9. [x] Re-run the repository script against deployed `4a6e5998bdb7d055cfa87d9e440fa7ae36e14669`: latest backup `20260916T042915Z` restored in isolation, Alembic head `20260915_0036`, PASS.
-10. [ ] Off-site backup setup remains follow-up pending remote/provider configuration.
+10. [x] Off-site setup completed by the 2026-09-22 Telegram release-hardening slice; independent recovery verified.
 
 
 ## Active work — PostgreSQL failure recovery
@@ -274,3 +274,36 @@ No new telemetry is required for this client-only interaction. The fullscreen UI
 4. [x] Run frontend typecheck, production build, and Playwright E2E in CI; frontend job green with 18/18 E2E passing.
 5. [x] Review the exact PR diff and exact-SHA CI result (CI run #35134139926 green on `96154943f480f14da4436dd5e1863f41f08e1571`).
 6. [ ] Merge to `dev` only after required checks are green.
+
+## Active work — production readiness, 2026-09-22
+
+- Baseline: `dev` `56b94847d3a8d3e32fbb0062707f88ea43e47c57`; isolated branch `fix/production-readiness-20260922`.
+- Evidence: full 15-area audit, 200 unit/35 integration passing; browser 86/87; deterministic payment recovery, backup portability, delayed logout and 768px overlap reproductions.
+- Scope: resolve audit P1/P2, align existing product documentation, strengthen release checks; Ideas/History retain approved behavior, 3D remains excluded.
+- User selected Telegram off-site delivery through the existing project bot to configured administrators only. Encrypt before upload; keep private recovery identity outside the runtime host; test chunk download/reassembly/decryption/restore.
+- No schema/business configuration changes planned. Preserve database-managed prices, policies and admin controls. Production promotion is outside this preparation task; changes target dev via PR.
+- Risks: provider reconciliation must never create another charge; media volume needs a controlled ownership transition to non-root; delayed auth responses must not resurrect a logged-out session; Telegram partial delivery must not count as a successful backup.
+
+## Acceptance / progress
+
+1. [x] Payment lost response → verified webhook/admin reconciliation → exactly one credit; reject inconsistent metadata and unsafe replay.
+2. [x] Portable manifests, corruption/path-traversal rejection, independent restore; failed backups cannot defer the next scheduled retry.
+3. [x] Encrypted Telegram admin backup, bounded retries/checkpoints, off-site freshness and documented recovery.
+4. [x] Immediate local logout, stale request protection, desktop controls without overlap.
+5. [x] Non-root runtime and volume migration, audited frontend toolchain, reproducible build/CI checks.
+6. [ ] Full unit/integration/browser suites, migrations, image/runtime and recovery smoke; exact PR SHA green CI.
+7. [x] Final epic readiness matrix and deployment/rollback instructions with remaining external dependencies explicitly stated.
+
+- Local verification: 216 unit/contract passed; 44 integration plus the additional stale-balance regression; 102 browser passed with Chromium 1193 / WebKit 2203; typecheck/build/npm audit clean. Independent review identified stale User balance under row lock; fixed with populate_existing and a red/green regression.
+- Live operational work: encrypted snapshots delivered to 2 reachable active DB administrators; full independent Telegram download/decrypt/DB migration/media restore PASS. Third administrator chat is unavailable and excluded from the explicit backup destination allowlist. Backup/monitor cron use the staged audited ops package until application rollout. No application deployment performed.
+
+## Active work — frontend layout audit, 2026-09-22
+
+- Baseline: release candidate `a3bbb146`; scope is responsive layout and browser evidence, preserving the approved Ideas/History behavior and brand.
+- Existing 320–1920px coverage mainly uses empty lists. A populated-content audit reproduces clipped History actions, horizontal Profile/tariff overflow, an invisible mobile admin button, crowded Ideas search, and collapsed Ideas media with long titles/open parameters.
+- Reuse existing React/CSS and Playwright fixtures; no new dependencies, business settings, schema changes, provider calls, or deployment.
+- Acceptance: populated screens fit 320–1920px and landscape; text/actions remain inside cards; Ideas media and CTA remain reachable with long content; search/close controls remain reachable; screenshots inspected in addition to DOM checks.
+- Plan: [x] reproduce with screenshots; [x] add focused regression coverage; [x] fix layout; [ ] finish full browser / exact-commit CI gates; [x] prepare visual evidence in the dated layout audit report.
+- Guidance: claw frontend/UX audit, wondelai refactoring-ui, dev-agents-pack QA checklist, anthropics webapp-testing, upstream ksu/local verification-before-completion; agentskills source inspected (format specification, no product layout skill).
+
+- Follow-up evidence: long cards also exposed an active-preview bug; a failing-before/passing-after regression now checks 255-character titles in portrait and landscape. Independent read-only review and an eight-card mixed-height scrolling probe found no P1/P2 regression. Build/typecheck and the full mobile/desktop Chromium suites (38 each) passed; the final WebKit suite and exact-commit CI are release gates recorded in the PR.

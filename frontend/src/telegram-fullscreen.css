@@ -42,7 +42,7 @@
   outline-offset: 3px;
 }
 
-@media (max-width: 767px) {
+@media (max-width: 1023px) {
   .telegram-fullscreen-button {
     top: auto;
     right: max(10px, calc(env(safe-area-inset-right) + 10px));
@@ -63,5 +63,15 @@
 @media (prefers-reduced-motion: reduce) {
   .telegram-fullscreen-button {
     transition: none;
+  }
+}
+
+/* Standalone screens have their own headers, outside AppFrame. */
+@media (min-width:1024px) {
+  .telegram-fullscreen-button ~ .admin-shell .admin-header {
+    padding-right:48px;
+  }
+  .telegram-fullscreen-button ~ .questionnaire-shell .questionnaire-topbar {
+    padding-right:max(66px, calc(env(safe-area-inset-right) + 66px));
   }
 }

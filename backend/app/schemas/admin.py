@@ -448,6 +448,10 @@ class UserStateUpdate(BaseModel):
     role: UserRole | None = None
 
 
+class AdminPaymentReconcile(BaseModel):
+    provider_payment_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+
+
 class AdminPaymentResponse(BaseModel):
     id: UUID
     user_id: UUID

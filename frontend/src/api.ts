@@ -66,7 +66,9 @@ function saveTokens(pair: TokenPair) {
   localStorage.removeItem(ACCESS_KEY)
   localStorage.removeItem(REFRESH_KEY)
 }
+let sessionVersion = 0
 export function clearTokens() {
+  sessionVersion += 1
   sessionStorage.removeItem(ACCESS_KEY)
   localStorage.removeItem(ACCESS_KEY)
   localStorage.removeItem(REFRESH_KEY)
@@ -135,10 +137,25 @@ type BrowserLockManager = {
   request<T>(name: string, callback: () => Promise<T>): Promise<T>
 }
 
+let authQueue: Promise<unknown> = Promise.resolve()
+async function serializeAuth<T>(action: () => Promise<T>): Promise<T> {
+  const queued = authQueue.catch(() => {}).then(async () => {
+    const locks = (navigator as Navigator & { locks?: BrowserLockManager }).locks
+    return locks ? locks.request('auroom-auth-refresh', action) : action()
+  })
+  authQueue = queued.catch(() => {})
+  return queued
+}
+function requireCurrentSession(version: number) {
+  if (version !== sessionVersion) throw new ApiError(401, 'Сессия завершена. Войдите снова.')
+}
+
 async function refreshSession(): Promise<void> {
   if (!refreshPromise) {
-    refreshPromise = (async () => {
-      const rotate = async () => {
+    const version = sessionVersion
+    refreshPromise = serializeAuth(async () => {
+        requireCurrentSession(version)
+        if (sessionStorage.getItem('auroom.explicit_logout') === '1') throw new ApiError(401, 'Вы вышли из аккаунта.')
         const legacyToken = localStorage.getItem(REFRESH_KEY)
         const options: RequestInit = {
           method: 'POST',
@@ -150,34 +167,32 @@ async function refreshSession(): Promise<void> {
         }
         const response = await fetchWithTimeout(`${API_BASE}/auth/refresh`, options)
         if (!response.ok) throw await parseError(response)
-        saveTokens((await response.json()) as TokenPair)
-      }
-
-      const locks = (navigator as Navigator & { locks?: BrowserLockManager }).locks
-      if (locks) await locks.request('auroom-auth-refresh', rotate)
-      else await rotate()
-    })().finally(() => { refreshPromise = null })
+        const pair = (await response.json()) as TokenPair
+        requireCurrentSession(version)
+        saveTokens(pair)
+    }).finally(() => { refreshPromise = null })
   }
   return refreshPromise
 }
 
 async function clearBrowserRefreshCookie(): Promise<void> {
   try {
-    await fetchWithTimeout(`${API_BASE}/auth/logout`, {
+    await serializeAuth(() => fetchWithTimeout(`${API_BASE}/auth/logout`, {
       method: 'POST',
       credentials: 'same-origin',
-    })
+    }))
   } catch { /* best-effort cookie cleanup */ }
 }
 
 export async function restoreSession(): Promise<User | null> {
+  const version = sessionVersion
   try {
     await refreshSession()
     return await getMe()
   } catch (error) {
-    if (error instanceof ApiError && error.status === 401) {
-      await clearBrowserRefreshCookie()
+    if (error instanceof ApiError && error.status === 401 && version === sessionVersion) {
       clearTokens()
+      await clearBrowserRefreshCookie()
       return null
     }
     throw error
@@ -185,14 +200,16 @@ export async function restoreSession(): Promise<User | null> {
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const version = sessionVersion
   const { auth = true, retryAuth = true, headers, ...rest } = options
   const finalHeaders = new Headers(headers)
   const accessToken = sessionStorage.getItem(ACCESS_KEY)
   if (auth && accessToken) finalHeaders.set('Authorization', `Bearer ${accessToken}`)
   const response = await fetchWithTimeout(`${API_BASE}${path}`, { credentials: 'same-origin', ...rest, headers: finalHeaders })
+  if (auth) requireCurrentSession(version)
   if (response.status === 401 && auth && retryAuth) {
     try { await refreshSession(); return request<T>(path, { ...options, retryAuth: false }) }
-    catch (error) { clearTokens(); throw error }
+    catch (error) { if (version === sessionVersion) clearTokens(); throw error }
   }
   if (!response.ok) throw await parseError(response)
   if (response.status === 204) return undefined as T
@@ -200,12 +217,22 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 }
 
 export async function login(email: string, password: string): Promise<TokenPair> {
+  const version = sessionVersion
+  return serializeAuth(async () => {
+  requireCurrentSession(version)
   const pair = await request<TokenPair>('/auth/login', { method: 'POST', auth: false, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) })
+  requireCurrentSession(version)
   saveTokens(pair); return pair
+  })
 }
 export async function loginTelegram(initData: string): Promise<TokenPair> {
+  const version = sessionVersion
+  return serializeAuth(async () => {
+  requireCurrentSession(version)
   const pair = await request<TokenPair>('/auth/telegram', { method: 'POST', auth: false, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ init_data: initData }) })
+  requireCurrentSession(version)
   saveTokens(pair); return pair
+  })
 }
 export function getMe() { return request<User>('/me') }
 export async function logout() {
@@ -215,8 +242,8 @@ export async function logout() {
     options.headers = { 'Content-Type': 'application/json' }
     options.body = JSON.stringify({ refresh_token: legacyRefreshToken })
   }
-  try { await request('/auth/logout', options) }
-  finally { clearTokens() }
+  clearTokens()
+  await serializeAuth(() => request('/auth/logout', options))
 }
 
 export function listProjects(cursor?: string | null, limit = 20, sort?: 'created' | 'updated') {
@@ -313,7 +340,7 @@ export function adminListCreditTransactions(userId?: string) { const params = ne
 export function adminUpdateUser(userId: string, payload: { status?: 'active' | 'disabled'; role?: UserRole }) { return request<AdminUser>(`/admin/users/${userId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
 
 export function adminListPayments() { return request<AdminPayment[]>('/admin/payments') }
-export function adminReconcilePayment(paymentId: string) { return request<AdminPayment>(`/admin/payments/${paymentId}/reconcile`, { method: 'POST' }) }
+export function adminReconcilePayment(paymentId: string, providerPaymentId?: string) { return request<AdminPayment>(`/admin/payments/${paymentId}/reconcile`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: providerPaymentId ? JSON.stringify({ provider_payment_id: providerPaymentId }) : undefined }) }
 export function adminRefundPayment(paymentId: string) { return request<AdminPayment>(`/admin/payments/${paymentId}/refund`, { method: 'POST' }) }
 
 export function adminListBroadcasts() { return request<AdminBroadcast[]>('/admin/broadcasts') }

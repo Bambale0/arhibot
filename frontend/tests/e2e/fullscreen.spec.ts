@@ -265,7 +265,25 @@ test('fullscreen control stays visible inside standalone questionnaire flow',asy
   await expect(page.getByText('Заполните параметры всех объектов')).toBeVisible()
   const button=page.getByRole('button',{name:'Открыть на весь экран'})
   await expect(button).toBeVisible()
+  const controlBox = (await button.boundingBox())!
+  const contextBox = (await page.locator('.questionnaire-topbar > span').boundingBox())!
+  expect(controlBox.x).toBeGreaterThanOrEqual(contextBox.x + contextBox.width + 4)
   await installFullscreenCounters(page)
   await button.click()
   await expect.poll(() => page.evaluate(() => (window as unknown as { __fullscreenCalls:number }).__fullscreenCalls)).toBe(1)
 })
+
+
+for (const width of [768, 1024, 1440]) {
+  test(`fullscreen control does not overlap header actions at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 })
+    await prepare(page)
+    await page.goto('/')
+    const fullscreen = page.locator('.telegram-fullscreen-button')
+    await expect(fullscreen).toBeVisible()
+    const exit = page.getByRole('button', { name: 'Выйти', exact: true })
+    await expect(exit).toBeVisible()
+    const a = (await fullscreen.boundingBox())!, b = (await exit.boundingBox())!
+    expect(a.x < b.x+b.width && a.x+a.width > b.x && a.y < b.y+b.height && a.y+a.height > b.y).toBe(false)
+  })
+}

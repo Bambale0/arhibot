@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 umask 077
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 backup_dir=${1:?backup directory is required}
 remote=${AUROOM_OFFSITE_BACKUP_REMOTE:-}
@@ -24,7 +25,7 @@ done
 [[ -s "${backup_dir}/postgres.dump" ]] || { echo "Missing postgres.dump" >&2; exit 1; }
 [[ -s "${backup_dir}/media.tar.gz" ]] || { echo "Missing media.tar.gz" >&2; exit 1; }
 [[ -s "${backup_dir}/SHA256SUMS" ]] || { echo "Missing SHA256SUMS" >&2; exit 1; }
-(cd "${backup_dir}" && sha256sum -c SHA256SUMS >/dev/null)
+python3 "${script_dir}/backup_manifest.py" verify "${backup_dir}"
 tar -tzf "${backup_dir}/media.tar.gz" >/dev/null
 
 snapshot=$(basename "${backup_dir}")
@@ -49,6 +50,10 @@ remote_hash=$(rclone cat "${remote_dir}/${snapshot}.tar.age.sha256" | tr -d '[:s
   exit 1
 }
 
+downloaded_hash=$(rclone cat "${remote_dir}/${snapshot}.tar.age" | sha256sum | awk '{print $1}')
+[[ "${local_hash}" == "${downloaded_hash}" ]] || { echo "Off-site archive verification failed" >&2; exit 1; }
+
 printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${backup_dir}/OFFSITE_OK"
 chmod 600 "${backup_dir}/OFFSITE_OK"
+touch -r "${backup_dir}/SHA256SUMS" "${backup_dir}/OFFSITE_OK"
 echo "AuRoom encrypted off-site backup exported: ${snapshot}"

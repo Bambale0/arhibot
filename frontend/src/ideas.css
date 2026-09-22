@@ -93,7 +93,7 @@
 @media(max-width:360px){.idea-stage-shell,.idea-3d-viewer{min-height:350px}.idea-feed-copy h1{font-size:34px}.idea-media-strip-head button span{display:none}.idea-rail-thumb{width:43px;height:43px}.idea-action-rail{width:48px}.idea-stage-shell{padding-right:51px}}
 @media(prefers-reduced-motion:reduce){.ideas-feed{scroll-behavior:auto}.idea-3d-poster,.idea-use-button,.ideas-search input{transition:none}}
 
-/* Telegram/mobile one-screen contract: one publication and its CTA must fit one snap viewport. */
+/* Compact mobile feed; generated-work cards below can grow when content exceeds the viewport. */
 @media(max-width:520px) and (max-height:950px){
   .idea-feed-snap{height:100%;min-height:100%}
   .idea-feed-card{height:100%;min-height:100%;overflow:hidden;padding:73px 14px 11px;gap:7px}
@@ -161,3 +161,26 @@
 .ideas-floating-notice{box-sizing:border-box;padding:11px 13px;border:1px solid rgba(223,190,104,.42);border-radius:11px;background:#142019;color:#f0d886;font-size:13px}
 @media(max-width:520px){.idea-work-stage{min-height:330px}.idea-work-stage>img,.idea-work-empty{min-height:330px}.idea-work-actions button{width:40px;height:40px;border-radius:12px}.idea-work-summary>div{max-height:130px}}
 @media(max-width:520px) and (max-height:950px){.idea-work-card{gap:7px}.idea-work-stage{min-height:0;flex:1 1 0}.idea-work-stage>img,.idea-work-empty{height:100%;min-height:0;max-height:none}.idea-work-summary>div{max-height:105px}.idea-work-summary summary{font-size:9px}.idea-work-summary section strong,.idea-work-summary section span{font-size:9px}}
+
+/* Let long publications grow inside the feed instead of clipping their actions. */
+.ideas-concept-topbar { gap:12px; }
+.ideas-concept-topbar .wordmark { flex-shrink:0; }
+.ideas-search { min-width:0; }
+.ideas-search.open { flex:1; }
+.ideas-search.open input { min-width:0; width:100%; max-width:250px; }
+.ideas-search button { flex-shrink:0; }
+.idea-work-card { overflow-wrap:anywhere; }
+.idea-work-card .idea-feed-copy { padding-right:0; }
+.idea-work-summary, .idea-work-meta { min-width:0; }
+@media (max-width:520px) and (max-height:950px) {
+  .idea-feed-snap { height:auto; }
+  .idea-work-card { height:auto; overflow:visible; }
+  .idea-work-stage { flex:1 0 220px; min-height:220px; }
+  .idea-work-stage > img { position:absolute; inset:0; }
+}
+@media (max-width:520px) {
+  .ideas-concept-topbar.search-open .wordmark { font-size:0; gap:0; }
+}
+@media (max-width:360px) {
+  .idea-work-card .idea-feed-copy h1 { font-size:26px; }
+}
