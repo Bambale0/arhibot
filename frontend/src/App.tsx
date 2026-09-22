@@ -209,7 +209,7 @@ export default function App() {
   return <>
     <TelegramFullscreenButton/>
     <AppFrame active={section} onNavigate={navigate}>
-      {section === 'home' && <ProjectsScreen onOpenProject={openProject} onCreate={() => navigate('create')} />}
+{section === 'home' && <ProjectsScreen onOpenProject={openProject} onCreate={() => setSection('create')} onOpenIdeas={() => setSection('ideas')} />}
       {section !== 'home' && <Suspense fallback={<Loader />}>
         {section === 'ideas' && <IdeasScreen onOpenQuestionnaire={openQuestionnaire} />}
         {section === 'create' && <CreateScreen onOpenQuestionnaire={openQuestionnaire} />}

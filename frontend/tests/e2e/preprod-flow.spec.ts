@@ -46,8 +46,9 @@ let generationCount=0
 let publication:any=null
 let savedIdea=false
 let hideIdeaFromFeed=false
+let homeProjects:any[]=[]
 function resetState(){
-  generationCount=0; publication=null; savedIdea=false; hideIdeaFromFeed=false
+  generationCount=0; publication=null; savedIdea=false; hideIdeaFromFeed=false; homeProjects=[]
   session={session_id:'77777777-7777-4777-8777-777777777777',catalog_version:catalog.version,selected_objects:['lavochka'],initial_concept_mode:false,survey_completed_objects:[],initial_generation_id:null,initial_concept_accepted:false,current_object:null,current_question_id:null,source_step_completed:false,source_asset_id:null,scene_asset_id:null,answers:{},accepted_objects:[],removed_objects:[],pending_removal_object:null,generation_ids:{},edit_question_ids:[],review_comments:{},edit_regions:{},lock_regions:{},region_mode:null,region_object:null,application_submitted:false}
   project={id:projectId,name:'Лавочка',description:null,status:'active',context:{questionnaire_draft:false,design_session:session},created_at:now,updated_at:now}
 }
@@ -61,7 +62,7 @@ test.beforeEach(async ({page})=>{
   await page.route('**/api/v1/**',async route=>{
     const req=route.request(), path=new URL(req.url()).pathname, method=req.method()
     if(path.endsWith('/me')&&method==='GET') return json(route,user)
-    if(path.endsWith('/projects')&&method==='GET') return json(route,{items:[],next_cursor:null,has_more:false})
+    if(path.endsWith('/projects')&&method==='GET') return json(route,{items:homeProjects,next_cursor:null,has_more:false})
     if(path.endsWith(`/projects/${projectId}`)&&method==='GET') return json(route,project)
     for(let i=0;i<generationIds.length;i++) if(path.endsWith(`/generations/${generationIds[i]}`)&&method==='GET') return json(route,generation(i))
     if(path.endsWith('/questionnaires')&&method==='GET') return json(route,catalog)
@@ -91,6 +92,49 @@ test.beforeEach(async ({page})=>{
     }
     return json(route,{type:'mock_unhandled',detail:`${method} ${path}`},404)
   })
+})
+
+test('home is a lightweight project dashboard with on-demand projects and three-idea request',async({page})=>{
+  homeProjects=[
+    {
+      ...project,
+      name:'Дом',
+      context:{...project.context,house_area_m2:180,floors:2,design_session:{...session,scene_asset_id:null}},
+      updated_at:'2026-09-16T10:00:00Z',
+    },
+    {
+      ...project,
+      id:'88888888-8888-4888-8888-888888888888',
+      name:'Гостевой дом',
+      context:{...project.context,design_session:{...session,scene_asset_id:null}},
+      updated_at:'2026-09-15T10:00:00Z',
+    },
+  ]
+  const ideasRequest=page.waitForRequest(request=>{
+    const url=new URL(request.url())
+    return url.pathname.endsWith('/ideas')&&request.method()==='GET'
+  })
+
+  await page.goto('/')
+  const request=await ideasRequest
+  expect(new URL(request.url()).searchParams.get('limit')).toBe('3')
+
+  await expect(page.getByRole('heading',{name:'Ваш последний проект'})).toBeVisible()
+  await expect(page.getByText('180 м² · 2 этажа')).toBeVisible()
+  await expect(page.locator('.project-grid')).toHaveCount(0)
+  await expect(page.getByRole('button',{name:/Новый проект/})).toBeVisible()
+  await expect(page.getByRole('button',{name:/Проект по фото участка/})).toBeVisible()
+  await expect(page.getByRole('button',{name:/Новый вариант/})).toBeVisible()
+  await expect(page.getByRole('button',{name:/Мои проекты.*2 проекта/})).toBeVisible()
+  await expect(page.getByRole('button',{name:/Гостевой дом/})).toHaveCount(0)
+
+  await page.getByRole('button',{name:/Мои проекты.*2 проекта/}).click()
+  await expect(page.getByRole('button',{name:/Гостевой дом/})).toBeVisible()
+  await expect(page.getByRole('heading',{name:'Вдохновение'})).toBeVisible()
+  await expect(page.getByRole('button',{name:'Посмотреть ленту'})).toBeVisible()
+
+  await page.getByRole('button',{name:/Проект по фото участка/}).click()
+  await expect(page.getByText('Что проектируем?')).toBeVisible()
 })
 
 test('canonical create flow supports refinement and own unpublish without technical region UI',async({page})=>{
@@ -227,13 +271,13 @@ test('house terrace floor options follow selected storeys in the UI',async({page
 })
 
 
-test('fullscreen control stays hidden in the mobile product flow',async({page})=>{
+test('fullscreen control stays available in the mobile product flow',async({page})=>{
   await page.setViewportSize({width:390,height:844})
   await page.addInitScript(()=>{
     window.Telegram = { WebApp: { initData:'', requestFullscreen:()=>{} } }
   })
   await page.goto('/')
-  await expect(page.locator('.telegram-fullscreen-button')).toBeHidden()
+  await expect(page.getByRole('button',{name:'Открыть на весь экран'})).toBeVisible()
 })
 
 

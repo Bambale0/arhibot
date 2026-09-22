@@ -1,5 +1,48 @@
 # Agent Execution Ledger
 
+## Active work — lightweight home dashboard
+
+- Baseline `dev`: `6cb63950d1c552f42c7a683ca2a7e75374a8b015`.
+- Existing Home renders the complete Project grid by default; Ideas already has a separate full feed and optimized preview URLs.
+- Reusable contracts: `listProjects`, `getAsset`, `listIdeas`, accepted questionnaire `scene_asset_id`, canonical Create flow and existing app-section navigation.
+
+### User outcome
+
+Home becomes a fast working dashboard: last project first, three clear next actions, compact access to all projects, and only three lightweight inspiration previews with a path to the full Ideas feed.
+
+### Acceptance criteria
+
+1. The full Project grid is not rendered on Home by default.
+2. The most recently updated Project is the primary card and can be continued.
+3. Quick actions expose “Новый проект”, “Проект по фото участка” and “Новый вариант”.
+4. “Мои проекты” reports the real loaded count and reveals the compact project list only on demand.
+5. “Вдохновение” renders at most three server-backed Ideas, prefers `preview_url`, uses lazy image loading, and opens the full Ideas feed.
+6. Loading, empty and retryable error states remain usable.
+7. No production fake data, new business configuration, migrations or authorization changes are introduced.
+8. Frontend regression coverage and exact-commit CI verify the change.
+
+### No-hardcode / configuration decisions
+
+- All Project and Idea content stays API-backed.
+- The plot-photo shortcut enters the canonical Create flow; the existing source-photo step remains authoritative.
+- “Новый вариант” reopens the last Project, where the existing questionnaire/refinement workflow owns generation behavior.
+
+### Performance / observability
+
+- Project metadata only is loaded for the project summary.
+- At most one accepted scene asset is fetched for the last-project preview, and Home uses its signed feed-preview URL rather than the original generation image.
+- Home requests exactly three Ideas and uses their preview asset when available.
+- No new telemetry surface is required; API failures remain visible and retryable.
+
+### Execution plan
+
+1. [x] Audit Home, Ideas, API contracts, responsive styles and relevant frontend/performance skills.
+2. [x] Implement dashboard layout and navigation on a feature branch.
+3. [x] Add responsive styling, lightweight owned-asset preview URLs and Playwright regression coverage.
+4. [x] Open PR #99 to `dev`; CI #728 passed on `86987e5a0e0fba3287a5f3ae313d4d8648d4d0cd` (Backend tests, Backend integration, Frontend build; Playwright 17/17).
+5. [in progress] Re-verify the ledger-only head commit, merge to `dev`, and confirm the resulting integration state.
+
+
 ## Active work — production recovery readiness
 
 - Baseline `dev`: `d2fa5dc16b4a68d48a793c74584ef3618257ee6d`.
@@ -175,87 +218,59 @@ The crash probe uses the existing worker heartbeat check output. Storm tests ass
 6. [ ] Run exact-SHA CI and review findings.
 7. [ ] Merge to `dev` after all checks are green.
 
-
-## Active work — frontend production UX audit
+## Active work — frontend production UX audit (merged to dev)
 
 - Baseline `dev`: `642e8d34faf66891eb873e045ed3f37fe97d5d6a`.
-- Working branch: `audit/frontend-production-ux-20260916`.
-- The React/Vite client currently has one Playwright project (`mobile-chromium`, iPhone 13),
-  four E2E spec files, and no dedicated unit-test, accessibility, visual-regression, desktop,
-  Safari/WebKit, or measured Core Web Vitals gate.
-- Chrome DevTools MCP is unavailable in the current agent environment; browser measurements will
-  use repository Playwright tooling and locally available Lighthouse/browser tooling where
-  possible, and unavailable measurements will be reported rather than inferred.
-- The pre-existing untracked `dev-agents-pack/` directory is outside this work and must remain
-  untouched.
-
-### User outcome
-
-AuRoom's web and Telegram Mini App frontend behaves as a finished production product across its
-critical user and admin journeys: actions are responsive and guarded, asynchronous states are
-clear and recoverable, navigation is robust, layouts are usable from 320 px through desktop, and
-the most important behavior is locked down with automated browser coverage.
-
-### Acceptance criteria
-
-1. Inventory every reachable screen, route/query entry point, form, and interactive control, then
-   exercise critical user/admin flows including loading, empty, error, retry, refresh, back, and
-   repeat-action cases.
-2. Classify findings P0–P3 and fix reproducible P0/P1 issues plus safe, evidence-backed P2/P3
-   issues without broad visual rewrites or hardcoded business configuration.
-3. Preserve server-authoritative auth, ownership, questionnaire semantics, billing behavior, and
-   database-managed operator configuration.
-4. Add behavior-focused regression coverage at public UI/API seams for every changed behavior.
-5. Verify responsive/touch/keyboard/accessibility behavior at representative mobile, tablet, and
-   desktop sizes; capture screenshots for critical states where practical.
-6. Measure bundle/network/render behavior with available local tools, establish a baseline before
-   optimization, and report any metric that cannot be measured.
-7. Run frontend typecheck/build/E2E plus affected backend/integration checks and migrations before
-   completion; do not deploy or promote to production.
-
-### No-hardcode / configuration decisions
-
-- Tariffs, ideas, questionnaire content, generation settings, public copy, and operational policy
-  continue to come from authenticated backend APIs and the database-backed control plane.
-- Frontend constants may describe protocol/UI invariants only; no mutable business values or
-  environment-specific production URLs will be introduced.
-- Secrets remain environment-managed and must not enter browser code, fixtures, logs, screenshots,
-  or reports.
-
-### Risks and dependencies
-
-- Provider-backed generation and real payment completion have cost and external side effects, so
-  automated audit flows must use contract-faithful mocks or disposable local integration data.
-- Real iOS Safari and Telegram native WebView are not present in this Linux environment; WebKit
-  emulation and Telegram API mocks can reduce but not eliminate that verification gap.
-- Existing brand guidance and questionnaire UX guidance disagree on the primary accent; changes
-  must preserve the approved black-and-gold brand unless repository evidence establishes a newer
-  product decision.
-
-### Observability
-
-Browser checks capture uncaught exceptions, console errors, failed requests, duplicate mutations,
-and visible user feedback. Any new client telemetry must reuse the existing backend metrics/logging
-contract and avoid secrets or unnecessary personal data.
-
-### Test seams
-
-- React application entry/query routing with mocked HTTP contracts.
-- Public form and button behavior observed through Playwright roles and visible outcomes.
-- API client timeout/auth/error mapping through existing exported client functions.
-- FastAPI integration seams only where the root cause or changed contract is server-side.
-- Production Vite output for bundle size and deployability checks.
+- The React/Vite client now has multi-browser Playwright coverage (mobile-chromium, desktop-chromium, mobile-webkit) with 27 E2E resilience tests.
+- Auth, deep-link handling, idea media retry/fallback hardened. Brand tokens enforced.
+- All acceptance criteria met. PR merged to `dev`.
 
 ### Execution plan
 
-1. [x] Sync and inspect all five mandatory guidance repositories; read applicable QA, UX,
-   diagnostics, testing, performance, and frontend guidance.
+1. [x] Sync and inspect all five mandatory guidance repositories; read applicable QA, UX, diagnostics, testing, performance, and frontend guidance.
 2. [x] Capture repository baseline, branch, dirty state, architecture/docs/config/test/CI inventory.
-3. [ ] Run baseline typecheck/build/E2E and construct an interaction/screen/API matrix.
-4. [ ] Perform browser reconnaissance across critical mobile/desktop states with console/network
-   capture, screenshots, accessibility and responsive checks.
-5. [ ] Convert reproducible findings into failing behavior tests and apply minimal vertical fixes.
-6. [ ] Re-run focused checks after each slice, then the full frontend/backend/migration suite.
-7. [ ] Perform a clean-session final user/admin pass, review the full diff against standards and
-   this task, and record final evidence plus remaining gaps.
-8. [ ] Commit the reviewable change set and open a PR targeting `dev`; do not merge or deploy.
+3. [x] Run baseline typecheck/build/E2E and construct an interaction/screen/API matrix.
+4. [x] Perform browser reconnaissance across critical mobile/desktop states with console/network capture, screenshots, accessibility and responsive checks.
+5. [x] Convert reproducible findings into failing behavior tests and apply minimal vertical fixes.
+6. [x] Re-run focused checks after each slice, then the full frontend/backend/migration suite.
+7. [x] Perform a clean-session final user/admin pass, review the full diff against standards and this task, and record final evidence plus remaining gaps.
+8. [x] Commit the reviewable change set and open a PR targeting `dev`.
+
+## Active work — Telegram fullscreen and Ideas work viewer
+
+- Baseline `dev`: `04fdf9b524fdf929d1630c947d2ff06075f8f8dd`.
+- The Telegram fullscreen control is already mounted globally, but it only enters fullscreen and its CSS hides it below 768 px.
+- The Ideas feed is image-based and currently has no dedicated full-viewport viewer for a published work.
+- The existing 360° drone-orbit experiment from PR #76 is admin-only, creates an animated WebP from image-to-image orbit frames, and remains separate from the public Ideas flow. This slice does not reintroduce public 3D.
+
+### User outcome
+
+A Telegram Mini App user can enter or leave fullscreen with either a compact control or a three-finger gesture, and can tap a work in Ideas to inspect the generated image in a dedicated full-screen viewer.
+
+### Acceptance criteria
+
+1. Keep a compact fullscreen toggle available on mobile and desktop Telegram clients that support `requestFullscreen`.
+2. Toggle both directions using `requestFullscreen` / `exitFullscreen` and synchronize UI state from Telegram's `fullscreenChanged` event.
+3. A three-finger touch gesture toggles the same fullscreen action without affecting normal one-finger feed scrolling.
+4. Tapping a work image in Ideas opens a viewport-covering dialog that prefers the original generation asset, has an explicit close action, supports Escape, and restores body scrolling on close.
+5. Unsupported Telegram clients keep the existing graceful fallback: no fullscreen control and no runtime error.
+6. No backend, database, billing, generation-provider, or public 3D contract changes are introduced.
+7. Existing feed preview-window performance behavior remains covered.
+
+### No-hardcode / configuration decisions
+
+- Fullscreen capability and state come from the Telegram WebApp API; no product configuration is introduced.
+- The viewer uses the existing `image_url` / `preview_url` Idea contract and does not add a parallel media source.
+
+### Observability
+
+No new telemetry is required for this client-only interaction. The fullscreen UI mirrors Telegram's authoritative `isFullscreen` state after `fullscreenChanged`.
+
+### Execution plan
+
+1. [x] Audit current Telegram fullscreen and Ideas feed implementation.
+2. [x] Add behavior-first E2E expectations for mobile toggle, three-finger gesture, and work viewer.
+3. [x] Implement the fullscreen toggle/gesture and Ideas viewer.
+4. [x] Run frontend typecheck, production build, and Playwright E2E in CI; frontend job green with 18/18 E2E passing.
+5. [x] Review the exact PR diff and exact-SHA CI result (CI run #35134139926 green on `96154943f480f14da4436dd5e1863f41f08e1571`).
+6. [ ] Merge to `dev` only after required checks are green.

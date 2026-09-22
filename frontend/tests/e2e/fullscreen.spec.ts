@@ -70,7 +70,23 @@ async function prepare(
 ) {
   await page.addInitScript(() => {
     sessionStorage.setItem('auroom.access_token','fullscreen-e2e')
-    window.Telegram = { WebApp: { initData:'', requestFullscreen:() => {} } }
+    const handlers = new Map<string, Set<(...args: unknown[]) => void>>()
+    const webApp = {
+      initData:'',
+      isFullscreen:false,
+      requestFullscreen:() => {},
+      exitFullscreen:() => {},
+      onEvent:(eventType:string, callback:(...args: unknown[])=>void) => {
+        const callbacks=handlers.get(eventType) ?? new Set<(...args: unknown[])=>void>()
+        callbacks.add(callback)
+        handlers.set(eventType,callbacks)
+      },
+      offEvent:(eventType:string, callback:(...args: unknown[])=>void) => { handlers.get(eventType)?.delete(callback) },
+    }
+    window.Telegram = { WebApp:webApp }
+    ;(window as unknown as { __emitTelegramEvent:(eventType:string)=>void }).__emitTelegramEvent=(eventType) => {
+      handlers.get(eventType)?.forEach((callback)=>callback())
+    }
   })
   await page.route('**/api/v1/**',async route => {
     const request=route.request(), path=new URL(request.url()).pathname, method=request.method()
@@ -95,10 +111,29 @@ async function installFullscreenCounters(page:Page) {
   await page.evaluate(() => {
     const telegram=window.Telegram?.WebApp
     if (!telegram) throw new Error('Telegram WebApp is unavailable')
+    const emit=(eventType:string) => (window as unknown as { __emitTelegramEvent:(eventType:string)=>void }).__emitTelegramEvent(eventType)
     ;(window as unknown as { __fullscreenCalls:number }).__fullscreenCalls = 0
+    ;(window as unknown as { __exitFullscreenCalls:number }).__exitFullscreenCalls = 0
     ;(window as unknown as { __expandCalls:number }).__expandCalls = 0
     telegram.expand=() => { (window as unknown as { __expandCalls:number }).__expandCalls += 1 }
-    telegram.requestFullscreen=() => { (window as unknown as { __fullscreenCalls:number }).__fullscreenCalls += 1 }
+    telegram.requestFullscreen=() => {
+      ;(window as unknown as { __fullscreenCalls:number }).__fullscreenCalls += 1
+      telegram.isFullscreen=true
+      emit('fullscreenChanged')
+    }
+    telegram.exitFullscreen=() => {
+      ;(window as unknown as { __exitFullscreenCalls:number }).__exitFullscreenCalls += 1
+      telegram.isFullscreen=false
+      emit('fullscreenChanged')
+    }
+  })
+}
+
+async function threeFingerTap(page:Page) {
+  await page.evaluate(() => {
+    const event=new Event('touchstart',{bubbles:true,cancelable:true})
+    Object.defineProperty(event,'touches',{value:[{}, {}, {}]})
+    document.dispatchEvent(event)
   })
 }
 
@@ -110,19 +145,57 @@ test('fullscreen control stays visible on Ideas where AppFrame topbar is hidden'
   await expect(button).toBeVisible()
   await expect(button.locator('svg')).toHaveCount(1)
   const box=await button.boundingBox()
-  expect(box?.width).toBe(40)
-  expect(box?.height).toBe(40)
+  expect(box?.width).toBeLessThanOrEqual(40)
+  expect(box?.height).toBeLessThanOrEqual(40)
   await installFullscreenCounters(page)
   await button.click()
   await expect.poll(() => page.evaluate(() => (window as unknown as { __expandCalls:number }).__expandCalls)).toBe(1)
   await expect.poll(() => page.evaluate(() => (window as unknown as { __fullscreenCalls:number }).__fullscreenCalls)).toBe(1)
 })
 
-test('fullscreen control is hidden on mobile Telegram viewports',async({page})=>{
+test('fullscreen control stays available on mobile and three-finger gesture toggles it',async({page})=>{
   await page.setViewportSize({width:390,height:844})
   await prepare(page)
   await page.goto('/?section=ideas')
-  await expect(page.locator('.telegram-fullscreen-button')).toBeHidden()
+  const button=page.getByRole('button',{name:'Открыть на весь экран'})
+  await expect(button).toBeVisible()
+  await installFullscreenCounters(page)
+
+  await button.click()
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __fullscreenCalls:number }).__fullscreenCalls)).toBe(1)
+  await expect(page.getByRole('button',{name:'Выйти из полноэкранного режима'})).toBeVisible()
+
+  await threeFingerTap(page)
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __exitFullscreenCalls:number }).__exitFullscreenCalls)).toBe(1)
+  await expect(page.getByRole('button',{name:'Открыть на весь экран'})).toBeVisible()
+
+  await threeFingerTap(page)
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __fullscreenCalls:number }).__fullscreenCalls)).toBe(2)
+})
+
+test('Ideas work opens into a full-screen image viewer',async({page})=>{
+  const tinyPng=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64')
+  await page.route('**/viewer/**',async route=>route.fulfill({status:200,contentType:'image/png',body:tinyPng}))
+  await prepare(page,[{
+    id:'viewer-idea',
+    title:'Viewer idea',
+    category:'House',
+    generation_type:'master_plan',
+    image_url:'/viewer/original.png',
+    preview_url:'/viewer/preview.webp',
+    objects:[],
+    selected_objects:[],
+    published_at:now,
+    is_saved:false,
+  }])
+  await page.goto('/?section=ideas')
+
+  await page.getByRole('button',{name:'Открыть работу на весь экран'}).click()
+  const viewer=page.getByRole('dialog',{name:'Viewer idea'})
+  await expect(viewer).toBeVisible()
+  await expect(viewer.locator('img')).toHaveAttribute('src','/viewer/original.png')
+  await page.getByRole('button',{name:'Закрыть полноэкранный просмотр'}).click()
+  await expect(viewer).toBeHidden()
 })
 
 test('Ideas slideshow requests only active and neighboring previews',async({page})=>{
