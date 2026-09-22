@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -18,6 +19,8 @@ from app.schemas.projects import (
     ProjectResponse,
     ProjectUpdateRequest,
 )
+
+ProjectListSort = Literal["created", "updated"]
 
 
 class ProjectService:
@@ -52,24 +55,36 @@ class ProjectService:
         await self.repository.session.refresh(project)
         return self.to_response(project)
 
-    async def list(self, user: User, *, cursor: str | None, limit: int) -> ProjectListResponse:
-        cursor_created_at = None
+    async def list(
+        self,
+        user: User,
+        *,
+        cursor: str | None,
+        limit: int,
+        sort: ProjectListSort = "created",
+    ) -> ProjectListResponse:
+        cursor_at = None
         cursor_id = None
         if cursor:
-            cursor_created_at, cursor_id = decode_cursor(cursor)
+            cursor_at, cursor_id = decode_cursor(cursor)
+        sort_by = "updated_at" if sort == "updated" else "created_at"
 
         rows = await self.repository.list_owned(
             user.id,
             limit=limit + 1,
-            cursor_created_at=cursor_created_at,
+            cursor_at=cursor_at,
             cursor_id=cursor_id,
+            sort_by=sort_by,
         )
         has_more = len(rows) > limit
         items = rows[:limit]
         next_cursor = None
         if has_more and items:
             last = items[-1]
-            next_cursor = encode_cursor(last.created_at, last.id)
+            next_cursor = encode_cursor(
+                last.updated_at if sort_by == "updated_at" else last.created_at,
+                last.id,
+            )
         return ProjectListResponse(
             items=[self.to_response(item) for item in items],
             next_cursor=next_cursor,
