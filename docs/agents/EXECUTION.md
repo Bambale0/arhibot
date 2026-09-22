@@ -274,10 +274,8 @@ No new telemetry is required for this client-only interaction. The fullscreen UI
 4. [x] Run frontend typecheck, production build, and Playwright E2E in CI; frontend job green with 18/18 E2E passing.
 5. [x] Review the exact PR diff and exact-SHA CI result (CI run #35134139926 green on `96154943f480f14da4436dd5e1863f41f08e1571`).
 6. [ ] Merge to `dev` only after required checks are green.
-- Local verification: 216 unit/contract passed; 44 integration plus the additional stale-balance regression; 102 browser passed with Chromium 1193 / WebKit 2203; typecheck/build/npm audit clean. Independent review identified stale User balance under row lock; fixed with populate_existing and a red/green regression.
-- Live operational work: encrypted snapshots delivered to 2 reachable active DB administrators; full independent Telegram download/decrypt/DB migration/media restore PASS. Third administrator chat is unavailable and excluded from the explicit backup destination allowlist. Backup/monitor cron use the staged audited ops package until application rollout. No application deployment performed.
 
-# Active work — production readiness, 2026-09-22
+## Active work — production readiness, 2026-09-22
 
 - Baseline: `dev` `56b94847d3a8d3e32fbb0062707f88ea43e47c57`; isolated branch `fix/production-readiness-20260922`.
 - Evidence: full 15-area audit, 200 unit/35 integration passing; browser 86/87; deterministic payment recovery, backup portability, delayed logout and 768px overlap reproductions.
@@ -288,10 +286,13 @@ No new telemetry is required for this client-only interaction. The fullscreen UI
 
 ## Acceptance / progress
 
-1. [ ] Payment lost response → verified webhook/admin reconciliation → exactly one credit; reject inconsistent metadata and unsafe replay.
-2. [ ] Portable manifests, corruption/path-traversal rejection, independent restore; failed backups cannot defer the next scheduled retry.
-3. [ ] Encrypted Telegram admin backup, bounded retries/checkpoints, off-site freshness and documented recovery.
-4. [ ] Immediate local logout, stale request protection, desktop controls without overlap.
-5. [ ] Non-root runtime and volume migration, audited frontend toolchain, reproducible build/CI checks.
+1. [x] Payment lost response → verified webhook/admin reconciliation → exactly one credit; reject inconsistent metadata and unsafe replay.
+2. [x] Portable manifests, corruption/path-traversal rejection, independent restore; failed backups cannot defer the next scheduled retry.
+3. [x] Encrypted Telegram admin backup, bounded retries/checkpoints, off-site freshness and documented recovery.
+4. [x] Immediate local logout, stale request protection, desktop controls without overlap.
+5. [x] Non-root runtime and volume migration, audited frontend toolchain, reproducible build/CI checks.
 6. [ ] Full unit/integration/browser suites, migrations, image/runtime and recovery smoke; exact PR SHA green CI.
-7. [ ] Final epic readiness matrix and deployment/rollback instructions with remaining external dependencies explicitly stated.
+7. [x] Final epic readiness matrix and deployment/rollback instructions with remaining external dependencies explicitly stated.
+
+- Local verification: 216 unit/contract passed; 44 integration plus the additional stale-balance regression; 102 browser passed with Chromium 1193 / WebKit 2203; typecheck/build/npm audit clean. Independent review identified stale User balance under row lock; fixed with populate_existing and a red/green regression.
+- Live operational work: encrypted snapshots delivered to 2 reachable active DB administrators; full independent Telegram download/decrypt/DB migration/media restore PASS. Third administrator chat is unavailable and excluded from the explicit backup destination allowlist. Backup/monitor cron use the staged audited ops package until application rollout. No application deployment performed.
