@@ -105,8 +105,8 @@ function WorkCard({
     </div>
 
     <div className={`idea-work-stage ${imageReady ? 'media-ready' : 'media-pending'}`}>
-<button type="button" className="idea-work-open" aria-label="Открыть работу на весь экран" onClick={onOpen} />
-      {imageUrl && shouldLoadImage ? (
+      <button type="button" className="idea-work-open" aria-label="Открыть работу на весь экран" onClick={onOpen} />
+      {shouldRenderImage ? (
         <img
           src={imageUrl ?? undefined}
           alt={idea.title}
