@@ -21,6 +21,7 @@ from app.repositories.billing import BillingRepository
 from app.repositories.generations import GenerationRepository
 from app.repositories.projects import ProjectRepository
 from app.schemas.admin import (
+    AdminAiFlyoverGifCreate,
     AdminAiHistoryItem,
     AdminAiOrbitCreate,
     AdminAiSandboxCreate,
@@ -53,6 +54,7 @@ from app.telegram_bot.main import TelegramBotApi
 
 ADMIN_SANDBOX_PROMPT_PREFIX = "AUROOM_ADMIN_SANDBOX_V1\n"
 ADMIN_ORBIT_PROMPT_PREFIX = "AUROOM_ADMIN_ORBIT_V1\n"
+ADMIN_FLYOVER_GIF_PROMPT_PREFIX = "AUROOM_ADMIN_FLYOVER_GIF_V1\n"
 
 
 def _parse_admin_ai_envelope(
@@ -74,6 +76,30 @@ def _parse_admin_ai_envelope(
         operator_prompt if isinstance(operator_prompt, str) else "",
         params if isinstance(params, dict) else {},
         frame_count if isinstance(frame_count, int) else None,
+        frame_duration_ms if isinstance(frame_duration_ms, int) else None,
+    )
+
+
+def _parse_flyover_gif_envelope(
+    prompt: str,
+) -> tuple[str, dict[str, object], int | None, int | None, int | None]:
+    try:
+        payload = loads(prompt.removeprefix(ADMIN_FLYOVER_GIF_PROMPT_PREFIX))
+    except (JSONDecodeError, TypeError):
+        return "", {}, None, None, None
+    if not isinstance(payload, dict):
+        return "", {}, None, None, None
+
+    operator_prompt = payload.get("prompt")
+    params = payload.get("params")
+    keyframe_count = payload.get("keyframe_count")
+    inbetween_frames = payload.get("inbetween_frames")
+    frame_duration_ms = payload.get("frame_duration_ms")
+    return (
+        operator_prompt if isinstance(operator_prompt, str) else "",
+        params if isinstance(params, dict) else {},
+        keyframe_count if isinstance(keyframe_count, int) else None,
+        inbetween_frames if isinstance(inbetween_frames, int) else None,
         frame_duration_ms if isinstance(frame_duration_ms, int) else None,
     )
 
@@ -464,6 +490,97 @@ class AdminService:
         return generated
 
 
+    async def create_ai_flyover_gif_generation(
+        self, actor: User, payload: AdminAiFlyoverGifCreate
+    ) -> GenerationResponse:
+        source = await GenerationRepository(self.session).get_owned(
+            payload.source_generation_id,
+            actor.id,
+        )
+        if source is None:
+            raise AppError(
+                type="flyover_source_not_found",
+                title="Flyover source not found",
+                status=404,
+                detail="The source generation does not exist or is not available.",
+            )
+        if source.status != GenerationStatus.COMPLETED or source.output_asset_id is None:
+            raise AppError(
+                type="flyover_source_not_ready",
+                title="Flyover source is not ready",
+                status=409,
+                detail="Complete an AI Sandbox image before building a GIF flyover.",
+            )
+        if source.origin != GenerationOrigin.ADMIN_SANDBOX.value:
+            raise AppError(
+                type="flyover_source_not_sandbox",
+                title="Flyover source must be an AI Sandbox image",
+                status=422,
+                detail="Use a completed still image from the admin AI Sandbox.",
+            )
+
+        project = await self.session.get(Project, source.project_id)
+        if project is None or not bool((project.context or {}).get("admin_ai_sandbox")):
+            raise AppError(
+                type="flyover_source_not_sandbox",
+                title="Flyover source must be an AI Sandbox result",
+                status=422,
+                detail="Use a completed result from the admin AI Sandbox.",
+            )
+
+        envelope = ADMIN_FLYOVER_GIF_PROMPT_PREFIX + dumps(
+            {
+                "prompt": payload.prompt,
+                "params": payload.params,
+                "keyframe_count": payload.keyframe_count,
+                "inbetween_frames": payload.inbetween_frames,
+                "frame_duration_ms": payload.frame_duration_ms,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if len(envelope) > 12_000:
+            raise AppError(
+                type="flyover_payload_too_large",
+                title="Flyover payload is too large",
+                status=422,
+                detail="Shorten the prompt or reduce flyover parameters.",
+            )
+
+        def bind_flyover(generation, _project) -> None:  # noqa: ANN001
+            generation.model_name = payload.model_name
+            generation.telegram_delivery_status = "skipped"
+
+        generated = await build_generation_service(self.session, self.settings).create(
+            actor,
+            AdminSandboxGenerationCreate(
+                project_id=project.id,
+                input_asset_id=source.output_asset_id,
+                type=GenerationType.MASTER_PLAN,
+                prompt=envelope,
+            ),
+            before_commit=bind_flyover,
+            skip_pricing=True,
+            origin=GenerationOrigin.ADMIN_FLYOVER_GIF,
+        )
+        self.repository.add_audit(
+            actor_user_id=actor.id,
+            action="generation.flyover_gif.create",
+            entity_type="generation",
+            entity_id=str(generated.id),
+            details={
+                "source_generation_id": str(source.id),
+                "model_name": payload.model_name,
+                "keyframe_count": payload.keyframe_count,
+                "inbetween_frames": payload.inbetween_frames,
+                "frame_duration_ms": payload.frame_duration_ms,
+                "param_keys": sorted(payload.params),
+            },
+        )
+        await self.session.commit()
+        return generated
+
+
     async def list_ai_sandbox_history(
         self,
         actor: User,
@@ -495,13 +612,28 @@ class AdminService:
             elif row.prompt.startswith(ADMIN_ORBIT_PROMPT_PREFIX):
                 kind = "orbit"
                 prefix = ADMIN_ORBIT_PROMPT_PREFIX
+            elif row.prompt.startswith(ADMIN_FLYOVER_GIF_PROMPT_PREFIX):
+                kind = "flyover_gif"
+                prefix = ADMIN_FLYOVER_GIF_PROMPT_PREFIX
             else:
                 continue
 
-            prompt, params, frame_count, frame_duration_ms = _parse_admin_ai_envelope(
-                row.prompt,
-                prefix,
-            )
+            if kind == "flyover_gif":
+                (
+                    prompt,
+                    params,
+                    keyframe_count,
+                    inbetween_frames,
+                    frame_duration_ms,
+                ) = _parse_flyover_gif_envelope(row.prompt)
+                frame_count = None
+            else:
+                prompt, params, frame_count, frame_duration_ms = _parse_admin_ai_envelope(
+                    row.prompt,
+                    prefix,
+                )
+                keyframe_count = None
+                inbetween_frames = None
             generation = await generation_service.to_response(row)
             generation = generation.model_copy(update={"prompt": prompt})
             history.append(
@@ -511,7 +643,13 @@ class AdminService:
                     prompt=prompt,
                     params=params,
                     frame_count=frame_count if kind == "orbit" else None,
-                    frame_duration_ms=frame_duration_ms if kind == "orbit" else None,
+                    frame_duration_ms=(
+                        frame_duration_ms if kind in {"orbit", "flyover_gif"} else None
+                    ),
+                    keyframe_count=keyframe_count if kind == "flyover_gif" else None,
+                    inbetween_frames=(
+                        inbetween_frames if kind == "flyover_gif" else None
+                    ),
                 )
             )
         return history
