@@ -330,3 +330,9 @@ svg { width:20px; height:20px; }
   .generate-bar>div { display:none; }
   .generate-button { width:100%; }
 }
+.home-last-copy h2 { overflow-wrap:anywhere; }
+.home-last-copy > div { min-width:0; max-width:100%; }
+.home-last-preview { min-width:0; width:100%; }
+@media (max-width:640px) {
+  .home-last-card { grid-template-columns:minmax(0,1fr); }
+}

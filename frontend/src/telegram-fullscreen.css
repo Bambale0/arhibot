@@ -65,3 +65,13 @@
     transition: none;
   }
 }
+
+/* Standalone screens have their own headers, outside AppFrame. */
+@media (min-width:1024px) {
+  .telegram-fullscreen-button ~ .admin-shell .admin-header {
+    padding-right:48px;
+  }
+  .telegram-fullscreen-button ~ .questionnaire-shell .questionnaire-topbar {
+    padding-right:max(66px, calc(env(safe-area-inset-right) + 66px));
+  }
+}

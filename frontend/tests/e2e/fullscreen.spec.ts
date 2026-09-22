@@ -265,6 +265,9 @@ test('fullscreen control stays visible inside standalone questionnaire flow',asy
   await expect(page.getByText('Заполните параметры всех объектов')).toBeVisible()
   const button=page.getByRole('button',{name:'Открыть на весь экран'})
   await expect(button).toBeVisible()
+  const controlBox = (await button.boundingBox())!
+  const contextBox = (await page.locator('.questionnaire-topbar > span').boundingBox())!
+  expect(controlBox.x).toBeGreaterThanOrEqual(contextBox.x + contextBox.width + 4)
   await installFullscreenCounters(page)
   await button.click()
   await expect.poll(() => page.evaluate(() => (window as unknown as { __fullscreenCalls:number }).__fullscreenCalls)).toBe(1)

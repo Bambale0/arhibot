@@ -351,3 +351,6 @@
     transition: none;
   }
 }
+
+.questionnaire-create .page-heading-row > div { min-width:0; }
+.questionnaire-create .page-heading-row h1 { max-width:100%; overflow-wrap:anywhere; }

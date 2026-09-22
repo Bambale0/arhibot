@@ -296,3 +296,14 @@ No new telemetry is required for this client-only interaction. The fullscreen UI
 
 - Local verification: 216 unit/contract passed; 44 integration plus the additional stale-balance regression; 102 browser passed with Chromium 1193 / WebKit 2203; typecheck/build/npm audit clean. Independent review identified stale User balance under row lock; fixed with populate_existing and a red/green regression.
 - Live operational work: encrypted snapshots delivered to 2 reachable active DB administrators; full independent Telegram download/decrypt/DB migration/media restore PASS. Third administrator chat is unavailable and excluded from the explicit backup destination allowlist. Backup/monitor cron use the staged audited ops package until application rollout. No application deployment performed.
+
+## Active work — frontend layout audit, 2026-09-22
+
+- Baseline: release candidate `a3bbb146`; scope is responsive layout and browser evidence, preserving the approved Ideas/History behavior and brand.
+- Existing 320–1920px coverage mainly uses empty lists. A populated-content audit reproduces clipped History actions, horizontal Profile/tariff overflow, an invisible mobile admin button, crowded Ideas search, and collapsed Ideas media with long titles/open parameters.
+- Reuse existing React/CSS and Playwright fixtures; no new dependencies, business settings, schema changes, provider calls, or deployment.
+- Acceptance: populated screens fit 320–1920px and landscape; text/actions remain inside cards; Ideas media and CTA remain reachable with long content; search/close controls remain reachable; screenshots inspected in addition to DOM checks.
+- Plan: [x] reproduce with screenshots; [x] add focused regression coverage; [x] fix layout; [ ] finish full browser / exact-commit CI gates; [x] prepare visual evidence in the dated layout audit report.
+- Guidance: claw frontend/UX audit, wondelai refactoring-ui, dev-agents-pack QA checklist, anthropics webapp-testing, upstream ksu/local verification-before-completion; agentskills source inspected (format specification, no product layout skill).
+
+- Follow-up evidence: long cards also exposed an active-preview bug; a failing-before/passing-after regression now checks 255-character titles in portrait and landscape. Independent read-only review and an eight-card mixed-height scrolling probe found no P1/P2 regression. Build/typecheck and the full mobile/desktop Chromium suites (38 each) passed; the final WebKit suite and exact-commit CI are release gates recorded in the PR.
