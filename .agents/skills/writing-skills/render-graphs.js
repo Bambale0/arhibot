@@ -13,9 +13,41 @@
  * Requires: graphviz (dot) installed on system
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
-import { execFileSync } from 'child_process';
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
+const sanitizeFilename = require('sanitize-filename');
+
+function sanitizePathSegments(pathValue) {
+  return String(pathValue ?? '').split(/[\\/]+/).filter(Boolean).map((segment) => {
+    const sanitized = sanitizeFilename(segment);
+    if (sanitized !== segment || !sanitized) {
+      throw new Error(`Unsafe path segment: ${segment}`);
+    }
+    return sanitized;
+  });
+}
+
+function safeJoin(base, ...parts) {
+  const root = path.resolve(base);
+  const target = path.resolve(root, ...parts.flatMap(sanitizePathSegments));
+  const rel = path.relative(root, target);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(`Path escapes skill directory: ${parts.join('/')}`);
+  }
+  return target;
+}
+
+function selfTest() {
+  const root = path.resolve('/tmp/skill');
+  if (safeJoin(root, 'diagrams', 'a.svg') !== path.resolve(root, 'diagrams', 'a.svg')) {
+    throw new Error('safeJoin failed valid path');
+  }
+  for (const bad of ['../x', 'diagrams/../../x']) {
+    try { safeJoin(root, bad); } catch { continue; }
+    throw new Error(`safeJoin accepted ${bad}`);
+  }
+}
 
 function extractDotBlocks(markdown) {
   const blocks = [];
@@ -69,7 +101,7 @@ ${bodies.join('\n\n')}
 
 function renderToSvg(dotContent) {
   try {
-    return execFileSync('dot', ['-Tsvg'], {
+    return execSync('dot -Tsvg', {
       input: dotContent,
       encoding: 'utf-8',
       maxBuffer: 10 * 1024 * 1024
@@ -83,6 +115,10 @@ function renderToSvg(dotContent) {
 
 function main() {
   const args = process.argv.slice(2);
+  if (args.includes('--self-test')) {
+    selfTest();
+    return;
+  }
   const combine = args.includes('--combine');
   const skillDirArg = args.find(a => !a.startsWith('--'));
 
@@ -98,8 +134,8 @@ function main() {
     process.exit(1);
   }
 
-  const skillDir = path.resolve(skillDirArg);
-  const skillFile = path.join(skillDir, 'SKILL.md');
+  const skillDir = safeJoin(process.cwd(), skillDirArg);
+  const skillFile = safeJoin(skillDir, 'SKILL.md');
   const skillName = path.basename(skillDir).replace(/-/g, '_');
 
   if (!fs.existsSync(skillFile)) {
@@ -107,10 +143,9 @@ function main() {
     process.exit(1);
   }
 
-  // Check if dot is available. Run the binary directly rather than probing
-  // with `which`, which is not a command on Windows.
+  // Check if dot is available
   try {
-    execFileSync('dot', ['-V'], { stdio: 'ignore' });
+    execSync('which dot', { encoding: 'utf-8' });
   } catch {
     console.error('Error: graphviz (dot) not found. Install with:');
     console.error('  brew install graphviz    # macOS');
@@ -128,7 +163,7 @@ function main() {
 
   console.log(`Found ${blocks.length} diagram(s) in ${path.basename(skillDir)}/SKILL.md`);
 
-  const outputDir = path.join(skillDir, 'diagrams');
+  const outputDir = safeJoin(skillDir, 'diagrams');
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir);
   }
@@ -138,12 +173,12 @@ function main() {
     const combined = combineGraphs(blocks, skillName);
     const svg = renderToSvg(combined);
     if (svg) {
-      const outputPath = path.join(outputDir, `${skillName}_combined.svg`);
+      const outputPath = safeJoin(outputDir, `${skillName}_combined.svg`);
       fs.writeFileSync(outputPath, svg);
       console.log(`  Rendered: ${skillName}_combined.svg`);
 
       // Also write the dot source for debugging
-      const dotPath = path.join(outputDir, `${skillName}_combined.dot`);
+      const dotPath = safeJoin(outputDir, `${skillName}_combined.dot`);
       fs.writeFileSync(dotPath, combined);
       console.log(`  Source: ${skillName}_combined.dot`);
     } else {
@@ -154,7 +189,7 @@ function main() {
     for (const block of blocks) {
       const svg = renderToSvg(block.content);
       if (svg) {
-        const outputPath = path.join(outputDir, `${block.name}.svg`);
+        const outputPath = safeJoin(outputDir, `${block.name}.svg`);
         fs.writeFileSync(outputPath, svg);
         console.log(`  Rendered: ${block.name}.svg`);
       } else {
