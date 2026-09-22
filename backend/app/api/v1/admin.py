@@ -13,6 +13,7 @@ from app.schemas.admin import (
     AdminAiSandboxCreate,
     AdminOverviewResponse,
     AdminPaymentResponse,
+    AdminPaymentReconcile,
     AdminUserResponse,
     AuditLogResponse,
     BillingPlanCreate,
@@ -230,8 +231,10 @@ async def list_payments(_admin: AdminUser, session: DbSession, settings: Setting
 
 
 @router.post("/payments/{payment_id}/reconcile", response_model=AdminPaymentResponse)
-async def reconcile_payment(payment_id: UUID, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> AdminPaymentResponse:
-    return await AdminBillingService(session, settings).reconcile_payment(admin, payment_id)
+async def reconcile_payment(payment_id: UUID, admin: AdminUser, session: DbSession, payload: AdminPaymentReconcile | None = None, settings: Settings = Depends(get_settings)) -> AdminPaymentResponse:
+    return await AdminBillingService(session, settings).reconcile_payment(
+        admin, payment_id, provider_payment_id=payload.provider_payment_id if payload else None,
+    )
 
 
 @router.post("/payments/{payment_id}/refund", response_model=AdminPaymentResponse)

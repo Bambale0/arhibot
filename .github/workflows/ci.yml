@@ -56,7 +56,7 @@ jobs:
         working-directory: .
         run: |
           bash -n ops/deploy_docker.sh ops/backup_runtime.sh ops/export_offsite_backup.sh ops/fetch_offsite_backup.sh ops/restore_runtime.sh ops/verify_restore_isolated.sh ops/runtime_housekeeping.sh ops/install_host_nginx.sh backend/scripts/dependency_locks.sh
-          python -m py_compile ops/runtime_preflight.py backend/scripts/redis_failure_probe.py backend/scripts/postgres_failure_probe.py backend/scripts/http_load_probe.py backend/scripts/worker_crash_probe.py
+          python -m py_compile ops/backup_readiness.py ops/backup_manifest.py ops/telegram_backup.py ops/runtime_preflight.py backend/scripts/redis_failure_probe.py backend/scripts/postgres_failure_probe.py backend/scripts/http_load_probe.py backend/scripts/worker_crash_probe.py
 
       - name: Validate Docker Compose
         working-directory: .
@@ -65,6 +65,13 @@ jobs:
           trap 'rm -f backend/.env' EXIT
           docker compose --project-directory backend -f backend/docker-compose.yml config --quiet
           docker compose --project-directory backend -f backend/docker-compose.yml build api frontend
+          docker compose --project-directory backend -f backend/docker-compose.yml run --rm --no-deps api python -c 'import os,pathlib; assert os.getuid()==10001; p=pathlib.Path("/data/media/ci-write-probe"); p.write_bytes(b"ok"); p.unlink()'
+
+      - name: Install backup encryption tool for recovery tests
+        run: sudo apt-get update -qq && sudo apt-get install -y age
+
+      - name: Lint correctness
+        run: ruff check app tests --select E9,F63,F7,F82
 
       - name: Unit and contract tests
         run: pytest -q -m 'not integration'
@@ -355,8 +362,8 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Audit frontend production dependencies
-        run: npm audit --omit=dev --audit-level=high
+      - name: Audit frontend and build dependencies
+        run: npm audit --audit-level=high
 
       - name: Typecheck
         run: npm run typecheck

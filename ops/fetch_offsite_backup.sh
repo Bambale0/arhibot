@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 umask 077
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 remote_snapshot=${1:?remote snapshot directory is required}
 target_dir=${2:?local target directory is required}
@@ -37,7 +38,7 @@ age --decrypt --identity "${identity_file}" "${bundle}"   | tar -xf - -C "${targ
 [[ -s "${target_dir}/postgres.dump" ]] || { echo "Recovered backup is missing postgres.dump" >&2; exit 1; }
 [[ -s "${target_dir}/media.tar.gz" ]] || { echo "Recovered backup is missing media.tar.gz" >&2; exit 1; }
 [[ -s "${target_dir}/SHA256SUMS" ]] || { echo "Recovered backup is missing SHA256SUMS" >&2; exit 1; }
-(cd "${target_dir}" && sha256sum -c SHA256SUMS >/dev/null)
+python3 "${script_dir}/backup_manifest.py" verify "${target_dir}"
 tar -tzf "${target_dir}/media.tar.gz" >/dev/null
 chmod 600 "${target_dir}/postgres.dump" "${target_dir}/media.tar.gz" "${target_dir}/SHA256SUMS"
 echo "AuRoom encrypted off-site backup recovered: ${target_dir}"

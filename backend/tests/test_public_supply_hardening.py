@@ -64,7 +64,7 @@ def test_ci_has_dependency_and_container_build_gates() -> None:
     ci = (REPO_ROOT / '.github' / 'workflows' / 'ci.yml').read_text()
     assert 'pip-audit -r requirements.lock --require-hashes --progress-spinner off --strict' in ci
     assert 'pip-audit -r requirements-build.lock --require-hashes --progress-spinner off --strict' in ci
-    assert 'npm audit --omit=dev --audit-level=high' in ci
+    assert 'npm audit --audit-level=high' in ci
     assert 'docker compose --project-directory backend -f backend/docker-compose.yml build api frontend' in ci
     deploy = (REPO_ROOT / 'ops' / 'deploy_docker.sh').read_text()
     assert 'Applying canonical host Nginx config' in deploy
@@ -204,7 +204,7 @@ def test_isolated_restore_drill_never_targets_live_runtime() -> None:
     assert '--network "container:${drill_name}"' in drill
     assert 'pg_restore -U app -d app --no-owner --no-privileges' in drill
     assert 'alembic upgrade head' in drill
-    assert 'sha256sum -c SHA256SUMS' in drill
+    assert 'backup_manifest.py" verify' in drill
     assert 'tar -tzf' in drill
     assert 'docker stop "${drill_name}"' in drill
 

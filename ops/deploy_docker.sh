@@ -61,6 +61,9 @@ rollback_code() {
   tar -xzf "${code_backup}" -C "${restore_root}"
   rsync --archive --delete \
     --exclude='backend/.env' \
+  --exclude='.backup.env' \
+  --exclude='.runtime-monitor/' \
+  --exclude='.runtime-mutation.lock' \
     --exclude='.git/' \
     --exclude='backups/' \
     --exclude='.release/' \
@@ -145,6 +148,7 @@ if find "${app_dir}" -mindepth 1 -maxdepth 1 \
     --exclude='./.release' \
     --exclude='./.git' \
     --exclude='./backend/.env' \
+    --exclude='./.backup.env' \
     -czf "${code_backup}" -C "${app_dir}" .
   sha256sum "${code_backup}" > "${code_backup}.sha256"
 
@@ -153,11 +157,15 @@ if find "${app_dir}" -mindepth 1 -maxdepth 1 \
   echo "${backup_output}"
   runtime_backup=$(printf '%s\n' "${backup_output}" | sed -n 's/^AuRoom runtime backup: //p' | tail -n1)
   [[ -n "${runtime_backup}" ]] || { echo "Could not determine pre-migration runtime backup path" >&2; exit 1; }
+  python3 "${candidate}/ops/backup_readiness.py" "${app_dir}" "${runtime_backup}"
 fi
 
 mutation_started=1
 rsync --archive --delete \
   --exclude='backend/.env' \
+  --exclude='.backup.env' \
+  --exclude='.runtime-monitor/' \
+  --exclude='.runtime-mutation.lock' \
   --exclude='.git/' \
   --exclude='backups/' \
   --exclude='.release/' \
@@ -191,6 +199,10 @@ fi
 
 # Freeze remaining DB writers while Alembic runs.
 compose stop worker broadcast-worker maintenance
+
+# Existing volumes were created by older root images; writers are stopped above.
+echo "Preparing media ownership for the unprivileged runtime"
+compose run --rm --user 0:0 --cap-add CHOWN --cap-add DAC_OVERRIDE api chown -R 10001:10001 /data/media
 
 echo "Applying database migrations"
 compose run --rm api alembic upgrade head

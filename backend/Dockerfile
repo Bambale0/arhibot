@@ -30,6 +30,12 @@ COPY --from=builder /wheels/ai_architecture_backend-*.whl /tmp/
 RUN pip install --no-deps /tmp/ai_architecture_backend-*.whl \
     && rm -f /tmp/ai_architecture_backend-*.whl
 
+RUN groupadd --gid 10001 auroom \
+    && useradd --uid 10001 --gid auroom --no-create-home auroom \
+    && mkdir -p /data/media \
+    && chown auroom:auroom /data/media
+USER 10001:10001
+
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

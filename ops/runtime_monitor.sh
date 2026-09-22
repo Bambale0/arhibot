@@ -58,7 +58,7 @@ else
   fail "could not determine disk usage"
 fi
 
-latest_backup=$(find "${app_dir}/backups/runtime" -mindepth 2 -maxdepth 2 -type f -name SHA256SUMS -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)
+latest_backup=$(find "${app_dir}/backups/runtime" -mindepth 2 -maxdepth 2 -type f -name SHA256SUMS ! -path "${app_dir}/backups/runtime/.partial-*/*" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)
 if [[ -z "${latest_backup}" ]]; then
   fail "no runtime backup checksum found"
 else
@@ -87,7 +87,7 @@ for raw in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         value = value[1:-1]
     values[key.strip()] = value
-print(1 if values.get("AUROOM_OFFSITE_BACKUP_REMOTE") and values.get("AUROOM_BACKUP_AGE_RECIPIENT") else 0)
+print(1 if (values.get("AUROOM_OFFSITE_BACKUP_REMOTE") or values.get("AUROOM_BACKUP_TRANSPORT") == "telegram") and values.get("AUROOM_BACKUP_AGE_RECIPIENT") else 0)
 PY
 )
 fi

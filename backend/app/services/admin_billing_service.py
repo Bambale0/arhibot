@@ -9,6 +9,7 @@ from app.db.models.billing import BillingSettings
 from app.db.models.users import User
 from app.repositories.admin import AdminRepository
 from app.repositories.billing import BillingRepository
+from app.providers.yookassa import YooKassaError, YooKassaProvider
 from app.schemas.admin import AdminPaymentResponse, BillingSettingsResponse, BillingSettingsUpdate
 from app.services.billing_service import BillingService
 
@@ -89,7 +90,9 @@ class AdminBillingService:
     async def list_payments(self) -> list[AdminPaymentResponse]:
         return [self.payment_response(row) for row in await self.repository.list_all_payments()]
 
-    async def reconcile_payment(self, actor: User, payment_id: UUID) -> AdminPaymentResponse:
+    async def reconcile_payment(
+        self, actor: User, payment_id: UUID, *, provider_payment_id: str | None = None,
+    ) -> AdminPaymentResponse:
         payment = await self.repository.get_payment(payment_id)
         if payment is None:
             raise AppError(
@@ -99,7 +102,23 @@ class AdminBillingService:
                 detail="Payment does not exist.",
             )
         billing = BillingService(self.session, self.settings)
-        if payment.yookassa_payment_id:
+        if not billing.provider_configured:
+            raise AppError(type="billing_not_configured", title="Billing not configured", status=503,
+                           detail="YooKassa credentials are not configured.")
+        if provider_payment_id and payment.yookassa_payment_id not in {None, provider_payment_id}:
+            raise AppError(type="payment_provider_id_mismatch", title="Payment ID mismatch", status=409,
+                           detail="The payment is already linked to a different provider ID.")
+        if not payment.yookassa_payment_id:
+            if not provider_payment_id:
+                raise AppError(type="payment_provider_id_required", title="Provider payment ID required", status=409,
+                               detail="Find this payment in YooKassa and supply its provider ID. No new charge will be created.")
+            remote = await YooKassaProvider(self.settings).get_payment(provider_payment_id)
+            try:
+                await billing.apply_remote(remote, expected_local_id=payment.id)
+            except YooKassaError as exc:
+                raise AppError(type="payment_provider_mismatch", title="Provider payment does not match", status=409,
+                               detail="Provider amount, currency or payment metadata do not match this payment.") from exc
+        else:
             await billing.sync_payment(payment)
         payment = await self.repository.get_payment(payment_id) or payment
         if payment.refund_id:
@@ -112,8 +131,10 @@ class AdminBillingService:
             action="payment.reconcile",
             entity_type="billing_payment",
             entity_id=str(payment.id),
+            details={"provider_payment_id": payment.yookassa_payment_id},
         )
         await self.session.commit()
+        await self.session.refresh(payment)
         return self.payment_response(payment)
 
     async def refund_payment(self, actor: User, payment_id: UUID) -> AdminPaymentResponse:

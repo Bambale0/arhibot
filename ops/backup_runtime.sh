@@ -32,33 +32,7 @@ else
   echo "Docker Compose is not installed" >&2; exit 1
 fi
 
-interval_hours=$(compose exec -T postgres psql -U app -d app -Atc "select backup_interval_hours from operational_settings where id=1" 2>/dev/null | tr -d '[:space:]' || true)
-if [[ "${mode}" != "force" ]]; then
-  if [[ ! "${interval_hours}" =~ ^[1-9][0-9]*$ ]]; then
-    echo "AuRoom backup skipped: automatic backup interval is disabled"
-    exit 0
-  fi
-  latest_epoch=$(find "${backup_root}" -mindepth 1 -maxdepth 1 -type d -printf '%T@\n' 2>/dev/null | sort -nr | head -n1 | cut -d. -f1 || true)
-  now_epoch=$(date +%s)
-  if [[ "${latest_epoch}" =~ ^[0-9]+$ ]] && (( now_epoch - latest_epoch < interval_hours * 3600 )); then
-    echo "AuRoom backup skipped: next interval not reached"
-    exit 0
-  fi
-fi
-
-timestamp=$(date -u +%Y%m%dT%H%M%SZ)
-target="${backup_root}/${timestamp}"
-install -d -m 700 "${target}"
-compose exec -T postgres pg_dump -U app -d app -Fc > "${target}/postgres.dump"
-compose exec -T api sh -lc 'cd /data/media && tar -czf - .' > "${target}/media.tar.gz"
-chmod 600 "${target}/postgres.dump" "${target}/media.tar.gz"
-sha256sum "${target}/postgres.dump" "${target}/media.tar.gz" > "${target}/SHA256SUMS"
-chmod 600 "${target}/SHA256SUMS"
-
-# Verify both backup streams before advertising the snapshot as usable.
-tar -tzf "${target}/media.tar.gz" >/dev/null
-compose exec -T postgres pg_restore --list < "${target}/postgres.dump" >/dev/null
-
+export_snapshot() {
 if [[ -f "${backup_env}" ]]; then
   backup_env_mode=$(stat -c '%a' "${backup_env}")
   if (( 10#${backup_env_mode} % 100 != 0 )); then
@@ -88,10 +62,54 @@ PY
   }
   offsite_remote=$(read_backup_value AUROOM_OFFSITE_BACKUP_REMOTE)
   age_recipient=$(read_backup_value AUROOM_BACKUP_AGE_RECIPIENT)
-  if [[ -n "${offsite_remote}" || -n "${age_recipient}" ]]; then
+  transport=$(read_backup_value AUROOM_BACKUP_TRANSPORT)
+  if [[ "${transport}" == "telegram" ]]; then
+    python3 "${script_dir}/telegram_backup.py" export "${target}" --app-dir "${app_dir}"
+  elif [[ -n "${offsite_remote}" || -n "${age_recipient}" ]]; then
     AUROOM_OFFSITE_BACKUP_REMOTE="${offsite_remote}"     AUROOM_BACKUP_AGE_RECIPIENT="${age_recipient}"       bash "${script_dir}/export_offsite_backup.sh" "${target}"
   fi
 fi
+
+}
+
+interval_hours=$(compose exec -T postgres psql -U app -d app -Atc "select backup_interval_hours from operational_settings where id=1" 2>/dev/null | tr -d '[:space:]' || true)
+if [[ "${mode}" != "force" ]]; then
+  if [[ ! "${interval_hours}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "AuRoom backup skipped: automatic backup interval is disabled"
+    exit 0
+  fi
+  latest_manifest=$(find "${backup_root}" -mindepth 2 -maxdepth 2 -type f -name SHA256SUMS ! -path "${backup_root}/.partial-*/*" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)
+  latest_epoch=""
+  [[ -z "${latest_manifest}" ]] || latest_epoch=$(stat -c %Y "${latest_manifest}")
+  now_epoch=$(date +%s)
+  if [[ "${latest_epoch}" =~ ^[0-9]+$ ]] && (( now_epoch - latest_epoch < interval_hours * 3600 )); then
+    target=$(dirname "${latest_manifest}")
+    if [[ ! -s "${target}/OFFSITE_OK" ]]; then export_snapshot; fi
+    echo "AuRoom backup skipped: next interval not reached"
+    exit 0
+  fi
+fi
+
+timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+final_target="${backup_root}/${timestamp}"
+target=$(mktemp -d "${backup_root}/.partial-${timestamp}.XXXXXX")
+trap 'rm -rf "${target}"' ERR
+install -d -m 700 "${target}"
+compose exec -T postgres pg_dump -U app -d app -Fc > "${target}/postgres.dump"
+compose exec -T api sh -lc 'cd /data/media && tar -czf - .' > "${target}/media.tar.gz"
+chmod 600 "${target}/postgres.dump" "${target}/media.tar.gz"
+python3 "${script_dir}/backup_manifest.py" write "${target}"
+chmod 600 "${target}/SHA256SUMS"
+
+# Verify both backup streams before advertising the snapshot as usable.
+tar -tzf "${target}/media.tar.gz" >/dev/null
+compose exec -T postgres pg_restore --list < "${target}/postgres.dump" >/dev/null
+[[ ! -e "${final_target}" ]] || { echo "Snapshot already exists" >&2; exit 1; }
+mv "${target}" "${final_target}"
+target="${final_target}"
+trap - ERR
+export_snapshot
+
 
 retention_days=$(compose exec -T postgres psql -U app -d app -Atc "select backup_retention_days from operational_settings where id=1" 2>/dev/null | tr -d '[:space:]' || true)
 if [[ "${retention_days}" =~ ^[1-9][0-9]*$ ]]; then

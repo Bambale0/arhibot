@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 umask 077
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 app_dir=${1:-/root/arhibot}
 backup_dir=${2:?backup directory is required}
@@ -37,7 +38,7 @@ done
 [[ -s "${backup_dir}/SHA256SUMS" ]] || { echo "Missing SHA256SUMS" >&2; exit 1; }
 
 echo "Verifying backup checksums and media archive"
-(cd "${backup_dir}" && sha256sum -c SHA256SUMS)
+python3 "${script_dir}/backup_manifest.py" verify "${backup_dir}"
 tar -tzf "${backup_dir}/media.tar.gz" >/dev/null
 media_entries=$(tar -tzf "${backup_dir}/media.tar.gz" | wc -l | tr -d '[:space:]')
 

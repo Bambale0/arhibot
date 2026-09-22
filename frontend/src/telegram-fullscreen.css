@@ -42,7 +42,7 @@
   outline-offset: 3px;
 }
 
-@media (max-width: 767px) {
+@media (max-width: 1023px) {
   .telegram-fullscreen-button {
     top: auto;
     right: max(10px, calc(env(safe-area-inset-right) + 10px));

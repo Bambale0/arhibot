@@ -283,6 +283,11 @@ class BillingService:
                 receipt=receipt,
             )
         except YooKassaError as exc:
+            # A verified webhook may have settled the payment while create was in flight.
+            payment = await self.repository.get_by_id_for_update(payment.id) or payment
+            if payment.yookassa_payment_id:
+                await self.session.commit()
+                return self._payment_response(payment)
             payment.status = "uncertain" if exc.ambiguous else "failed"
             payment.provider_error = str(exc)[:1000]
             await self.session.commit()
@@ -303,11 +308,7 @@ class BillingService:
                 detail="YooKassa could not create the payment. Please try again.",
             ) from exc
 
-        payment.yookassa_payment_id = remote.id
-        payment.status = remote.status
-        payment.confirmation_url = remote.confirmation_url
-        payment.provider_error = None
-        await self.session.commit()
+        await self.apply_remote(remote, expected_local_id=payment.id)
         await self.session.refresh(payment)
         return self._payment_response(payment)
 
@@ -354,6 +355,10 @@ class BillingService:
         if payment is None:
             return
 
+        if expected_local_id is not None and payment.id != expected_local_id:
+            raise YooKassaError("YooKassa payment is linked to another local payment")
+        if remote.metadata.get("billing_payment_id") != str(payment.id):
+            raise YooKassaError("YooKassa local payment metadata does not match")
         if payment.yookassa_payment_id and payment.yookassa_payment_id != remote.id:
             raise YooKassaError("YooKassa payment id does not match local payment")
         if remote.amount != payment.amount_value or remote.currency != payment.currency:
@@ -364,7 +369,12 @@ class BillingService:
             raise YooKassaError("YooKassa payment package metadata does not match")
 
         payment.yookassa_payment_id = remote.id
+        if remote.confirmation_url:
+            payment.confirmation_url = remote.confirmation_url
         payment.provider_error = None
+        if payment.status in {"succeeded", "refunded"} and remote.status != "succeeded":
+            await self.session.commit()
+            return
         if remote.status == "succeeded":
             if payment.status not in {"succeeded", "refunded"}:
                 await self.credit_service.apply(
@@ -571,7 +581,7 @@ class BillingService:
                 if (
                     candidate is None
                     or candidate.yookassa_payment_id is not None
-                    or candidate.status not in {"creating", "failed"}
+                    or candidate.status not in {"creating", "failed", "uncertain"}
                 ):
                     raise AppError(
                         type="billing_webhook_object_not_ready",
