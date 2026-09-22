@@ -114,8 +114,14 @@ test('home is a lightweight project dashboard with on-demand projects and three-
     const url=new URL(request.url())
     return url.pathname.endsWith('/ideas')&&request.method()==='GET'
   })
+  const projectsRequest=page.waitForRequest(request=>{
+    const url=new URL(request.url())
+    return url.pathname.endsWith('/projects')&&request.method()==='GET'
+  })
 
   await page.goto('/')
+  const projectRequest=await projectsRequest
+  expect(new URL(projectRequest.url()).searchParams.get('sort')).toBe('updated')
   const request=await ideasRequest
   expect(new URL(request.url()).searchParams.get('limit')).toBe('3')
 

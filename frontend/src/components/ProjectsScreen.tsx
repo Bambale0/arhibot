@@ -63,12 +63,11 @@ export function ProjectsScreen({
     setError(null)
     setPreviewUrl(null)
     try {
-      const page = await api.listProjects(null, 50)
-      const ordered = [...page.items].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
-      setProjects(ordered)
+      const page = await api.listProjects(null, 50, 'updated')
+      setProjects(page.items)
       setProjectsHasMore(Boolean(page.has_more))
 
-      const sceneAssetId = ordered[0]?.context.design_session?.scene_asset_id
+      const sceneAssetId = page.items[0]?.context.design_session?.scene_asset_id
       if (sceneAssetId) {
         try {
           const asset = await api.getAsset(sceneAssetId)

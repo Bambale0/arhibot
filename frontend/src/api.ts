@@ -219,8 +219,8 @@ export async function logout() {
   finally { clearTokens() }
 }
 
-export function listProjects(cursor?: string | null, limit = 20) {
-  const params = new URLSearchParams({ limit: String(limit) }); if (cursor) params.set('cursor', cursor); return request<ProjectList>(`/projects?${params}`)
+export function listProjects(cursor?: string | null, limit = 20, sort?: 'created' | 'updated') {
+  const params = new URLSearchParams({ limit: String(limit) }); if (cursor) params.set('cursor', cursor); if (sort) params.set('sort', sort); return request<ProjectList>(`/projects?${params}`)
 }
 export function getProject(projectId: string) { return request<Project>(`/projects/${projectId}`) }
 export function createProject(payload: { name: string; description?: string; context?: ProjectContextWrite }) { return request<Project>('/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
