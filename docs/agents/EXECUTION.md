@@ -218,6 +218,24 @@ The crash probe uses the existing worker heartbeat check output. Storm tests ass
 6. [ ] Run exact-SHA CI and review findings.
 7. [ ] Merge to `dev` after all checks are green.
 
+## Active work — frontend production UX audit (merged to dev)
+
+- Baseline `dev`: `642e8d34faf66891eb873e045ed3f37fe97d5d6a`.
+- The React/Vite client now has multi-browser Playwright coverage (mobile-chromium, desktop-chromium, mobile-webkit) with 27 E2E resilience tests.
+- Auth, deep-link handling, idea media retry/fallback hardened. Brand tokens enforced.
+- All acceptance criteria met. PR merged to `dev`.
+
+### Execution plan
+
+1. [x] Sync and inspect all five mandatory guidance repositories; read applicable QA, UX, diagnostics, testing, performance, and frontend guidance.
+2. [x] Capture repository baseline, branch, dirty state, architecture/docs/config/test/CI inventory.
+3. [x] Run baseline typecheck/build/E2E and construct an interaction/screen/API matrix.
+4. [x] Perform browser reconnaissance across critical mobile/desktop states with console/network capture, screenshots, accessibility and responsive checks.
+5. [x] Convert reproducible findings into failing behavior tests and apply minimal vertical fixes.
+6. [x] Re-run focused checks after each slice, then the full frontend/backend/migration suite.
+7. [x] Perform a clean-session final user/admin pass, review the full diff against standards and this task, and record final evidence plus remaining gaps.
+8. [x] Commit the reviewable change set and open a PR targeting `dev`.
+
 ## Active work — Telegram fullscreen and Ideas work viewer
 
 - Baseline `dev`: `04fdf9b524fdf929d1630c947d2ff06075f8f8dd`.

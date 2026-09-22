@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { Generation, Project } from '../types'
 import { BackIcon, SparkIcon } from './Icons'
 
@@ -13,6 +14,7 @@ export function HistoryGenerationScreen({ project, generation, onBack }: {
   generation: Generation
   onBack: () => void
 }) {
+  const [imageFailed, setImageFailed] = useState(false)
   return <main className="questionnaire-shell">
     <header className="questionnaire-topbar">
       <button className="back-button" type="button" onClick={onBack}><BackIcon /> Назад</button>
@@ -22,14 +24,14 @@ export function HistoryGenerationScreen({ project, generation, onBack }: {
     <section className="questionnaire-card">
       <span className="eyebrow">РЕЗУЛЬТАТ AUROOM</span>
       <h1>{statusText[generation.status]}</h1>
-      {generation.output_asset ? (
+      {generation.output_asset && !imageFailed ? (
         <div className="questionnaire-result">
-          <img src={generation.output_asset.url} alt="Сгенерированная работа AuRoom" />
+          <img src={generation.output_asset.url} alt="Сгенерированная работа AuRoom" onError={() => setImageFailed(true)} />
         </div>
       ) : (
         <div className="empty-state">
           <SparkIcon />
-          <p>{generation.status === 'failed' ? 'Готового изображения для этой генерации нет.' : 'Готовое изображение появится после завершения генерации.'}</p>
+          <p>{imageFailed ? 'Изображение временно недоступно. Попробуйте открыть работу позже.' : generation.status === 'failed' ? 'Готового изображения для этой генерации нет.' : 'Готовое изображение появится после завершения генерации.'}</p>
         </div>
       )}
       <button className="secondary-button questionnaire-wide" type="button" onClick={onBack}>Вернуться в историю</button>
