@@ -578,6 +578,22 @@ textarea:focus-visible {
   border-color: #684039;
 }
 
+/* Bottom navigation — brand dark for all screens */
+.app-shell .bottom-nav {
+  background: rgba(3, 8, 7, .98);
+  border-color: var(--brand-line);
+  box-shadow: 0 -14px 36px rgba(0, 0, 0, .34);
+}
+.app-shell .bottom-nav button {
+  color: #898375;
+  font-weight: 500;
+}
+.app-shell .bottom-nav button.active {
+  color: var(--brand-gold);
+  font-weight: 650;
+  background: rgba(228, 198, 126, .08);
+}
+
 .ideas-shell .bottom-nav {
   background: rgba(3, 8, 7, .98);
   border-color: var(--brand-line);

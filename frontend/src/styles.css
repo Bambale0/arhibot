@@ -3,7 +3,7 @@
 html,body,#root { min-height:100%; margin:0; }
 button,input,textarea { font:inherit; }
 button { color:inherit; }
-button:focus-visible,input:focus-visible,textarea:focus-visible { outline:2px solid rgba(201,105,59,.48); outline-offset:2px; }
+button:focus-visible,input:focus-visible,textarea:focus-visible { outline:2px solid rgba(228,198,126,.58); outline-offset:2px; }
 body { min-width:320px; background:var(--paper); }
 svg { width:20px; height:20px; }
 .wordmark { display:flex; align-items:center; gap:10px; font-size:17px; font-weight:700; letter-spacing:-.03em; }
@@ -46,7 +46,7 @@ svg { width:20px; height:20px; }
 .auth-form { display:grid;gap:17px; }
 .auth-form label,.project-form label { display:grid;gap:8px;font-size:13px;font-weight:700; }
 .auth-form input,.project-form input,.prompt-input { width:100%;border:1px solid var(--line);background:#fbfaf7;border-radius:11px;padding:13px 14px;color:var(--ink);transition:.15s; }
-.auth-form input:focus,.project-form input:focus,.prompt-input:focus { border-color:#bd967e;outline:none;box-shadow:0 0 0 3px rgba(201,105,59,.08); }
+.auth-form input:focus,.project-form input:focus,.prompt-input:focus { border-color:var(--accent);outline:none;box-shadow:0 0 0 3px rgba(228,198,126,.08); }
 .auth-submit { width:100%;margin-top:6px; }
 .telegram-hint { color:#99978f;font-size:11px;text-align:center;line-height:1.5;margin-top:20px; }
 
