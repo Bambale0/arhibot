@@ -52,9 +52,9 @@ test('section navigation survives refresh and follows browser Back/Forward', asy
   await routeNavigationData(page)
   await page.goto('/?section=home')
 
-  await page.getByRole('button', { name: 'Идеи' }).click()
+  await page.getByRole('button', { name: 'Идеи', exact: true }).click()
   await expect(page).toHaveURL(/section=ideas/)
-  await expect(page.getByRole('button', { name: 'Идеи' })).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('button', { name: 'Идеи', exact: true })).toHaveAttribute('aria-current', 'page')
 
   await page.getByRole('button', { name: 'Профиль' }).click()
   await expect(page).toHaveURL(/section=profile/)
