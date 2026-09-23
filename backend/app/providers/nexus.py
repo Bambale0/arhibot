@@ -13,6 +13,7 @@ from app.core.resilience import (
     get_circuit_breaker,
     request_with_resilience,
 )
+from app.prompt_builders.image_output import build_image_output_prompt
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,7 +191,7 @@ class NexusImageProvider:
         model_params: dict[str, object] | None,
     ) -> dict[str, object]:
         # Operator-controlled tuning parameters must never override provenance-critical
-        # request fields. The generation row must describe what Nexus actually receives.
+        # request fields. Preserve the stored brief, adding only the shared image output contract.
         reserved = {"model_name", "prompt", "image_url", "image_urls"}
         params = {
             key: value
@@ -198,7 +199,7 @@ class NexusImageProvider:
             if key not in reserved
         }
         params["model_name"] = model_name
-        params["prompt"] = prompt
+        params["prompt"] = build_image_output_prompt(prompt)
         if image_url:
             params["image_urls"] = [image_url]
         return params

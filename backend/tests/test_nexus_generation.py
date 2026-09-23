@@ -1,3 +1,5 @@
+import pytest
+
 from app.db.models.projects import Project
 from app.prompt_builders.generation import build_generation_prompt
 from app.providers.nexus import NexusImageProvider
@@ -55,6 +57,31 @@ def test_nexus_model_params_cannot_override_prompt_model_or_reference() -> None:
     )
 
     assert params["model_name"] == "real-model"
-    assert params["prompt"] == "canonical prompt"
+    assert params["prompt"].startswith("canonical prompt\n")
+    assert "forged prompt" not in params["prompt"]
     assert params["image_urls"] == ["https://media.example.com/base.png"]
     assert params["steps"] == 24
+
+
+@pytest.mark.parametrize("source", [
+    "AUROOM_INITIAL_CONCEPT_V1\nHouse area: 180 m2, floors: 2",
+    "AUROOM_RENDER_SPEC_V1\nMove the 6 m terrace to the left",
+    "Create exterior facade. Client preferences: modern timber",
+])
+@pytest.mark.parametrize("model", ["primary-image-model", "fallback-image-model"])
+def test_image_request_preserves_geometry_but_prohibits_visible_annotations(
+    source: str, model: str,
+) -> None:
+    params = NexusImageProvider._build_params(
+        model_name=model,
+        prompt=source,
+        image_url="https://media.example.test/source.png",
+        model_params={},
+    )
+    prompt = params["prompt"]
+    assert prompt.startswith(source + "\n"), "Keep canonical geometry and answers intact"
+    prohibitions = ("text", "letters", "digits", "pseudo-text", "dimension lines", "watermarks")
+    for prohibition in prohibitions:
+        assert prohibition in prompt
+    assert "geometry constraints only" in prompt
+    assert params["image_urls"] == ["https://media.example.test/source.png"]
