@@ -120,8 +120,8 @@ export default function App() {
   if (routeLoading) return <Loader />
   if (routeError) return <div className="boot-loader"><div className="wordmark"><span className="wordmark-dot" />AuRoom</div><div className="empty-state"><h2>Не удалось открыть ссылку</h2><p>{routeError}</p><div className="questionnaire-actions"><button className="primary-button" onClick={() => { deepLinkHandled.current = false; setRouteRevision((value) => value + 1) }}>Повторить</button><button className="secondary-button" onClick={() => navigate('home')}>На главную</button></div></div></div>
   if (adminOpen && isAdmin) return <><TelegramFullscreenButton/><Suspense fallback={<Loader />}><AdminScreen onClose={closeAdmin} /></Suspense></>
-  if (questionnaireProject) return <><TelegramFullscreenButton/><Suspense fallback={<Loader />}><QuestionnaireWorkspaceScreen project={questionnaireProject} selectedObjects={questionnaireObjects} onBack={() => { void closeQuestionnaire() }} onProjectChange={updateQuestionnaireProject} /></Suspense></>
-  if (historyResult) return <><TelegramFullscreenButton/><Suspense fallback={<Loader />}><HistoryGenerationScreen project={historyResult.project} generation={historyResult.generation} onBack={closeHistoryResult} /></Suspense></>
+  if (questionnaireProject) return <><TelegramFullscreenButton placement="header"/><Suspense fallback={<Loader />}><QuestionnaireWorkspaceScreen project={questionnaireProject} selectedObjects={questionnaireObjects} onBack={() => { void closeQuestionnaire() }} onProjectChange={updateQuestionnaireProject} /></Suspense></>
+  if (historyResult) return <><TelegramFullscreenButton placement="header"/><Suspense fallback={<Loader />}><HistoryGenerationScreen project={historyResult.project} generation={historyResult.generation} onBack={closeHistoryResult} /></Suspense></>
 
   function routeUrl(params: URLSearchParams) {
     const query = params.toString()

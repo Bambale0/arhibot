@@ -307,3 +307,15 @@ No new telemetry is required for this client-only interaction. The fullscreen UI
 - Guidance: claw frontend/UX audit, wondelai refactoring-ui, dev-agents-pack QA checklist, anthropics webapp-testing, upstream ksu/local verification-before-completion; agentskills source inspected (format specification, no product layout skill).
 
 - Follow-up evidence: long cards also exposed an active-preview bug; a failing-before/passing-after regression now checks 255-character titles in portrait and landscape. Independent read-only review and an eight-card mixed-height scrolling probe found no P1/P2 regression. Build/typecheck and the full mobile/desktop Chromium suites (38 each) passed; the final WebKit suite and exact-commit CI are release gates recorded in the PR.
+
+## Active work — questionnaire visual cleanup, 2026-09-23
+
+- Baseline: deployed `dev` `1a55e697`; branch `fix/questionnaire-visual-20260923`.
+- User clarified the screenshot request: decorative lines and visual spacing only; preserve question order, answers and navigation.
+- Root cause: the mobile `.questionnaire-layout .questionnaire-card` padding overrides the less-specific `.question-card` gutter, leaving its absolute vertical rule and marker inside the text. The 380px override introduces a different, excessive left inset.
+- Reuse existing questionnaire theme and browser fixtures. No API, schema, business configuration, provider calls or new dependencies.
+- Acceptance: no decorative rule through question/answer text; consistent insets at 320–1440px; controls remain reachable when scrolling; approved black/gold theme retained.
+- Plan: [x] capture baseline and adjacent states; [x] remove conflicting decoration/insets and address visible overlaps; [x] inspect Chromium/WebKit screenshots and run relevant existing flows; [x] independent review; [ ] exact-SHA CI and PR delivery to dev.
+- Guidance: claw frontend/UX audit, wondelai refactoring-ui, dev-agents-pack QA checklist, anthropics webapp-testing, upstream ksu/local verification-before-completion and requesting-code-review; agentskills inspected (format specification, no application visual skill); local bot-ux-designer/tma-codegen. Preserve the existing Telegram API integration instead of introducing the skill's alternative SDK setup for a CSS correction.
+- Verification: production build/typecheck PASS; existing fullscreen E2E 27/27 and product-flow E2E 30/30 across mobile/desktop Chromium and mobile WebKit. Screenshot matrix covers 320/375/390/614/760/768/1024/1440px; optional multi-select/text states and landscape 844×390 inspected. Independent review also checked long header names at 11 widths; no confirmed P1/P2. No new permanent tests for this presentation-only correction.
+- Evidence: `/root/.agents/reports/arhibot-questionnaire-visual-2026-09-23/index.html` contains before/after comparisons. CI and deployment status are recorded in the PR to avoid treating a pending run as verified.
