@@ -62,10 +62,29 @@ let hideIdeaFromFeed=false
 let homeProjects:any[]=[]
 function resetState(){
   generationCount=0; publication=null; savedIdea=false; hideIdeaFromFeed=false; homeProjects=[]
-  session={session_id:'77777777-7777-4777-8777-777777777777',catalog_version:catalog.version,selected_objects:['lavochka'],plot_area_sotkas:8,initial_concept_mode:false,survey_completed_objects:[],initial_generation_id:null,initial_concept_accepted:false,current_object:null,current_question_id:null,source_step_completed:false,source_asset_id:null,scene_asset_id:null,answers:{},accepted_objects:[],removed_objects:[],pending_removal_object:null,generation_ids:{},edit_question_ids:[],review_comments:{},edit_regions:{},lock_regions:{},region_mode:null,region_object:null,application_submitted:false}
+  session={session_id:'77777777-7777-4777-8777-777777777777',catalog_version:catalog.version,selected_objects:['lavochka'],plot_area_sotkas:8,site_plan:null,initial_concept_mode:false,survey_completed_objects:[],initial_generation_id:null,initial_concept_accepted:false,current_object:null,current_question_id:null,source_step_completed:false,source_asset_id:null,scene_asset_id:null,answers:{},accepted_objects:[],removed_objects:[],pending_removal_object:null,generation_ids:{},edit_question_ids:[],review_comments:{},edit_regions:{},lock_regions:{},region_mode:null,region_object:null,application_submitted:false}
   project={id:projectId,name:'Лавочка',description:null,status:'active',context:{questionnaire_draft:false,plot_area_m2:800,design_session:session},created_at:now,updated_at:now}
 }
 function asset(i:number){return {id:assetIds[i],project_id:projectId,type:'image',purpose:'generation_output',original_filename:'result.png',mime_type:'image/png',size_bytes:1234,width:640,height:480,url:`data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"></svg>`,created_at:now}}
+function withMockSitePlan(next:any){
+  if(!next.initial_concept_mode||!next.plot_area_sotkas) return {...next,site_plan:null}
+  const objects=next.selected_objects.map((key:string,index:number)=>{
+    const definition=catalog.questionnaires.find((item:any)=>item.key===key)
+    const house=key==='eskez-doma'
+    const width=house?0.42:0.16
+    const height=house?0.26:0.11
+    return {
+      object_key:key,
+      object_name:definition?.title||key,
+      role:house?'house':'site_object',
+      zone:house?'center_front':'auto',
+      relations:[],
+      rect:{x:house?0.29:0.12+index*0.2,y:house?0.30:0.68,width,height},
+      placement_source:'derived',
+    }
+  })
+  return {...next,site_plan:{schema:'auroom.site_plan.v1',plot:{area_sotkas:next.plot_area_sotkas,area_m2:next.plot_area_sotkas*100,coordinate_system:'normalized',front_side:'y0',geometry_accuracy:'relative'},objects,warnings:[]}}
+}
 function generation(i:number,status='completed'){return {id:generationIds[i],project_id:projectId,input_asset_id:null,output_asset:status==='completed'?asset(i):null,type:'master_plan',status,credits_charged:1,model_name:'mock',fallback_used:false,composition_mode:'replace',edit_region:null,protected_regions:[],error:null,created_at:now,updated_at:now,started_at:now,completed_at:status==='completed'?now:null}}
 async function json(route:Route,data:unknown,status=200){await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)})}
 
@@ -82,7 +101,7 @@ test.beforeEach(async ({page})=>{
     if(path.endsWith('/questionnaire-generation-cost')&&method==='GET') return json(route,{generation_type:'master_plan',initial_credits:0,credits:1,initial_offer_available:true,is_available:true})
     if(path.endsWith('/questionnaire-projects')&&method==='POST') return json(route,project,201)
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='GET') return json(route,{session})
-    if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='PUT') {session=JSON.parse(req.postData()||'{}');project={...project,context:{...project.context,design_session:session}};return json(route,{session})}
+    if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='PUT') {session=withMockSitePlan(JSON.parse(req.postData()||'{}'));project={...project,context:{...project.context,design_session:session}};return json(route,{session})}
     if(path.endsWith(`/projects/${projectId}/questionnaire-generation`)&&method==='POST'){const i=generationCount++;return json(route,generation(i,'queued'),202)}
     if(path.endsWith(`/projects/${projectId}/questionnaire-initial-accept`)&&method==='POST'){
       const completed=generation(0)
@@ -204,6 +223,11 @@ test('initial concept collects all answers before one generation and supports pr
 
   await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
   expect(generationCount).toBe(0)
+  const sitePlan=page.getByTestId('site-plan-preview')
+  await expect(sitePlan).toBeVisible()
+  await expect(sitePlan.getByText('Схема размещения')).toBeVisible()
+  await expect(sitePlan.getByText('Лавочка')).toBeVisible()
+  await expect(sitePlan.getByText('8 сот.')).toBeVisible()
   await expect(page.getByText('Одна общая генерация · Бесплатно')).toBeVisible()
   await page.getByRole('button',{name:'Создать общую концепцию'}).click()
   await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
@@ -216,6 +240,7 @@ test('initial concept collects all answers before one generation and supports pr
   await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
   expect(generationCount).toBe(2)
   expect(session.plot_area_sotkas).toBe(12)
+  expect(session.site_plan.plot.area_sotkas).toBe(12)
 
   await page.getByRole('button',{name:'Принять концепцию'}).click()
   await expect(page.getByText('Что делаем дальше?')).toBeVisible()
