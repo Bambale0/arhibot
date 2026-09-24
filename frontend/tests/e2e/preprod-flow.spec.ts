@@ -223,11 +223,8 @@ test('initial concept collects all answers before one generation and supports pr
 
   await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
   expect(generationCount).toBe(0)
-  const sitePlan=page.getByTestId('site-plan-preview')
-  await expect(sitePlan).toBeVisible()
-  await expect(sitePlan.getByText('Схема размещения')).toBeVisible()
-  await expect(sitePlan.getByText('Лавочка')).toBeVisible()
-  await expect(sitePlan.getByText('8 сот.')).toBeVisible()
+  await expect(page.getByTestId('site-plan-preview')).toHaveCount(0)
+  await expect(page.getByText('Схема размещения')).toHaveCount(0)
   await expect(page.getByText('Одна общая генерация · Бесплатно')).toBeVisible()
   await page.getByRole('button',{name:'Создать общую концепцию'}).click()
   await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
