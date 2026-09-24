@@ -171,6 +171,7 @@ function newSession(version:string, selected:string[], plotAreaSotkas:number|nul
     catalog_version:version,
     selected_objects:selected,
     plot_area_sotkas:plotAreaSotkas,
+    site_plan:null,
     initial_concept_mode:true,
     survey_completed_objects:[],
     initial_generation_id:null,
