@@ -5,6 +5,7 @@ from json import dumps
 from math import floor
 from typing import Any
 
+from app.questionnaires.site_plan import build_site_plan
 from app.schemas.questionnaires import DesignSession
 
 
@@ -350,6 +351,7 @@ def build_initial_concept_prompt(
     camera = _initial_concept_camera(len(objects))
     site_scale = _initial_site_scale(session)
     placement_constraints = _initial_placement_constraints(objects)
+    site_plan = build_site_plan(objects=objects, session=session, site_scale=site_scale)
     source = (
         {
             "kind": "site_photo",
@@ -390,6 +392,7 @@ def build_initial_concept_prompt(
             "reserve_space_for_every_selected_object": True,
         },
         "site_scale": site_scale,
+        "site_plan": site_plan,
         "site_layout": {
             "placement_constraints": placement_constraints,
             "strength": "hard_constraints",
@@ -430,13 +433,15 @@ def build_initial_concept_prompt(
         "1. Все selected objects одновременно присутствуют в одной сцене.\n"
         f"2. {camera['directive']}\n"
         "3. Соблюдай site_scale: размер участка и относительный масштаб объектов.\n"
-        "4. Соблюдай site_layout: расположение объектов относительно дома/двора/въезда — жёсткое ограничение.\n"
-        "5. Каждый ответ questionnaire_constraints является обязательным.\n"
-        "6. Фотореализм и эстетика после выполнения пунктов 1–5.\n"
+        "4. Соблюдай site_plan: normalized rect каждого объекта задаёт его разрешённую семантическую зону участка.\n"
+        "5. Соблюдай site_layout: расположение объектов относительно дома/двора/въезда — жёсткое ограничение.\n"
+        "6. Каждый ответ questionnaire_constraints является обязательным.\n"
+        "7. Фотореализм и эстетика после выполнения пунктов 1–6.\n"
         "STRUCTURED_SPEC:\n"
         f"{dumps(spec, ensure_ascii=False, separators=(',', ':'))}\n"
-        "FINAL_CHECK: проверь, что каждый выбранный объект полностью виден, ракурс "
-        "соответствует camera.mode, а относительный масштаб соответствует site_scale."
+        "FINAL_CHECK: проверь, что каждый выбранный объект полностью виден, находится "
+        "в своей site_plan semantic zone, ракурс соответствует camera.mode, а относительный "
+        "масштаб соответствует site_scale."
     )
 
 
