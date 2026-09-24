@@ -254,6 +254,115 @@
   outline-offset: 3px;
 }
 
+
+.site-plan-preview {
+  margin: 14px 0;
+  padding: 14px;
+  border: 1px solid rgba(228, 198, 126, .18);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .025);
+}
+
+.site-plan-preview-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.site-plan-preview-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.site-plan-preview-head strong {
+  color: var(--brand-ivory);
+  font-size: 13px;
+}
+
+.site-plan-preview-head span,
+.site-plan-preview-head small {
+  color: var(--brand-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.site-plan-preview-head small {
+  flex: 0 0 auto;
+  color: var(--brand-gold);
+}
+
+.site-plan-canvas {
+  position: relative;
+  width: min(100%, 440px);
+  aspect-ratio: 5 / 4;
+  margin: 0 auto;
+  overflow: hidden;
+  border: 1px solid rgba(228, 198, 126, .25);
+  border-radius: 12px;
+  background:
+    linear-gradient(rgba(228, 198, 126, .035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(228, 198, 126, .035) 1px, transparent 1px),
+    rgba(6, 11, 10, .82);
+  background-size: 10% 10%;
+}
+
+.site-plan-object {
+  position: absolute;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  min-height: 18px;
+  padding: 3px;
+  border: 1px solid rgba(228, 198, 126, .48);
+  border-radius: 7px;
+  background: rgba(228, 198, 126, .12);
+}
+
+.site-plan-object.house {
+  border-width: 2px;
+  background: rgba(228, 198, 126, .22);
+}
+
+.site-plan-object span {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--brand-ivory);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-plan-entry {
+  position: absolute;
+  left: 32%;
+  bottom: 0;
+  width: 36%;
+  border-bottom: 4px solid rgba(228, 198, 126, .7);
+  text-align: center;
+}
+
+.site-plan-entry span {
+  display: inline-block;
+  transform: translateY(-6px);
+  color: var(--brand-muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.site-plan-warning {
+  margin: 10px 0 0;
+  color: var(--brand-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 @media (max-width: 640px) {
   .questionnaire-create {
     width: calc(100% - 32px);
