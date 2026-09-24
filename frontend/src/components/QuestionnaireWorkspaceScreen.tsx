@@ -79,7 +79,7 @@ function questionEnabledForSelection(
   // A separately selected garage owns its own questionnaire. Keeping the house
   // garage branch as well would ask for the same object twice and create
   // conflicting prompt constraints.
-  if (objectKey === 'eskez-doma' && selectedObjects.includes('garazh') && ['6','6а','6б','6в'].includes(question.id)) {
+  if (objectKey === 'eskez-doma' && selectedObjects.some((key) => key === 'garazh' || key === 'naves') && ['6','6а','6б','6в'].includes(question.id)) {
     return false
   }
   return true
