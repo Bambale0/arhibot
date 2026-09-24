@@ -82,7 +82,7 @@ def question_enabled_for_selection(
     # requirements and can produce conflicting prompt constraints.
     if (
         object_key == "eskez-doma"
-        and "garazh" in selected_objects
+        and any(key in selected_objects for key in ("garazh", "naves"))
         and str(question.get("id")) in {"6", "6а", "6б", "6в"}
     ):
         return False
