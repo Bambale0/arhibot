@@ -473,3 +473,44 @@ def test_catalog_bump_keeps_accepted_answers_but_revalidates_unfinished_answers(
     with pytest.raises(AppError) as exc:
         service._validate(unfinished, catalog, allow_submitted=False, previous=unfinished_previous)
     assert "cannot be skipped" in exc.value.detail
+
+def test_plot_size_can_change_before_initial_acceptance_but_not_after() -> None:
+    session_id = uuid4()
+    initial_generation_id = uuid4()
+    previous = DesignSession(
+        session_id=session_id,
+        catalog_version=CATALOG_VERSION,
+        selected_objects=["eskez-doma"],
+        plot_area_sotkas=8,
+        initial_concept_mode=True,
+        source_step_completed=True,
+    )
+    changed_before_acceptance = previous.model_copy(
+        update={"plot_area_sotkas": 12}
+    )
+    QuestionnaireService._validate_accepted_object_locks(
+        previous,
+        changed_before_acceptance,
+        build_catalog(),
+    )
+
+    accepted = previous.model_copy(
+        update={
+            "plot_area_sotkas": 8,
+            "initial_generation_id": initial_generation_id,
+            "initial_concept_accepted": True,
+            "survey_completed_objects": ["eskez-doma"],
+            "accepted_objects": ["eskez-doma"],
+        }
+    )
+    changed_after_acceptance = accepted.model_copy(
+        update={"plot_area_sotkas": 12}
+    )
+
+    with pytest.raises(AppError, match="plot size"):
+        QuestionnaireService._validate_accepted_object_locks(
+            accepted,
+            changed_after_acceptance,
+            build_catalog(),
+        )
+
