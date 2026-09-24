@@ -21,6 +21,7 @@ from app.domain.generations.enums import GenerationOrigin, GenerationStatus, Gen
 from app.questionnaires.application_brief import build_application_brief
 from app.questionnaires.generation_prompt import (
     build_initial_concept_prompt,
+    build_initial_site_plan,
     build_questionnaire_generation_prompt,
 )
 from app.questionnaires.generation_prompt import (
@@ -91,6 +92,11 @@ class QuestionnaireService:
         project = await ProjectService(self.projects).get_owned_model(user, project_id)
         previous = self._stored_session(project.context)
         catalog = await self.catalog()
+        payload = self._canonicalize_site_plan(
+            payload,
+            previous=previous,
+            catalog=catalog,
+        )
         self._validate(payload, catalog, allow_submitted=False, previous=previous)
         self._validate_accepted_object_locks(previous, payload, catalog)
         self._validate_acceptance_completion(previous, payload, catalog)
@@ -115,6 +121,11 @@ class QuestionnaireService:
         project = await ProjectService(self.projects).get_owned_model(user, project_id)
         previous = self._stored_session(project.context)
         catalog = await self.catalog()
+        payload = self._canonicalize_site_plan(
+            payload,
+            previous=previous,
+            catalog=catalog,
+        )
         self._validate(payload, catalog, allow_submitted=True, previous=previous)
         self._validate_accepted_object_locks(previous, payload, catalog)
         self._validate_acceptance_completion(previous, payload, catalog)
@@ -888,6 +899,25 @@ class QuestionnaireService:
     def _stored_session(context: dict | None) -> DesignSession | None:
         raw = (context or {}).get("design_session")
         return DesignSession.model_validate(raw) if raw else None
+
+    @staticmethod
+    def _canonicalize_site_plan(
+        payload: DesignSession,
+        *,
+        previous: DesignSession | None,
+        catalog: dict,
+    ) -> DesignSession:
+        if not payload.initial_concept_mode:
+            return (
+                payload
+                if payload.site_plan is None
+                else payload.model_copy(update={"site_plan": None})
+            )
+        if previous is not None and previous.initial_concept_accepted:
+            return payload.model_copy(update={"site_plan": previous.site_plan})
+        return payload.model_copy(
+            update={"site_plan": build_initial_site_plan(catalog, payload)}
+        )
 
     @classmethod
     def _validate_accepted_object_locks(
