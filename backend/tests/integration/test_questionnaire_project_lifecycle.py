@@ -75,10 +75,22 @@ async def test_questionnaire_project_is_hidden_until_source_step_and_can_be_disc
             json=design_session,
         )
         assert saved.status_code == 200, saved.text
+        design_session = saved.json()["session"]
+
+        design_session["plot_area_sotkas"] = 12
+        resized = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=design_session,
+        )
+        assert resized.status_code == 200, resized.text
+        assert resized.json()["session"]["plot_area_sotkas"] == 12
+        design_session = resized.json()["session"]
 
         promoted = await client.get(f"/api/v1/projects/{project_id}", headers=headers)
         assert promoted.status_code == 200, promoted.text
         assert promoted.json()["context"]["questionnaire_draft"] is False
+        assert promoted.json()["context"]["plot_area_m2"] == 1200
 
         forged_session = await client.patch(
             f"/api/v1/projects/{project_id}",

@@ -16,6 +16,25 @@ This section is the authoritative status summary. The implementation records bel
 - Dependabot major-version upgrades are maintenance backlog and are not MVP handoff blockers; handle them separately, one upgrade at a time.
 
 
+## Active work — questionnaire cross-object logic and spatial constraints, 2026-09-24
+
+- Baseline: `dev` `678a081b8b12333d175093821fe99321a9e79b6e`.
+- User-reported gaps: duplicate house/garage requirements when a separate garage is selected; empty follow-up questions after conditional option filtering; unclear enforcement of object placement/plot size; plot size unavailable during initial-TZ regeneration.
+- Product rule: a separately selected garage or canopy owns its own questionnaire, so the house garage/canopy branch is inactive for that startup selection.
+- Product rule: a single/multi question with zero currently available options is inactive and is skipped by UI, validation and prompt building.
+- Plot size remains editable at 4–15 sotkas until the initial concept is accepted; after acceptance it is immutable with the initial brief.
+- Prompt contract now elevates extracted location answers into `site_layout.placement_constraints` and strengthens site-scale priority. These are model constraints, not deterministic geometric guarantees; exact placement would require a coordinate/mask/site-plan or deterministic rendering layer.
+
+### Acceptance criteria
+
+1. [x] Skip duplicate house garage/canopy questions when that object is selected separately.
+2. [x] Skip conditional questions whose option set becomes empty.
+3. [x] Apply the same active-question rules in frontend navigation, backend validation and prompt construction.
+4. [x] Allow plot-size edits before initial acceptance and persist `plot_area_m2`.
+5. [x] Promote explicit location answers into a dedicated structured site-layout constraint block.
+6. [x] Add backend/frontend regression coverage.
+7. [ ] Exact-head CI, review, merge to `dev`, development deploy and server smoke.
+
 ## Completed work — lightweight home dashboard
 
 - Baseline `dev`: `6cb63950d1c552f42c7a683ca2a7e75374a8b015`.

@@ -5,6 +5,7 @@ from app.questionnaires.catalog import build_catalog
 from app.questionnaires.generation_prompt import (
     build_initial_concept_prompt,
     build_questionnaire_generation_prompt,
+    question_is_active,
 )
 from app.schemas.questionnaires import DesignSession
 
@@ -330,3 +331,106 @@ def test_object_removal_prompt_is_explicit_and_drops_design_constraints() -> Non
     }
     assert "Полностью удалить" in spec["refinement_comment"]
     assert "Не применяется при удалении" in spec["inheritance"]
+
+def test_initial_concept_skips_house_garage_branch_when_garage_is_separate_object() -> None:
+    catalog = build_catalog()
+    house = _definition("eskez-doma")
+    session = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma", "garazh"],
+        plot_area_sotkas=10,
+        initial_concept_mode=True,
+        source_step_completed=True,
+        answers={
+            "eskez-doma": {
+                "6": "Да",
+                "6а": "В доме",
+            },
+            "garazh": {"1": "Современный минимализм"},
+        },
+    )
+
+    spec = _spec(build_initial_concept_prompt(catalog, session, input_asset_present=False))
+    house_spec = next(
+        item for item in spec["task"]["objects"] if item["object_key"] == "eskez-doma"
+    )
+    prompt_questions = {
+        item["question"] for item in house_spec["questionnaire_constraints"]
+    }
+    garage_branch_questions = {
+        question["text"]
+        for question in house["questions"]
+        if question["id"] in {"6", "6а", "6б", "6в"}
+    }
+
+    assert prompt_questions.isdisjoint(garage_branch_questions)
+    assert any(item["object_key"] == "garazh" for item in spec["task"]["objects"])
+
+
+def test_house_followup_with_no_available_options_is_inactive() -> None:
+    house = _definition("eskez-doma")
+    questions = {question["id"]: question for question in house["questions"]}
+    non_flat_roof = next(
+        option for option in questions["7"]["options"] if option != "Плоская"
+    )
+    two_floors = next(
+        option for option in questions["4"]["options"] if option.startswith("2 ")
+    )
+    answers = {
+        "4": two_floors,
+        "7": non_flat_roof,
+        "12": next(option for option in questions["12"]["options"] if option != "Нет"),
+        "12б": ["Второй этаж"],
+    }
+
+    assert question_is_active(
+        "eskez-doma",
+        questions["13"],
+        answers,
+        True,
+        ["eskez-doma"],
+    ) is False
+
+
+def test_initial_concept_promotes_object_location_to_explicit_site_layout_constraint() -> None:
+    catalog = build_catalog()
+    bench = _definition("lavochka")
+    location_question = next(
+        question
+        for question in bench["questions"]
+        if "где" in question["text"].lower()
+        or "относительно" in question["text"].lower()
+        or "располож" in question["text"].lower()
+    )
+    location_answer = next(
+        (
+            option
+            for option in location_question["options"]
+            if any(marker in option.lower() for marker in ("сзади", "двор"))
+        ),
+        location_question["options"][0],
+    )
+    session = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma", "lavochka"],
+        plot_area_sotkas=8,
+        initial_concept_mode=True,
+        source_step_completed=True,
+        answers={
+            "eskez-doma": {"1": "Современный минимализм"},
+            "lavochka": {location_question["id"]: location_answer},
+        },
+    )
+
+    spec = _spec(build_initial_concept_prompt(catalog, session, input_asset_present=False))
+
+    assert spec["site_scale"]["plot_area_m2"] == 800
+    assert spec["site_layout"]["strength"] == "hard_constraints"
+    assert {
+        "object_key": "lavochka",
+        "object_name": "Лавочка",
+        "question": location_question["text"],
+        "answer": location_answer,
+    } in spec["site_layout"]["placement_constraints"]
+    assert "располож" in spec["site_layout"]["directive"].lower()
+

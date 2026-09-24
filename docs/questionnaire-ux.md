@@ -6,6 +6,9 @@ The questionnaire UI is a mobile-first conversational wizard for an architectura
 
 - Keep one meaningful question in primary focus.
 - Preserve questionnaire source wording and business rules; visual presentation must not change semantics.
+- Apply cross-object logic before presenting a question: when a separately selected object owns the same requirements (for example a garage/canopy selected alongside the house), do not ask the duplicate branch inside another questionnaire.
+- Skip a choice question automatically when all of its options are inactive for the current answers; never render an empty answer list.
+- Keep plot size editable while the initial concept is still unaccepted, and freeze it with the accepted initial brief.
 - Use large touch targets for answer choices and visible selected states.
 - Keep skip secondary and only show it when the source explicitly allows it.
 - Keep custom input obvious and validate before continuing.

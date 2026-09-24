@@ -25,6 +25,7 @@ from app.questionnaires.generation_prompt import (
 )
 from app.questionnaires.generation_prompt import (
     condition_ok as questionnaire_condition_ok,
+    question_is_active as questionnaire_question_is_active,
 )
 from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
@@ -97,10 +98,13 @@ class QuestionnaireService:
         await self._validate_generations(
             user, project.id, payload, catalog=catalog, previous=previous
         )
-        project.context = {
+        project_context = {
             **(project.context or {}),
             "design_session": payload.model_dump(mode="json"),
         }
+        if payload.plot_area_sotkas is not None:
+            project_context["plot_area_m2"] = payload.plot_area_sotkas * 100
+        project.context = project_context
         await self.session.commit()
         await self.session.refresh(project)
         return payload
@@ -266,8 +270,12 @@ class QuestionnaireService:
                 question
                 for question in definition["questions"]
                 if question["phase"] == "pre_render"
-                and self._condition_ok(
-                    question.get("condition"), answers, house_reference_available
+                and questionnaire_question_is_active(
+                    object_key,
+                    question,
+                    answers,
+                    house_reference_available,
+                    next_session.selected_objects,
                 )
             ),
             None,
@@ -471,8 +479,12 @@ class QuestionnaireService:
                     question
                     for question in definition["questions"]
                     if question["phase"] == "pre_render"
-                    and self._condition_ok(
-                        question.get("condition"), answers, house_reference_available
+                    and questionnaire_question_is_active(
+                        object_key,
+                        question,
+                        answers,
+                        house_reference_available,
+                        session.selected_objects,
                     )
                 ]
                 missing = [
@@ -523,7 +535,13 @@ class QuestionnaireService:
             question
             for question in definition["questions"]
             if question["phase"] == "pre_render"
-            and self._condition_ok(question.get("condition"), answers, house_accepted)
+            and questionnaire_question_is_active(
+                object_key,
+                question,
+                answers,
+                house_accepted,
+                session.selected_objects,
+            )
         ]
         missing = [
             question["id"] for question in active_pre_render if question["id"] not in answers
@@ -887,6 +905,11 @@ class QuestionnaireService:
 
         if cls._session_started(previous) and payload.selected_objects != previous.selected_objects:
             raise cls._invalid("Selected questionnaire objects are fixed after the session starts.")
+        if (
+            previous.initial_concept_accepted
+            and payload.plot_area_sotkas != previous.plot_area_sotkas
+        ):
+            raise cls._invalid("The plot size is immutable after initial concept acceptance.")
         if (
             previous.initial_concept_accepted
             and payload.survey_completed_objects != previous.survey_completed_objects
@@ -1430,7 +1453,14 @@ class QuestionnaireService:
                     "Lock-region selection must target the current or accepted object."
                 )
 
-        house_accepted = "eskez-doma" in payload.accepted_objects
+        house_accepted = (
+            "eskez-doma" in payload.accepted_objects
+            or (
+                payload.initial_concept_mode
+                and not payload.initial_concept_accepted
+                and "eskez-doma" in payload.selected_objects
+            )
+        )
         allowed_answer_keys = set(payload.selected_objects) | {"zayavka"}
         previous_accepted = (
             set(previous.accepted_objects)
@@ -1477,6 +1507,16 @@ class QuestionnaireService:
                     raise self._invalid(
                         f"Unknown question {object_key}.{question_id} in the saved session."
                     )
+                if not questionnaire_question_is_active(
+                    object_key,
+                    question,
+                    answers,
+                    house_accepted,
+                    payload.selected_objects,
+                ):
+                    raise self._invalid(
+                        f"Answer {object_key}.{question_id} belongs to an inactive question."
+                    )
                 allow_empty_multi = (
                     object_key == "eskez-doma"
                     and question_id == "15б"
@@ -1499,7 +1539,13 @@ class QuestionnaireService:
             if question is None:
                 raise self._invalid("The current question does not exist in the current questionnaire.")
             answers = payload.answers.get(payload.current_object, {})
-            if not self._condition_ok(question.get("condition"), answers, house_accepted):
+            if not questionnaire_question_is_active(
+                payload.current_object,
+                question,
+                answers,
+                house_accepted,
+                payload.selected_objects,
+            ):
                 raise self._invalid("The current question is inactive for the saved answers.")
 
         if payload.edit_question_ids:

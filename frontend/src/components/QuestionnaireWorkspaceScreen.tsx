@@ -37,11 +37,21 @@ function ResultImage({ url, alt }: { url:string; alt:string }) {
   return <img src={url} alt={alt} onError={() => setFailed(true)}/>
 }
 
-function conditionOk(condition:QuestionnaireCondition|null, answers:Record<string,QuestionnaireAnswer>, houseAccepted:boolean):boolean {
+function conditionOk(
+  condition:QuestionnaireCondition|null,
+  answers:Record<string,QuestionnaireAnswer>,
+  houseAccepted:boolean,
+  selectedObjects:string[] = [],
+):boolean {
   if (!condition) return true
   if (condition.operator === 'house_accepted') return houseAccepted
-  if (condition.operator === 'all') return (condition.conditions || []).every((item) => conditionOk(item, answers, houseAccepted))
-  if (condition.operator === 'any') return (condition.conditions || []).some((item) => conditionOk(item, answers, houseAccepted))
+  if (condition.operator === 'all') return (condition.conditions || []).every((item) => conditionOk(item, answers, houseAccepted, selectedObjects))
+  if (condition.operator === 'any') return (condition.conditions || []).some((item) => conditionOk(item, answers, houseAccepted, selectedObjects))
+  if (condition.operator === 'object_not_selected') {
+    if (typeof condition.value === 'string') return !selectedObjects.includes(condition.value)
+    if (Array.isArray(condition.value)) return !condition.value.some((item) => selectedObjects.includes(item))
+    return true
+  }
   const answer = condition.question_id ? answers[condition.question_id] : undefined
   if (condition.operator === 'eq') return answer === condition.value
   if (condition.operator === 'neq') return answer !== condition.value
@@ -61,14 +71,50 @@ function conditionOk(condition:QuestionnaireCondition|null, answers:Record<strin
   return true
 }
 
-function sanitizeObjectAnswers(definition:QuestionnaireDefinition, answers:Record<string,QuestionnaireAnswer>, houseAccepted:boolean) {
+function questionEnabledForSelection(
+  objectKey:string,
+  question:QuestionnaireQuestion,
+  selectedObjects:string[],
+):boolean {
+  // A separately selected garage owns its own questionnaire. Keeping the house
+  // garage branch as well would ask for the same object twice and create
+  // conflicting prompt constraints.
+  if (objectKey === 'eskez-doma' && selectedObjects.some((key) => key === 'garazh' || key === 'naves') && ['6','6а','6б','6в'].includes(question.id)) {
+    return false
+  }
+  return true
+}
+
+function questionIsVisible(
+  objectKey:string,
+  question:QuestionnaireQuestion,
+  answers:Record<string,QuestionnaireAnswer>,
+  houseAccepted:boolean,
+  selectedObjects:string[],
+):boolean {
+  if (!questionEnabledForSelection(objectKey, question, selectedObjects)) return false
+  if (!conditionOk(question.condition, answers, houseAccepted, selectedObjects)) return false
+  if ((question.kind === 'single' || question.kind === 'multi') && question.options.length > 0) {
+    return question.options.some((option) =>
+      conditionOk(question.option_rules[option] || null, answers, houseAccepted, selectedObjects),
+    )
+  }
+  return true
+}
+
+function sanitizeObjectAnswers(
+  definition:QuestionnaireDefinition,
+  answers:Record<string,QuestionnaireAnswer>,
+  houseAccepted:boolean,
+  selectedObjects:string[],
+) {
   const next = { ...answers }
   for (let pass=0; pass<definition.questions.length; pass++) {
     let changed = false
     for (const question of definition.questions) {
       const value = next[question.id]
       if (value === undefined) continue
-      if (!conditionOk(question.condition, next, houseAccepted)) {
+      if (!questionIsVisible(definition.key, question, next, houseAccepted, selectedObjects)) {
         delete next[question.id]
         changed = true
         continue
@@ -76,13 +122,13 @@ function sanitizeObjectAnswers(definition:QuestionnaireDefinition, answers:Recor
       if (question.kind === 'single' && typeof value === 'string') {
         const custom = value.startsWith('Свой вариант:') && question.options.includes('Свой вариант')
         const listed = question.options.length === 0 || question.options.includes(value)
-        if (!custom && (!listed || !conditionOk(question.option_rules[value] || null, next, houseAccepted))) {
+        if (!custom && (!listed || !conditionOk(question.option_rules[value] || null, next, houseAccepted, selectedObjects))) {
           delete next[question.id]
           changed = true
         }
       }
       if (question.kind === 'multi' && Array.isArray(value)) {
-        const filtered = value.filter((item) => question.options.includes(item) && conditionOk(question.option_rules[item] || null, next, houseAccepted))
+        const filtered = value.filter((item) => question.options.includes(item) && conditionOk(question.option_rules[item] || null, next, houseAccepted, selectedObjects))
         if (filtered.length !== value.length) {
           if (filtered.length) next[question.id] = filtered
           else delete next[question.id]
@@ -132,10 +178,13 @@ function answerEquals(left:QuestionnaireAnswer|undefined, right:QuestionnaireAns
 }
 
 function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCatalog):DesignSession {
-  if (stored.catalog_version === catalog.version) return stored
-
   const definitions = new Map(catalog.questionnaires.map((item) => [item.key, item]))
   const houseAccepted = stored.accepted_objects.includes('eskez-doma')
+    || Boolean(
+      stored.initial_concept_mode
+      && !stored.initial_concept_accepted
+      && stored.selected_objects.includes('eskez-doma')
+    )
   const nextAnswers:DesignSession['answers'] = Object.fromEntries(
     Object.entries(stored.answers).map(([key, answers]) => [key, { ...answers }]),
   )
@@ -153,12 +202,12 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
       for (const question of definition.questions) {
         const value = answers[question.id]
         if (value === undefined) continue
-        if (!conditionOk(question.condition, answers, houseAccepted)) {
+        if (!questionIsVisible(objectKey, question, answers, houseAccepted, stored.selected_objects)) {
           delete answers[question.id]
           changed = true
           continue
         }
-        if (question.skip_default !== null && answerEquals(value, question.skip_default) && !conditionOk(question.skip_condition, answers, houseAccepted)) {
+        if (question.skip_default !== null && answerEquals(value, question.skip_default) && !conditionOk(question.skip_condition, answers, houseAccepted, stored.selected_objects)) {
           delete answers[question.id]
           changed = true
           continue
@@ -167,14 +216,14 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
           const custom = value.startsWith('Свой вариант:') && question.options.includes('Свой вариант')
           const placeholder = value === 'Свой вариант' && question.options.includes('Свой вариант')
           const listed = question.options.length === 0 || question.options.includes(value)
-          const allowed = custom || (listed && conditionOk(question.option_rules[value] || null, answers, houseAccepted))
+          const allowed = custom || (listed && conditionOk(question.option_rules[value] || null, answers, houseAccepted, stored.selected_objects))
           if (placeholder || !allowed) {
             delete answers[question.id]
             changed = true
           }
         }
         if (question.kind === 'multi' && Array.isArray(value)) {
-          const filtered = value.filter((item) => question.options.includes(item) && conditionOk(question.option_rules[item] || null, answers, houseAccepted))
+          const filtered = value.filter((item) => question.options.includes(item) && conditionOk(question.option_rules[item] || null, answers, houseAccepted, stored.selected_objects))
           if (filtered.length !== value.length) {
             if (filtered.length) answers[question.id] = filtered
             else delete answers[question.id]
@@ -188,11 +237,14 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
     if (stored.current_object === objectKey) {
       const firstMissing = definition.questions.find((question) =>
         question.phase === 'pre_render'
-        && conditionOk(question.condition, answers, houseAccepted)
+        && questionIsVisible(objectKey, question, answers, houseAccepted, stored.selected_objects)
         && answers[question.id] === undefined,
       )
       if (firstMissing) currentQuestionId = firstMissing.id
-      else if (currentQuestionId && !definition.questions.some((question) => question.id === currentQuestionId && conditionOk(question.condition, answers, houseAccepted))) currentQuestionId = null
+      else if (currentQuestionId && !definition.questions.some((question) =>
+        question.id === currentQuestionId
+        && questionIsVisible(objectKey, question, answers, houseAccepted, stored.selected_objects)
+      )) currentQuestionId = null
     }
   }
 
@@ -218,6 +270,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const [regionDraft, setRegionDraft] = useState<NormalizedRect|null>(null)
   const regionStartRef = useRef<{x:number;y:number}|null>(null)
   const [customOption, setCustomOption] = useState(false)
+  const [plotAreaDraft, setPlotAreaDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [generationInFlight, setGenerationInFlight] = useState(false)
   const [ideaPublication, setIdeaPublication] = useState<AdminIdea|null|undefined>(undefined)
@@ -280,6 +333,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     return () => { stopped = true }
   }, [project.id])
 
+  useEffect(() => {
+    setPlotAreaDraft(session?.plot_area_sotkas == null ? '' : String(session.plot_area_sotkas))
+  }, [session?.plot_area_sotkas])
+
   const definitions = useMemo(() => new Map((catalog?.questionnaires || []).map((item) => [item.key, item])), [catalog])
   const current = session?.current_object ? definitions.get(session.current_object) || null : null
   const houseAccepted = session?.accepted_objects.includes('eskez-doma')
@@ -289,10 +346,16 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       && session.selected_objects.includes('eskez-doma')
     )
   const objectAnswers = current && session ? session.answers[current.key] || {} : {}
-  const visible = current ? current.questions.filter((q) => conditionOk(q.condition, objectAnswers, houseAccepted)) : []
+  const visible = current && session
+    ? current.questions.filter((q) =>
+      questionIsVisible(current.key, q, objectAnswers, houseAccepted, session.selected_objects),
+    )
+    : []
   const active = current && session ? visible.find((q) => q.id === session.current_question_id) || null : null
   const currentGenerationId = current && session && session.region_mode == null ? session.generation_ids[current.key] || null : null
   const initialGenerationId = session?.initial_generation_id || null
+  const parsedPlotArea = Number(plotAreaDraft)
+  const plotAreaValid = Number.isInteger(parsedPlotArea) && parsedPlotArea >= 4 && parsedPlotArea <= 15
   const latestAcceptedKey = session?.accepted_objects.at(-1) || null
   const latestAcceptedGenerationId = session?.scene_generation_id
     || (latestAcceptedKey ? session?.generation_ids[latestAcceptedKey] || null : null)
@@ -406,7 +469,14 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }, [active?.id, current?.key])
 
   function syncProject(next:DesignSession) {
-    onProjectChange({ ...project, context:{ ...project.context, design_session:next } })
+    onProjectChange({
+      ...project,
+      context:{
+        ...project.context,
+        design_session:next,
+        plot_area_m2:next.plot_area_sotkas == null ? project.context.plot_area_m2 : next.plot_area_sotkas * 100,
+      },
+    })
   }
 
   async function persist(next:DesignSession) {
@@ -440,7 +510,14 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }
 
   function availableOptions(question:QuestionnaireQuestion) {
-    return question.options.filter((option) => conditionOk(question.option_rules[option] || null, objectAnswers, houseAccepted))
+    return question.options.filter((option) =>
+      conditionOk(
+        question.option_rules[option] || null,
+        objectAnswers,
+        houseAccepted,
+        session?.selected_objects || [],
+      ),
+    )
   }
 
   function generationCostLabel() {
@@ -547,7 +624,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   function preQuestions(definition:QuestionnaireDefinition, next:DesignSession) {
     const answers = next.answers[definition.key] || {}
-    return definition.questions.filter((q) => q.phase === 'pre_render' && conditionOk(q.condition, answers, next.accepted_objects.includes('eskez-doma')))
+    const houseReference = next.accepted_objects.includes('eskez-doma')
+      || (next.initial_concept_mode && !next.initial_concept_accepted && next.selected_objects.includes('eskez-doma'))
+    return definition.questions.filter((q) =>
+      q.phase === 'pre_render'
+      && questionIsVisible(definition.key, q, answers, houseReference, next.selected_objects),
+    )
   }
 
   function suggestedRegion(next:DesignSession, definition:QuestionnaireDefinition):NormalizedRect {
@@ -698,16 +780,29 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }
 
   async function generateInitial(next:DesignSession) {
+    if (!plotAreaValid) {
+      setError('Укажите размер участка от 4 до 15 соток.')
+      return
+    }
     setGenerationInFlight(true)
     setBusy(true)
     setError(null)
     setRenderOutput(null)
     try {
+      let generationSession = next
+      if (generationSession.plot_area_sotkas !== parsedPlotArea) {
+        generationSession = await saveQuestionnaireSession(project.id, {
+          ...generationSession,
+          plot_area_sotkas:parsedPlotArea,
+        })
+        setSession(generationSession)
+        syncProject(generationSession)
+      }
       const queued = await createQuestionnaireGeneration(project.id)
       void getQuestionnaireGenerationCost(project.id)
         .then(setGenerationCost)
         .catch(() => setGenerationCost(null))
-      const queuedState = { ...next, initial_generation_id:queued.id }
+      const queuedState = { ...generationSession, initial_generation_id:queued.id }
       setSession(queuedState)
       syncProject(queuedState)
       const completed = await poll(queued)
@@ -815,7 +910,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       ? { ...session, review_comments:{ ...session.review_comments, [current.key]:reviewComment.trim() } }
       : session
     const rawObjectAnswers = { ...(base.answers[current.key] || {}), [question.id]:value }
-    const sanitizedObjectAnswers = sanitizeObjectAnswers(current, rawObjectAnswers, houseAccepted)
+    const sanitizedObjectAnswers = sanitizeObjectAnswers(
+      current,
+      rawObjectAnswers,
+      houseAccepted,
+      base.selected_objects,
+    )
     const nextAnswers = {
       ...base.answers,
       [current.key]:sanitizedObjectAnswers,
@@ -823,7 +923,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     let next:DesignSession = { ...base, answers:nextAnswers }
 
     if (current.key === 'zayavka') {
-      const questions = current.questions.filter((q) => q.phase === 'application' && conditionOk(q.condition, nextAnswers[current.key], houseAccepted))
+      const questions = current.questions.filter((q) =>
+        q.phase === 'application'
+        && questionIsVisible(current.key, q, nextAnswers[current.key], houseAccepted, next.selected_objects),
+      )
       const index = questions.findIndex((q) => q.id === question.id)
       if (index < questions.length - 1) return persist({ ...next, current_question_id:questions[index + 1].id })
       if (question.id === '25' && value === true) {
@@ -838,7 +941,13 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         .filter((id) => id !== question.id)
         .filter((id) => {
           const target = current.questions.find((item) => item.id === id)
-          return Boolean(target && conditionOk(target.condition, answers, next.accepted_objects.includes('eskez-doma')))
+          return Boolean(target && questionIsVisible(
+            current.key,
+            target,
+            answers,
+            next.accepted_objects.includes('eskez-doma'),
+            next.selected_objects,
+          ))
         })
       next = { ...next, edit_question_ids:rest }
       if (rest.length) return persist({ ...next, current_question_id:rest[0] })
@@ -899,7 +1008,8 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   async function previousQuestion() {
     if (!session || !current || !active || busy) return
     const phaseQuestions = current.questions.filter((question) =>
-      question.phase === active.phase && conditionOk(question.condition, objectAnswers, houseAccepted)
+      question.phase === active.phase
+      && questionIsVisible(current.key, question, objectAnswers, houseAccepted, session.selected_objects)
     )
     const index = phaseQuestions.findIndex((question) => question.id === active.id)
     if (index > 0) {
@@ -1030,6 +1140,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         <p>{initialGenerationId ? 'В одной визуализации собраны все объекты, выбранные до старта проекта.' : 'AuRoom сначала соберёт полное ТЗ по всем выбранным объектам и только потом сделает одну общую визуализацию участка.'}</p>
         {renderOutput && <div className="questionnaire-result"><ResultImage url={renderOutput.url} alt="Общая концепция участка"/></div>}
         {!initialGenerationId && <div className="questionnaire-options">{session.selected_objects.map((key) => <button key={key} className={`questionnaire-option ${session.survey_completed_objects.includes(key) ? 'selected' : ''}`} disabled={busy} onClick={() => void chooseObject(key)}><span>{session.survey_completed_objects.includes(key) ? '✓ ' : ''}{definitions.get(key)?.title || key}</span><i/></button>)}</div>}
+        {ready && !initialGenerationId && <label className="create-plot-size">
+          <span><strong>Размер участка</strong><small>Можно изменить до принятия концепции · 4–15 соток</small></span>
+          <span className="create-plot-input"><input aria-label="Размер участка, соток" type="number" min={4} max={15} step={1} inputMode="numeric" value={plotAreaDraft} disabled={busy} onChange={(event) => setPlotAreaDraft(event.target.value)} /><b>сот.</b></span>
+        </label>}
         {ready && !initialGenerationId && <div className="questionnaire-answer-review">{session.selected_objects.map((key) => {
           const definition = definitions.get(key)
           const answers = session.answers[key] || {}
@@ -1037,11 +1151,11 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
           const answered = definition.questions.filter((question) =>
             question.phase === 'pre_render'
             && answers[question.id] !== undefined
-            && conditionOk(question.condition, answers, houseAccepted)
+            && questionIsVisible(key, question, answers, houseAccepted, session.selected_objects)
           )
           return <details key={key}><summary>{definition.title}</summary>{answered.map((question) => <button type="button" key={question.id} disabled={busy} onClick={() => void editInitialQuestion(key, question.id)}><span>{question.text}</span><strong>{text(answers[question.id])}</strong></button>)}</details>
         })}</div>}
-        {ready && !initialGenerationId && <><p className="region-hint">Одна общая генерация · {initialGenerationCostLabel()}</p><div className="questionnaire-actions"><button className="primary-button" disabled={busy || generationCost?.is_available === false} onClick={() => void generateInitial(session)}>Создать общую концепцию</button></div></>}
+        {ready && !initialGenerationId && <><p className="region-hint">Одна общая генерация · {initialGenerationCostLabel()}</p><div className="questionnaire-actions"><button className="primary-button" disabled={busy || !plotAreaValid || generationCost?.is_available === false} onClick={() => void generateInitial(session)}>Создать общую концепцию</button></div></>}
         {initialGenerationId && renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void acceptInitial()}>Принять концепцию</button><button className="secondary-button" disabled={busy} onClick={() => void reopenInitialAnswers()}>Изменить ТЗ · новая генерация</button></div>}
         {(busy || generationInFlight) && initialGenerationId && !renderOutput && <div className="empty-inline">Создаём весь участок одной генерацией…</div>}
         {error && <div className="banner-error">{error}</div>}
