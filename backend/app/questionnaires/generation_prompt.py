@@ -70,6 +70,52 @@ def condition_ok(
     return True
 
 
+def question_enabled_for_selection(
+    object_key: str,
+    question: dict[str, Any],
+    selected_objects: Sequence[str],
+) -> bool:
+    """Apply cross-questionnaire invariants that are not operator-editable catalog copy."""
+
+    # A separately selected garage owns its own complete questionnaire. Asking the
+    # house questionnaire for an additional garage/canopy/attachment would duplicate
+    # requirements and can produce conflicting prompt constraints.
+    if (
+        object_key == "eskez-doma"
+        and "garazh" in selected_objects
+        and str(question.get("id")) in {"6", "6а", "6б", "6в"}
+    ):
+        return False
+    return True
+
+
+def question_is_active(
+    object_key: str,
+    question: dict[str, Any],
+    answers: dict[str, object],
+    house_accepted: bool,
+    selected_objects: Sequence[str],
+) -> bool:
+    if not question_enabled_for_selection(object_key, question, selected_objects):
+        return False
+    if not condition_ok(
+        question.get("condition"), answers, house_accepted, selected_objects
+    ):
+        return False
+    options = question.get("options") or []
+    if question.get("kind") in {"single", "multi"} and options:
+        return any(
+            condition_ok(
+                (question.get("option_rules") or {}).get(option),
+                answers,
+                house_accepted,
+                selected_objects,
+            )
+            for option in options
+        )
+    return True
+
+
 def _answer_value(value: object) -> object:
     if isinstance(value, list):
         return [str(item) for item in value]
@@ -274,8 +320,9 @@ def build_initial_concept_prompt(
         for question in definition["questions"]:
             if question.get("phase") != "pre_render":
                 continue
-            if not condition_ok(
-                question.get("condition"),
+            if not question_is_active(
+                object_key,
+                question,
                 answers,
                 house_reference_available,
                 session.selected_objects,
@@ -415,8 +462,9 @@ def build_questionnaire_generation_prompt(
     for question in definition["questions"]:
         if question.get("phase") != "pre_render":
             continue
-        if not condition_ok(
-            question.get("condition"),
+        if not question_is_active(
+            object_key,
+            question,
             answers,
             house_accepted,
             session.selected_objects,
