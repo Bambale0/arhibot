@@ -134,7 +134,7 @@ async def worker_singleton(worker_name: str) -> AsyncIterator[None]:
             await asyncio.sleep(WORKER_LEASE_ACQUIRE_POLL_SECONDS)
     if not acquired:
         raise RuntimeError(
-            f'Another {worker_name} worker still owns the singleton lease '
+            f'Another {worker_name} worker already owns the singleton lease '
             f'after {WORKER_LEASE_ACQUIRE_MAX_ATTEMPTS} attempts'
         )
 
