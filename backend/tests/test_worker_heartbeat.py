@@ -121,5 +121,5 @@ def test_compose_and_deploy_require_worker_health() -> None:
 
     for worker_name in ('generation', 'broadcast', 'maintenance'):
         assert f'app.workers.heartbeat\", \"check\", \"{worker_name}\", \"45\"' in compose
-    assert 'for service in worker broadcast-worker maintenance frontend; do' in deploy
-    assert 'for service in maintenance worker broadcast-worker frontend postgres redis; do' in smoke
+    assert 'for service in api worker broadcast-worker maintenance frontend; do' in deploy
+    assert 'for service in api maintenance worker broadcast-worker frontend postgres redis; do' in smoke
