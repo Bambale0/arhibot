@@ -209,6 +209,14 @@ test('initial concept collects all answers before one generation and supports pr
   await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
   expect(generationCount).toBe(1)
 
+  await page.getByRole('button',{name:'Изменить ТЗ · новая генерация'}).click()
+  await expect(page.getByLabel('Размер участка, соток')).toHaveValue('8')
+  await page.getByLabel('Размер участка, соток').fill('12')
+  await page.getByRole('button',{name:'Создать общую концепцию'}).click()
+  await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
+  expect(generationCount).toBe(2)
+  expect(session.plot_area_sotkas).toBe(12)
+
   await page.getByRole('button',{name:'Принять концепцию'}).click()
   await expect(page.getByText('Что делаем дальше?')).toBeVisible()
   await expect(page.getByText('Следующая генерация · 1 кр.')).toBeVisible()
@@ -273,6 +281,7 @@ test('house terrace floor options follow selected storeys in the UI',async({page
   await page.getByRole('button',{name:'Дом, фасад',exact:true}).click()
 
   await page.getByText('1 этаж',{exact:true}).click()
+  await page.getByText('Нет',{exact:true}).click()
   await page.getByText('Терраса',{exact:true}).click()
   await expect(page.getByText('На каких этажах терраса?')).toBeVisible()
   await expect(page.getByText('Первый этаж',{exact:true})).toBeVisible()
@@ -282,13 +291,61 @@ test('house terrace floor options follow selected storeys in the UI',async({page
 
   await page.getByRole('button',{name:'Назад'}).click()
   await page.getByRole('button',{name:'Назад'}).click()
+  await page.getByRole('button',{name:'Назад'}).click()
   await page.getByText('2 этажа + мансарда',{exact:true}).click()
+  await page.getByText('Нет',{exact:true}).click()
   await page.getByText('Терраса',{exact:true}).click()
   await expect(page.getByText('Второй этаж',{exact:true})).toBeVisible()
   await expect(page.getByText('Мансарда',{exact:true})).toBeVisible()
   await expect(page.getByText('Третий этаж',{exact:true})).toHaveCount(0)
 })
 
+
+
+
+test('house skips embedded garage branch when a separate garage questionnaire is selected',async({page})=>{
+  session={
+    ...session,
+    selected_objects:['eskez-doma','garazh'],
+    plot_area_sotkas:8,
+    initial_concept_mode:true,
+    source_step_completed:true,
+    current_object:'eskez-doma',
+    current_question_id:'4',
+    answers:{},
+  }
+  project={...project,name:'Дом и гараж',context:{...project.context,plot_area_m2:800,design_session:session}}
+
+  await page.goto('/?project=' + projectId)
+  await expect(page.getByText('Сколько этажей?')).toBeVisible()
+  await page.getByText('2 этажа',{exact:true}).click()
+
+  await expect(page.getByText('Нужен гараж или навес?')).toHaveCount(0)
+  await expect(page.getByText('Нужна терраса?')).toBeVisible()
+})
+
+
+test('empty house follow-up is skipped after terrace is placed on the second floor',async({page})=>{
+  session={
+    ...session,
+    selected_objects:['eskez-doma'],
+    plot_area_sotkas:8,
+    initial_concept_mode:true,
+    source_step_completed:true,
+    current_object:'eskez-doma',
+    current_question_id:'12',
+    answers:{'eskez-doma':{'4':'2 этажа','6':'Нет','7':'Двускатная'}},
+  }
+  project={...project,name:'Дом',context:{...project.context,plot_area_m2:800,design_session:session}}
+
+  await page.goto('/?project=' + projectId)
+  await page.getByText('Терраса',{exact:true}).click()
+  await page.getByText('Второй этаж',{exact:true}).click()
+  await page.getByRole('button',{name:'Продолжить'}).click()
+
+  await expect(page.getByText('Что еще добавить к дому?')).toHaveCount(0)
+  await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
+})
 
 test('fullscreen control stays available in the mobile product flow',async({page})=>{
   await page.setViewportSize({width:390,height:844})
