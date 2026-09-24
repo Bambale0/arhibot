@@ -1453,7 +1453,14 @@ class QuestionnaireService:
                     "Lock-region selection must target the current or accepted object."
                 )
 
-        house_accepted = "eskez-doma" in payload.accepted_objects
+        house_accepted = (
+            "eskez-doma" in payload.accepted_objects
+            or (
+                payload.initial_concept_mode
+                and not payload.initial_concept_accepted
+                and "eskez-doma" in payload.selected_objects
+            )
+        )
         allowed_answer_keys = set(payload.selected_objects) | {"zayavka"}
         previous_accepted = (
             set(previous.accepted_objects)
