@@ -10,6 +10,7 @@ const catalog = {
   version:'e2e-v1',
   sections:[
     {key:'house',title:'Дом',object_keys:['eskez-doma']},
+    {key:'outbuildings',title:'Гараж и навес',object_keys:['garazh']},
     {key:'furniture',title:'Мебель и площадки',object_keys:['lavochka']},
     {key:'landscape',title:'Участок',object_keys:['gazon','prud']},
   ],
@@ -27,14 +28,26 @@ const catalog = {
       {id:'1',text:'Что делаем?',kind:'single',options:['Пруд','Ручей'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
       {id:'2',text:'Эскиз воды вам подходит?',kind:'single',options:['Да, идём дальше','Нет, хочу уточнить и сделать заново'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'review',condition:null,option_rules:{},edit_targets:{}},
     ]},
-    {key:'eskez-doma',title:'Дом, фасад',source_file:'fixture',order:3,scene_policy:{},questions:[
+    {key:'garazh',title:'Гараж',source_file:'fixture',order:3,scene_policy:{},questions:[
+      {id:'1',text:'Какой гараж?',kind:'single',options:['На 1 автомобиль','На 2 автомобиля'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
+      {id:'2',text:'Эскиз гаража вам подходит?',kind:'single',options:['Да, идём дальше','Нет, хочу уточнить и сделать заново'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'review',condition:null,option_rules:{},edit_targets:{}},
+    ]},
+    {key:'eskez-doma',title:'Дом, фасад',source_file:'fixture',order:4,scene_policy:{},questions:[
       {id:'4',text:'Сколько этажей?',kind:'single',options:['1 этаж','2 этажа','2 этажа + мансарда','3 этажа'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
+      {id:'6',text:'Нужен гараж или навес?',kind:'single',options:['Да','Нет'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
       {id:'12',text:'Нужна терраса?',kind:'single',options:['Терраса','Нет'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
       {id:'12б',text:'На каких этажах терраса?',kind:'multi',options:['Первый этаж','Второй этаж','Третий этаж','Мансарда'],required:true,skip_default:null,help:null,field_hint:null,max_selections:4,phase:'pre_render',condition:{question_id:'12',operator:'neq',value:'Нет'},option_rules:{
         'Первый этаж':{question_id:'4',operator:'floor_option',value:'Первый этаж'},
         'Второй этаж':{question_id:'4',operator:'floor_option',value:'Второй этаж'},
         'Третий этаж':{question_id:'4',operator:'floor_option',value:'Третий этаж'},
         'Мансарда':{question_id:'4',operator:'floor_option',value:'Мансарда'},
+      },edit_targets:{}},
+      {id:'13',text:'Что еще добавить к дому?',kind:'multi',options:['Балкон','Терраса на плоской кровле'],required:false,skip_default:null,help:null,field_hint:null,max_selections:2,phase:'pre_render',condition:null,option_rules:{
+        'Балкон':{operator:'all',conditions:[
+          {question_id:'4',operator:'neq',value:'1 этаж'},
+          {question_id:'12б',operator:'not_contains_any',value:['Второй этаж','Третий этаж','Мансарда']},
+        ]},
+        'Терраса на плоской кровле':{question_id:'7',operator:'eq',value:'Плоская'},
       },edit_targets:{}},
       {id:'15',text:'Эскиз дома вам подходит?',kind:'single',options:['Да, идём дальше','Нет, хочу уточнить и сделать заново'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'review',condition:null,option_rules:{},edit_targets:{}},
     ]},
