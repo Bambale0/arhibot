@@ -12,6 +12,7 @@ def condition_ok(
     condition: dict[str, Any] | None,
     answers: dict[str, object],
     house_accepted: bool,
+    selected_objects: Sequence[str] | None = None,
 ) -> bool:
     if not condition:
         return True
@@ -20,16 +21,23 @@ def condition_ok(
         return house_accepted
     if operator == "all":
         return all(
-            condition_ok(item, answers, house_accepted)
+            condition_ok(item, answers, house_accepted, selected_objects)
             for item in condition.get("conditions", [])
         )
     if operator == "any":
         return any(
-            condition_ok(item, answers, house_accepted)
+            condition_ok(item, answers, house_accepted, selected_objects)
             for item in condition.get("conditions", [])
         )
-    answer = answers.get(condition.get("question_id"))
     value = condition.get("value")
+    if operator == "object_not_selected":
+        selected = set(selected_objects or ())
+        if isinstance(value, str):
+            return value not in selected
+        if isinstance(value, list):
+            return not any(str(item) in selected for item in value)
+        return True
+    answer = answers.get(condition.get("question_id"))
     if operator == "eq":
         return answer == value
     if operator == "neq":
@@ -72,6 +80,47 @@ def _answer_value(value: object) -> object:
     if isinstance(value, float) and value.is_integer():
         return int(value)
     return value
+
+
+_SPATIAL_QUESTION_MARKERS = ("где", "располож", "относительно", "сторон", "место")
+_SPATIAL_ANSWER_MARKERS = (
+    "слева", "справа", "сзади", "перед дом", "во дворе", "двор",
+    "въезд", "улиц", "за дом", "перед фасад", "у фасад", "центр участка",
+)
+
+
+def _initial_placement_constraints(objects: Sequence[dict[str, object]]) -> list[dict[str, object]]:
+    placements: list[dict[str, object]] = []
+    for item in objects:
+        constraints = item.get("questionnaire_constraints")
+        if not isinstance(constraints, list):
+            continue
+        for constraint in constraints:
+            if not isinstance(constraint, dict):
+                continue
+            question = str(constraint.get("question", "")).strip()
+            answer = constraint.get("answer")
+            answer_text = (
+                " ".join(str(part) for part in answer)
+                if isinstance(answer, list)
+                else str(answer or "")
+            )
+            question_lower = question.lower()
+            answer_lower = answer_text.lower()
+            if not (
+                any(marker in question_lower for marker in _SPATIAL_QUESTION_MARKERS)
+                or any(marker in answer_lower for marker in _SPATIAL_ANSWER_MARKERS)
+            ):
+                continue
+            placements.append(
+                {
+                    "object_key": item.get("object_key"),
+                    "object_name": item.get("object_name"),
+                    "question": question,
+                    "answer": answer,
+                }
+            )
+    return placements
 
 
 def _js_percent(value: float) -> int:
@@ -182,7 +231,8 @@ def _initial_site_scale(session: DesignSession) -> dict[str, object]:
         "жёстким ориентиром композиции: 1 сотка = 100 м². Площадь дома — общая "
         "площадь по этажам; estimated_house_footprint_m2 используется только как "
         "ориентир пятна застройки. Не увеличивай дом так, чтобы он визуально занимал "
-        "несоразмерную долю участка."
+        "несоразмерную долю участка. Не растягивай и не сжимай границы участка ради "
+        "удобства композиции: сначала зафиксируй масштаб участка, затем вписывай в него объекты."
         if scale_known
         else (
             "Точный размер участка отсутствует у исторического/внутреннего проекта. "
@@ -225,7 +275,10 @@ def build_initial_concept_prompt(
             if question.get("phase") != "pre_render":
                 continue
             if not condition_ok(
-                question.get("condition"), answers, house_reference_available
+                question.get("condition"),
+                answers,
+                house_reference_available,
+                session.selected_objects,
             ):
                 continue
             if question["id"] not in answers:
@@ -249,6 +302,7 @@ def build_initial_concept_prompt(
 
     camera = _initial_concept_camera(len(objects))
     site_scale = _initial_site_scale(session)
+    placement_constraints = _initial_placement_constraints(objects)
     source = (
         {
             "kind": "site_photo",
@@ -289,6 +343,21 @@ def build_initial_concept_prompt(
             "reserve_space_for_every_selected_object": True,
         },
         "site_scale": site_scale,
+        "site_layout": {
+            "placement_constraints": placement_constraints,
+            "strength": "hard_constraints",
+            "directive": (
+                "Сначала зафиксируй ориентацию дома, двора и въезда/улицы, если они заданы. "
+                "Затем размести каждый объект строго по placement_constraints. Ответы «сзади», "
+                "«во дворе», «слева», «справа», «у въезда» и аналогичные нельзя заменять "
+                "визуально удобным местом. Перед финалом отдельно перепроверь расположение "
+                "каждого объекта относительно дома и въезда."
+            ),
+            "conflict_policy": (
+                "Явное местоположение из опросника важнее декоративной композиции. "
+                "Если места мало, меняй кадрирование и плотность композиции, а не сторону размещения."
+            ),
+        },
         "camera": camera,
         "questionnaire_semantics": {
             "strength": "hard_constraints",
@@ -314,8 +383,9 @@ def build_initial_concept_prompt(
         "1. Все selected objects одновременно присутствуют в одной сцене.\n"
         f"2. {camera['directive']}\n"
         "3. Соблюдай site_scale: размер участка и относительный масштаб объектов.\n"
-        "4. Каждый ответ questionnaire_constraints является обязательным.\n"
-        "5. Фотореализм и эстетика после выполнения пунктов 1–4.\n"
+        "4. Соблюдай site_layout: расположение объектов относительно дома/двора/въезда — жёсткое ограничение.\n"
+        "5. Каждый ответ questionnaire_constraints является обязательным.\n"
+        "6. Фотореализм и эстетика после выполнения пунктов 1–5.\n"
         "STRUCTURED_SPEC:\n"
         f"{dumps(spec, ensure_ascii=False, separators=(',', ':'))}\n"
         "FINAL_CHECK: проверь, что каждый выбранный объект полностью виден, ракурс "
@@ -345,7 +415,12 @@ def build_questionnaire_generation_prompt(
     for question in definition["questions"]:
         if question.get("phase") != "pre_render":
             continue
-        if not condition_ok(question.get("condition"), answers, house_accepted):
+        if not condition_ok(
+            question.get("condition"),
+            answers,
+            house_accepted,
+            session.selected_objects,
+        ):
             continue
         if question["id"] not in answers:
             continue
