@@ -2,7 +2,7 @@ export type NormalizedRect = { x:number; y:number; width:number; height:number }
 export type QuestionnaireAnswer = string | number | boolean | string[]
 export type QuestionnaireCondition = {
   question_id?: string
-  operator: 'eq'|'neq'|'in'|'contains'|'starts_with'|'all'|'any'|'house_accepted'|'not_contains_any'|'floor_option'
+  operator: 'eq'|'neq'|'in'|'contains'|'starts_with'|'all'|'any'|'house_accepted'|'not_contains_any'|'floor_option'|'object_not_selected'
   value?: string|string[]
   conditions?: QuestionnaireCondition[]
 }
