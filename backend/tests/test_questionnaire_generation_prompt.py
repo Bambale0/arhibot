@@ -434,3 +434,121 @@ def test_initial_concept_promotes_object_location_to_explicit_site_layout_constr
     } in spec["site_layout"]["placement_constraints"]
     assert "располож" in spec["site_layout"]["directive"].lower()
 
+
+
+def test_initial_concept_embeds_deterministic_normalized_site_plan() -> None:
+    catalog = build_catalog()
+    bench = _definition("lavochka")
+    location_question = next(
+        question
+        for question in bench["questions"]
+        if "относительно дома" in question["text"].lower()
+    )
+    right_answer = next(
+        option for option in location_question["options"] if "справа" in option.lower()
+    )
+    session = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma", "lavochka"],
+        plot_area_sotkas=8,
+        initial_concept_mode=True,
+        source_step_completed=True,
+        answers={
+            "eskez-doma": {
+                "1": "Современный минимализм",
+                "3": 200,
+                "4": "2 этажа",
+            },
+            "lavochka": {location_question["id"]: right_answer},
+        },
+    )
+
+    first = _spec(build_initial_concept_prompt(catalog, session, input_asset_present=False))
+    second = _spec(build_initial_concept_prompt(catalog, session, input_asset_present=False))
+
+    assert first["site_plan"] == second["site_plan"]
+    site_plan = first["site_plan"]
+    assert site_plan["schema"] == "auroom.site_plan.v1"
+    assert site_plan["plot"] == {
+        "area_sotkas": 8,
+        "area_m2": 800,
+        "coordinate_system": "normalized",
+        "front_side": "y0",
+        "geometry_accuracy": "relative",
+    }
+
+    objects = {item["object_key"]: item for item in site_plan["objects"]}
+    assert set(objects) == {"eskez-doma", "lavochka"}
+    house = objects["eskez-doma"]
+    bench_item = objects["lavochka"]
+
+    assert house["role"] == "house"
+    assert house["placement_source"] == "derived"
+    assert house["estimated_footprint_m2"] == 100.0
+    assert bench_item["placement_source"] == "questionnaire"
+    assert bench_item["relations"] == ["right_of_house"]
+
+    for item in objects.values():
+        rect = item["rect"]
+        assert 0 <= rect["x"] < 1
+        assert 0 <= rect["y"] < 1
+        assert 0 < rect["width"] <= 1
+        assert 0 < rect["height"] <= 1
+        assert rect["x"] + rect["width"] <= 1
+        assert rect["y"] + rect["height"] <= 1
+
+    house_right = house["rect"]["x"] + house["rect"]["width"]
+    bench_center_x = bench_item["rect"]["x"] + bench_item["rect"]["width"] / 2
+    assert bench_center_x > house_right
+    assert site_plan["warnings"] == []
+
+
+def test_initial_concept_site_plan_keeps_multiple_spatial_relations() -> None:
+    catalog = build_catalog()
+    synthetic_catalog = {
+        **catalog,
+        "questionnaires": [
+            *[
+                definition
+                for definition in catalog["questionnaires"]
+                if definition["key"] != "lavochka"
+            ],
+            {
+                **_definition("lavochka"),
+                "questions": [
+                    {
+                        **question,
+                        "options": ["Справа от дома, у въезда"]
+                        if question["id"] == "2"
+                        else question["options"],
+                    }
+                    for question in _definition("lavochka")["questions"]
+                ],
+            },
+        ],
+    }
+    session = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma", "lavochka"],
+        plot_area_sotkas=8,
+        initial_concept_mode=True,
+        source_step_completed=True,
+        answers={
+            "eskez-doma": {"1": "Современный минимализм"},
+            "lavochka": {"2": "Справа от дома, у въезда"},
+        },
+    )
+
+    spec = _spec(
+        build_initial_concept_prompt(
+            synthetic_catalog,
+            session,
+            input_asset_present=False,
+        )
+    )
+    objects = {item["object_key"]: item for item in spec["site_plan"]["objects"]}
+    bench_item = objects["lavochka"]
+
+    assert bench_item["relations"] == ["right_of_house", "entry_zone"]
+    assert bench_item["zone"] == "entry_right"
+    assert bench_item["rect"]["y"] < objects["eskez-doma"]["rect"]["y"]
