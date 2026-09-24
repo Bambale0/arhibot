@@ -86,6 +86,30 @@ async def test_questionnaire_project_is_hidden_until_source_step_and_can_be_disc
         assert resized.status_code == 200, resized.text
         assert resized.json()["session"]["plot_area_sotkas"] == 12
         design_session = resized.json()["session"]
+        site_plan = design_session["site_plan"]
+        assert site_plan["schema"] == "auroom.site_plan.v1"
+        assert site_plan["plot"]["area_sotkas"] == 12
+        assert site_plan["plot"]["area_m2"] == 1200
+        assert [item["object_key"] for item in site_plan["objects"]] == [
+            "eskez-doma",
+            "banya",
+        ]
+
+        forged_plan = {
+            **site_plan,
+            "plot": {**site_plan["plot"], "area_m2": 999999},
+            "warnings": [{"object_key": "banya", "code": "client_forged"}],
+        }
+        design_session["site_plan"] = forged_plan
+        canonicalized = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=design_session,
+        )
+        assert canonicalized.status_code == 200, canonicalized.text
+        design_session = canonicalized.json()["session"]
+        assert design_session["site_plan"]["plot"]["area_m2"] == 1200
+        assert design_session["site_plan"]["warnings"] != forged_plan["warnings"]
 
         promoted = await client.get(f"/api/v1/projects/{project_id}", headers=headers)
         assert promoted.status_code == 200, promoted.text

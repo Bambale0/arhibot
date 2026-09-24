@@ -299,14 +299,10 @@ def _initial_site_scale(session: DesignSession) -> dict[str, object]:
     }
 
 
-def build_initial_concept_prompt(
+def _initial_concept_objects(
     catalog: dict[str, Any],
     session: DesignSession,
-    *,
-    input_asset_present: bool,
-) -> str:
-    """Build one generation spec for every object selected before project launch."""
-
+) -> list[dict[str, object]]:
     definitions = {
         str(item["key"]): item
         for item in catalog["questionnaires"]
@@ -347,6 +343,29 @@ def build_initial_concept_prompt(
                 "questionnaire_constraints": constraints,
             }
         )
+    return objects
+
+
+def build_initial_site_plan(
+    catalog: dict[str, Any],
+    session: DesignSession,
+) -> dict[str, object]:
+    """Build the canonical server-side spatial snapshot for an initial concept."""
+
+    objects = _initial_concept_objects(catalog, session)
+    site_scale = _initial_site_scale(session)
+    return build_site_plan(objects=objects, session=session, site_scale=site_scale)
+
+
+def build_initial_concept_prompt(
+    catalog: dict[str, Any],
+    session: DesignSession,
+    *,
+    input_asset_present: bool,
+) -> str:
+    """Build one generation spec for every object selected before project launch."""
+
+    objects = _initial_concept_objects(catalog, session)
 
     camera = _initial_concept_camera(len(objects))
     site_scale = _initial_site_scale(session)
