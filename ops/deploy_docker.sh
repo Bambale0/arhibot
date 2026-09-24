@@ -249,7 +249,7 @@ for service in bot worker broadcast-worker maintenance; do
   fi
 done
 
-for service in worker broadcast-worker maintenance frontend; do
+for service in api worker broadcast-worker maintenance frontend; do
   service_id=$(compose ps -q "${service}")
   health_passed=0
   for attempt in $(seq 1 18); do

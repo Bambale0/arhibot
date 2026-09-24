@@ -17,6 +17,8 @@ HEARTBEAT_TTL_SECONDS = 60
 WORKER_LEASE_PREFIX = 'auroom:worker_lease:'
 WORKER_LEASE_TTL_SECONDS = 45
 WORKER_LEASE_REFRESH_SECONDS = 10
+WORKER_LEASE_ACQUIRE_POLL_SECONDS = 1.0
+WORKER_LEASE_ACQUIRE_MAX_ATTEMPTS = WORKER_LEASE_TTL_SECONDS + 5
 
 
 def _normalized_worker_name(worker_name: str) -> str:
@@ -118,14 +120,23 @@ async def _worker_lease_loop(
 async def worker_singleton(worker_name: str) -> AsyncIterator[None]:
     key = worker_lease_key(worker_name)
     owner_token = token_hex(24)
-    acquired = await redis_client.set(
-        key,
-        owner_token,
-        ex=WORKER_LEASE_TTL_SECONDS,
-        nx=True,
-    )
+    acquired = False
+    for attempt in range(WORKER_LEASE_ACQUIRE_MAX_ATTEMPTS):
+        acquired = await redis_client.set(
+            key,
+            owner_token,
+            ex=WORKER_LEASE_TTL_SECONDS,
+            nx=True,
+        )
+        if acquired:
+            break
+        if attempt + 1 < WORKER_LEASE_ACQUIRE_MAX_ATTEMPTS:
+            await asyncio.sleep(WORKER_LEASE_ACQUIRE_POLL_SECONDS)
     if not acquired:
-        raise RuntimeError(f'Another {worker_name} worker already owns the singleton lease')
+        raise RuntimeError(
+            f'Another {worker_name} worker already owns the singleton lease '
+            f'after {WORKER_LEASE_ACQUIRE_MAX_ATTEMPTS} attempts'
+        )
 
     owner_task = asyncio.current_task()
     if owner_task is None:
