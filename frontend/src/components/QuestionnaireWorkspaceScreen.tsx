@@ -267,6 +267,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const [regionDraft, setRegionDraft] = useState<NormalizedRect|null>(null)
   const regionStartRef = useRef<{x:number;y:number}|null>(null)
   const [customOption, setCustomOption] = useState(false)
+  const [plotAreaDraft, setPlotAreaDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [generationInFlight, setGenerationInFlight] = useState(false)
   const [ideaPublication, setIdeaPublication] = useState<AdminIdea|null|undefined>(undefined)
@@ -338,7 +339,11 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       && session.selected_objects.includes('eskez-doma')
     )
   const objectAnswers = current && session ? session.answers[current.key] || {} : {}
-  const visible = current ? current.questions.filter((q) => conditionOk(q.condition, objectAnswers, houseAccepted)) : []
+  const visible = current && session
+    ? current.questions.filter((q) =>
+      questionIsVisible(current.key, q, objectAnswers, houseAccepted, session.selected_objects),
+    )
+    : []
   const active = current && session ? visible.find((q) => q.id === session.current_question_id) || null : null
   const currentGenerationId = current && session && session.region_mode == null ? session.generation_ids[current.key] || null : null
   const initialGenerationId = session?.initial_generation_id || null
@@ -455,7 +460,14 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }, [active?.id, current?.key])
 
   function syncProject(next:DesignSession) {
-    onProjectChange({ ...project, context:{ ...project.context, design_session:next } })
+    onProjectChange({
+      ...project,
+      context:{
+        ...project.context,
+        design_session:next,
+        plot_area_m2:next.plot_area_sotkas == null ? project.context.plot_area_m2 : next.plot_area_sotkas * 100,
+      },
+    })
   }
 
   async function persist(next:DesignSession) {
@@ -489,7 +501,14 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }
 
   function availableOptions(question:QuestionnaireQuestion) {
-    return question.options.filter((option) => conditionOk(question.option_rules[option] || null, objectAnswers, houseAccepted))
+    return question.options.filter((option) =>
+      conditionOk(
+        question.option_rules[option] || null,
+        objectAnswers,
+        houseAccepted,
+        session?.selected_objects || [],
+      ),
+    )
   }
 
   function generationCostLabel() {
@@ -596,7 +615,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   function preQuestions(definition:QuestionnaireDefinition, next:DesignSession) {
     const answers = next.answers[definition.key] || {}
-    return definition.questions.filter((q) => q.phase === 'pre_render' && conditionOk(q.condition, answers, next.accepted_objects.includes('eskez-doma')))
+    const houseReference = next.accepted_objects.includes('eskez-doma')
+      || (next.initial_concept_mode && !next.initial_concept_accepted && next.selected_objects.includes('eskez-doma'))
+    return definition.questions.filter((q) =>
+      q.phase === 'pre_render'
+      && questionIsVisible(definition.key, q, answers, houseReference, next.selected_objects),
+    )
   }
 
   function suggestedRegion(next:DesignSession, definition:QuestionnaireDefinition):NormalizedRect {
@@ -864,7 +888,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       ? { ...session, review_comments:{ ...session.review_comments, [current.key]:reviewComment.trim() } }
       : session
     const rawObjectAnswers = { ...(base.answers[current.key] || {}), [question.id]:value }
-    const sanitizedObjectAnswers = sanitizeObjectAnswers(current, rawObjectAnswers, houseAccepted)
+    const sanitizedObjectAnswers = sanitizeObjectAnswers(
+      current,
+      rawObjectAnswers,
+      houseAccepted,
+      base.selected_objects,
+    )
     const nextAnswers = {
       ...base.answers,
       [current.key]:sanitizedObjectAnswers,
@@ -872,7 +901,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     let next:DesignSession = { ...base, answers:nextAnswers }
 
     if (current.key === 'zayavka') {
-      const questions = current.questions.filter((q) => q.phase === 'application' && conditionOk(q.condition, nextAnswers[current.key], houseAccepted))
+      const questions = current.questions.filter((q) =>
+        q.phase === 'application'
+        && questionIsVisible(current.key, q, nextAnswers[current.key], houseAccepted, next.selected_objects),
+      )
       const index = questions.findIndex((q) => q.id === question.id)
       if (index < questions.length - 1) return persist({ ...next, current_question_id:questions[index + 1].id })
       if (question.id === '25' && value === true) {
@@ -887,7 +919,13 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         .filter((id) => id !== question.id)
         .filter((id) => {
           const target = current.questions.find((item) => item.id === id)
-          return Boolean(target && conditionOk(target.condition, answers, next.accepted_objects.includes('eskez-doma')))
+          return Boolean(target && questionIsVisible(
+            current.key,
+            target,
+            answers,
+            next.accepted_objects.includes('eskez-doma'),
+            next.selected_objects,
+          ))
         })
       next = { ...next, edit_question_ids:rest }
       if (rest.length) return persist({ ...next, current_question_id:rest[0] })
@@ -948,7 +986,8 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   async function previousQuestion() {
     if (!session || !current || !active || busy) return
     const phaseQuestions = current.questions.filter((question) =>
-      question.phase === active.phase && conditionOk(question.condition, objectAnswers, houseAccepted)
+      question.phase === active.phase
+      && questionIsVisible(current.key, question, objectAnswers, houseAccepted, session.selected_objects)
     )
     const index = phaseQuestions.findIndex((question) => question.id === active.id)
     if (index > 0) {
@@ -1086,7 +1125,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
           const answered = definition.questions.filter((question) =>
             question.phase === 'pre_render'
             && answers[question.id] !== undefined
-            && conditionOk(question.condition, answers, houseAccepted)
+            && questionIsVisible(key, question, answers, houseAccepted, session.selected_objects)
           )
           return <details key={key}><summary>{definition.title}</summary>{answered.map((question) => <button type="button" key={question.id} disabled={busy} onClick={() => void editInitialQuestion(key, question.id)}><span>{question.text}</span><strong>{text(answers[question.id])}</strong></button>)}</details>
         })}</div>}
