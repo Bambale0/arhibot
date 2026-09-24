@@ -1,6 +1,18 @@
-# Production readiness: 2026-09-22
+# Production readiness: 2026-09-22 — status updated 2026-09-24
 
-Scope: the approved image-based AuRoom MVP, prepared from dev `56b94847`. The Ideas showcase, personal History and questionnaire editor retain their existing responsibilities; 3D remains excluded. No application production deployment is part of this preparation.
+Scope: the approved image-based AuRoom MVP. The Ideas showcase, personal History and questionnaire editor retain their existing responsibilities; public 3D remains excluded. This document records production-readiness preparation and the later verified development deployment; production promotion to `main` is still a separate explicit operator action.
+
+## Status update — 2026-09-24
+
+- Current verified `dev` baseline: `b55fff1cbd7e66945df28032f5289f3c7ec38be2` (merged PR #111).
+- Production-readiness hardening PR #110 merged to `dev`; its exact-head CI `35778017831` passed.
+- Telegram layout/safe-area and common image-output contract PR #111 passed CI `35841327489` and merged.
+- Post-merge `dev` CI `35842676884` passed Backend tests, Backend integration and Frontend build.
+- Development deployment `35843724041` and deployed-server smoke `35844018736` both succeeded.
+- Repository/runtime evidence supports final acceptance of the approved image-based MVP scope.
+- Before production promotion, perform the environment-specific acceptance path for any real paid generation/payment behavior required by launch, then promote `dev -> main` only with explicit operator approval.
+- Distributed tracing, long-duration provider soak testing and blue-green/canary deployment remain later-stage operational improvements, not blockers for the current MVP handoff.
+
 
 ## Audit remediation
 
@@ -24,7 +36,7 @@ Scope: the approved image-based AuRoom MVP, prepared from dev `56b94847`. The Id
 
 ## Verification records
 
-The final exact commit and CI run are recorded in the PR. Local evidence is retained outside Git under `/tmp/arhibot-audit/evidence/release-*` and in the delivery report.
+The original release-candidate evidence is recorded below. The 2026-09-24 status update above records the later merged/deployed `dev` baseline. Local preparation evidence is retained outside Git under `/tmp/arhibot-audit/evidence/release-*` and in the delivery report.
 
 - Python 3.12: 216 unit/contract tests; real PostgreSQL/Redis integration suite including concurrent/replayed/mismatched billing and stale cached-balance cases.
 - Frontend: TypeScript/build, full npm vulnerability audit (0 findings), 102 Chromium/WebKit browser tests; delayed logout/refresh and 768/1024/1440px controls are regression tests.
