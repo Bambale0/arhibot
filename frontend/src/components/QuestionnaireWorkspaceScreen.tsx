@@ -178,10 +178,13 @@ function answerEquals(left:QuestionnaireAnswer|undefined, right:QuestionnaireAns
 }
 
 function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCatalog):DesignSession {
-  if (stored.catalog_version === catalog.version) return stored
-
   const definitions = new Map(catalog.questionnaires.map((item) => [item.key, item]))
   const houseAccepted = stored.accepted_objects.includes('eskez-doma')
+    || Boolean(
+      stored.initial_concept_mode
+      && !stored.initial_concept_accepted
+      && stored.selected_objects.includes('eskez-doma')
+    )
   const nextAnswers:DesignSession['answers'] = Object.fromEntries(
     Object.entries(stored.answers).map(([key, answers]) => [key, { ...answers }]),
   )
