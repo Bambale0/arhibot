@@ -23,6 +23,7 @@ import type {
   QuestionnaireGenerationCost,
   QuestionnaireQuestion,
   NormalizedRect,
+  SitePlan,
 } from '../questionnaireTypes'
 import type { AdminIdea, Asset, Generation, Project } from '../types'
 import { BackIcon, ImageIcon, SparkIcon, UploadIcon } from './Icons'
@@ -35,6 +36,29 @@ function ResultImage({ url, alt }: { url:string; alt:string }) {
   useEffect(() => setFailed(false), [url])
   if (failed) return <div className="empty-state"><ImageIcon/><p>Изображение временно недоступно. Попробуйте открыть этот шаг позже.</p></div>
   return <img src={url} alt={alt} onError={() => setFailed(true)}/>
+}
+
+function SitePlanPreview({ plan }:{ plan:SitePlan }) {
+  return <section className="site-plan-preview" data-testid="site-plan-preview">
+    <div className="site-plan-preview-head">
+      <div><strong>Схема размещения</strong><span>Относительное расположение объектов до генерации</span></div>
+      <small>{plan.plot.area_sotkas ? `${plan.plot.area_sotkas} сот.` : 'масштаб участка'}</small>
+    </div>
+    <div className="site-plan-canvas" role="img" aria-label="Схема размещения объектов на участке">
+      {plan.objects.map((item) => <div
+        key={item.object_key}
+        className={`site-plan-object ${item.role === 'house' ? 'house' : ''}`}
+        style={{
+          left:`${item.rect.x * 100}%`,
+          top:`${item.rect.y * 100}%`,
+          width:`${item.rect.width * 100}%`,
+          height:`${item.rect.height * 100}%`,
+        }}
+      ><span>{item.object_name}</span></div>)}
+      <div className="site-plan-entry" aria-hidden="true"><span>Въезд / улица</span></div>
+    </div>
+    {plan.warnings.length > 0 && <p className="site-plan-warning">Для части объектов место приблизительное — генерация сохранит выбранную смысловую зону участка.</p>}
+  </section>
 }
 
 function conditionOk(
@@ -147,6 +171,7 @@ function newSession(version:string, selected:string[], plotAreaSotkas:number|nul
     catalog_version:version,
     selected_objects:selected,
     plot_area_sotkas:plotAreaSotkas,
+    site_plan:null,
     initial_concept_mode:true,
     survey_completed_objects:[],
     initial_generation_id:null,
@@ -1144,6 +1169,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
           <span><strong>Размер участка</strong><small>Можно изменить до принятия концепции · 4–15 соток</small></span>
           <span className="create-plot-input"><input aria-label="Размер участка, соток" type="number" min={4} max={15} step={1} inputMode="numeric" value={plotAreaDraft} disabled={busy} onChange={(event) => setPlotAreaDraft(event.target.value)} /><b>сот.</b></span>
         </label>}
+        {ready && !initialGenerationId && session.site_plan && <SitePlanPreview plan={session.site_plan}/>}
         {ready && !initialGenerationId && <div className="questionnaire-answer-review">{session.selected_objects.map((key) => {
           const definition = definitions.get(key)
           const answers = session.answers[key] || {}
