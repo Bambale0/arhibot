@@ -330,6 +330,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     return () => { stopped = true }
   }, [project.id])
 
+  useEffect(() => {
+    setPlotAreaDraft(session?.plot_area_sotkas == null ? '' : String(session.plot_area_sotkas))
+  }, [session?.plot_area_sotkas])
+
   const definitions = useMemo(() => new Map((catalog?.questionnaires || []).map((item) => [item.key, item])), [catalog])
   const current = session?.current_object ? definitions.get(session.current_object) || null : null
   const houseAccepted = session?.accepted_objects.includes('eskez-doma')
@@ -347,6 +351,8 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const active = current && session ? visible.find((q) => q.id === session.current_question_id) || null : null
   const currentGenerationId = current && session && session.region_mode == null ? session.generation_ids[current.key] || null : null
   const initialGenerationId = session?.initial_generation_id || null
+  const parsedPlotArea = Number(plotAreaDraft)
+  const plotAreaValid = Number.isInteger(parsedPlotArea) && parsedPlotArea >= 4 && parsedPlotArea <= 15
   const latestAcceptedKey = session?.accepted_objects.at(-1) || null
   const latestAcceptedGenerationId = session?.scene_generation_id
     || (latestAcceptedKey ? session?.generation_ids[latestAcceptedKey] || null : null)
@@ -771,16 +777,29 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }
 
   async function generateInitial(next:DesignSession) {
+    if (!plotAreaValid) {
+      setError('Укажите размер участка от 4 до 15 соток.')
+      return
+    }
     setGenerationInFlight(true)
     setBusy(true)
     setError(null)
     setRenderOutput(null)
     try {
+      let generationSession = next
+      if (generationSession.plot_area_sotkas !== parsedPlotArea) {
+        generationSession = await saveQuestionnaireSession(project.id, {
+          ...generationSession,
+          plot_area_sotkas:parsedPlotArea,
+        })
+        setSession(generationSession)
+        syncProject(generationSession)
+      }
       const queued = await createQuestionnaireGeneration(project.id)
       void getQuestionnaireGenerationCost(project.id)
         .then(setGenerationCost)
         .catch(() => setGenerationCost(null))
-      const queuedState = { ...next, initial_generation_id:queued.id }
+      const queuedState = { ...generationSession, initial_generation_id:queued.id }
       setSession(queuedState)
       syncProject(queuedState)
       const completed = await poll(queued)
@@ -1118,6 +1137,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         <p>{initialGenerationId ? 'В одной визуализации собраны все объекты, выбранные до старта проекта.' : 'AuRoom сначала соберёт полное ТЗ по всем выбранным объектам и только потом сделает одну общую визуализацию участка.'}</p>
         {renderOutput && <div className="questionnaire-result"><ResultImage url={renderOutput.url} alt="Общая концепция участка"/></div>}
         {!initialGenerationId && <div className="questionnaire-options">{session.selected_objects.map((key) => <button key={key} className={`questionnaire-option ${session.survey_completed_objects.includes(key) ? 'selected' : ''}`} disabled={busy} onClick={() => void chooseObject(key)}><span>{session.survey_completed_objects.includes(key) ? '✓ ' : ''}{definitions.get(key)?.title || key}</span><i/></button>)}</div>}
+        {ready && !initialGenerationId && <label className="create-plot-size">
+          <span><strong>Размер участка</strong><small>Можно изменить до принятия концепции · 4–15 соток</small></span>
+          <span className="create-plot-input"><input aria-label="Размер участка, соток" type="number" min={4} max={15} step={1} inputMode="numeric" value={plotAreaDraft} disabled={busy} onChange={(event) => setPlotAreaDraft(event.target.value)} /><b>сот.</b></span>
+        </label>}
         {ready && !initialGenerationId && <div className="questionnaire-answer-review">{session.selected_objects.map((key) => {
           const definition = definitions.get(key)
           const answers = session.answers[key] || {}
@@ -1129,7 +1152,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
           )
           return <details key={key}><summary>{definition.title}</summary>{answered.map((question) => <button type="button" key={question.id} disabled={busy} onClick={() => void editInitialQuestion(key, question.id)}><span>{question.text}</span><strong>{text(answers[question.id])}</strong></button>)}</details>
         })}</div>}
-        {ready && !initialGenerationId && <><p className="region-hint">Одна общая генерация · {initialGenerationCostLabel()}</p><div className="questionnaire-actions"><button className="primary-button" disabled={busy || generationCost?.is_available === false} onClick={() => void generateInitial(session)}>Создать общую концепцию</button></div></>}
+        {ready && !initialGenerationId && <><p className="region-hint">Одна общая генерация · {initialGenerationCostLabel()}</p><div className="questionnaire-actions"><button className="primary-button" disabled={busy || !plotAreaValid || generationCost?.is_available === false} onClick={() => void generateInitial(session)}>Создать общую концепцию</button></div></>}
         {initialGenerationId && renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void acceptInitial()}>Принять концепцию</button><button className="secondary-button" disabled={busy} onClick={() => void reopenInitialAnswers()}>Изменить ТЗ · новая генерация</button></div>}
         {(busy || generationInFlight) && initialGenerationId && !renderOutput && <div className="empty-inline">Создаём весь участок одной генерацией…</div>}
         {error && <div className="banner-error">{error}</div>}
