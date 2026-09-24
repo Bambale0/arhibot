@@ -37,11 +37,21 @@ function ResultImage({ url, alt }: { url:string; alt:string }) {
   return <img src={url} alt={alt} onError={() => setFailed(true)}/>
 }
 
-function conditionOk(condition:QuestionnaireCondition|null, answers:Record<string,QuestionnaireAnswer>, houseAccepted:boolean):boolean {
+function conditionOk(
+  condition:QuestionnaireCondition|null,
+  answers:Record<string,QuestionnaireAnswer>,
+  houseAccepted:boolean,
+  selectedObjects:string[] = [],
+):boolean {
   if (!condition) return true
   if (condition.operator === 'house_accepted') return houseAccepted
-  if (condition.operator === 'all') return (condition.conditions || []).every((item) => conditionOk(item, answers, houseAccepted))
-  if (condition.operator === 'any') return (condition.conditions || []).some((item) => conditionOk(item, answers, houseAccepted))
+  if (condition.operator === 'all') return (condition.conditions || []).every((item) => conditionOk(item, answers, houseAccepted, selectedObjects))
+  if (condition.operator === 'any') return (condition.conditions || []).some((item) => conditionOk(item, answers, houseAccepted, selectedObjects))
+  if (condition.operator === 'object_not_selected') {
+    if (typeof condition.value === 'string') return !selectedObjects.includes(condition.value)
+    if (Array.isArray(condition.value)) return !condition.value.some((item) => selectedObjects.includes(item))
+    return true
+  }
   const answer = condition.question_id ? answers[condition.question_id] : undefined
   if (condition.operator === 'eq') return answer === condition.value
   if (condition.operator === 'neq') return answer !== condition.value
@@ -61,14 +71,50 @@ function conditionOk(condition:QuestionnaireCondition|null, answers:Record<strin
   return true
 }
 
-function sanitizeObjectAnswers(definition:QuestionnaireDefinition, answers:Record<string,QuestionnaireAnswer>, houseAccepted:boolean) {
+function questionEnabledForSelection(
+  objectKey:string,
+  question:QuestionnaireQuestion,
+  selectedObjects:string[],
+):boolean {
+  // A separately selected garage owns its own questionnaire. Keeping the house
+  // garage branch as well would ask for the same object twice and create
+  // conflicting prompt constraints.
+  if (objectKey === 'eskez-doma' && selectedObjects.includes('garazh') && ['6','6а','6б','6в'].includes(question.id)) {
+    return false
+  }
+  return true
+}
+
+function questionIsVisible(
+  objectKey:string,
+  question:QuestionnaireQuestion,
+  answers:Record<string,QuestionnaireAnswer>,
+  houseAccepted:boolean,
+  selectedObjects:string[],
+):boolean {
+  if (!questionEnabledForSelection(objectKey, question, selectedObjects)) return false
+  if (!conditionOk(question.condition, answers, houseAccepted, selectedObjects)) return false
+  if ((question.kind === 'single' || question.kind === 'multi') && question.options.length > 0) {
+    return question.options.some((option) =>
+      conditionOk(question.option_rules[option] || null, answers, houseAccepted, selectedObjects),
+    )
+  }
+  return true
+}
+
+function sanitizeObjectAnswers(
+  definition:QuestionnaireDefinition,
+  answers:Record<string,QuestionnaireAnswer>,
+  houseAccepted:boolean,
+  selectedObjects:string[],
+) {
   const next = { ...answers }
   for (let pass=0; pass<definition.questions.length; pass++) {
     let changed = false
     for (const question of definition.questions) {
       const value = next[question.id]
       if (value === undefined) continue
-      if (!conditionOk(question.condition, next, houseAccepted)) {
+      if (!questionIsVisible(definition.key, question, next, houseAccepted, selectedObjects)) {
         delete next[question.id]
         changed = true
         continue
@@ -76,13 +122,13 @@ function sanitizeObjectAnswers(definition:QuestionnaireDefinition, answers:Recor
       if (question.kind === 'single' && typeof value === 'string') {
         const custom = value.startsWith('Свой вариант:') && question.options.includes('Свой вариант')
         const listed = question.options.length === 0 || question.options.includes(value)
-        if (!custom && (!listed || !conditionOk(question.option_rules[value] || null, next, houseAccepted))) {
+        if (!custom && (!listed || !conditionOk(question.option_rules[value] || null, next, houseAccepted, selectedObjects))) {
           delete next[question.id]
           changed = true
         }
       }
       if (question.kind === 'multi' && Array.isArray(value)) {
-        const filtered = value.filter((item) => question.options.includes(item) && conditionOk(question.option_rules[item] || null, next, houseAccepted))
+        const filtered = value.filter((item) => question.options.includes(item) && conditionOk(question.option_rules[item] || null, next, houseAccepted, selectedObjects))
         if (filtered.length !== value.length) {
           if (filtered.length) next[question.id] = filtered
           else delete next[question.id]
@@ -153,12 +199,12 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
       for (const question of definition.questions) {
         const value = answers[question.id]
         if (value === undefined) continue
-        if (!conditionOk(question.condition, answers, houseAccepted)) {
+        if (!questionIsVisible(objectKey, question, answers, houseAccepted, stored.selected_objects)) {
           delete answers[question.id]
           changed = true
           continue
         }
-        if (question.skip_default !== null && answerEquals(value, question.skip_default) && !conditionOk(question.skip_condition, answers, houseAccepted)) {
+        if (question.skip_default !== null && answerEquals(value, question.skip_default) && !conditionOk(question.skip_condition, answers, houseAccepted, stored.selected_objects)) {
           delete answers[question.id]
           changed = true
           continue
@@ -167,14 +213,14 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
           const custom = value.startsWith('Свой вариант:') && question.options.includes('Свой вариант')
           const placeholder = value === 'Свой вариант' && question.options.includes('Свой вариант')
           const listed = question.options.length === 0 || question.options.includes(value)
-          const allowed = custom || (listed && conditionOk(question.option_rules[value] || null, answers, houseAccepted))
+          const allowed = custom || (listed && conditionOk(question.option_rules[value] || null, answers, houseAccepted, stored.selected_objects))
           if (placeholder || !allowed) {
             delete answers[question.id]
             changed = true
           }
         }
         if (question.kind === 'multi' && Array.isArray(value)) {
-          const filtered = value.filter((item) => question.options.includes(item) && conditionOk(question.option_rules[item] || null, answers, houseAccepted))
+          const filtered = value.filter((item) => question.options.includes(item) && conditionOk(question.option_rules[item] || null, answers, houseAccepted, stored.selected_objects))
           if (filtered.length !== value.length) {
             if (filtered.length) answers[question.id] = filtered
             else delete answers[question.id]
@@ -188,11 +234,14 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
     if (stored.current_object === objectKey) {
       const firstMissing = definition.questions.find((question) =>
         question.phase === 'pre_render'
-        && conditionOk(question.condition, answers, houseAccepted)
+        && questionIsVisible(objectKey, question, answers, houseAccepted, stored.selected_objects)
         && answers[question.id] === undefined,
       )
       if (firstMissing) currentQuestionId = firstMissing.id
-      else if (currentQuestionId && !definition.questions.some((question) => question.id === currentQuestionId && conditionOk(question.condition, answers, houseAccepted))) currentQuestionId = null
+      else if (currentQuestionId && !definition.questions.some((question) =>
+        question.id === currentQuestionId
+        && questionIsVisible(objectKey, question, answers, houseAccepted, stored.selected_objects)
+      )) currentQuestionId = null
     }
   }
 
