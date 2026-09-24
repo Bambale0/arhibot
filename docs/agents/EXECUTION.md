@@ -1,6 +1,22 @@
 # Agent Execution Ledger
 
-## Active work — lightweight home dashboard
+## Current release status — 2026-09-24
+
+This section is the authoritative status summary. The implementation records below are retained as historical evidence and should not be read as currently open epics.
+
+- Current integration baseline: `dev` at `b55fff1cbd7e66945df28032f5289f3c7ec38be2`.
+- Merged product/release work includes #93, #96, #99, #100, #106, #110 and #111.
+- Current `dev` CI run `35842676884`: Backend tests, Backend integration and Frontend build — **SUCCESS**.
+- Development deployment run `35843724041` — **SUCCESS**.
+- Deployed-server smoke run `35844018736` — **SUCCESS**.
+- Encrypted off-site Telegram backup and independent recovery were verified during the 2026-09-22 production-readiness slice.
+- Public 3D remains intentionally outside the approved image-based MVP scope.
+- There are no open product epics represented by the historical sections below.
+- Remaining release gates are environment-specific acceptance of any real paid generation/billing path required for launch, followed by an explicitly authorized `dev -> main` production promotion.
+- Dependabot major-version upgrades are maintenance backlog and are not MVP handoff blockers; handle them separately, one upgrade at a time.
+
+
+## Completed work — lightweight home dashboard
 
 - Baseline `dev`: `6cb63950d1c552f42c7a683ca2a7e75374a8b015`.
 - Existing Home renders the complete Project grid by default; Ideas already has a separate full feed and optimized preview URLs.
@@ -40,10 +56,10 @@ Home becomes a fast working dashboard: last project first, three clear next acti
 2. [x] Implement dashboard layout and navigation on a feature branch.
 3. [x] Add responsive styling, lightweight owned-asset preview URLs and Playwright regression coverage.
 4. [x] Open PR #99 to `dev`; CI #728 passed on `86987e5a0e0fba3287a5f3ae313d4d8648d4d0cd` (Backend tests, Backend integration, Frontend build; Playwright 17/17).
-5. [in progress] Re-verify the ledger-only head commit, merge to `dev`, and confirm the resulting integration state.
+5. [x] Merged to `dev` via PR #99; follow-up project ordering fix #100 also merged and is included in the current release baseline.
 
 
-## Active work — production recovery readiness
+## Completed work — production recovery readiness
 
 - Baseline `dev`: `d2fa5dc16b4a68d48a793c74584ef3618257ee6d`.
 - Runtime target: SentinelX host `archibot-prod` only.
@@ -105,7 +121,7 @@ The drill prints the backup path, restored Alembic revision before/after migrati
 10. [x] Off-site setup completed by the 2026-09-22 Telegram release-hardening slice; independent recovery verified.
 
 
-## Active work — PostgreSQL failure recovery
+## Completed work — PostgreSQL failure recovery
 
 - Baseline `dev`: `4a6e5998bdb7d055cfa87d9e440fa7ae36e14669`.
 - Existing Redis controlled pause/recovery probe is green in CI.
@@ -144,7 +160,7 @@ The probe reports expected state, actual connectivity, elapsed seconds, and erro
 6. [x] Merge to `dev` only after green checks (squash `7a98578a76019336489f22b1f9f888859678878e`; deploy #71 and server smoke #211 green).
 
 
-## Active work — authenticated load readiness
+## Completed work — authenticated load readiness
 
 - Baseline `dev`: `7a98578a76019336489f22b1f9f888859678878e`.
 - Existing CI covers unit, integration, migrations, Redis/PostgreSQL failure recovery and browser E2E, but it does not currently drive bounded concurrent authenticated HTTP traffic through a running API process.
@@ -185,7 +201,7 @@ The probe prints mode, completed operations, error count/rate, elapsed time, thr
 7. [x] Merge to `dev` only after green checks (squash `491f971423e66810469329afc8ef94b93ff447cb`).
 
 
-## Active work — worker crash and provider storm recovery
+## Completed work — worker crash and provider storm recovery
 
 - Baseline `dev`: `491f971423e66810469329afc8ef94b93ff447cb`.
 - Redis and PostgreSQL pause/recovery probes are green in CI.
@@ -215,10 +231,10 @@ The crash probe uses the existing worker heartbeat check output. Storm tests ass
 3. [x] Add SIGKILL/recovery CI gate.
 4. [x] Add provider storm regression tests.
 5. [x] Update operations documentation.
-6. [ ] Run exact-SHA CI and review findings.
-7. [ ] Merge to `dev` after all checks are green.
+6. [x] Exact-SHA CI completed successfully for PR #93 and findings were reviewed.
+7. [x] PR #93 merged to `dev` on 2026-09-16.
 
-## Active work — frontend production UX audit (merged to dev)
+## Completed work — frontend production UX audit
 
 - Baseline `dev`: `642e8d34faf66891eb873e045ed3f37fe97d5d6a`.
 - The React/Vite client now has multi-browser Playwright coverage (mobile-chromium, desktop-chromium, mobile-webkit) with 27 E2E resilience tests.
@@ -236,7 +252,7 @@ The crash probe uses the existing worker heartbeat check output. Storm tests ass
 7. [x] Perform a clean-session final user/admin pass, review the full diff against standards and this task, and record final evidence plus remaining gaps.
 8. [x] Commit the reviewable change set and open a PR targeting `dev`.
 
-## Active work — Telegram fullscreen and Ideas work viewer
+## Completed work — Telegram fullscreen and Ideas work viewer
 
 - Baseline `dev`: `04fdf9b524fdf929d1630c947d2ff06075f8f8dd`.
 - The Telegram fullscreen control is already mounted globally, but it only enters fullscreen and its CSS hides it below 768 px.
@@ -273,9 +289,9 @@ No new telemetry is required for this client-only interaction. The fullscreen UI
 3. [x] Implement the fullscreen toggle/gesture and Ideas viewer.
 4. [x] Run frontend typecheck, production build, and Playwright E2E in CI; frontend job green with 18/18 E2E passing.
 5. [x] Review the exact PR diff and exact-SHA CI result (CI run #35134139926 green on `96154943f480f14da4436dd5e1863f41f08e1571`).
-6. [ ] Merge to `dev` only after required checks are green.
+6. [x] Merged to `dev`; the fullscreen/viewer work is included in merged frontend production UX hardening PR #96.
 
-## Active work — production readiness, 2026-09-22
+## Completed preparation — production readiness, 2026-09-22
 
 - Baseline: `dev` `56b94847d3a8d3e32fbb0062707f88ea43e47c57`; isolated branch `fix/production-readiness-20260922`.
 - Evidence: full 15-area audit, 200 unit/35 integration passing; browser 86/87; deterministic payment recovery, backup portability, delayed logout and 768px overlap reproductions.
@@ -291,38 +307,38 @@ No new telemetry is required for this client-only interaction. The fullscreen UI
 3. [x] Encrypted Telegram admin backup, bounded retries/checkpoints, off-site freshness and documented recovery.
 4. [x] Immediate local logout, stale request protection, desktop controls without overlap.
 5. [x] Non-root runtime and volume migration, audited frontend toolchain, reproducible build/CI checks.
-6. [ ] Full unit/integration/browser suites, migrations, image/runtime and recovery smoke; exact PR SHA green CI.
+6. [x] Full release-candidate verification completed; PR #110 exact-head CI `35778017831` passed and the change merged to `dev`.
 7. [x] Final epic readiness matrix and deployment/rollback instructions with remaining external dependencies explicitly stated.
 
 - Local verification: 216 unit/contract passed; 44 integration plus the additional stale-balance regression; 102 browser passed with Chromium 1193 / WebKit 2203; typecheck/build/npm audit clean. Independent review identified stale User balance under row lock; fixed with populate_existing and a red/green regression.
 - Live operational work: encrypted snapshots delivered to 2 reachable active DB administrators; full independent Telegram download/decrypt/DB migration/media restore PASS. Third administrator chat is unavailable and excluded from the explicit backup destination allowlist. Backup/monitor cron use the staged audited ops package until application rollout. No application deployment performed.
 
-## Active work — frontend layout audit, 2026-09-22
+## Completed work — frontend layout audit, 2026-09-22
 
 - Baseline: release candidate `a3bbb146`; scope is responsive layout and browser evidence, preserving the approved Ideas/History behavior and brand.
 - Existing 320–1920px coverage mainly uses empty lists. A populated-content audit reproduces clipped History actions, horizontal Profile/tariff overflow, an invisible mobile admin button, crowded Ideas search, and collapsed Ideas media with long titles/open parameters.
 - Reuse existing React/CSS and Playwright fixtures; no new dependencies, business settings, schema changes, provider calls, or deployment.
 - Acceptance: populated screens fit 320–1920px and landscape; text/actions remain inside cards; Ideas media and CTA remain reachable with long content; search/close controls remain reachable; screenshots inspected in addition to DOM checks.
-- Plan: [x] reproduce with screenshots; [x] add focused regression coverage; [x] fix layout; [ ] finish full browser / exact-commit CI gates; [x] prepare visual evidence in the dated layout audit report.
+- Plan: [x] reproduce with screenshots; [x] add focused regression coverage; [x] fix layout; [x] finish full browser / exact-commit CI gates; [x] prepare visual evidence in the dated layout audit report.
 - Guidance: claw frontend/UX audit, wondelai refactoring-ui, dev-agents-pack QA checklist, anthropics webapp-testing, upstream ksu/local verification-before-completion; agentskills source inspected (format specification, no product layout skill).
 
-- Follow-up evidence: long cards also exposed an active-preview bug; a failing-before/passing-after regression now checks 255-character titles in portrait and landscape. Independent read-only review and an eight-card mixed-height scrolling probe found no P1/P2 regression. Build/typecheck and the full mobile/desktop Chromium suites (38 each) passed; the final WebKit suite and exact-commit CI are release gates recorded in the PR.
+- Follow-up evidence: long cards also exposed an active-preview bug; a failing-before/passing-after regression checks 255-character titles in portrait and landscape. Independent read-only review and an eight-card mixed-height scrolling probe found no P1/P2 regression. PR #110 completed the release gate with typecheck/build and all 114 browser checks passing in CI `35778017831`.
 
-## Active work — questionnaire visual cleanup, 2026-09-23
+## Completed work — questionnaire visual cleanup, 2026-09-23
 
 - Baseline: deployed `dev` `1a55e697`; branch `fix/questionnaire-visual-20260923`.
 - User clarified the screenshot request: decorative lines and visual spacing only; preserve question order, answers and navigation.
 - Root cause: the mobile `.questionnaire-layout .questionnaire-card` padding overrides the less-specific `.question-card` gutter, leaving its absolute vertical rule and marker inside the text. The 380px override introduces a different, excessive left inset.
 - Reuse existing questionnaire theme and browser fixtures. No API, schema, business configuration, provider calls or new dependencies.
 - Acceptance: no decorative rule through question/answer text; consistent insets at 320–1440px; controls remain reachable when scrolling; approved black/gold theme retained.
-- Plan: [x] capture baseline and adjacent states; [x] remove conflicting decoration/insets and address visible overlaps; [x] inspect Chromium/WebKit screenshots and run relevant existing flows; [x] independent review; [ ] exact-SHA CI and PR delivery to dev.
+- Plan: [x] capture baseline and adjacent states; [x] remove conflicting decoration/insets and address visible overlaps; [x] inspect Chromium/WebKit screenshots and run relevant existing flows; [x] independent review; [x] exact-SHA CI and PR delivery to dev.
 - Guidance: claw frontend/UX audit, wondelai refactoring-ui, dev-agents-pack QA checklist, anthropics webapp-testing, upstream ksu/local verification-before-completion and requesting-code-review; agentskills inspected (format specification, no application visual skill); local bot-ux-designer/tma-codegen. Preserve the existing Telegram API integration instead of introducing the skill's alternative SDK setup for a CSS correction.
 - Verification: production build/typecheck PASS; existing fullscreen E2E 27/27 and product-flow E2E 30/30 across mobile/desktop Chromium and mobile WebKit. Screenshot matrix covers 320/375/390/614/760/768/1024/1440px; optional multi-select/text states and landscape 844×390 inspected. Independent review also checked long header names at 11 widths; no confirmed P1/P2. No new permanent tests for this presentation-only correction.
-- Evidence: `/root/.agents/reports/arhibot-questionnaire-visual-2026-09-23/index.html` contains before/after comparisons. CI and deployment status are recorded in the PR to avoid treating a pending run as verified.
+- Evidence: `/root/.agents/reports/arhibot-questionnaire-visual-2026-09-23/index.html` contains before/after comparisons. PR #111 CI `35841327489` passed; the change merged to `dev` as `b55fff1cbd7e66945df28032f5289f3c7ec38be2`. Post-merge CI `35842676884`, development deploy `35843724041` and server smoke `35844018736` all succeeded.
 
 ### Follow-up — native fullscreen chrome and image output, 2026-09-23
 
-- User added a Telegram Desktop fullscreen screenshot with overlapping native controls, then requested that the common AI prompt prohibit visible writing, numbers and dimensions. PR #111 remains unmerged while these additions are verified.
+- User added a Telegram Desktop fullscreen screenshot with overlapping native controls, then requested that the common AI prompt prohibit visible writing, numbers and dimensions. These additions were verified and merged in PR #111.
 - Telegram's official bridge already maintains `--tg-safe-area-inset-*` and `--tg-content-safe-area-inset-*`. Shared CSS now reserves these areas for the root, sticky headers, fullscreen controls, Ideas viewport/nav and image viewer; no cached JS copy or new SDK dependency. Reference: https://core.telegram.org/bots/webapps#contentsafeareainset.
 - The image-output contract is appended at `NexusImageProvider._build_params`, covering initial concepts, edits, generic/sandbox requests and primary/fallback models. It forbids rendered writing/pseudo-text, digits, labels, dimensions, callouts, UI and watermarks while preserving numeric geometry constraints. Stored canonical prompts are unchanged because accepting a result compares them with current answers.
 - This implements the user's explicit common output-format requirement; operator templates/model settings stay DB-managed. No schema migration, price/policy changes or paid provider call.
