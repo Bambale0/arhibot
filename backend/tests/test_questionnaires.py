@@ -507,10 +507,11 @@ def test_plot_size_can_change_before_initial_acceptance_but_not_after() -> None:
         update={"plot_area_sotkas": 12}
     )
 
-    with pytest.raises(AppError, match="plot size"):
+    with pytest.raises(AppError) as exc:
         QuestionnaireService._validate_accepted_object_locks(
             accepted,
             changed_after_acceptance,
             build_catalog(),
         )
+    assert "plot size" in exc.value.detail.lower()
 
