@@ -65,3 +65,23 @@ def test_quality_gate_accepts_unchanged_scene() -> None:
     assert report.passed is True
     assert report.changed_outside_pixels == 0
     assert report.boundary_luma_excess == 0.0
+
+
+def test_quality_gate_rejects_color_temperature_rectangle_with_similar_luma() -> None:
+    base = Image.new("RGB", (100, 100), (100, 100, 100))
+    final = base.copy()
+    ImageDraw.Draw(final).rectangle((25, 25, 74, 74), fill=(130, 91, 100))
+
+    report = analyze_masked_edit_quality(
+        base_data=_png(base),
+        final_data=_png(final),
+        edit_region={"x": 0.25, "y": 0.25, "width": 0.5, "height": 0.5},
+        boundary_band_px=3,
+        max_luma_excess=10.0,
+        max_color_excess=20.0,
+        max_straight_edge_fraction=0.95,
+    )
+
+    assert report.passed is False
+    assert report.boundary_luma_excess < 10.0
+    assert report.boundary_color_excess > 20.0
