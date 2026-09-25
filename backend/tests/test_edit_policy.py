@@ -25,6 +25,9 @@ def test_roof_material_change_keeps_structural_link_checks() -> None:
     assert policy.intent == EditIntent.ROOF_FINISH
     assert "fireplace_chimney" in policy.structural_links
     assert "structural_link_consistency" in policy.quality_checks
+    assert "structural_link_consistency" in policy.deferred_quality_checks
+    assert "structural_link_consistency" not in policy.enforced_quality_checks
+    assert policy.scene_analysis_enforced is False
     assert policy.allow_chimney_relocation is False
 
 
