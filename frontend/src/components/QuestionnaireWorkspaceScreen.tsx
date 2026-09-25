@@ -190,6 +190,8 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
     Object.entries(stored.answers).map(([key, answers]) => [key, { ...answers }]),
   )
   let currentQuestionId = stored.current_question_id
+  let currentObject = stored.current_object
+  const surveyCompletedObjects = [...stored.survey_completed_objects]
 
   for (const [objectKey, answers] of Object.entries(nextAnswers)) {
     if (stored.accepted_objects.includes(objectKey) || objectKey === 'zayavka') continue
@@ -241,11 +243,18 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
         && questionIsVisible(objectKey, question, answers, houseAccepted, stored.selected_objects)
         && answers[question.id] === undefined,
       )
-      if (firstMissing) currentQuestionId = firstMissing.id
-      else if (currentQuestionId && !definition.questions.some((question) =>
+      if (firstMissing) {
+        currentQuestionId = firstMissing.id
+      } else if (stored.initial_concept_mode && !stored.initial_concept_accepted) {
+        if (!surveyCompletedObjects.includes(objectKey)) surveyCompletedObjects.push(objectKey)
+        currentObject = null
+        currentQuestionId = null
+      } else if (currentQuestionId && !definition.questions.some((question) =>
         question.id === currentQuestionId
         && questionIsVisible(objectKey, question, answers, houseAccepted, stored.selected_objects)
-      )) currentQuestionId = null
+      )) {
+        currentQuestionId = null
+      }
     }
   }
 
@@ -253,6 +262,8 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
     ...stored,
     catalog_version:catalog.version,
     answers:nextAnswers,
+    survey_completed_objects:surveyCompletedObjects,
+    current_object:currentObject,
     current_question_id:currentQuestionId,
   }
 }
@@ -790,15 +801,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     setError(null)
     setRenderOutput(null)
     try {
-      let generationSession = next
-      if (generationSession.plot_area_sotkas !== parsedPlotArea) {
-        generationSession = await saveQuestionnaireSession(project.id, {
-          ...generationSession,
-          plot_area_sotkas:parsedPlotArea,
-        })
-        setSession(generationSession)
-        syncProject(generationSession)
-      }
+      const generationSession = await saveQuestionnaireSession(project.id, {
+        ...next,
+        plot_area_sotkas:parsedPlotArea,
+      })
+      setSession(generationSession)
+      syncProject(generationSession)
       const queued = await createQuestionnaireGeneration(project.id)
       void getQuestionnaireGenerationCost(project.id)
         .then(setGenerationCost)

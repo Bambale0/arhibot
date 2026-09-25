@@ -175,6 +175,33 @@ test('home is a lightweight project dashboard with on-demand projects and three-
   await expect(page.getByText('Что проектируем?')).toBeVisible()
 })
 
+test('stale empty conditional house question is repaired instead of shown as a dead end',async({page})=>{
+  session={
+    ...session,
+    selected_objects:['eskez-doma','garazh'],
+    initial_concept_mode:true,
+    source_step_completed:true,
+    current_object:'eskez-doma',
+    current_question_id:'13',
+    survey_completed_objects:[],
+    answers:{
+      'eskez-doma':{
+        '4':'1 этаж',
+        '12':'Нет',
+      },
+    },
+  }
+  project={...project,name:'Дом + гараж',context:{...project.context,design_session:session}}
+
+  await page.goto(`/?project=${projectId}`)
+
+  await expect(page.getByText('Что еще добавить к дому?')).toHaveCount(0)
+  await expect(page.getByRole('heading',{name:'Заполните параметры всех объектов'})).toBeVisible()
+  await expect(page.getByRole('button',{name:/✓ Дом, фасад/})).toBeVisible()
+  await page.getByRole('button',{name:'Гараж',exact:true}).click()
+  await expect(page.getByText('Какой гараж?')).toBeVisible()
+})
+
 test('canonical create flow supports refinement and own unpublish without technical region UI',async({page})=>{
   const errors:string[]=[]; page.on('console',m=>{if(m.type()==='error')errors.push(m.text())})
   await page.goto('/')
