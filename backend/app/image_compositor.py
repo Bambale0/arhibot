@@ -8,6 +8,12 @@ from math import ceil, floor
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 
+DEFAULT_FEATHER_FRACTION = 0.015
+DEFAULT_FEATHER_MIN_PX = 6
+DEFAULT_FEATHER_MAX_PX = 24
+EXPLICIT_FEATHER_MAX_PX = 32
+
+
 @dataclass(frozen=True, slots=True)
 class MaskedCompositeResult:
     data: bytes
@@ -90,13 +96,21 @@ def build_edit_reference_guide(
     return buffer.getvalue()
 
 
+def _default_feather_px(size: tuple[int, int]) -> int:
+    shortest = max(1, min(size))
+    return max(
+        DEFAULT_FEATHER_MIN_PX,
+        min(DEFAULT_FEATHER_MAX_PX, round(shortest * DEFAULT_FEATHER_FRACTION)),
+    )
+
+
 def compose_masked_edit(
     *,
     base_data: bytes,
     candidate_data: bytes,
     edit_region: Mapping[str, float],
     protected_regions: Sequence[Mapping[str, float]] = (),
-    feather_px: int = 3,
+    feather_px: int | None = None,
     max_pixels: int | None = None,
 ) -> MaskedCompositeResult:
     """Composite an AI candidate into a previous accepted scene.
@@ -111,11 +125,16 @@ def compose_masked_edit(
     if candidate.size != base.size:
         candidate = candidate.resize(base.size, Image.Resampling.LANCZOS)
 
+    effective_feather_px = (
+        _default_feather_px(base.size)
+        if feather_px is None
+        else max(0, min(int(feather_px), EXPLICIT_FEATHER_MAX_PX))
+    )
     mask = _region_mask(
         base.size,
         edit_region,
         protected_regions,
-        feather_px=max(0, min(int(feather_px), 12)),
+        feather_px=effective_feather_px,
     )
     output = Image.composite(candidate, base, mask)
     buffer = BytesIO()
