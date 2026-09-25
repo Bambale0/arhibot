@@ -43,10 +43,16 @@ def _rect_box(
 
 
 def _changed_pixels(first: Image.Image, second: Image.Image) -> int:
+    first_bytes = first.tobytes()
+    second_bytes = second.tobytes()
     return sum(
         1
-        for first_pixel, second_pixel in zip(first.getdata(), second.getdata(), strict=True)
-        if first_pixel != second_pixel
+        for offset in range(0, len(first_bytes), 3)
+        if (
+            first_bytes[offset] != second_bytes[offset]
+            or first_bytes[offset + 1] != second_bytes[offset + 1]
+            or first_bytes[offset + 2] != second_bytes[offset + 2]
+        )
     )
 
 
