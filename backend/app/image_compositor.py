@@ -8,10 +8,10 @@ from math import ceil, floor
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 
-DEFAULT_FEATHER_FRACTION = 0.015
-DEFAULT_FEATHER_MIN_PX = 6
+DEFAULT_FEATHER_FRACTION = 0.014
+DEFAULT_FEATHER_MIN_PX = 4
 DEFAULT_FEATHER_MAX_PX = 24
-EXPLICIT_FEATHER_MAX_PX = 32
+EXPLICIT_FEATHER_MAX_PX = 12
 
 
 @dataclass(frozen=True, slots=True)
