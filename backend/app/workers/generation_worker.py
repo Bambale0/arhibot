@@ -20,7 +20,7 @@ from app.db.models.projects import Project
 from app.db.session import dispose_engine, get_session_factory
 from app.domain.assets.enums import AssetPurpose, AssetType
 from app.domain.generations.enums import GenerationOrigin, GenerationStatus
-from app.image_compositor import compose_masked_edit
+from app.image_compositor import build_edit_reference_guide, compose_masked_edit
 from app.image_flyover import FlyoverGif, build_flyover_gif
 from app.image_orbit import build_orbit_animation
 from app.prompt_builders.generation import build_generation_prompt
@@ -48,6 +48,21 @@ QUESTIONNAIRE_PROMPT_PREFIXES = (
 QUESTIONNAIRE_ASPECT_RATIOS = {"1:1": 1.0, "4:3": 4 / 3, "3:4": 3 / 4, "16:9": 16 / 9, "9:16": 9 / 16}
 RESERVED_PROVIDER_PARAMS = {"model_name", "prompt", "image_url", "image_urls"}
 ADMIN_ORBIT_MAX_CONCURRENCY = 3
+MASKED_EDIT_GUIDE_PROMPT = (
+    "MASKED EDIT REFERENCE CONTRACT:\n"
+    "Reference image 1 is the canonical accepted scene. "
+    "Reference image 2 is a pixel-aligned binary edit guide for reference image 1: "
+    "white pixels are the only area allowed to change; black pixels are locked and "
+    "must remain visually unchanged. Make the requested edit only inside the white "
+    "area. At the white/black boundary, preserve continuous geometry, perspective, "
+    "materials, paving, rooflines, wall edges, vegetation and lighting so the edit "
+    "joins the locked scene naturally. The binary guide is an instruction map only: "
+    "never render its black/white colors, rectangle edges, or mask markings in the output."
+)
+
+
+def _masked_edit_provider_prompt(prompt: str) -> str:
+    return f"{prompt}\n\n{MASKED_EDIT_GUIDE_PROMPT}"
 
 
 def _admin_sandbox_request(
@@ -656,11 +671,46 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         input_storage_path = input_asset.storage_path if input_asset is not None else None
 
     provider = NexusImageProvider(settings)
+    guide_storage = LocalMediaStorage(settings)
+    guide_relative_path: str | None = None
+    reference_image_urls: list[str] | None = None
+    masked_base_data: bytes | None = None
     model_name = primary_model
     fallback_used = False
     provider_task_id: str | None = None
     flyover_gif: FlyoverGif | None = None
     try:
+        if composition_mode == "masked_edit":
+            if source_url is None or input_storage_path is None or edit_region is None:
+                raise RuntimeError(
+                    "Masked questionnaire edit is missing its base scene or edit region"
+                )
+            base_path = guide_storage.absolute_path(input_storage_path)
+            masked_base_data = await asyncio.to_thread(base_path.read_bytes)
+            guide_data = await asyncio.to_thread(
+                build_edit_reference_guide,
+                base_data=masked_base_data,
+                edit_region=edit_region,
+                protected_regions=protected_regions,
+                max_pixels=settings.max_image_pixels,
+            )
+            guide_relative_path = f"internal/generation-guides/{generation_id}.png"
+            await guide_storage.write(guide_relative_path, guide_data)
+            reference_image_urls = [
+                guide_storage.signed_url(
+                    guide_relative_path,
+                    ttl_seconds=max(
+                        settings.media_url_ttl_seconds,
+                        settings.nexus_task_timeout_seconds + 120,
+                    ),
+                )
+            ]
+            prompt = _masked_edit_provider_prompt(prompt)
+            logger.info(
+                "Generation %s sending aligned edit guide to provider (%s protected region(s))",
+                generation_id,
+                len(protected_regions),
+            )
         if flyover_request is not None:
             if source_url is None or input_storage_path is None:
                 raise RuntimeError("Flyover GIF generation requires a source image.")
@@ -722,6 +772,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     image_url=source_url,
                     model_params=primary_params,
                     idempotency_key=f"auroom-{generation_id}-primary",
+                    reference_image_urls=reference_image_urls,
                     timeout_seconds=primary_timeout_seconds,
                 )
             except NexusProviderError as primary_error:
@@ -740,6 +791,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     image_url=source_url,
                     model_params=fallback_params,
                     idempotency_key=f"auroom-{generation_id}-fallback",
+                    reference_image_urls=reference_image_urls,
                 )
             provider_task_id = result.task_id
             data = await _download_image(result.image_url, settings)
@@ -748,8 +800,10 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 raise RuntimeError(
                     "Masked questionnaire edit is missing its base scene or edit region"
                 )
-            base_path = LocalMediaStorage(settings).absolute_path(input_storage_path)
-            base_data = await asyncio.to_thread(base_path.read_bytes)
+            base_data = masked_base_data
+            if base_data is None:
+                base_path = guide_storage.absolute_path(input_storage_path)
+                base_data = await asyncio.to_thread(base_path.read_bytes)
             composite = await asyncio.to_thread(
                 compose_masked_edit,
                 base_data=base_data,
@@ -839,6 +893,18 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
     except Exception as exc:
         logger.exception("Generation %s failed", generation_id)
         await _mark_failed_and_refund(generation_id, exc)
+    finally:
+        if guide_relative_path is not None:
+            guide_path = guide_storage.absolute_path(guide_relative_path)
+            try:
+                if guide_path.exists():
+                    await asyncio.to_thread(guide_path.unlink)
+            except OSError:
+                logger.warning(
+                    "Could not remove temporary edit guide for generation %s",
+                    generation_id,
+                    exc_info=True,
+                )
 
 
 async def _reconcile_database_jobs(settings: Settings) -> None:
