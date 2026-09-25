@@ -84,3 +84,16 @@ def test_edit_reference_guide_marks_only_editable_pixels_white() -> None:
     assert image.getpixel((5, 5)) == (0, 0, 0)
     assert image.getpixel((20, 20)) == (255, 255, 255)
     assert image.getpixel((50, 50)) == (0, 0, 0)
+
+
+def test_masked_edit_default_feather_blends_a_wide_inward_boundary() -> None:
+    result = compose_masked_edit(
+        base_data=_png((500, 500), (0, 0, 0)),
+        candidate_data=_png((500, 500), (255, 255, 255)),
+        edit_region={"x": 0.2, "y": 0.2, "width": 0.6, "height": 0.6},
+    )
+    output = _pixels(result.data)
+
+    assert output.getpixel((99, 250)) == (0, 0, 0)
+    assert output.getpixel((106, 250))[0] < 240
+    assert output.getpixel((250, 250)) == (255, 255, 255)
