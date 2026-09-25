@@ -30,6 +30,7 @@ def test_house_refinement_prompt_locks_visible_interior_and_structural_link() ->
         selected_objects=["eskez-doma"],
         initial_concept_mode=True,
         initial_concept_accepted=True,
+        initial_generation_id=uuid4(),
         source_step_completed=True,
         scene_asset_id=uuid4(),
         accepted_objects=["eskez-doma"],
