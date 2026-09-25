@@ -299,6 +299,20 @@ def _initial_site_scale(session: DesignSession) -> dict[str, object]:
     }
 
 
+def _requires_detached_from_house(
+    object_name: str,
+    constraints: list[dict[str, object]],
+) -> bool:
+    fragments = [object_name]
+    for item in constraints:
+        answer = item.get("answer")
+        if isinstance(answer, list):
+            fragments.extend(str(value) for value in answer)
+        elif answer is not None:
+            fragments.append(str(answer))
+    return "отдельн" in " ".join(fragments).casefold()
+
+
 def _initial_concept_objects(
     catalog: dict[str, Any],
     session: DesignSession,
@@ -336,10 +350,20 @@ def _initial_concept_objects(
                     "answer": value,
                 }
             )
+        object_name = str(definition["title"]).strip()
         objects.append(
             {
                 "object_key": object_key,
-                "object_name": str(definition["title"]).strip(),
+                "object_name": object_name,
+                "visual_identity": {
+                    "must_be_recognizable_as": object_name,
+                    "substitution_forbidden": True,
+                },
+                "structural_constraints": (
+                    ["detached_from_house"]
+                    if _requires_detached_from_house(object_name, constraints)
+                    else []
+                ),
                 "questionnaire_constraints": constraints,
             }
         )
@@ -410,6 +434,21 @@ def build_initial_concept_prompt(
             "preserve_realistic_scale_and_access": True,
             "reserve_space_for_every_selected_object": True,
         },
+        "object_fidelity": {
+            "strength": "hard_constraints",
+            "identity_rule": (
+                "Каждый selected object должен визуально однозначно распознаваться именно "
+                "как object_name. Нельзя заменять выбранный тип похожим объектом, мебелью "
+                "или декором: лавочка должна оставаться лавочкой, бассейн — бассейном, "
+                "гараж — гаражом."
+            ),
+            "detached_structure_rule": (
+                "Если structural_constraints содержит detached_from_house, объект должен "
+                "быть физически отделён от основного дома заметным проходом/воздушным "
+                "промежутком. Запрещены общая стена, общая кровля и визуальное сращивание "
+                "объёмов."
+            ),
+        },
         "site_scale": site_scale,
         "site_plan": site_plan,
         "site_layout": {
@@ -438,6 +477,8 @@ def build_initial_concept_prompt(
             "Не создавать отдельные изображения для отдельных объектов.",
             "Не кадрировать сцену так, чтобы выбранные объекты выпадали из кадра.",
             "Не занимать домом весь участок, если выбраны другие объекты.",
+            "Не заменять выбранный объект визуально похожим объектом, мебелью или декором.",
+            "Не присоединять к дому объект с structural_constraints=detached_from_house.",
             "Не показывать текст, подписи, размеры, UI или технические аннотации.",
         ],
         "output": {
@@ -454,13 +495,16 @@ def build_initial_concept_prompt(
         "3. Соблюдай site_scale: размер участка и относительный масштаб объектов.\n"
         "4. Соблюдай site_plan: normalized rect каждого объекта задаёт его разрешённую семантическую зону участка.\n"
         "5. Соблюдай site_layout: расположение объектов относительно дома/двора/въезда — жёсткое ограничение.\n"
-        "6. Каждый ответ questionnaire_constraints является обязательным.\n"
-        "7. Фотореализм и эстетика после выполнения пунктов 1–6.\n"
+        "6. Сохраняй visual_identity каждого selected object: тип объекта нельзя подменять похожим.\n"
+        "7. Соблюдай structural_constraints: detached_from_house означает физически отдельный объём с видимым промежутком.\n"
+        "8. Каждый ответ questionnaire_constraints является обязательным.\n"
+        "9. Фотореализм и эстетика только после выполнения пунктов 1–8.\n"
         "STRUCTURED_SPEC:\n"
         f"{dumps(spec, ensure_ascii=False, separators=(',', ':'))}\n"
-        "FINAL_CHECK: проверь, что каждый выбранный объект полностью виден, находится "
-        "в своей site_plan semantic zone, ракурс соответствует camera.mode, а относительный "
-        "масштаб соответствует site_scale."
+        "FINAL_CHECK: проверь, что каждый выбранный объект полностью виден, однозначно "
+        "распознаётся как свой object_name, находится в своей site_plan semantic zone, "
+        "detached_from_house объекты не касаются дома, ракурс соответствует camera.mode, "
+        "а относительный масштаб соответствует site_scale."
     )
 
 
