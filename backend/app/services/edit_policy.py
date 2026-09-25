@@ -50,6 +50,9 @@ class EditPolicySnapshot:
     scene_analysis_required: bool
     structural_links: tuple[str, ...]
     quality_checks: tuple[str, ...]
+    enforced_quality_checks: tuple[str, ...]
+    deferred_quality_checks: tuple[str, ...]
+    scene_analysis_enforced: bool
 
     def to_dict(self) -> dict[str, object]:
         data = asdict(self)
@@ -57,6 +60,8 @@ class EditPolicySnapshot:
         data["intent"] = self.intent.value
         data["structural_links"] = list(self.structural_links)
         data["quality_checks"] = list(self.quality_checks)
+        data["enforced_quality_checks"] = list(self.enforced_quality_checks)
+        data["deferred_quality_checks"] = list(self.deferred_quality_checks)
         return data
 
 
@@ -71,8 +76,16 @@ _INTERIOR_MARKERS = (
     "ванн",
     "лестниц",
     "перегород",
+    "планиров",
     "внутренн",
     "внутри дома",
+    "кухня внутри",
+    "кухню внутри",
+    "кухне внутри",
+    "стол внутри",
+    "стена внутри",
+    "стены внутри",
+    "стену внутри",
 )
 _FIREPLACE_EDIT_ACTIONS = (
     "перенес",
@@ -252,6 +265,9 @@ def build_edit_policy(
             scene_analysis_required=False,
             structural_links=("fireplace_chimney",),
             quality_checks=("outside_region_integrity", "boundary_continuity"),
+            enforced_quality_checks=(),
+            deferred_quality_checks=(),
+            scene_analysis_enforced=False,
         )
 
     if interior_detected and not edit_question_ids and not sanitized_comment:
@@ -272,6 +288,9 @@ def build_edit_policy(
             scene_analysis_required=False,
             structural_links=("fireplace_chimney",) if object_key == "eskez-doma" else (),
             quality_checks=("outside_region_integrity", "boundary_continuity"),
+            enforced_quality_checks=(),
+            deferred_quality_checks=(),
+            scene_analysis_enforced=False,
         )
 
     intent = (
@@ -299,6 +318,11 @@ def build_edit_policy(
     if structural_sensitive:
         checks.append("structural_link_consistency")
 
+    enforced_checks = ("outside_region_integrity", "boundary_continuity")
+    deferred_checks = tuple(
+        check for check in checks if check not in enforced_checks
+    )
+
     return EditPolicySnapshot(
         version="exterior-edit-policy.v1",
         domain=domain,
@@ -316,4 +340,7 @@ def build_edit_policy(
         scene_analysis_required=structural_sensitive,
         structural_links=("fireplace_chimney",) if object_key == "eskez-doma" else (),
         quality_checks=tuple(checks),
+        enforced_quality_checks=enforced_checks,
+        deferred_quality_checks=deferred_checks,
+        scene_analysis_enforced=False,
     )
