@@ -11,8 +11,6 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 DEFAULT_FEATHER_FRACTION = 0.014
 DEFAULT_FEATHER_MIN_PX = 4
 DEFAULT_FEATHER_MAX_PX = 24
-EXPLICIT_FEATHER_MAX_PX = 12
-
 
 @dataclass(frozen=True, slots=True)
 class MaskedCompositeResult:
@@ -39,6 +37,26 @@ def _rect_box(rect: Mapping[str, float], width: int, height: int) -> tuple[int, 
     right = max(left + 1, min(width, ceil((x + rect_width) * width)))
     bottom = max(top + 1, min(height, ceil((y + rect_height) * height)))
     return left, top, right, bottom
+
+
+def expand_normalized_region(
+    region: Mapping[str, float],
+    *,
+    margin_fraction: float,
+) -> dict[str, float]:
+    """Expand a normalized provider work region while keeping the commit region unchanged."""
+
+    margin = max(0.0, min(float(margin_fraction), 0.5))
+    left = max(0.0, float(region["x"]) - margin)
+    top = max(0.0, float(region["y"]) - margin)
+    right = min(1.0, float(region["x"]) + float(region["width"]) + margin)
+    bottom = min(1.0, float(region["y"]) + float(region["height"]) + margin)
+    return {
+        "x": round(left, 10),
+        "y": round(top, 10),
+        "width": round(max(0.0, right - left), 10),
+        "height": round(max(0.0, bottom - top), 10),
+    }
 
 
 def _region_mask(
@@ -96,12 +114,17 @@ def build_edit_reference_guide(
     return buffer.getvalue()
 
 
-def _default_feather_px(size: tuple[int, int]) -> int:
+def _default_feather_px(
+    size: tuple[int, int],
+    *,
+    fraction: float = DEFAULT_FEATHER_FRACTION,
+    min_px: int = DEFAULT_FEATHER_MIN_PX,
+    max_px: int = DEFAULT_FEATHER_MAX_PX,
+) -> int:
     shortest = max(1, min(size))
-    return max(
-        DEFAULT_FEATHER_MIN_PX,
-        min(DEFAULT_FEATHER_MAX_PX, round(shortest * DEFAULT_FEATHER_FRACTION)),
-    )
+    lower = max(0, int(min_px))
+    upper = max(lower, int(max_px))
+    return max(lower, min(upper, round(shortest * max(0.0, float(fraction)))))
 
 
 def compose_masked_edit(
@@ -111,6 +134,9 @@ def compose_masked_edit(
     edit_region: Mapping[str, float],
     protected_regions: Sequence[Mapping[str, float]] = (),
     feather_px: int | None = None,
+    feather_fraction: float = DEFAULT_FEATHER_FRACTION,
+    feather_min_px: int = DEFAULT_FEATHER_MIN_PX,
+    feather_max_px: int = DEFAULT_FEATHER_MAX_PX,
     max_pixels: int | None = None,
 ) -> MaskedCompositeResult:
     """Composite an AI candidate into a previous accepted scene.
@@ -125,10 +151,16 @@ def compose_masked_edit(
     if candidate.size != base.size:
         candidate = candidate.resize(base.size, Image.Resampling.LANCZOS)
 
+    configured_max = max(0, int(feather_max_px))
     effective_feather_px = (
-        _default_feather_px(base.size)
+        _default_feather_px(
+            base.size,
+            fraction=feather_fraction,
+            min_px=feather_min_px,
+            max_px=configured_max,
+        )
         if feather_px is None
-        else max(0, min(int(feather_px), EXPLICIT_FEATHER_MAX_PX))
+        else max(0, min(int(feather_px), configured_max))
     )
     mask = _region_mask(
         base.size,
