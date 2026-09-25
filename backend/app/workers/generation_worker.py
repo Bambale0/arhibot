@@ -13,6 +13,13 @@ import httpx
 from sqlalchemy import select
 
 from app.core.config import Settings, get_settings
+from app.core.metrics import (
+    record_generation_quality_retry_success,
+    record_masked_edit_boundary_failure,
+    record_masked_edit_quality_rejected,
+    record_masked_edit_retry,
+    record_masked_edit_started,
+)
 from app.core.redis import redis_client
 from app.db.models.assets import Asset
 from app.db.models.generations import Generation
@@ -735,6 +742,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
     provider_work_region = edit_region
     try:
         if composition_mode == "masked_edit":
+            record_masked_edit_started()
             if source_url is None or input_storage_path is None or edit_region is None:
                 raise RuntimeError(
                     "Masked questionnaire edit is missing its base scene or edit region"
@@ -837,6 +845,8 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             previous_failure: dict[str, object] | None = None
             base_provider_prompt = prompt
             for quality_attempt in range(max_quality_retries + 1):
+                if quality_attempt > 0:
+                    record_masked_edit_retry()
                 attempt_prompt = (
                     base_provider_prompt
                     if quality_attempt == 0 or previous_failure is None
@@ -934,6 +944,16 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     ),
                 )
                 initial_report = report.to_dict()
+                boundary_failed = (
+                    report.boundary_luma_excess
+                    > float(quality_settings["max_luma_excess"])
+                    or report.boundary_color_excess
+                    > float(quality_settings["max_color_excess"])
+                    or report.straight_edge_fraction
+                    > float(quality_settings["max_straight_edge_fraction"])
+                )
+                if boundary_failed:
+                    record_masked_edit_boundary_failure()
                 attempt_report: dict[str, object] = {
                     "attempt": quality_attempt + 1,
                     "model": model_name,
@@ -1003,8 +1023,23 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         "version": "edit-quality.v1",
                         "attempts": quality_attempts,
                         "provider_work_region": provider_work_region,
+                        "enforced_checks": list(
+                            edit_policy.get("enforced_quality_checks", [])
+                        ),
+                        "deferred_checks": list(
+                            edit_policy.get("deferred_quality_checks", [])
+                        ),
+                        "scene_analysis": (
+                            "enforced"
+                            if edit_policy.get("scene_analysis_enforced")
+                            else "deferred"
+                            if edit_policy.get("scene_analysis_required")
+                            else "not_required"
+                        ),
                         "final": "passed",
                     }
+                    if quality_attempt > 0:
+                        record_generation_quality_retry_success()
                     logger.info(
                         "Generation %s masked quality passed attempt=%s "
                         "outside_changed=%s boundary_luma=%.4f boundary_color=%.4f "
@@ -1031,8 +1066,22 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         "version": "edit-quality.v1",
                         "attempts": quality_attempts,
                         "provider_work_region": provider_work_region,
+                        "enforced_checks": list(
+                            edit_policy.get("enforced_quality_checks", [])
+                        ),
+                        "deferred_checks": list(
+                            edit_policy.get("deferred_quality_checks", [])
+                        ),
+                        "scene_analysis": (
+                            "enforced"
+                            if edit_policy.get("scene_analysis_enforced")
+                            else "deferred"
+                            if edit_policy.get("scene_analysis_required")
+                            else "not_required"
+                        ),
                         "final": "rejected",
                     }
+                    record_masked_edit_quality_rejected()
                     raise GenerationQualityRejected(quality_report)
 
         async with get_session_factory()() as session:
