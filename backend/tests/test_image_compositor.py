@@ -2,7 +2,11 @@ from io import BytesIO
 
 from PIL import Image
 
-from app.image_compositor import build_edit_reference_guide, compose_masked_edit
+from app.image_compositor import (
+    build_edit_reference_guide,
+    compose_masked_edit,
+    expand_normalized_region,
+)
 
 
 def _png(size: tuple[int, int], color: tuple[int, int, int]) -> bytes:
@@ -97,3 +101,49 @@ def test_masked_edit_default_feather_blends_a_wide_inward_boundary() -> None:
     assert output.getpixel((99, 250)) == (0, 0, 0)
     assert output.getpixel((106, 250))[0] < 240
     assert output.getpixel((250, 250)) == (255, 255, 255)
+
+
+def test_provider_work_region_expands_without_mutating_commit_region() -> None:
+    commit = {"x": 0.4, "y": 0.4, "width": 0.2, "height": 0.2}
+
+    work = expand_normalized_region(commit, margin_fraction=0.03)
+
+    assert work == {
+        "x": 0.37,
+        "y": 0.37,
+        "width": 0.26,
+        "height": 0.26,
+    }
+    assert commit == {"x": 0.4, "y": 0.4, "width": 0.2, "height": 0.2}
+
+
+def test_provider_work_region_clamps_at_image_edges() -> None:
+    work = expand_normalized_region(
+        {"x": 0.01, "y": 0.02, "width": 0.25, "height": 0.3},
+        margin_fraction=0.05,
+    )
+
+    assert work == {
+        "x": 0.0,
+        "y": 0.0,
+        "width": 0.31,
+        "height": 0.37,
+    }
+
+
+def test_runtime_feather_can_exceed_old_explicit_cap() -> None:
+    base = Image.new("RGB", (200, 200), "black")
+    candidate = Image.new("RGB", (200, 200), "white")
+
+    result = compose_masked_edit(
+        base_data=_png(base),
+        candidate_data=_png(candidate),
+        edit_region={"x": 0.1, "y": 0.1, "width": 0.8, "height": 0.8},
+        feather_px=20,
+        feather_max_px=24,
+    )
+    output = _open(result.data)
+
+    assert output.getpixel((20, 100))[0] < 80
+    assert output.getpixel((35, 100))[0] > 100
+    assert output.getpixel((100, 100)) == (255, 255, 255)
