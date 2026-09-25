@@ -2,7 +2,7 @@ from io import BytesIO
 
 from PIL import Image
 
-from app.image_compositor import compose_masked_edit
+from app.image_compositor import build_edit_reference_guide, compose_masked_edit
 
 
 def _png(size: tuple[int, int], color: tuple[int, int, int]) -> bytes:
@@ -70,3 +70,17 @@ def test_masked_edit_rejects_image_over_pixel_limit_before_compositing() -> None
         assert "pixel limit" in str(exc)
     else:
         raise AssertionError("Expected compositor to enforce max_pixels")
+
+
+def test_edit_reference_guide_marks_only_editable_pixels_white() -> None:
+    guide = build_edit_reference_guide(
+        base_data=_png((100, 100), (10, 20, 30)),
+        edit_region={"x": 0.1, "y": 0.1, "width": 0.8, "height": 0.8},
+        protected_regions=[{"x": 0.4, "y": 0.4, "width": 0.2, "height": 0.2}],
+    )
+    image = _pixels(guide)
+
+    assert image.size == (100, 100)
+    assert image.getpixel((5, 5)) == (0, 0, 0)
+    assert image.getpixel((20, 20)) == (255, 255, 255)
+    assert image.getpixel((50, 50)) == (0, 0, 0)
