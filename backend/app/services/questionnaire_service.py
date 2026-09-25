@@ -45,6 +45,7 @@ from app.schemas.questionnaires import (
     QuestionnaireCatalogResponse,
 )
 from app.services.asset_service import LocalMediaStorage
+from app.services.edit_policy import build_edit_policy
 from app.services.project_service import ProjectService
 
 
@@ -593,11 +594,32 @@ class QuestionnaireService:
                     "Every previously accepted object must have a locked visual region."
                 )
 
+        edit_policy: dict[str, object] = {}
+        if masked:
+            policy = build_edit_policy(
+                object_key=object_key,
+                edit_question_ids=list(session.edit_question_ids) if refinement else [],
+                review_comment=session.review_comments.get(object_key, ""),
+            )
+            if not policy.allow_generation:
+                raise AppError(
+                    type="exterior_refinement_interior_not_supported",
+                    title="Изменение интерьера недоступно",
+                    status=422,
+                    detail=(
+                        "В этом режиме можно дорабатывать внешний вид дома: фасад, кровлю, "
+                        "окна, террасы, наружные элементы и участок. Изменение интерьера, "
+                        "мебели и перенос внутреннего камина пока не поддерживаются."
+                    ),
+                )
+            edit_policy = policy.to_dict()
+
         prompt = build_questionnaire_generation_prompt(
             definition,
             session,
             accepted_before=accepted_before,
             input_asset_present=input_asset_id is not None,
+            edit_policy=edit_policy or None,
         )
         return (
             QuestionnaireGenerationCreate(
@@ -608,6 +630,7 @@ class QuestionnaireService:
                 composition_mode="masked_edit" if masked else "replace",
                 edit_region=edit_region if masked else None,
                 protected_regions=protected_regions,
+                edit_policy=edit_policy,
             ),
             session,
             object_key,
