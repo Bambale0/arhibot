@@ -103,3 +103,28 @@ def test_chimney_move_is_structural_geometry_edit() -> None:
     assert policy.intent == EditIntent.CHIMNEY_GEOMETRY
     assert policy.scene_analysis_required is True
     assert "structural_link_consistency" in policy.quality_checks
+
+def test_layout_only_comment_is_blocked() -> None:
+    policy = build_edit_policy(
+        object_key="eskez-doma",
+        edit_question_ids=[],
+        review_comment="Измени планировку.",
+    )
+
+    assert policy.allow_generation is False
+    assert policy.domain == EditDomain.INTERIOR
+    assert policy.sanitized_comment == ""
+
+
+def test_mixed_comment_removes_kitchen_inside_clause() -> None:
+    policy = build_edit_policy(
+        object_key="eskez-doma",
+        edit_question_ids=["8"],
+        review_comment="Сделай фасад светлее, кухню внутри оформи современнее.",
+    )
+
+    assert policy.allow_generation is True
+    assert policy.domain == EditDomain.MIXED
+    assert policy.sanitized_comment == "Сделай фасад светлее"
+    assert "кухн" not in policy.sanitized_comment.casefold()
+
