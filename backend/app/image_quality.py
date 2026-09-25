@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from io import BytesIO
-from math import ceil, floor
-from collections.abc import Mapping
+from math import ceil, floor, sqrt
 
 from PIL import Image, ImageOps
 
@@ -14,6 +14,7 @@ class MaskedEditQualityReport:
     outside_integrity_passed: bool
     changed_outside_pixels: int
     boundary_luma_excess: float
+    boundary_color_excess: float
     straight_edge_fraction: float
 
     def to_dict(self) -> dict[str, object]:
@@ -74,6 +75,13 @@ def _luma(pixel: tuple[int, int, int]) -> float:
     return 0.2126 * red + 0.7152 * green + 0.0722 * blue
 
 
+def _color_distance(
+    first: tuple[int, int, int],
+    second: tuple[int, int, int],
+) -> float:
+    return sqrt(sum((left - right) ** 2 for left, right in zip(first, second, strict=True)))
+
+
 def _boundary_pairs(
     image: Image.Image,
     box: tuple[int, int, int, int],
@@ -111,13 +119,14 @@ def _boundary_metrics(
     box: tuple[int, int, int, int],
     band_px: int,
     max_luma_excess: float,
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
     base_pairs = _boundary_pairs(base, box, band_px)
     final_pairs = _boundary_pairs(final, box, band_px)
     if not final_pairs:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0
 
     excesses: list[float] = []
+    color_excesses: list[float] = []
     straight_hits = 0
     straight_threshold = max(1.0, max_luma_excess * 0.5)
     for base_pair, final_pair in zip(base_pairs, final_pairs, strict=True):
@@ -125,12 +134,16 @@ def _boundary_metrics(
         final_delta = abs(_luma(final_pair[0]) - _luma(final_pair[1]))
         excess = max(0.0, final_delta - base_delta)
         excesses.append(excess)
+        base_color = _color_distance(base_pair[0], base_pair[1])
+        final_color = _color_distance(final_pair[0], final_pair[1])
+        color_excesses.append(max(0.0, final_color - base_color))
         if excess > straight_threshold:
             straight_hits += 1
 
     mean_excess = sum(excesses) / len(excesses)
+    mean_color_excess = sum(color_excesses) / len(color_excesses)
     straight_fraction = straight_hits / len(excesses)
-    return mean_excess, straight_fraction
+    return mean_excess, mean_color_excess, straight_fraction
 
 
 def analyze_masked_edit_quality(
@@ -141,6 +154,7 @@ def analyze_masked_edit_quality(
     boundary_band_px: int,
     max_luma_excess: float,
     max_straight_edge_fraction: float,
+    max_color_excess: float = 255.0,
 ) -> MaskedEditQualityReport:
     base = _read_rgb(base_data)
     final = _read_rgb(final_data)
@@ -150,12 +164,13 @@ def analyze_masked_edit_quality(
             outside_integrity_passed=False,
             changed_outside_pixels=base.width * base.height,
             boundary_luma_excess=float("inf"),
+            boundary_color_excess=float("inf"),
             straight_edge_fraction=1.0,
         )
 
     box = _rect_box(edit_region, base.width, base.height)
     changed_outside = _outside_change_count(base, final, box)
-    luma_excess, straight_fraction = _boundary_metrics(
+    luma_excess, color_excess, straight_fraction = _boundary_metrics(
         base,
         final,
         box,
@@ -165,6 +180,7 @@ def analyze_masked_edit_quality(
     outside_passed = changed_outside == 0
     boundary_passed = (
         luma_excess <= max_luma_excess
+        and color_excess <= max_color_excess
         and straight_fraction <= max_straight_edge_fraction
     )
     return MaskedEditQualityReport(
@@ -172,5 +188,6 @@ def analyze_masked_edit_quality(
         outside_integrity_passed=outside_passed,
         changed_outside_pixels=changed_outside,
         boundary_luma_excess=round(luma_excess, 4),
+        boundary_color_excess=round(color_excess, 4),
         straight_edge_fraction=round(straight_fraction, 4),
     )
