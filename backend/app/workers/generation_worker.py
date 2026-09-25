@@ -1024,7 +1024,8 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         "attempts": quality_attempts,
                         "provider_work_region": provider_work_region,
                         "enforced_checks": list(
-                            edit_policy.get("enforced_quality_checks", [])
+                            edit_policy.get("enforced_quality_checks")
+                            or ("outside_region_integrity", "boundary_continuity")
                         ),
                         "deferred_checks": list(
                             edit_policy.get("deferred_quality_checks", [])
@@ -1067,7 +1068,8 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         "attempts": quality_attempts,
                         "provider_work_region": provider_work_region,
                         "enforced_checks": list(
-                            edit_policy.get("enforced_quality_checks", [])
+                            edit_policy.get("enforced_quality_checks")
+                            or ("outside_region_integrity", "boundary_continuity")
                         ),
                         "deferred_checks": list(
                             edit_policy.get("deferred_quality_checks", [])
