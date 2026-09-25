@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.errors import AppError
+from app.core.metrics import record_interior_request_blocked
 from app.db.models.assets import Asset
 from app.db.models.projects import Project
 from app.db.models.questionnaires import (
@@ -602,6 +603,7 @@ class QuestionnaireService:
                 review_comment=session.review_comments.get(object_key, ""),
             )
             if not policy.allow_generation:
+                record_interior_request_blocked()
                 raise AppError(
                     type="exterior_refinement_interior_not_supported",
                     title="Изменение интерьера недоступно",
