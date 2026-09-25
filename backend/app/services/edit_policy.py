@@ -89,15 +89,29 @@ _INTERIOR_MARKERS = (
 )
 _FIREPLACE_EDIT_ACTIONS = (
     "перенес",
+    "перенос",
     "передвин",
+    "передвиг",
     "перемест",
+    "перемещ",
     "смест",
+    "смещ",
     "добав",
     "убер",
     "убрат",
+    "убир",
     "замен",
     "измен",
+    "меня",
     "сдела",
+)
+_FIREPLACE_CHIMNEY_PATTERNS = (
+    re.compile(r"\bкаминн\w*\s+(?:труб\w*|дымоход\w*)\b", re.IGNORECASE),
+    re.compile(r"\b(?:труб\w*|дымоход\w*)\s+(?:от\s+)?камин\w*\b", re.IGNORECASE),
+)
+_COMMENT_CLAUSE_SPLIT_RE = re.compile(
+    r"(?<=[.!?;])\s+|,\s*|\s+(?:а\s+ещ[её]|и)\s+",
+    re.IGNORECASE,
 )
 _GEOMETRY_MARKERS = (
     "перенес",
@@ -178,9 +192,39 @@ def _contains(text: str, markers: tuple[str, ...]) -> bool:
     return any(marker in lowered for marker in markers)
 
 
+def _strip_chimney_fireplace_phrases(text: str) -> str:
+    cleaned = text
+    for pattern in _FIREPLACE_CHIMNEY_PATTERNS:
+        cleaned = pattern.sub("", cleaned)
+    return cleaned
+
+
+def _action_is_negated(text: str, action_start: int) -> bool:
+    prefix = text[max(0, action_start - 24) : action_start]
+    return re.search(r"(?:^|\s)не(?:\s+(?:надо|нужно))?\s*$", prefix) is not None
+
+
+def _has_non_negated_action(text: str, markers: tuple[str, ...]) -> bool:
+    for marker in markers:
+        start = 0
+        while True:
+            index = text.find(marker, start)
+            if index < 0:
+                break
+            if not _action_is_negated(text, index):
+                return True
+            start = index + len(marker)
+    return False
+
+
 def _fireplace_edit_requested(text: str) -> bool:
-    lowered = text.casefold()
-    return "камин" in lowered and _contains(lowered, _FIREPLACE_EDIT_ACTIONS)
+    for clause in _COMMENT_CLAUSE_SPLIT_RE.split(text.casefold()):
+        normalized = _strip_chimney_fireplace_phrases(clause)
+        if "камин" not in normalized:
+            continue
+        if _has_non_negated_action(normalized, _FIREPLACE_EDIT_ACTIONS):
+            return True
+    return False
 
 
 def _interior_clause(text: str) -> bool:
@@ -196,11 +240,7 @@ def _sanitize_comment(comment: str) -> tuple[str, bool]:
 
     parts = [
         part.strip(" .!?;,-")
-        for part in re.split(
-            r"(?<=[.!?;])\s+|,\s*|\s+(?:а\s+ещ[её]|и)\s+",
-            stripped,
-            flags=re.IGNORECASE,
-        )
+        for part in _COMMENT_CLAUSE_SPLIT_RE.split(stripped)
     ]
     kept = [part for part in parts if part and not _interior_clause(part)]
     return ". ".join(kept), True
