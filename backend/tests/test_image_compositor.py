@@ -132,15 +132,15 @@ def test_provider_work_region_clamps_at_image_edges() -> None:
 
 
 def test_runtime_feather_can_exceed_old_explicit_cap() -> None:
-    result = compose_masked_edit(
-        base_data=_png((200, 200), (0, 0, 0)),
-        candidate_data=_png((200, 200), (255, 255, 255)),
-        edit_region={"x": 0.1, "y": 0.1, "width": 0.8, "height": 0.8},
-        feather_px=20,
-        feather_max_px=24,
-    )
-    output = _pixels(result.data)
+    kwargs = {
+        "base_data": _png((200, 200), (0, 0, 0)),
+        "candidate_data": _png((200, 200), (255, 255, 255)),
+        "edit_region": {"x": 0.1, "y": 0.1, "width": 0.8, "height": 0.8},
+        "feather_max_px": 24,
+    }
+    old_cap = _pixels(compose_masked_edit(**kwargs, feather_px=12).data)
+    wider = _pixels(compose_masked_edit(**kwargs, feather_px=20).data)
 
-    assert output.getpixel((20, 100))[0] < 80
-    assert output.getpixel((35, 100))[0] > 100
-    assert output.getpixel((100, 100)) == (255, 255, 255)
+    assert wider.getpixel((30, 100))[0] < old_cap.getpixel((30, 100))[0]
+    assert wider.getpixel((100, 100)) == (255, 255, 255)
+    assert wider.getpixel((5, 100)) == (0, 0, 0)
