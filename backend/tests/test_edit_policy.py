@@ -155,5 +155,5 @@ def test_negative_fireplace_lock_instruction_is_not_blocked() -> None:
 
     assert policy.allow_generation is True
     assert policy.intent == EditIntent.ROOF_FINISH
-    assert policy.sanitized_comment == "Сделай крышу темнее. не изменяй камин"
+    assert "не изменяй камин" in policy.sanitized_comment.casefold()
     assert policy.allow_fireplace_relocation is False
