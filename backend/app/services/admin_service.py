@@ -302,6 +302,16 @@ class AdminService:
             primary_params=row.primary_params or {},
             fallback_params=row.fallback_params or {},
             mode_params=row.mode_params or {},
+            masked_edit_provider_context_margin_fraction=row.masked_edit_provider_context_margin_fraction,
+            masked_edit_feather_fraction=row.masked_edit_feather_fraction,
+            masked_edit_feather_min_px=row.masked_edit_feather_min_px,
+            masked_edit_feather_max_px=row.masked_edit_feather_max_px,
+            masked_edit_recomposite_feather_multiplier=row.masked_edit_recomposite_feather_multiplier,
+            masked_edit_boundary_band_px=row.masked_edit_boundary_band_px,
+            masked_edit_max_luma_excess=row.masked_edit_max_luma_excess,
+            masked_edit_max_color_excess=row.masked_edit_max_color_excess,
+            masked_edit_max_straight_edge_fraction=row.masked_edit_max_straight_edge_fraction,
+            generation_quality_max_retries=row.generation_quality_max_retries,
             updated_at=row.updated_at,
         )
 
@@ -328,6 +338,29 @@ class AdminService:
         row.primary_params = payload.primary_params
         row.fallback_params = payload.fallback_params
         row.mode_params = payload.mode_params
+        quality_fields = (
+            "masked_edit_provider_context_margin_fraction",
+            "masked_edit_feather_fraction",
+            "masked_edit_feather_min_px",
+            "masked_edit_feather_max_px",
+            "masked_edit_recomposite_feather_multiplier",
+            "masked_edit_boundary_band_px",
+            "masked_edit_max_luma_excess",
+            "masked_edit_max_color_excess",
+            "masked_edit_max_straight_edge_fraction",
+            "generation_quality_max_retries",
+        )
+        for field in quality_fields:
+            value = getattr(payload, field)
+            if value is not None:
+                setattr(row, field, value)
+        if row.masked_edit_feather_min_px > row.masked_edit_feather_max_px:
+            raise AppError(
+                type="masked_edit_feather_range_invalid",
+                title="Invalid masked edit feather range",
+                status=422,
+                detail="Masked edit feather minimum cannot exceed maximum.",
+            )
         row.updated_by_user_id = actor.id
         self.repository.add_audit(
             actor_user_id=actor.id,
