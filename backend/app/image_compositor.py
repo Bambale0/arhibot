@@ -64,6 +64,32 @@ def _region_mask(
     return mask
 
 
+def build_edit_reference_guide(
+    *,
+    base_data: bytes,
+    edit_region: Mapping[str, float],
+    protected_regions: Sequence[Mapping[str, float]] = (),
+    max_pixels: int | None = None,
+) -> bytes:
+    """Build a pixel-aligned provider guide for a masked edit.
+
+    White pixels are editable; black pixels are locked. Protected regions always
+    remain black even when they overlap the selected edit rectangle.
+    """
+
+    base = _read_rgb(base_data, max_pixels=max_pixels)
+    mask = _region_mask(
+        base.size,
+        edit_region,
+        protected_regions,
+        feather_px=0,
+    )
+    guide = Image.merge("RGB", (mask, mask, mask))
+    buffer = BytesIO()
+    guide.save(buffer, format="PNG", optimize=True)
+    return buffer.getvalue()
+
+
 def compose_masked_edit(
     *,
     base_data: bytes,
