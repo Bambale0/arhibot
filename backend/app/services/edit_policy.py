@@ -211,6 +211,9 @@ def _has_non_negated_action(text: str, markers: tuple[str, ...]) -> bool:
             index = text.find(marker, start)
             if index < 0:
                 break
+            if index > 0 and text[index - 1].isalnum():
+                start = index + len(marker)
+                continue
             if not _action_is_negated(text, index):
                 return True
             start = index + len(marker)
