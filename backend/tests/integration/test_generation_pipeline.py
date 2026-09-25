@@ -158,9 +158,17 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
 
         candidate_data = _png((100, 100), (220, 210, 200))
         provider_calls: list[dict] = []
+        provider_guides: list[bytes] = []
 
         async def fake_generate(self, **kwargs):  # noqa: ANN001, ARG001
             provider_calls.append(kwargs)
+            for guide_url in kwargs.get("reference_image_urls") or []:
+                parsed = urlsplit(guide_url)
+                guide_response = await client.get(
+                    f"{parsed.path}?{parsed.query}"
+                )
+                assert guide_response.status_code == 200, guide_response.text
+                provider_guides.append(guide_response.content)
             return NexusImageResult(
                 task_id="integration-task",
                 image_url="https://cdn.example.test/generated.png",
@@ -189,7 +197,20 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
         assert signed_media.status_code == 200, signed_media.text
         assert signed_media.content == base_data
         assert "Add a bathhouse only in the editable area" in provider_calls[0]["prompt"]
+        assert "pixel-aligned binary edit guide" in provider_calls[0]["prompt"]
         assert provider_calls[0]["timeout_seconds"] == 45
+        guide_urls = provider_calls[0].get("reference_image_urls")
+        assert guide_urls is not None and len(guide_urls) == 1
+        assert len(provider_guides) == 1
+        with Image.open(BytesIO(provider_guides[0])) as opened_guide:
+            guide = opened_guide.convert("RGB")
+            assert guide.size == (100, 100)
+            assert guide.getpixel((5, 5)) == (0, 0, 0)
+            assert guide.getpixel((20, 20)) == (255, 255, 255)
+            assert guide.getpixel((50, 50)) == (0, 0, 0)
+        guide_parts = urlsplit(guide_urls[0])
+        cleaned_guide = await client.get(f"{guide_parts.path}?{guide_parts.query}")
+        assert cleaned_guide.status_code == 404
 
         async with get_session_factory()() as session:
             generation = await session.get(Generation, generation_id)
