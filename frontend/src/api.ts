@@ -314,7 +314,24 @@ export function adminUpdateIdea(id: string, payload: Partial<{ is_active: boolea
 export function adminArchiveIdea(id: string) { return request<AdminIdea>(`/admin/ideas/${id}`, { method: 'DELETE' }) }
 
 export function adminGetGenerationSettings() { return request<AdminGenerationSettings>('/admin/generation') }
-export function adminUpdateGenerationSettings(payload: { primary_model: string; fallback_model: string | null; primary_timeout_seconds: number; primary_params: Record<string, unknown>; fallback_params: Record<string, unknown>; mode_params: Record<string, Record<string, unknown>> }) {
+export function adminUpdateGenerationSettings(payload: {
+  primary_model: string
+  fallback_model: string | null
+  primary_timeout_seconds: number
+  primary_params: Record<string, unknown>
+  fallback_params: Record<string, unknown>
+  mode_params: Record<string, Record<string, unknown>>
+  masked_edit_provider_context_margin_fraction: number
+  masked_edit_feather_fraction: number
+  masked_edit_feather_min_px: number
+  masked_edit_feather_max_px: number
+  masked_edit_recomposite_feather_multiplier: number
+  masked_edit_boundary_band_px: number
+  masked_edit_max_luma_excess: number
+  masked_edit_max_color_excess: number
+  masked_edit_max_straight_edge_fraction: number
+  generation_quality_max_retries: number
+}) {
   return request<AdminGenerationSettings>('/admin/generation', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 }
 export function adminListGenerationSandboxHistory(limit = 30) {
