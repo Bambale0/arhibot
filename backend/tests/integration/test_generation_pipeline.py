@@ -538,6 +538,12 @@ async def test_questionnaire_masked_quality_retry_reuses_one_generation(
         assert body["status"] == "completed"
         assert body["quality_status"] == "passed"
         assert body["quality_report"]["final"] == "passed"
+        assert body["quality_report"]["enforced_checks"] == [
+            "outside_region_integrity",
+            "boundary_continuity",
+        ]
+        assert body["quality_report"]["deferred_checks"] == []
+        assert body["quality_report"]["scene_analysis"] == "not_required"
         assert len(body["quality_report"]["attempts"]) == 2
         assert body["quality_report"]["provider_work_region"] == {
             "x": 0.25,
