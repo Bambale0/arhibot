@@ -131,3 +131,29 @@ def test_mixed_comment_removes_kitchen_inside_clause() -> None:
     assert policy.sanitized_comment == "Сделай фасад светлее"
     assert "кухн" not in policy.sanitized_comment.casefold()
 
+
+
+def test_fireplace_chimney_finish_phrase_is_not_misclassified_as_interior_fireplace() -> None:
+    policy = build_edit_policy(
+        object_key="eskez-doma",
+        edit_question_ids=["11б"],
+        review_comment="Сделай каминную трубу кирпичной.",
+    )
+
+    assert policy.allow_generation is True
+    assert policy.domain == EditDomain.EXTERIOR
+    assert policy.intent == EditIntent.CHIMNEY_FINISH
+    assert policy.sanitized_comment == "Сделай каминную трубу кирпичной."
+
+
+def test_negative_fireplace_lock_instruction_is_not_blocked() -> None:
+    policy = build_edit_policy(
+        object_key="eskez-doma",
+        edit_question_ids=["7"],
+        review_comment="Сделай крышу темнее и не изменяй камин.",
+    )
+
+    assert policy.allow_generation is True
+    assert policy.intent == EditIntent.ROOF_FINISH
+    assert policy.sanitized_comment == "Сделай крышу темнее. не изменяй камин"
+    assert policy.allow_fireplace_relocation is False
