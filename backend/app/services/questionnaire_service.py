@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.errors import AppError
+from app.core.metrics import record_interior_request_blocked
 from app.db.models.assets import Asset
 from app.db.models.projects import Project
 from app.db.models.questionnaires import (
@@ -21,10 +22,12 @@ from app.domain.generations.enums import GenerationOrigin, GenerationStatus, Gen
 from app.questionnaires.application_brief import build_application_brief
 from app.questionnaires.generation_prompt import (
     build_initial_concept_prompt,
+    build_initial_site_plan,
     build_questionnaire_generation_prompt,
 )
 from app.questionnaires.generation_prompt import (
     condition_ok as questionnaire_condition_ok,
+    question_is_active as questionnaire_question_is_active,
 )
 from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
@@ -43,6 +46,7 @@ from app.schemas.questionnaires import (
     QuestionnaireCatalogResponse,
 )
 from app.services.asset_service import LocalMediaStorage
+from app.services.edit_policy import build_edit_policy
 from app.services.project_service import ProjectService
 
 
@@ -90,6 +94,11 @@ class QuestionnaireService:
         project = await ProjectService(self.projects).get_owned_model(user, project_id)
         previous = self._stored_session(project.context)
         catalog = await self.catalog()
+        payload = self._canonicalize_site_plan(
+            payload,
+            previous=previous,
+            catalog=catalog,
+        )
         self._validate(payload, catalog, allow_submitted=False, previous=previous)
         self._validate_accepted_object_locks(previous, payload, catalog)
         self._validate_acceptance_completion(previous, payload, catalog)
@@ -97,10 +106,13 @@ class QuestionnaireService:
         await self._validate_generations(
             user, project.id, payload, catalog=catalog, previous=previous
         )
-        project.context = {
+        project_context = {
             **(project.context or {}),
             "design_session": payload.model_dump(mode="json"),
         }
+        if payload.plot_area_sotkas is not None:
+            project_context["plot_area_m2"] = payload.plot_area_sotkas * 100
+        project.context = project_context
         await self.session.commit()
         await self.session.refresh(project)
         return payload
@@ -111,6 +123,11 @@ class QuestionnaireService:
         project = await ProjectService(self.projects).get_owned_model(user, project_id)
         previous = self._stored_session(project.context)
         catalog = await self.catalog()
+        payload = self._canonicalize_site_plan(
+            payload,
+            previous=previous,
+            catalog=catalog,
+        )
         self._validate(payload, catalog, allow_submitted=True, previous=previous)
         self._validate_accepted_object_locks(previous, payload, catalog)
         self._validate_acceptance_completion(previous, payload, catalog)
@@ -266,8 +283,12 @@ class QuestionnaireService:
                 question
                 for question in definition["questions"]
                 if question["phase"] == "pre_render"
-                and self._condition_ok(
-                    question.get("condition"), answers, house_reference_available
+                and questionnaire_question_is_active(
+                    object_key,
+                    question,
+                    answers,
+                    house_reference_available,
+                    next_session.selected_objects,
                 )
             ),
             None,
@@ -471,8 +492,12 @@ class QuestionnaireService:
                     question
                     for question in definition["questions"]
                     if question["phase"] == "pre_render"
-                    and self._condition_ok(
-                        question.get("condition"), answers, house_reference_available
+                    and questionnaire_question_is_active(
+                        object_key,
+                        question,
+                        answers,
+                        house_reference_available,
+                        session.selected_objects,
                     )
                 ]
                 missing = [
@@ -523,7 +548,13 @@ class QuestionnaireService:
             question
             for question in definition["questions"]
             if question["phase"] == "pre_render"
-            and self._condition_ok(question.get("condition"), answers, house_accepted)
+            and questionnaire_question_is_active(
+                object_key,
+                question,
+                answers,
+                house_accepted,
+                session.selected_objects,
+            )
         ]
         missing = [
             question["id"] for question in active_pre_render if question["id"] not in answers
@@ -564,11 +595,33 @@ class QuestionnaireService:
                     "Every previously accepted object must have a locked visual region."
                 )
 
+        edit_policy: dict[str, object] = {}
+        if masked:
+            policy = build_edit_policy(
+                object_key=object_key,
+                edit_question_ids=list(session.edit_question_ids) if refinement else [],
+                review_comment=session.review_comments.get(object_key, ""),
+            )
+            if not policy.allow_generation:
+                record_interior_request_blocked()
+                raise AppError(
+                    type="exterior_refinement_interior_not_supported",
+                    title="Изменение интерьера недоступно",
+                    status=422,
+                    detail=(
+                        "В этом режиме можно дорабатывать внешний вид дома: фасад, кровлю, "
+                        "окна, террасы, наружные элементы и участок. Изменение интерьера, "
+                        "мебели и перенос внутреннего камина пока не поддерживаются."
+                    ),
+                )
+            edit_policy = policy.to_dict()
+
         prompt = build_questionnaire_generation_prompt(
             definition,
             session,
             accepted_before=accepted_before,
             input_asset_present=input_asset_id is not None,
+            edit_policy=edit_policy or None,
         )
         return (
             QuestionnaireGenerationCreate(
@@ -579,6 +632,7 @@ class QuestionnaireService:
                 composition_mode="masked_edit" if masked else "replace",
                 edit_region=edit_region if masked else None,
                 protected_regions=protected_regions,
+                edit_policy=edit_policy,
             ),
             session,
             object_key,
@@ -871,6 +925,25 @@ class QuestionnaireService:
         raw = (context or {}).get("design_session")
         return DesignSession.model_validate(raw) if raw else None
 
+    @staticmethod
+    def _canonicalize_site_plan(
+        payload: DesignSession,
+        *,
+        previous: DesignSession | None,
+        catalog: dict,
+    ) -> DesignSession:
+        if not payload.initial_concept_mode:
+            return (
+                payload
+                if payload.site_plan is None
+                else payload.model_copy(update={"site_plan": None})
+            )
+        if previous is not None and previous.initial_concept_accepted:
+            return payload.model_copy(update={"site_plan": previous.site_plan})
+        return payload.model_copy(
+            update={"site_plan": build_initial_site_plan(catalog, payload)}
+        )
+
     @classmethod
     def _validate_accepted_object_locks(
         cls,
@@ -887,6 +960,11 @@ class QuestionnaireService:
 
         if cls._session_started(previous) and payload.selected_objects != previous.selected_objects:
             raise cls._invalid("Selected questionnaire objects are fixed after the session starts.")
+        if (
+            previous.initial_concept_accepted
+            and payload.plot_area_sotkas != previous.plot_area_sotkas
+        ):
+            raise cls._invalid("The plot size is immutable after initial concept acceptance.")
         if (
             previous.initial_concept_accepted
             and payload.survey_completed_objects != previous.survey_completed_objects
@@ -1430,7 +1508,14 @@ class QuestionnaireService:
                     "Lock-region selection must target the current or accepted object."
                 )
 
-        house_accepted = "eskez-doma" in payload.accepted_objects
+        house_accepted = (
+            "eskez-doma" in payload.accepted_objects
+            or (
+                payload.initial_concept_mode
+                and not payload.initial_concept_accepted
+                and "eskez-doma" in payload.selected_objects
+            )
+        )
         allowed_answer_keys = set(payload.selected_objects) | {"zayavka"}
         previous_accepted = (
             set(previous.accepted_objects)
@@ -1477,6 +1562,16 @@ class QuestionnaireService:
                     raise self._invalid(
                         f"Unknown question {object_key}.{question_id} in the saved session."
                     )
+                if not questionnaire_question_is_active(
+                    object_key,
+                    question,
+                    answers,
+                    house_accepted,
+                    payload.selected_objects,
+                ):
+                    raise self._invalid(
+                        f"Answer {object_key}.{question_id} belongs to an inactive question."
+                    )
                 allow_empty_multi = (
                     object_key == "eskez-doma"
                     and question_id == "15б"
@@ -1499,7 +1594,13 @@ class QuestionnaireService:
             if question is None:
                 raise self._invalid("The current question does not exist in the current questionnaire.")
             answers = payload.answers.get(payload.current_object, {})
-            if not self._condition_ok(question.get("condition"), answers, house_accepted):
+            if not questionnaire_question_is_active(
+                payload.current_object,
+                question,
+                answers,
+                house_accepted,
+                payload.selected_objects,
+            ):
                 raise self._invalid("The current question is inactive for the saved answers.")
 
         if payload.edit_question_ids:

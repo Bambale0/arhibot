@@ -29,9 +29,10 @@ def test_required_integration_gate_contains_worker_sigkill_recovery_probe() -> N
 
     assert 'Controlled worker SIGKILL recovery probe' in ci
     assert 'kill -9 "${first_pid}"' in ci
-    assert 'already owns the singleton lease' in ci
-    assert 'sleep 47' in ci
-    assert 'Worker SIGKILL recovery probe passed' in ci
+    assert 'Replacement worker exited instead of waiting for the stale singleton lease' in ci
+    assert 'Replacement worker acquired the singleton lease before stale-owner expiry' in ci
+    assert 'Replacement worker did not acquire the lease after stale-owner expiry' in ci
+    assert 'Worker SIGKILL recovery probe passed without restart loop' in ci
 
     assert 'worker_singleton' in probe
     assert 'worker_heartbeat' in probe

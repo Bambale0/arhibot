@@ -45,6 +45,15 @@ def test_public_nginx_denies_internal_docs_and_has_security_headers() -> None:
     assert "limit_conn_status 429;" in inner
 
 
+def test_frontend_shell_is_never_cached_but_hashed_assets_are_cacheable() -> None:
+    nginx = (REPO_ROOT / 'frontend' / 'nginx.conf').read_text()
+
+    assert 'location = /index.html' in nginx
+    assert nginx.count('Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"') >= 2
+    assert 'Pragma "no-cache"' in nginx
+    assert 'Cache-Control "public, max-age=604800"' in nginx
+
+
 def test_supply_chain_dependencies_are_immutable_or_monitored() -> None:
     backend_docker = (REPO_ROOT / 'backend' / 'Dockerfile').read_text()
     renderer_docker = (REPO_ROOT / 'backend' / 'Dockerfile.renderer').read_text()
