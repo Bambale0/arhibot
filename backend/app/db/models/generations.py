@@ -67,6 +67,11 @@ class Generation(Base):
     protected_regions: Mapped[list] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"
     )
+    edit_policy: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    quality_report: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    quality_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     provider_task_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     telegram_delivery_status: Mapped[str] = mapped_column(

@@ -262,7 +262,7 @@ jobs:
             fi
           done
 
-          for service in maintenance worker broadcast-worker frontend postgres redis; do
+          for service in api maintenance worker broadcast-worker frontend postgres redis; do
             container_id=$("${compose[@]}" ps -q "${service}")
             health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "${container_id}")
             [[ "${health}" == "healthy" ]] || {

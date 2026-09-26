@@ -1,8 +1,31 @@
 export type NormalizedRect = { x:number; y:number; width:number; height:number }
+export type SitePlanObject = {
+  object_key:string
+  object_name:string
+  role:'house'|'site_object'|string
+  zone:string
+  relations:string[]
+  rect:NormalizedRect
+  placement_source:'questionnaire'|'derived'|'user'|string
+  estimated_footprint_m2?:number|null
+}
+export type SitePlanWarning = { object_key:string; code:string }
+export type SitePlan = {
+  schema:'auroom.site_plan.v1'
+  plot:{
+    area_sotkas:number|null
+    area_m2:number|null
+    coordinate_system:'normalized'|string
+    front_side:'y0'|string
+    geometry_accuracy:'relative'|'metric'|string
+  }
+  objects:SitePlanObject[]
+  warnings:SitePlanWarning[]
+}
 export type QuestionnaireAnswer = string | number | boolean | string[]
 export type QuestionnaireCondition = {
   question_id?: string
-  operator: 'eq'|'neq'|'in'|'contains'|'starts_with'|'all'|'any'|'house_accepted'|'not_contains_any'|'floor_option'
+  operator: 'eq'|'neq'|'in'|'contains'|'starts_with'|'all'|'any'|'house_accepted'|'not_contains_any'|'floor_option'|'object_not_selected'
   value?: string|string[]
   conditions?: QuestionnaireCondition[]
 }
@@ -39,6 +62,7 @@ export type DesignSession = {
   catalog_version:string
   selected_objects:string[]
   plot_area_sotkas:number|null
+  site_plan:SitePlan|null
   initial_concept_mode:boolean
   survey_completed_objects:string[]
   initial_generation_id:string|null
@@ -69,6 +93,7 @@ export function createDesignSession(catalogVersion:string, selectedObjects:strin
     catalog_version:catalogVersion,
     selected_objects:[...selectedObjects],
     plot_area_sotkas:null,
+    site_plan:null,
     initial_concept_mode:true,
     survey_completed_objects:[],
     initial_generation_id:null,
