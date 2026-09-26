@@ -63,6 +63,7 @@ async def _accepted_generation(
     session_state = DesignSession(
         catalog_version=catalog_version,
         selected_objects=[object_key],
+        plot_area_sotkas=10,
         current_object=None,
         source_step_completed=True,
         scene_asset_id=asset_id,
@@ -211,15 +212,40 @@ async def test_user_adds_own_accepted_create_result_to_ideas() -> None:
         assert unsaved_idea.status_code == 200, unsaved_idea.text
         assert unsaved_idea.json() == {"idea_id": idea["id"], "is_saved": False}
 
+        other_headers, _ = await _register(client)
+        async with get_session_factory()() as db:
+            original = await db.get(Generation, generation_id)
+            owner_project = await db.get(Project, original.project_id)
+            context = dict(owner_project.context)
+            context['design_session'] = {**context['design_session'], 'answers': {
+                'eskez-doma': {'1':'Барнхаус'}, 'zayavka': {'1':'Private contact data'},
+            }}
+            owner_project.context = context
+            await db.commit()
         started = await client.post(
-            f"/api/v1/ideas/{idea['id']}/project", headers=user_headers
+            f"/api/v1/ideas/{idea['id']}/project", headers=other_headers
         )
         assert started.status_code == 201, started.text
         started_session = started.json()["context"]["design_session"]
         assert started.json()["context"]["questionnaire_draft"] is True
         assert started_session["selected_objects"] == ["eskez-doma"]
         assert started_session["answers"] == {}
+        assert started_session["plot_area_sotkas"] == 10
         assert started_session["accepted_objects"] == []
+
+        # The source step stays pristine; published parameters are applied only
+        # after the new owner chooses their own photo (or continues without it).
+        started_session.update(source_step_completed=True)
+        seeded = await client.put(
+            f"/api/v1/projects/{started.json()['id']}/questionnaire-session",
+            headers=other_headers, json=started_session,
+        )
+        assert seeded.status_code == 200, seeded.text
+        seeded_session = seeded.json()['session']
+        assert seeded_session['answers'] == {'eskez-doma': {'1': 'Современный минимализм'}}
+        assert seeded_session['accepted_objects'] == []
+        assert seeded_session['generation_ids'] == {}
+        assert seeded_session['scene_asset_id'] is None
 
         async with get_session_factory()() as session:
             generation = await session.get(Generation, generation_id)

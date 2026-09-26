@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
 from app.db.models.projects import Project
 from app.db.models.users import User
+from app.questionnaires.idea_template import design_answers_from_snapshot
 from app.repositories.assets import AssetRepository
 from app.repositories.projects import ProjectRepository
 from app.schemas.projects import ProjectResponse
@@ -79,6 +80,8 @@ class QuestionnaireProjectService:
         self,
         user: User,
         payload: QuestionnaireProjectStartRequest,
+        *,
+        design_template: dict | None = None,
     ) -> ProjectResponse:
         requested = payload.selected_objects
         if len(requested) != len(set(requested)):
@@ -110,6 +113,8 @@ class QuestionnaireProjectService:
             "questionnaire_draft": True,
             "design_session": design_session.model_dump(mode="json"),
         }
+        if design_template is not None:
+            project_context["questionnaire_template"] = design_template
         if payload.plot_area_sotkas is not None:
             project_context["plot_area_m2"] = payload.plot_area_sotkas * 100
         project = Project(
@@ -168,8 +173,17 @@ class QuestionnaireProjectService:
             if asset is None or asset.project_id != project.id:
                 raise self._invalid("The site source asset must belong to the questionnaire project.")
 
+        template = (project.context or {}).get("questionnaire_template")
+        if isinstance(template, dict):
+            answers = design_answers_from_snapshot(
+                template, catalog, payload.selected_objects,
+                QuestionnaireService(self.session)._validate_answer,
+            )
+            payload = payload.model_copy(update={"answers": answers})
+        context = dict(project.context or {})
+        context.pop("questionnaire_template", None)
         project.context = {
-            **(project.context or {}),
+            **context,
             "questionnaire_draft": False,
             "design_session": payload.model_dump(mode="json"),
         }

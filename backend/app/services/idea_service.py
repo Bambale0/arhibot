@@ -15,7 +15,7 @@ from app.db.models.projects import Project
 from app.db.models.users import User
 from app.domain.generations.enums import GenerationStatus
 from app.questionnaires.catalog import user_question_title
-from app.questionnaires.generation_prompt import condition_ok
+from app.questionnaires.generation_prompt import question_is_active
 from app.repositories.admin import AdminRepository
 from app.repositories.ideas import IdeaRepository
 from app.schemas.admin import (
@@ -297,6 +297,7 @@ class IdeaService:
             for key in section["object_keys"]
         }
         objects: list[dict] = []
+        template_answers: list[dict] = []
         accepted_before: list[str] = []
         for key in selected_objects:
             definition = definitions.get(key)
@@ -311,11 +312,16 @@ class IdeaService:
             for question in definition["questions"]:
                 if question.get("phase") != "pre_render":
                     continue
-                if not condition_ok(question.get("condition"), answers, house_accepted):
+                if not question_is_active(key, question, answers, house_accepted, selected_objects):
                     continue
                 rendered = _answer_text(answers.get(question["id"]))
                 if not rendered:
                     continue
+                template_answers.append({
+                    "object_key": key,
+                    "question": user_question_title(question["text"]),
+                    "value": answers[question["id"]],
+                })
                 summary.append(
                     IdeaAnswerSummary(
                         question=user_question_title(question["text"]), answer=rendered
@@ -342,6 +348,10 @@ class IdeaService:
             "selected_objects": selected_objects,
             "object_key": object_key,
             "objects": objects,
+            "design_template": {
+                "answers": template_answers,
+                "plot_area_sotkas": design_session.plot_area_sotkas,
+            },
         }
 
     async def get_own_publication(
@@ -526,11 +536,18 @@ class IdeaService:
                 status=409,
                 detail="The published work cannot be used to start a project.",
             )
+        # Copy the immutable public design snapshot, never current owner state,
+        # application answers, assets, acceptance flags or generation identifiers.
+        selected = [str(item) for item in selected_objects]
+        plot_area = (snapshot.get("design_template") or {}).get("plot_area_sotkas")
         return await QuestionnaireProjectService(self.session).start(
             user,
             QuestionnaireProjectStartRequest(
-                selected_objects=[str(item) for item in selected_objects]
+                selected_objects=selected,
+                plot_area_sotkas=plot_area,
             ),
+            design_template={"objects": snapshot.get("objects", []),
+                             "design_template": snapshot.get("design_template", {})},
         )
 
 

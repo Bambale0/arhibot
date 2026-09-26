@@ -530,7 +530,8 @@ async def test_questionnaire_masked_quality_retry_reuses_one_generation(
         with Image.open(BytesIO(guides[0])) as opened:
             guide = opened.convert("RGB")
             assert guide.getpixel((20, 60)) == (0, 0, 0)
-            assert guide.getpixel((32, 60)) == (255, 255, 255)
+            assert guide.getpixel((32, 60)) == (0, 0, 0)
+            assert guide.getpixel((40, 60)) == (255, 255, 255)
 
         completed = await client.get(f"/api/v1/generations/{generation_id}", headers=headers)
         assert completed.status_code == 200, completed.text
@@ -611,3 +612,129 @@ async def test_questionnaire_masked_quality_rejection_refunds_once(
         me_again = await client.get("/api/v1/me", headers=headers)
         assert me_again.status_code == 200
         assert me_again.json()["credits_balance"] == 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('acknowledged', [True, False])
+async def test_worker_restart_never_reposts_an_existing_or_ambiguous_request(monkeypatch, acknowledged):
+    import asyncio
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url='http://test') as client:
+        _, admin_headers = await _register_admin(client)
+        tokens, headers = await _register_user(client)
+        user_id = tokens['user']['id']
+        generation_id, base_data, _ = await _create_strict_masked_generation(
+            client, admin_headers=admin_headers, headers=headers, user_id=user_id,
+        )
+        calls = []
+        async def generate(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                assert kwargs['task_id'] is None
+                if acknowledged:
+                    await kwargs['on_task_created']('durable-task')
+                raise asyncio.CancelledError()
+            assert kwargs['task_id'] == 'durable-task'
+            return NexusImageResult(task_id='durable-task',image_url='https://cdn.example.test/recovered.png')
+        async def download(url, settings):
+            return base_data
+        monkeypatch.setattr(NexusImageProvider, 'generate', generate)
+        monkeypatch.setattr(generation_worker, '_download_image', download)
+        with pytest.raises(asyncio.CancelledError):
+            await generation_worker.process_generation(generation_id, get_settings())
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+        await redis_client.rpush(generation_worker.GENERATION_PROCESSING_KEY, str(generation_id))
+        await generation_worker._recover_reserved_jobs()
+        await generation_worker.process_generation(generation_id, get_settings())
+        await generation_worker.process_generation(generation_id, get_settings())
+        result = (await client.get(f'/api/v1/generations/{generation_id}', headers=headers)).json()
+        assert result['status'] == ('completed' if acknowledged else 'processing')
+        assert len(calls) == (2 if acknowledged else 1)
+        assert sum(c['task_id'] is None for c in calls) == 1
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('failure_stage', ['poll', 'download'])
+async def test_unknown_provider_status_keeps_charge_and_reconciles_same_task(monkeypatch, failure_stage):
+    from datetime import UTC, datetime, timedelta
+    from app.providers.nexus import NexusOutcomeUnknown
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url='http://test') as client:
+        _, admin_headers = await _register_admin(client)
+        tokens, headers = await _register_user(client)
+        generation_id, base_data, _ = await _create_strict_masked_generation(
+            client, admin_headers=admin_headers, headers=headers, user_id=tokens['user']['id'])
+        calls = []
+        async def generate(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                await kwargs['on_task_created']('slow-confirmed-task')
+                if failure_stage == 'poll':
+                    raise NexusOutcomeUnknown('Temporary polling outage')
+            else:
+                assert kwargs['task_id'] == 'slow-confirmed-task'
+            return NexusImageResult(task_id='slow-confirmed-task', image_url='https://cdn.example.test/result.png')
+        async def download(url, settings):
+            if len(calls) == 1 and failure_stage == 'download':
+                from httpx import ReadTimeout
+                raise ReadTimeout('transient media outage')
+            return base_data
+        monkeypatch.setattr(NexusImageProvider, 'generate', generate)
+        monkeypatch.setattr(generation_worker, '_download_image', download)
+        await generation_worker.process_generation(generation_id, get_settings())
+        pending = (await client.get(f'/api/v1/generations/{generation_id}', headers=headers)).json()
+        assert pending['status'] == 'processing'
+        assert pending['quality_report']['requires_reconciliation'] is True
+        assert (await client.get('/api/v1/me', headers=headers)).json()['credits_balance'] == 3
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+        async with get_session_factory()() as session:
+            row = await session.get(Generation, generation_id)
+            row.started_at = datetime.now(UTC) - timedelta(hours=1)
+            await session.commit()
+        await generation_worker._reconcile_database_jobs(get_settings())
+        await generation_worker.process_generation(generation_id, get_settings())
+        result = (await client.get(f'/api/v1/generations/{generation_id}', headers=headers)).json()
+        assert result['status'] == 'completed'
+        assert not result['quality_report'].get('requires_reconciliation')
+        assert len(calls) == 2
+        assert sum(call['task_id'] is None for call in calls) == 1
+        assert (await client.get('/api/v1/me', headers=headers)).json()['credits_balance'] == 3
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+
+
+@pytest.mark.asyncio
+async def test_accepted_task_checkpoint_commit_failure_does_not_refund_or_repost(monkeypatch):
+    from sqlalchemy.ext.asyncio import AsyncSession
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url='http://test') as client:
+        _, admin_headers = await _register_admin(client)
+        tokens, headers = await _register_user(client)
+        generation_id, _, _ = await _create_strict_masked_generation(
+            client, admin_headers=admin_headers, headers=headers, user_id=tokens['user']['id'])
+        original_commit = AsyncSession.commit
+        injected = False
+        async def commit(session):
+            nonlocal injected
+            if not injected and any(isinstance(row, Generation) and row.provider_task_id == 'accepted-before-db-outage' for row in session.dirty):
+                injected = True
+                raise RuntimeError('database connection interrupted before checkpoint commit')
+            return await original_commit(session)
+        calls = []
+        async def generate(self, **kwargs):
+            calls.append(kwargs)
+            await kwargs['on_task_created']('accepted-before-db-outage')
+            pytest.fail('checkpoint failure must stop polling without resubmission')
+        monkeypatch.setattr(AsyncSession, 'commit', commit)
+        monkeypatch.setattr(NexusImageProvider, 'generate', generate)
+        await generation_worker.process_generation(generation_id, get_settings())
+        result = (await client.get(f'/api/v1/generations/{generation_id}', headers=headers)).json()
+        assert injected
+        assert result['status'] == 'processing'
+        assert result['quality_report']['requires_reconciliation'] is True
+        assert result['quality_report']['provider_request']['task_id'] is None
+        assert (await client.get('/api/v1/me', headers=headers)).json()['credits_balance'] == 3
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+        await generation_worker._reconcile_database_jobs(get_settings())
+        await generation_worker.process_generation(generation_id, get_settings())
+        assert len(calls) == 1

@@ -538,7 +538,7 @@ test('uncertain creation blocks another paid request until server state can be c
   expect(creates).toBe(1)
   unavailable=false
   await page.getByRole('button',{name:'Проверить запуск'}).click()
-  await expect(page.getByText('Эскиз воды вам подходит?')).toBeVisible()
+  await expect(page.getByText('Объект «Пруд или ручей» удалён правильно?')).toBeVisible()
   expect(creates).toBe(1)
 })
 
@@ -564,7 +564,7 @@ test('failed accepted-object removal retries without deleting the accepted gener
   await page.goto(`/?project=${projectId}`)
   await expect(page.getByRole('button',{name:'Проверить генерацию'})).toBeVisible()
   await page.getByRole('button',{name:'Проверить генерацию'}).click()
-  await expect(page.getByText('Эскиз воды вам подходит?')).toBeVisible()
+  await expect(page.getByText('Объект «Пруд или ручей» удалён правильно?')).toBeVisible()
   expect(retried).toBe(true)
   expect(invalidPut).toBe(false)
 })
