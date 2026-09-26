@@ -6,7 +6,7 @@
 
 ### Foundation + auth
 
-- Python 3.12+
+- Python 3.14 для Docker runtime, CI и разработки (минимум пакета: Python 3.12)
 - FastAPI `/api/v1`
 - OpenAPI `/openapi.json`, Swagger `/docs`, ReDoc `/redoc`
 - PostgreSQL + SQLAlchemy 2 async + Alembic
@@ -60,6 +60,10 @@ Backend:
 8. возвращает публичный URL вида `https://media.example.com/uploads/users/...`.
 
 В production Nginx читает volume в read-only режиме. Запись файлов по HTTP запрещена: только API-процесс может писать в media volume.
+
+## Python и lock-файлы
+
+Используйте Python 3.14 для установки dev-зависимостей и команд `scripts/dependency_locks.sh CHECK` / `UPDATE`. Lock-файлы проверяются в том же Python, что используется в Docker и CI: условные зависимости и комментарии об их происхождении могут различаться между версиями Python. Образы API и renderer собираются из одних hash-locked зависимостей.
 
 ## Local media deployment
 
