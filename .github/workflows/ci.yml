@@ -28,7 +28,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
-          python-version: '3.12'
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: |
             backend/pyproject.toml
@@ -64,7 +64,7 @@ jobs:
           cp backend/.env.example backend/.env
           trap 'rm -f backend/.env' EXIT
           docker compose --project-directory backend -f backend/docker-compose.yml config --quiet
-          docker compose --project-directory backend -f backend/docker-compose.yml build api frontend
+          docker compose --project-directory backend -f backend/docker-compose.yml build api frontend renderer-worker
           docker compose --project-directory backend -f backend/docker-compose.yml run --rm --no-deps api python -c 'import os,pathlib; assert os.getuid()==10001; p=pathlib.Path("/data/media/ci-write-probe"); p.write_bytes(b"ok"); p.unlink()'
 
       - name: Install backup encryption tool for recovery tests
@@ -128,7 +128,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
-          python-version: '3.12'
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: |
             backend/pyproject.toml
