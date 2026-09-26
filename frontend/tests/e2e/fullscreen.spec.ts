@@ -273,6 +273,64 @@ test('fullscreen control stays visible inside standalone questionnaire flow',asy
   await expect.poll(() => page.evaluate(() => (window as unknown as { __fullscreenCalls:number }).__fullscreenCalls)).toBe(1)
 })
 
+test('Telegram fullscreen safe areas keep native controls separate from app headers', async ({ page }) => {
+  await prepare(page)
+  for (const width of [390, 768, 1280]) {
+    await page.setViewportSize({ width, height: 780 })
+    for (const route of [`/?project=${projectId}`, '/', '/?section=ideas']) {
+      await page.goto(route)
+      await expect(page.locator(route.startsWith('/?project')
+        ? '.questionnaire-shell'
+        : route.includes('ideas') ? '.ideas-page-concept' : '.home-dashboard-page')).toBeVisible()
+      const button = page.getByRole('button', { name: 'Открыть на весь экран' })
+      await expect(button).toBeVisible()
+      // The Telegram bridge updates these CSS variables when native chrome changes.
+      await page.evaluate(() => {
+        const style = document.documentElement.style
+        style.setProperty('--tg-safe-area-inset-top', '24px')
+        style.setProperty('--tg-content-safe-area-inset-top', '44px')
+        style.setProperty('--tg-content-safe-area-inset-right', '20px')
+        style.setProperty('--tg-content-safe-area-inset-left', '18px')
+        style.setProperty('--tg-safe-area-inset-bottom', '16px')
+        const native = document.createElement('div')
+        native.id = 'native-telegram-controls'
+        native.style.cssText = 'position:fixed;top:0;right:0;width:110px;height:68px;z-index:10000'
+        document.body.append(native)
+      })
+      const header = page.locator('.questionnaire-topbar, .topbar, .ideas-concept-topbar').first()
+      const headerBox = (await header.boundingBox())!
+      expect(headerBox.y).toBeGreaterThanOrEqual(68)
+      const control = (await button.boundingBox())!
+      expect(control.y).toBeGreaterThanOrEqual(68)
+      expect(control.x + control.width).toBeLessThanOrEqual(width - 20)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+      const nav = page.getByRole('navigation', { name: 'Основная навигация' })
+      if (await nav.count()) {
+        const navBox = (await nav.boundingBox())!
+        expect(navBox.y + navBox.height).toBeLessThanOrEqual(780 - 16)
+        expect(navBox.x).toBeGreaterThanOrEqual(18)
+        expect(navBox.x + navBox.width).toBeLessThanOrEqual(width - 20)
+      }
+      expect(await button.evaluate(element => {
+        const box = element.getBoundingClientRect()
+        const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)
+        return hit === element || element.contains(hit)
+      })).toBe(true)
+      if (route.startsWith('/?project')) {
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+        expect((await header.boundingBox())!.y).toBeGreaterThanOrEqual(68)
+      }
+      await page.evaluate(() => {
+        document.querySelector('#native-telegram-controls')?.remove()
+        for (const name of ['--tg-safe-area-inset-top', '--tg-safe-area-inset-bottom', '--tg-content-safe-area-inset-top', '--tg-content-safe-area-inset-right', '--tg-content-safe-area-inset-left']) document.documentElement.style.removeProperty(name)
+        window.scrollTo(0, 0)
+      })
+      expect((await header.boundingBox())!.y).toBe(0)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+    }
+  }
+})
+
 
 for (const width of [768, 1024, 1440]) {
   test(`fullscreen control does not overlap header actions at ${width}px`, async ({ page }) => {

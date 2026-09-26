@@ -158,6 +158,13 @@ class GenerationService:
             protected_regions=[
                 item.model_dump(mode="json") for item in payload.protected_regions
             ],
+            edit_policy=dict(getattr(payload, "edit_policy", {}) or {}),
+            quality_status=(
+                "pending"
+                if payload.composition_mode == "masked_edit"
+                and bool(getattr(payload, "edit_policy", {}))
+                else None
+            ),
         )
         self.repository.add(generation)
         try:
@@ -303,6 +310,9 @@ class GenerationService:
             composition_mode=generation.composition_mode,
             edit_region=generation.edit_region,
             protected_regions=generation.protected_regions or [],
+            edit_policy=generation.edit_policy or {},
+            quality_report=generation.quality_report,
+            quality_status=generation.quality_status,
             error=generation.error,
             created_at=generation.created_at,
             updated_at=generation.updated_at,

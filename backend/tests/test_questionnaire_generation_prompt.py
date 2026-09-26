@@ -5,6 +5,7 @@ from app.questionnaires.catalog import build_catalog
 from app.questionnaires.generation_prompt import (
     build_initial_concept_prompt,
     build_questionnaire_generation_prompt,
+    question_is_active,
 )
 from app.schemas.questionnaires import DesignSession
 
@@ -330,3 +331,263 @@ def test_object_removal_prompt_is_explicit_and_drops_design_constraints() -> Non
     }
     assert "Полностью удалить" in spec["refinement_comment"]
     assert "Не применяется при удалении" in spec["inheritance"]
+
+def test_initial_concept_skips_house_garage_branch_when_garage_is_separate_object() -> None:
+    catalog = build_catalog()
+    house = _definition("eskez-doma")
+    session = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma", "garazh"],
+        plot_area_sotkas=10,
+        initial_concept_mode=True,
+        source_step_completed=True,
+        answers={
+            "eskez-doma": {
+                "6": "Да",
+                "6а": "В доме",
+            },
+            "garazh": {"1": "Современный минимализм"},
+        },
+    )
+
+    spec = _spec(build_initial_concept_prompt(catalog, session, input_asset_present=False))
+    house_spec = next(
+        item for item in spec["task"]["objects"] if item["object_key"] == "eskez-doma"
+    )
+    prompt_questions = {
+        item["question"] for item in house_spec["questionnaire_constraints"]
+    }
+    garage_branch_questions = {
+        question["text"]
+        for question in house["questions"]
+        if question["id"] in {"6", "6а", "6б", "6в"}
+    }
+
+    assert prompt_questions.isdisjoint(garage_branch_questions)
+    assert any(item["object_key"] == "garazh" for item in spec["task"]["objects"])
+
+
+def test_initial_concept_hardens_object_identity_and_detached_structures() -> None:
+    catalog = build_catalog()
+    session = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma", "garazh", "lavochka"],
+        plot_area_sotkas=8,
+        initial_concept_mode=True,
+        source_step_completed=True,
+        answers={
+            "eskez-doma": {"1": "Современный минимализм"},
+            "garazh": {
+                "1": "Как у дома",
+                "4": "Ближе к улице, у въезда",
+            },
+            "lavochka": {
+                "1": "Металл + дерево",
+                "2": "Слева от дома",
+            },
+        },
+    )
+
+    spec = _spec(build_initial_concept_prompt(catalog, session, input_asset_present=False))
+    objects = {item["object_key"]: item for item in spec["task"]["objects"]}
+
+    assert objects["garazh"]["visual_identity"] == {
+        "must_be_recognizable_as": "Гараж, отдельный",
+        "substitution_forbidden": True,
+    }
+    assert objects["garazh"]["structural_constraints"] == ["detached_from_house"]
+    assert objects["lavochka"]["visual_identity"] == {
+        "must_be_recognizable_as": "Лавочка",
+        "substitution_forbidden": True,
+    }
+    assert objects["lavochka"]["structural_constraints"] == []
+    assert spec["object_fidelity"]["strength"] == "hard_constraints"
+    assert "замен" in spec["object_fidelity"]["identity_rule"].lower()
+    assert "общая стена" in spec["object_fidelity"]["detached_structure_rule"].lower()
+
+
+def test_house_followup_with_no_available_options_is_inactive() -> None:
+    house = _definition("eskez-doma")
+    questions = {question["id"]: question for question in house["questions"]}
+    non_flat_roof = next(
+        option for option in questions["7"]["options"] if option != "Плоская"
+    )
+    two_floors = next(
+        option for option in questions["4"]["options"] if option.startswith("2 ")
+    )
+    answers = {
+        "4": two_floors,
+        "7": non_flat_roof,
+        "12": next(option for option in questions["12"]["options"] if option != "Нет"),
+        "12б": ["Второй этаж"],
+    }
+
+    assert question_is_active(
+        "eskez-doma",
+        questions["13"],
+        answers,
+        True,
+        ["eskez-doma"],
+    ) is False
+
+
+def test_initial_concept_promotes_object_location_to_explicit_site_layout_constraint() -> None:
+    catalog = build_catalog()
+    bench = _definition("lavochka")
+    location_question = next(
+        question
+        for question in bench["questions"]
+        if "где" in question["text"].lower()
+        or "относительно" in question["text"].lower()
+        or "располож" in question["text"].lower()
+    )
+    location_answer = next(
+        (
+            option
+            for option in location_question["options"]
+            if any(marker in option.lower() for marker in ("сзади", "двор"))
+        ),
+        location_question["options"][0],
+    )
+    session = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma", "lavochka"],
+        plot_area_sotkas=8,
+        initial_concept_mode=True,
+        source_step_completed=True,
+        answers={
+            "eskez-doma": {"1": "Современный минимализм"},
+            "lavochka": {location_question["id"]: location_answer},
+        },
+    )
+
+    spec = _spec(build_initial_concept_prompt(catalog, session, input_asset_present=False))
+
+    assert spec["site_scale"]["plot_area_m2"] == 800
+    assert spec["site_layout"]["strength"] == "hard_constraints"
+    assert {
+        "object_key": "lavochka",
+        "object_name": "Лавочка",
+        "question": location_question["text"],
+        "answer": location_answer,
+    } in spec["site_layout"]["placement_constraints"]
+    assert "располож" in spec["site_layout"]["directive"].lower()
+
+
+
+def test_initial_concept_embeds_deterministic_normalized_site_plan() -> None:
+    catalog = build_catalog()
+    bench = _definition("lavochka")
+    location_question = next(
+        question
+        for question in bench["questions"]
+        if "относительно дома" in question["text"].lower()
+    )
+    right_answer = next(
+        option for option in location_question["options"] if "справа" in option.lower()
+    )
+    session = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma", "lavochka"],
+        plot_area_sotkas=8,
+        initial_concept_mode=True,
+        source_step_completed=True,
+        answers={
+            "eskez-doma": {
+                "1": "Современный минимализм",
+                "3": 200,
+                "4": "2 этажа",
+            },
+            "lavochka": {location_question["id"]: right_answer},
+        },
+    )
+
+    first = _spec(build_initial_concept_prompt(catalog, session, input_asset_present=False))
+    second = _spec(build_initial_concept_prompt(catalog, session, input_asset_present=False))
+
+    assert first["site_plan"] == second["site_plan"]
+    site_plan = first["site_plan"]
+    assert site_plan["schema"] == "auroom.site_plan.v1"
+    assert site_plan["plot"] == {
+        "area_sotkas": 8,
+        "area_m2": 800,
+        "coordinate_system": "normalized",
+        "front_side": "y0",
+        "geometry_accuracy": "relative",
+    }
+
+    objects = {item["object_key"]: item for item in site_plan["objects"]}
+    assert set(objects) == {"eskez-doma", "lavochka"}
+    house = objects["eskez-doma"]
+    bench_item = objects["lavochka"]
+
+    assert house["role"] == "house"
+    assert house["placement_source"] == "derived"
+    assert house["estimated_footprint_m2"] == 100.0
+    assert bench_item["placement_source"] == "questionnaire"
+    assert bench_item["relations"] == ["right_of_house"]
+
+    for item in objects.values():
+        rect = item["rect"]
+        assert 0 <= rect["x"] < 1
+        assert 0 <= rect["y"] < 1
+        assert 0 < rect["width"] <= 1
+        assert 0 < rect["height"] <= 1
+        assert rect["x"] + rect["width"] <= 1
+        assert rect["y"] + rect["height"] <= 1
+
+    house_right = house["rect"]["x"] + house["rect"]["width"]
+    bench_center_x = bench_item["rect"]["x"] + bench_item["rect"]["width"] / 2
+    assert bench_center_x > house_right
+    assert site_plan["warnings"] == []
+
+
+def test_initial_concept_site_plan_keeps_multiple_spatial_relations() -> None:
+    catalog = build_catalog()
+    synthetic_catalog = {
+        **catalog,
+        "questionnaires": [
+            *[
+                definition
+                for definition in catalog["questionnaires"]
+                if definition["key"] != "lavochka"
+            ],
+            {
+                **_definition("lavochka"),
+                "questions": [
+                    {
+                        **question,
+                        "options": ["Справа от дома, у въезда"]
+                        if question["id"] == "2"
+                        else question["options"],
+                    }
+                    for question in _definition("lavochka")["questions"]
+                ],
+            },
+        ],
+    }
+    session = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma", "lavochka"],
+        plot_area_sotkas=8,
+        initial_concept_mode=True,
+        source_step_completed=True,
+        answers={
+            "eskez-doma": {"1": "Современный минимализм"},
+            "lavochka": {"2": "Справа от дома, у въезда"},
+        },
+    )
+
+    spec = _spec(
+        build_initial_concept_prompt(
+            synthetic_catalog,
+            session,
+            input_asset_present=False,
+        )
+    )
+    objects = {item["object_key"]: item for item in spec["site_plan"]["objects"]}
+    bench_item = objects["lavochka"]
+
+    assert bench_item["relations"] == ["right_of_house", "entry_zone"]
+    assert bench_item["zone"] == "entry_right"
+    assert bench_item["rect"]["y"] < objects["eskez-doma"]["rect"]["y"]

@@ -44,4 +44,4 @@ def test_ci_regenerates_and_audits_the_lock() -> None:
 def test_lock_tool_version_is_pinned() -> None:
     pyproject = (REPO_ROOT / 'backend' / 'pyproject.toml').read_text()
     assert 'pip-tools==7.6.1' in pyproject
-    assert 'requires = ["hatchling==1.32.0"]' in pyproject
+    assert 'requires = ["hatchling==1.32.4"]' in pyproject
