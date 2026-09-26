@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
 from time import monotonic
 
 import httpx
@@ -14,6 +15,7 @@ from app.core.resilience import (
     request_with_resilience,
 )
 from app.prompt_builders.image_output import build_image_output_prompt
+from app.prompt_builders.visual_fidelity import build_visual_fidelity_prompt
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +28,13 @@ class NexusProviderError(RuntimeError):
     def __init__(self, message: str, *, retryable: bool) -> None:
         super().__init__(message)
         self.retryable = retryable
+
+
+class NexusOutcomeUnknown(NexusProviderError):
+    """A request may still be billable/running; never permit a fresh purchase."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, retryable=False)
 
 
 class NexusImageProvider:
@@ -61,128 +70,95 @@ class NexusImageProvider:
         idempotency_key: str,
         reference_image_urls: list[str] | None = None,
         timeout_seconds: float | None = None,
+        task_id: str | None = None,
+        on_task_created: Callable[[str], Awaitable[None]] | None = None,
     ) -> NexusImageResult:
-        effective_timeout = (
-            self.timeout_seconds
-            if timeout_seconds is None
-            else min(float(timeout_seconds), float(self.timeout_seconds))
+        create_timeout = self.timeout_seconds if timeout_seconds is None else min(
+            float(timeout_seconds), float(self.timeout_seconds)
         )
-        if effective_timeout <= 0:
+        if create_timeout <= 0:
             raise ValueError("timeout_seconds must be positive")
-        deadline = monotonic() + effective_timeout
-        params = self._build_params(
-            model_name=model_name,
-            prompt=prompt,
-            image_url=image_url,
-            model_params=model_params,
-            reference_image_urls=reference_image_urls,
-        )
-
-        headers = {**self.headers, "Idempotency-Key": idempotency_key}
+        started = monotonic()
+        deadline = started + self.timeout_seconds
         async with httpx.AsyncClient(timeout=self.http_timeout) as client:
-            try:
-                response = await request_with_resilience(
-                    lambda: client.post(
-                        f"{self.base_url}/generate",
-                        headers=headers,
-                        json={"params": params},
-                    ),
-                    dependency="nexus",
-                    operation="create_generation",
-                    breaker=self.breaker,
-                    policy=self.retry_policy,
-                    deadline_monotonic=deadline,
-                )
-            except CircuitOpenError as exc:
-                raise NexusProviderError("Nexus is temporarily unavailable", retryable=False) from exc
-            except (httpx.HTTPError, TimeoutError) as exc:
-                raise NexusProviderError("Nexus generation request failed", retryable=True) from exc
-
-            if response.status_code >= 400:
-                detail = self._safe_error(response)
-                retryable = response.status_code >= 500 or response.status_code in {408, 429}
-                raise NexusProviderError(
-                    f"Nexus create failed ({response.status_code}): {detail}",
-                    retryable=retryable,
-                )
-
-            try:
-                payload = response.json()
-            except ValueError as exc:
-                raise NexusProviderError(
-                    "Nexus returned an invalid create-task response",
-                    retryable=True,
-                ) from exc
-            immediate_url = self._extract_image_url(payload, payload.get("result") or {})
-            task_id = str(payload.get("task_id") or "").strip()
-            if immediate_url:
-                return NexusImageResult(task_id=task_id or "sync", image_url=immediate_url)
             if not task_id:
-                raise NexusProviderError(
-                    "Nexus response did not include task_id or image URL",
-                    retryable=True,
+                params = self._build_params(
+                    model_name=model_name, prompt=prompt, image_url=image_url,
+                    model_params=model_params, reference_image_urls=reference_image_urls,
                 )
-
-            while monotonic() < deadline:
-                await asyncio.sleep(self.poll_interval_seconds)
                 try:
-                    task_response = await request_with_resilience(
-                        lambda: client.get(
-                            f"{self.base_url}/tasks/{task_id}",
-                            headers=self.headers,
+                    response = await request_with_resilience(
+                        lambda: client.post(
+                            f"{self.base_url}/generate",
+                            headers={**self.headers, "Idempotency-Key": idempotency_key},
+                            json={"params": params},
                         ),
-                        dependency="nexus",
-                        operation="poll_generation",
-                        breaker=self.breaker,
-                        policy=self.retry_policy,
-                        deadline_monotonic=deadline,
+                        dependency="nexus", operation="create_generation", breaker=self.breaker,
+                        # Nexus does not document deduplication of POST /generate.
+                        # An ambiguous response is not permission to purchase another image.
+                        policy=RetryPolicy(max_attempts=1),
+                        deadline_monotonic=started + create_timeout,
                     )
                 except CircuitOpenError as exc:
-                    raise NexusProviderError("Nexus is temporarily unavailable", retryable=False) from exc
-                except TimeoutError as exc:
-                    raise NexusProviderError(
-                        f"Nexus polling timed out after {effective_timeout:g}s",
-                        retryable=True,
+                    raise NexusProviderError("Nexus circuit is open", retryable=False) from exc
+                except (httpx.HTTPError, TimeoutError) as exc:
+                    raise NexusOutcomeUnknown(
+                        "Nexus did not confirm generation creation; no duplicate request was sent"
                     ) from exc
-                except httpx.HTTPError as exc:
-                    raise NexusProviderError("Nexus polling failed", retryable=True) from exc
-
-                if task_response.status_code >= 400:
-                    detail = self._safe_error(task_response)
-                    retryable = (
-                        task_response.status_code >= 500
-                        or task_response.status_code in {408, 429}
-                    )
+                if response.status_code == 408 or response.status_code >= 500:
+                    raise NexusOutcomeUnknown("Nexus creation outcome is unknown")
+                if response.status_code >= 400:
                     raise NexusProviderError(
-                        f"Nexus polling failed ({task_response.status_code}): {detail}",
-                        retryable=retryable,
+                        f"Nexus create failed ({response.status_code}): {self._safe_error(response)}",
+                        retryable=False,
                     )
+                payload = self._task_payload(response, "create-task")
+                task_id = str(payload.get("task_id") or "").strip()
+                immediate = self._extract_image_url(payload, payload.get("result") or {})
+                if immediate:
+                    if on_task_created is not None:
+                        await on_task_created(task_id or "sync")
+                    return NexusImageResult(task_id=task_id or "sync", image_url=immediate)
+                if not task_id:
+                    raise NexusOutcomeUnknown("Nexus response did not include task_id or image URL")
+                if on_task_created is not None:
+                    await on_task_created(task_id)
 
+            # Once accepted, use the full task deadline and only GET the same task.
+            # A soft primary timeout must not launch a paid fallback in parallel.
+            while monotonic() < deadline:
                 try:
-                    task = task_response.json()
-                except ValueError as exc:
-                    raise NexusProviderError(
-                        "Nexus returned an invalid task-status response",
-                        retryable=True,
-                    ) from exc
+                    task_response = await request_with_resilience(
+                        lambda: client.get(f"{self.base_url}/tasks/{task_id}", headers=self.headers),
+                        dependency="nexus", operation="poll_generation", breaker=self.breaker,
+                        policy=self.retry_policy, deadline_monotonic=deadline,
+                    )
+                except (CircuitOpenError, httpx.HTTPError, TimeoutError) as exc:
+                    raise NexusOutcomeUnknown("Nexus task status is unknown; no fallback was started") from exc
+                if task_response.status_code >= 400:
+                    raise NexusOutcomeUnknown(f"Nexus polling failed ({task_response.status_code})")
+                task = self._task_payload(task_response, "task-status")
                 status = str(task.get("status") or "").lower()
                 if status == "completed":
-                    result = task.get("result") or {}
-                    image_url_result = self._extract_image_url(task, result)
-                    if not image_url_result:
-                        raise NexusProviderError(
-                            "Nexus task completed without image URL",
-                            retryable=True,
-                        )
-                    return NexusImageResult(task_id=task_id, image_url=image_url_result)
+                    output = self._extract_image_url(task, task.get("result") or {})
+                    if not output:
+                        raise NexusOutcomeUnknown("Nexus task completed without image URL")
+                    return NexusImageResult(task_id=task_id, image_url=output)
                 if status == "failed":
-                    error = task.get("error") or "provider task failed"
-                    raise NexusProviderError(f"Nexus task failed: {error}", retryable=True)
+                    # A terminal failed task is the only safe automatic fallback trigger.
+                    raise NexusProviderError("Nexus task failed", retryable=True)
+                await asyncio.sleep(min(self.poll_interval_seconds, max(0, deadline - monotonic())))
+            raise NexusOutcomeUnknown(f"Nexus task timed out after {self.timeout_seconds:g}s; no fallback was started")
 
-            raise NexusProviderError(
-                f"Nexus task timed out after {effective_timeout:g}s",
-                retryable=True,
-            )
+    @staticmethod
+    def _task_payload(response: httpx.Response, operation: str) -> dict:
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise NexusOutcomeUnknown(f"Nexus returned an invalid {operation} response") from exc
+        if not isinstance(payload, dict):
+            raise NexusOutcomeUnknown(f"Nexus returned an invalid {operation} response")
+        return payload
 
     @staticmethod
     def _build_params(
@@ -202,7 +178,7 @@ class NexusImageProvider:
             if key not in reserved
         }
         params["model_name"] = model_name
-        params["prompt"] = build_image_output_prompt(prompt)
+        params["prompt"] = build_image_output_prompt(build_visual_fidelity_prompt(prompt))
         image_urls = [
             url.strip()
             for url in [image_url, *(reference_image_urls or [])]

@@ -92,42 +92,44 @@ def _boundary_pairs(
     image: Image.Image,
     box: tuple[int, int, int, int],
     band_px: int,
+    side: str,
 ) -> list[tuple[tuple[int, int, int], tuple[int, int, int]]]:
     left, top, right, bottom = box
     distance = max(1, band_px)
     pairs: list[tuple[tuple[int, int, int], tuple[int, int, int]]] = []
 
     for y in range(top, bottom):
-        if left > 0:
+        if left > 0 and side == "left":
             outside_x = max(0, left - distance)
             inside_x = min(right - 1, left + distance - 1)
             pairs.append((image.getpixel((outside_x, y)), image.getpixel((inside_x, y))))
-        if right < image.width:
+        if right < image.width and side == "right":
             outside_x = min(image.width - 1, right + distance - 1)
             inside_x = max(left, right - distance)
             pairs.append((image.getpixel((outside_x, y)), image.getpixel((inside_x, y))))
 
     for x in range(left, right):
-        if top > 0:
+        if top > 0 and side == "top":
             outside_y = max(0, top - distance)
             inside_y = min(bottom - 1, top + distance - 1)
             pairs.append((image.getpixel((x, outside_y)), image.getpixel((x, inside_y))))
-        if bottom < image.height:
+        if bottom < image.height and side == "bottom":
             outside_y = min(image.height - 1, bottom + distance - 1)
             inside_y = max(top, bottom - distance)
             pairs.append((image.getpixel((x, outside_y)), image.getpixel((x, inside_y))))
     return pairs
 
 
-def _boundary_metrics(
+def _edge_metrics(
     base: Image.Image,
     final: Image.Image,
     box: tuple[int, int, int, int],
     band_px: int,
     max_luma_excess: float,
+    side: str,
 ) -> tuple[float, float, float]:
-    base_pairs = _boundary_pairs(base, box, band_px)
-    final_pairs = _boundary_pairs(final, box, band_px)
+    base_pairs = _boundary_pairs(base, box, band_px, side)
+    final_pairs = _boundary_pairs(final, box, band_px, side)
     if not final_pairs:
         return 0.0, 0.0, 0.0
 
@@ -176,12 +178,13 @@ def analyze_masked_edit_quality(
 
     box = _rect_box(edit_region, base.width, base.height)
     changed_outside = _outside_change_count(base, final, box)
-    luma_excess, color_excess, straight_fraction = _boundary_metrics(
-        base,
-        final,
-        box,
-        max(1, int(boundary_band_px)),
-        max_luma_excess,
+    # A single cropped wall must not be diluted by three intact boundaries.
+    edges = [
+        _edge_metrics(base, final, box, max(1, int(boundary_band_px)), max_luma_excess, side)
+        for side in ("left", "right", "top", "bottom")
+    ]
+    luma_excess, color_excess, straight_fraction = (
+        max(values) for values in zip(*edges, strict=True)
     )
     outside_passed = changed_outside == 0
     boundary_passed = (

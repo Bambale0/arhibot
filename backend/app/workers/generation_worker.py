@@ -5,7 +5,7 @@ import ipaddress
 import logging
 import socket
 from datetime import UTC, datetime, timedelta
-from json import JSONDecodeError, loads
+from json import JSONDecodeError, dumps, loads
 from urllib.parse import urljoin, urlsplit
 from uuid import UUID, uuid4
 
@@ -36,7 +36,7 @@ from app.image_quality import analyze_masked_edit_quality
 from app.image_flyover import FlyoverGif, build_flyover_gif
 from app.image_orbit import build_orbit_animation
 from app.prompt_builders.generation import build_generation_prompt
-from app.providers.nexus import NexusImageProvider, NexusProviderError
+from app.providers.nexus import NexusImageProvider, NexusImageResult, NexusProviderError, NexusOutcomeUnknown
 from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
 from app.repositories.generations import GenerationRepository
@@ -66,15 +66,22 @@ MASKED_EDIT_GUIDE_PROMPT = (
     "Reference image 2 is a pixel-aligned binary edit guide for reference image 1: "
     "white pixels are the only area allowed to change; black pixels are locked and "
     "must remain visually unchanged. Make the requested edit only inside the white "
-    "area. At the white/black boundary, preserve continuous geometry, perspective, "
+    "area. The entire added object, including its roof, chimney, overhangs, ground contact "
+    "and shadows, must fit comfortably INSIDE that white area. Never crop a structure "
+    "at a mask boundary or place any part of it into locked pixels. At the white/black boundary, preserve continuous geometry, perspective, "
     "materials, paving, rooflines, wall edges, vegetation and lighting so the edit "
     "joins the locked scene naturally. The binary guide is an instruction map only: "
     "never render its black/white colors, rectangle edges, or mask markings in the output."
 )
 
 
-def _masked_edit_provider_prompt(prompt: str) -> str:
-    return f"{prompt}\n\n{MASKED_EDIT_GUIDE_PROMPT}"
+def _masked_edit_provider_prompt(prompt: str, context_region: dict | None = None) -> str:
+    context = (
+        "\nRead neighboring lighting, materials and edges from this normalized context rectangle: "
+        + dumps(context_region) + ". This context is NOT permission to edit; only the white guide pixels may change."
+        if context_region is not None else ""
+    )
+    return f"{prompt}\n\n{MASKED_EDIT_GUIDE_PROMPT}{context}"
 
 
 class GenerationQualityRejected(RuntimeError):
@@ -542,6 +549,58 @@ async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -
         await session.commit()
 
 
+async def _generate_checkpointed(
+    provider: NexusImageProvider, generation_id: UUID, *, attempt: int, phase: str,
+    model_name: str, prompt: str, source_url: str | None, params: dict[str, object],
+    reference_image_urls: list[str] | None, timeout_seconds: float | None,
+) -> NexusImageResult:
+    """Persist submission intent before POST; persist accepted ID before polling.
+
+    A lost create response cannot safely be retried (Nexus has no documented
+    idempotency contract). A recovered accepted request resumes GET of its ID.
+    """
+    key = f"auroom-{generation_id}-{phase}" if attempt == 0 else f"auroom-{generation_id}-quality-{attempt}-{phase}"
+    resume_id = None
+    async with get_session_factory()() as db:
+        row = await GenerationRepository(db).get_for_update(generation_id)
+        if row is None or row.status != GenerationStatus.PROCESSING:
+            raise NexusProviderError("Generation is no longer processing", retryable=False)
+        previous = (row.quality_report or {}).get("provider_request", {})
+        if previous.get("key") == key:
+            resume_id = previous.get("task_id")
+            if not resume_id or resume_id == "sync":
+                raise NexusOutcomeUnknown("Previous Nexus submission could not be reconciled; no duplicate was sent")
+            model_name = previous["model"]
+        else:
+            row.quality_report = {**(row.quality_report or {}), "provider_request": {
+                "key": key, "attempt": attempt, "phase": phase, "model": model_name,
+                "state": "submitting", "task_id": None,
+            }}
+            await db.commit()
+
+    async def accepted(task_id: str) -> None:
+        try:
+            async with get_session_factory()() as db:
+                row = await GenerationRepository(db).get_for_update(generation_id)
+                if row is None or row.status != GenerationStatus.PROCESSING:
+                    raise NexusProviderError("Generation stopped after provider acceptance", retryable=False)
+                row.provider_task_id = task_id
+                row.model_name = model_name
+                row.quality_report = {**(row.quality_report or {}), "provider_request": {
+                    "key": key, "attempt": attempt, "phase": phase, "model": model_name,
+                    "state": "accepted", "task_id": task_id,
+                }}
+                await db.commit()
+        except Exception as exc:
+            raise NexusOutcomeUnknown("Could not persist accepted provider task; do not resubmit") from exc
+
+    return await provider.generate(
+        model_name=model_name, prompt=prompt, image_url=source_url, model_params=params,
+        idempotency_key=key, reference_image_urls=reference_image_urls,
+        timeout_seconds=timeout_seconds, task_id=resume_id, on_task_created=accepted,
+    )
+
+
 async def process_generation(generation_id: UUID, settings: Settings) -> None:
     async with get_session_factory()() as session:
         generation = await GenerationRepository(session).get_for_update(generation_id)
@@ -709,6 +768,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             primary_model = runtime.primary_model
             fallback_model = runtime.fallback_model
             primary_timeout_seconds = runtime.primary_timeout_seconds
+        provider_checkpoint = (generation.quality_report or {}).get("provider_request", {})
         composition_mode = generation.composition_mode
         edit_region = dict(generation.edit_region) if generation.edit_region else None
         protected_regions = list(generation.protected_regions or [])
@@ -757,7 +817,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             guide_data = await asyncio.to_thread(
                 build_edit_reference_guide,
                 base_data=masked_base_data,
-                edit_region=provider_work_region,
+                edit_region=edit_region,
                 protected_regions=protected_regions,
                 max_pixels=settings.max_image_pixels,
             )
@@ -772,7 +832,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     ),
                 )
             ]
-            prompt = _masked_edit_provider_prompt(prompt)
+            prompt = _masked_edit_provider_prompt(prompt, provider_work_region)
             logger.info(
                 "Generation %s masked edit policy=%s intent=%s commit_region=%s "
                 "provider_work_region=%s protected_regions=%s quality_gate=%s",
@@ -844,7 +904,8 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             quality_attempts: list[dict[str, object]] = []
             previous_failure: dict[str, object] | None = None
             base_provider_prompt = prompt
-            for quality_attempt in range(max_quality_retries + 1):
+            resume_attempt = int(provider_checkpoint.get("attempt", 0))
+            for quality_attempt in range(resume_attempt, max(max_quality_retries, resume_attempt) + 1):
                 if quality_attempt > 0:
                     record_masked_edit_retry()
                 attempt_prompt = (
@@ -852,49 +913,40 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     if quality_attempt == 0 or previous_failure is None
                     else _quality_retry_prompt(base_provider_prompt, previous_failure)
                 )
-                attempt_suffix = (
-                    "primary"
-                    if quality_attempt == 0
-                    else f"quality-{quality_attempt}-primary"
+                resume_fallback = (
+                    quality_attempt == resume_attempt and provider_checkpoint.get("phase") == "fallback"
                 )
-                attempt_fallback_suffix = (
-                    "fallback"
-                    if quality_attempt == 0
-                    else f"quality-{quality_attempt}-fallback"
-                )
-                model_name = primary_model
+                model_name = str(provider_checkpoint.get("model") or primary_model) if quality_attempt == resume_attempt else primary_model
+                fallback_used = fallback_used or resume_fallback
                 try:
-                    result = await provider.generate(
-                        model_name=model_name,
-                        prompt=attempt_prompt,
-                        image_url=source_url,
-                        model_params=primary_params,
-                        idempotency_key=f"auroom-{generation_id}-{attempt_suffix}",
+                    result = await _generate_checkpointed(
+                        provider, generation_id, attempt=quality_attempt,
+                        phase="fallback" if resume_fallback else "primary",
+                        model_name=model_name, prompt=attempt_prompt, source_url=source_url,
+                        params=fallback_params if resume_fallback else primary_params,
                         reference_image_urls=reference_image_urls,
-                        timeout_seconds=primary_timeout_seconds,
+                        timeout_seconds=None if resume_fallback else primary_timeout_seconds,
                     )
                 except NexusProviderError as primary_error:
-                    if not primary_error.retryable or not fallback_model:
+                    if not primary_error.retryable or not fallback_model or resume_fallback:
                         raise
                     logger.warning(
-                        "Primary Nexus model failed for %s attempt=%s; using admin-configured "
-                        "fallback: %s",
-                        generation_id,
-                        quality_attempt + 1,
-                        primary_error,
+                        "Primary Nexus task failed for %s attempt=%s; using configured fallback",
+                        generation_id, quality_attempt + 1,
                     )
                     model_name = fallback_model
                     fallback_used = True
-                    result = await provider.generate(
-                        model_name=model_name,
-                        prompt=attempt_prompt,
-                        image_url=source_url,
-                        model_params=fallback_params,
-                        idempotency_key=f"auroom-{generation_id}-{attempt_fallback_suffix}",
-                        reference_image_urls=reference_image_urls,
+                    result = await _generate_checkpointed(
+                        provider, generation_id, attempt=quality_attempt, phase="fallback",
+                        model_name=model_name, prompt=attempt_prompt, source_url=source_url,
+                        params=fallback_params, reference_image_urls=reference_image_urls,
+                        timeout_seconds=None,
                     )
                 provider_task_id = result.task_id
-                candidate_data = await _download_image(result.image_url, settings)
+                try:
+                    candidate_data = await _download_image(result.image_url, settings)
+                except httpx.HTTPError as exc:
+                    raise NexusOutcomeUnknown("Provider output download interrupted; resume existing task") from exc
 
                 if composition_mode != "masked_edit":
                     data = candidate_data
@@ -1023,6 +1075,9 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         "version": "edit-quality.v1",
                         "attempts": quality_attempts,
                         "provider_work_region": provider_work_region,
+                        "provider_edit_region": edit_region,
+                        "semantic_verification": "not_performed",
+                        "boundary_metric_scope": "worst_individual_edge",
                         "enforced_checks": list(
                             edit_policy.get("enforced_quality_checks")
                             or ("outside_region_integrity", "boundary_continuity")
@@ -1067,6 +1122,9 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         "version": "edit-quality.v1",
                         "attempts": quality_attempts,
                         "provider_work_region": provider_work_region,
+                        "provider_edit_region": edit_region,
+                        "semantic_verification": "not_performed",
+                        "boundary_metric_scope": "worst_individual_edge",
                         "enforced_checks": list(
                             edit_policy.get("enforced_quality_checks")
                             or ("outside_region_integrity", "boundary_continuity")
@@ -1148,6 +1206,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             if quality_report is not None:
                 generation.quality_report = quality_report
                 generation.quality_status = "passed"
+            if generation.quality_report:
+                generation.quality_report = {
+                    key: value for key, value in generation.quality_report.items()
+                    if key != "requires_reconciliation"
+                }
             generation.status = GenerationStatus.COMPLETED
             generation.error = None
             generation.completed_at = datetime.now(UTC)
@@ -1165,6 +1228,19 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 " (orbit loop)" if orbit_request is not None else "",
                 " (bird flyover GIF)" if flyover_request is not None else "",
             )
+    except NexusOutcomeUnknown:
+        logger.warning("Generation %s awaits provider reconciliation; no resubmission or refund", generation_id)
+        async with get_session_factory()() as session:
+            generation = await GenerationRepository(session).get_for_update(generation_id)
+            if generation is not None and generation.status == GenerationStatus.PROCESSING:
+                generation.quality_report = {
+                    **(generation.quality_report or {}), "requires_reconciliation": True,
+                }
+                generation.error = (
+                    "Ожидаем подтверждение результата от сервиса генерации. "
+                    "Повторный платный запуск заблокирован; текущая задача сохранена."
+                )
+                await session.commit()
     except Exception as exc:
         logger.exception("Generation %s failed", generation_id)
         await _mark_failed_and_refund(generation_id, exc)
@@ -1209,6 +1285,13 @@ async def _reconcile_database_jobs(settings: Settings) -> None:
             if raw_id in redis_ids:
                 continue
             if generation.status == GenerationStatus.PROCESSING:
+                checkpoint = (generation.quality_report or {}).get("provider_request", {})
+                if (generation.quality_report or {}).get("requires_reconciliation") and (
+                    not checkpoint.get("task_id") or checkpoint.get("task_id") == "sync"
+                ):
+                    # No documented lookup-by-idempotency-key API. Operator must
+                    # confirm provider outcome; never turn ambiguity into another POST.
+                    continue
                 if generation.started_at is not None and generation.started_at > stale_before:
                     continue
                 generation.status = GenerationStatus.QUEUED

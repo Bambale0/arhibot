@@ -85,3 +85,16 @@ def test_quality_gate_rejects_color_temperature_rectangle_with_similar_luma() ->
     assert report.passed is False
     assert report.boundary_luma_excess < 10.0
     assert report.boundary_color_excess > 20.0
+
+
+def test_quality_gate_rejects_one_clipped_side_hidden_by_other_three() -> None:
+    base = Image.new('RGB', (160, 120), (60, 80, 60))
+    final = base.copy()
+    ImageDraw.Draw(final).rectangle((90, 37, 119, 82), fill=(180, 180, 160))
+    report = analyze_masked_edit_quality(
+        base_data=_png(base), final_data=_png(final),
+        edit_region={'x': .25, 'y': .25, 'width': .5, 'height': .5},
+        boundary_band_px=3, max_luma_excess=35,
+        max_color_excess=80, max_straight_edge_fraction=.65,
+    )
+    assert not report.passed, 'One cropped wall must not be averaged away by three good sides'

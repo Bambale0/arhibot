@@ -820,7 +820,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       }
     }
     if (['queued','processing'].includes(currentGeneration.status)) {
-      throw new Error('Генерация всё ещё выполняется. Результат сохранён — откройте проект чуть позже.')
+      throw new Error(currentGeneration.error || 'Генерация ещё выполняется. Задача сохранена — проверьте результат чуть позже.')
     }
     if (currentGeneration.status !== 'completed' || !currentGeneration.output_asset) {
       throw new Error(currentGeneration.error || 'Генерация не завершилась')
@@ -1336,7 +1336,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     </main>
   }
 
-  if ((busy || generationInFlight) && !active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card generating-card"><SparkIcon/><h1>Создаём: {current.title}</h1><p>Сохраняем текущую сцену, ракурс и уже принятые объекты.</p>{error && <div className="banner-error">{error}</div>}</section></main>
+  if ((busy || generationInFlight) && !active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card generating-card"><SparkIcon/><h1>{session.pending_removal_object === current.key ? 'Удаляем' : 'Создаём'}: {current.title}</h1><p>Сохраняем текущую сцену, ракурс и уже принятые объекты.</p>{error && <div className="banner-error">{error}</div>}</section></main>
 
   if (!active) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>{current.title}</h1><p>{currentGenerationId ? 'Генерация не завершена. Можно безопасно проверить текущую задачу и повторить только если она действительно завершилась ошибкой.' : 'Ответы сохранены. Можно проверить состояние и повторить запуск.'}</p>{error && <div className="banner-error">{error}</div>}<div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void (uncertainCreation ? checkUncertainCreation() : resumeOrRetryGeneration())}>{uncertainCreation ? 'Проверить запуск' : currentGenerationId ? 'Проверить генерацию' : 'Повторить запуск'}</button></div></section></main>
 
@@ -1357,7 +1357,9 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     && (active.min_value == null || numericDraft >= active.min_value)
     && (active.max_value == null || numericDraft <= active.max_value)
   const customDraftValid = Boolean(draft.trim()) && (!customInputIsNumber || numericDraftValid)
-  const activeTitle = active.text
+  const activeTitle = review && session.pending_removal_object === current.key
+    ? `Объект «${current.title}» удалён правильно?`
+    : active.text
   const textPlaceholder = active.placeholder || undefined
 
   return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={() => void previousQuestion()}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><div className="questionnaire-layout"><aside className="questionnaire-progress"><span className="eyebrow">ВЫБРАНО</span>{session.selected_objects.map((key, index) => <div key={key} className={`questionnaire-progress-item ${session.accepted_objects.includes(key) ? 'done' : key === current.key ? 'current' : ''}`}><b>{session.accepted_objects.includes(key) ? '✓' : index + 1}</b><span>{definitions.get(key)?.title || key}</span></div>)}<div className={`questionnaire-progress-item ${current.key === 'zayavka' ? 'current' : ''}`}><b>✓</b><span>Заявка</span></div>{sourceAsset && <div className="questionnaire-source-mini"><ImageIcon/><span>Фото участка загружено</span></div>}</aside><section className="questionnaire-card question-card"><div className="questionnaire-question-head"><div><span className="eyebrow">{active.phase === 'application' ? 'ЗАЯВКА' : review ? 'ОЦЕНКА ЭСКИЗА' : current.title.toUpperCase()}</span><h1>{activeTitle}</h1></div>{canSkip && <span className="optional-badge">можно пропустить</span>}</div>{review && renderOutput && <div className="questionnaire-result"><ResultImage url={renderOutput.url} alt={`Эскиз ${current.title}`}/></div>}

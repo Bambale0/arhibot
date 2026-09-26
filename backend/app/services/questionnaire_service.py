@@ -1217,6 +1217,15 @@ class QuestionnaireService:
         previous: DesignSession | None = None,
     ) -> None:
         if previous is not None:
+            if previous.initial_generation_id is not None and payload.initial_generation_id != previous.initial_generation_id:
+                initial = await self.generations.get_owned(previous.initial_generation_id, user.id)
+                if initial is not None and initial.status in {GenerationStatus.QUEUED, GenerationStatus.PROCESSING}:
+                    raise AppError(
+                        type="questionnaire_generation_state_changed",
+                        title="Генерация уже выполняется",
+                        status=409,
+                        detail="Проверьте текущую генерацию перед новым запуском.",
+                    )
             for key, previous_id in previous.generation_ids.items():
                 if payload.generation_ids.get(key) == previous_id:
                     continue

@@ -314,6 +314,26 @@ async def test_initial_concept_pricing_uses_control_plane_for_regular_user() -> 
         assert stored.status_code == 200, stored.text
         retry_session = stored.json()["session"]
         retry_session["initial_generation_id"] = None
+        for pending_status in (GenerationStatus.QUEUED, GenerationStatus.PROCESSING):
+            async with get_session_factory()() as db:
+                pending = await db.get(Generation, UUID(body["id"]))
+                pending.status = pending_status
+                pending.quality_report = {"requires_reconciliation": True}
+                await db.commit()
+            blocked = await client.put(
+                f"/api/v1/projects/{project_id}/questionnaire-session",
+                headers=headers, json=retry_session,
+            )
+            assert blocked.status_code == 409, blocked.text
+            duplicate = await client.post(
+                f"/api/v1/projects/{project_id}/questionnaire-generation", headers=headers,
+            )
+            assert duplicate.status_code in (409, 422), duplicate.text
+            assert (await client.get("/api/v1/me", headers=headers)).json()["credits_balance"] == 18
+        async with get_session_factory()() as db:
+            pending = await db.get(Generation, UUID(body["id"]))
+            pending.status = GenerationStatus.FAILED
+            await db.commit()
         reopened = await client.put(
             f"/api/v1/projects/{project_id}/questionnaire-session",
             headers=headers,
