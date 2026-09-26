@@ -61,7 +61,10 @@ jobs:
         run: |
           set -Eeuo pipefail
           remote="${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}"
-          ssh -p "${DEPLOY_SSH_PORT}" "${remote}" bash -s -- "${DEPLOY_APP_DIR}" <<'REMOTE'
+          # Keep the script on fd 3: Compose exec attaches stdin even with -T
+          # and otherwise consumes the remaining checks from an SSH heredoc.
+          # Commands needing input provide their own explicit heredoc below.
+          ssh -p "${DEPLOY_SSH_PORT}" "${remote}" "bash /dev/fd/3 '${DEPLOY_APP_DIR}' 3<&0 </dev/null" <<'REMOTE'
           set -Eeuo pipefail
           app_dir=$1
           cd "${app_dir}/backend"
@@ -96,18 +99,18 @@ jobs:
           curl -fsS http://127.0.0.1:18080/ | grep -q '<div id="root"></div>'
 
           # Prove the trusted host-proxy client IP survives the inner Nginx hop.
-          # The auth limiter hashes request_identity(), so one synthetic request
+          # Login hashes login-ip:request_identity(), so one synthetic request
           # must increment exactly the bucket for the supplied X-Real-IP value.
           seconds=$(date +%S)
           if (( 10#${seconds} >= 55 )); then sleep 6; fi
           probe_ip="198.51.100.77"
-          probe_digest=$(printf '%s' "${probe_ip}" | sha256sum | cut -c1-24)
+          probe_digest=$(printf '%s' "login-ip:${probe_ip}" | sha256sum | cut -c1-24)
           probe_bucket=$(python3 -c 'import time; print(int(time.time() // 60))')
           probe_key="auroom:rate:auth:${probe_digest}:${probe_bucket}"
           before_raw=$("${compose[@]}" exec -T redis sh -lc 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --raw GET "$1"' sh "${probe_key}" 2>/dev/null || true)
           before=${before_raw:-0}
           [[ "${before}" =~ ^[0-9]+$ ]] || before=0
-          probe_status=$(curl -sS -o /dev/null -w '%{http_code}'             -H "X-Real-IP: ${probe_ip}"             -H 'Content-Type: application/json'             --data '{"email":"proxy-probe@example.invalid","password":"not-a-real-password"}'             http://127.0.0.1:18080/api/v1/auth/login)
+          probe_status=$(curl -sS -o /dev/null -w '%{http_code}'             -H "X-Real-IP: ${probe_ip}"             -H 'Content-Type: application/json'             --data '{"email":"proxy-probe@example.com","password":"not-a-real-password"}'             http://127.0.0.1:18080/api/v1/auth/login)
           [[ "${probe_status}" == "401" || "${probe_status}" == "429" ]] || {
             echo "Unexpected auth probe status: ${probe_status}" >&2
             exit 1
