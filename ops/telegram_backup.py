@@ -20,7 +20,8 @@ import urllib.parse
 import urllib.request
 import uuid
 
-from backup_manifest import digest, verify
+from backup_manifest import digest, verify, write_manifest
+import telegram_media as media_archives
 
 CHUNK_SIZE = 19_000_000  # Below Telegram getFile's 20 MB download limit.
 API = 'https://api.telegram.org'
@@ -146,8 +147,9 @@ def prepare(snapshot: Path, recipient: str) -> tuple[Path, dict]:
     return state_dir, state
 
 
-def pack_component(snapshot: Path, recipient: str, directory: Path, kind: str, names: tuple[str, ...]) -> dict:
+def pack_component(snapshot: Path, recipient: str, directory: Path, kind: str, names: tuple[str, ...], *, snapshot_name: str | None = None) -> dict:
     """Each component can be restored without any earlier local snapshot."""
+    label = snapshot_name or snapshot.name
     parts = []
     with tempfile.TemporaryDirectory(prefix='auroom-component-') as temp:
         archive = Path(temp) / 'component.tar'
@@ -159,12 +161,12 @@ def pack_component(snapshot: Path, recipient: str, directory: Path, kind: str, n
             check=True, capture_output=True)
         with encrypted.open('rb') as stream:
             while block := stream.read(CHUNK_SIZE):
-                name = f'{snapshot.name}.{kind}.tar.age.part{len(parts):04d}'
+                name = f'{label}.{kind}.tar.age.part{len(parts):04d}'
                 local = directory / name
                 local.write_bytes(block)
                 local.chmod(0o600)
                 parts.append({'name': name, 'size': len(block), 'sha256': hashlib.sha256(block).hexdigest()})
-    return {'kind': kind, 'snapshot': snapshot.name, 'parts': parts}
+    return {'kind': kind, 'snapshot': label, 'parts': parts}
 
 
 def reusable_media(snapshot: Path, recipient: str, admin_ids: list[int], media_hash: str) -> dict | None:
@@ -228,6 +230,133 @@ def prepare_v2(snapshot: Path, recipient: str, admin_ids: list[int]) -> tuple[Pa
     return directory, state
 
 
+def media_components(state: dict) -> list[dict]:
+    if state['version'] == 1:
+        return []
+    if state['version'] == 2:
+        return [state['media']]
+    media = state['media']
+    if not isinstance(media, dict):
+        raise ValueError('Invalid incremental media descriptor')
+    base, deltas = media.get('base'), media.get('deltas')
+    validate_component(base)
+    if base['kind'] not in ('media', 'legacy-v1-bundle') or not isinstance(deltas, list) or len(deltas) > media_archives.MAX_DELTAS:
+        raise ValueError('Invalid incremental media components')
+    if base['snapshot'] > state['snapshot'] or not isinstance(base.get('sha256'), str) or not re.fullmatch(r'[0-9a-f]{64}', base['sha256']):
+        raise ValueError('Invalid incremental baseline')
+    last = base['snapshot']
+    for delta in deltas:
+        validate_component(delta)
+        if delta['kind'] != 'media-delta' or not last < delta['snapshot'] <= state['snapshot']:
+            raise ValueError('Invalid incremental media order')
+        last = delta['snapshot']
+    return [base, *deltas]
+
+
+def incremental_source(snapshot: Path, recipient: str, admin_ids: list[int]) -> tuple[dict, dict] | None:
+    for previous in sorted(snapshot.parent.iterdir(), reverse=True):
+        if previous.name >= snapshot.name or previous.is_symlink() or not re.fullmatch(r'\d{8}T\d{6}Z', previous.name):
+            continue
+        state_file = previous / '.telegram/delivery.json'
+        if not (previous / 'OFFSITE_OK').is_file() or not state_file.is_file() or state_file.is_symlink():
+            continue
+        try:
+            state = json.loads(state_file.read_text())
+            if not isinstance(state, dict) or state.get('version') not in (1, 2, 3) or state.get('recipient') != recipient:
+                continue
+            verify(previous)
+            if state['version'] == 1:
+                base = {'kind': 'legacy-v1-bundle', 'snapshot': state['snapshot'],
+                        'parts': state['parts'], 'sha256': digest(previous / 'media.tar.gz')}
+                components = [base]
+            else:
+                components = media_components(state)
+            if not all(p.get('file_id') and p.get('verified') and set(admin_ids).issubset(p.get('sent_to', []))
+                       for component in components for p in component['parts']):
+                continue
+            old_index = media_archives.inventory(previous / 'media.tar.gz')
+            if state['version'] == 3:
+                baseline = state['baseline_index']
+                media_archives.validate_index(baseline)
+                media = copy.deepcopy(state['media'])
+            else:
+                baseline = old_index
+                media = {'base': copy.deepcopy(components[0]), 'deltas': []}
+            # The complete descriptor and baseline index travel with every new
+            # snapshot; local retention never creates a recursive dependency.
+            return {'media': media, 'baseline_index': baseline}, old_index
+        except (ValueError, KeyError, TypeError, OSError, tarfile.TarError):
+            continue
+    return None
+
+
+def prepare_incremental(snapshot: Path, recipient: str, admin_ids: list[int]) -> tuple[Path, dict]:
+    verify(snapshot)
+    if not re.fullmatch(r'\d{8}T\d{6}Z', snapshot.name):
+        raise ValueError('Snapshot name must be a UTC timestamp')
+    directory = snapshot / '.telegram'
+    state_file = directory / 'delivery.json'
+    if state_file.exists():
+        directory, state = prepare(snapshot, recipient)
+        if state.get('version') not in (1, 2, 3):
+            raise ValueError('Unsupported backup delivery state')
+        if state['version'] != 1 and state.get('checksums_sha256') != digest(snapshot / 'SHA256SUMS'):
+            raise ValueError('Snapshot changed during an incomplete backup export')
+        if state['version'] == 3:
+            media_components(state)
+        return directory, state
+    source = incremental_source(snapshot, recipient, admin_ids)
+    if source is None:
+        return prepare_v2(snapshot, recipient, admin_ids)
+    directory.mkdir(mode=0o700, exist_ok=True)
+    original_checksums = digest(snapshot / 'SHA256SUMS')
+    try:
+        current_index = media_archives.inventory(snapshot / 'media.tar.gz')
+    except tarfile.ReadError:
+        # Historical v1/v2 transport accepts opaque archives; preserve that
+        # compatibility rather than reinterpret their payload as a delta.
+        return prepare_v2(snapshot, recipient, admin_ids)
+    state, previous_index = source
+    media = state['media']
+    changed = media_archives.changed_files(current_index, previous_index)
+    if changed and len(media['deltas']) >= media_archives.MAX_DELTAS:
+        # Compact only the overlay. The large verified baseline is never resent
+        # merely because many tiny daily changes reached the chain bound.
+        changed = media_archives.changed_files(current_index, state['baseline_index'])
+        media['deltas'] = []
+    if changed:
+        delta = directory / 'media-delta.tar.gz'
+        media_archives.make_delta(snapshot / 'media.tar.gz', delta, current_index, changed)
+        media['deltas'].append(pack_component(directory, recipient, directory, 'media-delta', ('media-delta.tar.gz',), snapshot_name=snapshot.name))
+        delta.unlink()
+    index = {'version': 1, 'files': current_index, 'baseline_files': state['baseline_index'],
+             'database_sha256': digest(snapshot / 'postgres.dump'),
+             'source_media_sha256': digest(snapshot / 'media.tar.gz')}
+    save_json(directory / 'media-index.json', index)
+    if (directory / 'media-index.json').stat().st_size > 64 * 1024 * 1024:
+        raise ValueError('Incremental media index exceeds recovery limit')
+    with tempfile.TemporaryDirectory(prefix='auroom-database-index-') as temporary:
+        payload = Path(temporary) / snapshot.name
+        payload.mkdir()
+        for name in ('postgres.dump', 'SHA256SUMS'):
+            shutil.copyfile(snapshot / name, payload / name)
+        shutil.copyfile(directory / 'media-index.json', payload / 'media-index.json')
+        database = pack_component(payload, recipient, directory, 'database-v3',
+                                  ('postgres.dump', 'SHA256SUMS', 'media-index.json'))
+    verify(snapshot)
+    if digest(snapshot / 'SHA256SUMS') != original_checksums or media_archives.inventory(snapshot / 'media.tar.gz') != current_index:
+        raise ValueError('Snapshot changed during incremental preparation')
+    for component in [media['base'], *media['deltas']]:
+        for part in component['parts']:
+            if part.get('file_id'):
+                part['verified'] = False
+    state.update(version=3, snapshot=snapshot.name, recipient=recipient,
+                 checksums_sha256=original_checksums, parts=database['parts'], deliveries={},
+                 index_sha256=digest(directory / 'media-index.json'))
+    save_json(state_file, state)
+    return directory, state
+
+
 def public_parts(parts: list[dict]) -> list[dict]:
     return [{key: part[key] for key in ('name', 'size', 'sha256', 'file_id')} for part in parts]
 
@@ -235,8 +364,8 @@ def public_parts(parts: list[dict]) -> list[dict]:
 def export(snapshot: Path, recipient: str, telegram: Telegram, admin_ids: list[int]) -> None:
     if not admin_ids or any(value <= 0 for value in admin_ids):
         raise ValueError('Backup delivery requires explicit private administrator chat IDs')
-    directory, state = prepare_v2(snapshot, recipient, admin_ids)
-    parts = state['parts'] + (state['media']['parts'] if state['version'] == 2 else [])
+    directory, state = prepare_incremental(snapshot, recipient, admin_ids)
+    parts = state['parts'] + [part for component in media_components(state) for part in component['parts']]
     for part in parts:
         local = directory / part['name']
         if not part.get('file_id'):
@@ -263,10 +392,18 @@ def export(snapshot: Path, recipient: str, telegram: Telegram, admin_ids: list[i
     if state['version'] == 2:
         manifest['media'] = {key: state['media'][key] for key in ('kind', 'snapshot', 'sha256')}
         manifest['media']['parts'] = public_parts(state['media']['parts'])
+    if state['version'] == 3:
+        manifest['media'] = {
+            'base': {**{key: state['media']['base'][key] for key in ('kind', 'snapshot', 'sha256')},
+                     'parts': public_parts(state['media']['base']['parts'])},
+            'deltas': [{**{key: component[key] for key in ('kind', 'snapshot')},
+                        'parts': public_parts(component['parts'])} for component in state['media']['deltas']],
+        }
+        manifest['index_sha256'] = state['index_sha256']
     manifest_path = directory / f'{snapshot.name}.manifest.json'
     save_json(manifest_path, manifest)
     manifest_caption = f'AuRoom: копия {snapshot.name} полностью загружена и проверена. Сохраните manifest и все части; для восстановления нужен отдельный ключ age.'
-    if state['version'] == 2:
+    if state['version'] in (2, 3):
         manifest_caption += ' Части медиа могут быть из предыдущих копий: они перечислены в manifest и нужны для восстановления.'
     for chat_id in admin_ids:
         if not isinstance(state['deliveries'].get(str(chat_id)), dict):
@@ -292,7 +429,7 @@ def validate_component(component: dict) -> None:
     kind = component.get('kind')
     snapshot = component.get('snapshot', '')
     parts = component.get('parts')
-    if kind not in ('legacy-v1-bundle', 'database', 'media') or not isinstance(snapshot, str) or not re.fullmatch(r'\d{8}T\d{6}Z', snapshot):
+    if kind not in ('legacy-v1-bundle', 'database', 'media', 'database-v3', 'media-delta') or not isinstance(snapshot, str) or not re.fullmatch(r'\d{8}T\d{6}Z', snapshot):
         raise ValueError('Unsupported backup component')
     if not isinstance(parts, list) or not parts or len(parts) > 10000:
         raise ValueError('Unsupported backup manifest')
@@ -337,6 +474,8 @@ def recover_component(component: dict, target: Path, identity: Path, telegram: T
                 'legacy-v1-bundle': {'postgres.dump', 'media.tar.gz', 'SHA256SUMS'},
                 'database': {'postgres.dump', 'SHA256SUMS'},
                 'media': {'media.tar.gz'},
+                'media-delta': {'media-delta.tar.gz'},
+                'database-v3': {'postgres.dump', 'SHA256SUMS', 'media-index.json'},
             }[component['kind']]
             if len(entries) != len(expected) or {m.name for m in entries} != expected or not all(m.isfile() for m in entries):
                 raise ValueError('Unsafe backup archive')
@@ -348,16 +487,66 @@ def recover_component(component: dict, target: Path, identity: Path, telegram: T
                 (target / entry.name).chmod(0o600)
 
 
+def recover_incremental_media(manifest: dict, target: Path, identity: Path,
+                              telegram: Telegram | None, parts_dir: Path | None) -> None:
+    components = media_components(manifest)
+    index_path = target / 'media-index.json'
+    if index_path.stat().st_size > 64 * 1024 * 1024 or digest(index_path) != manifest.get('index_sha256'):
+        raise ValueError('Incremental media index checksum mismatch')
+    index = json.loads(index_path.read_text())
+    if not isinstance(index, dict) or index.get('version') != 1:
+        raise ValueError('Unsupported incremental media index')
+    media_archives.validate_index(index['files'])
+    media_archives.validate_index(index['baseline_files'])
+    if digest(target / 'postgres.dump') != index.get('database_sha256'):
+        raise ValueError('Incremental database checksum mismatch')
+    checksums = {}
+    original = target / 'SHA256SUMS'
+    if original.stat().st_size > 16384:
+        raise ValueError('Invalid source checksums')
+    for line in original.read_text().splitlines():
+        match = re.fullmatch(r'([0-9a-f]{64}) [ *](.+)', line)
+        if not match:
+            raise ValueError('Invalid source checksums')
+        raw = match[2]
+        name = Path(raw).name
+        if '..' in Path(raw).parts or (not Path(raw).is_absolute() and raw != name) or name not in ('postgres.dump', 'media.tar.gz') or name in checksums:
+            raise ValueError('Invalid source checksum path')
+        checksums[name] = match[1]
+    if checksums != {'postgres.dump': index['database_sha256'], 'media.tar.gz': index['source_media_sha256']}:
+        raise ValueError('Source checksums do not match incremental index')
+    with tempfile.TemporaryDirectory(prefix='auroom-media-rebuild-') as temporary:
+        root = Path(temporary)
+        cache = root / 'content'
+        cache.mkdir()
+        for number, component in enumerate(components):
+            stage = root / str(number)
+            stage.mkdir()
+            name = 'media.tar.gz' if number == 0 else 'media-delta.tar.gz'
+            recover_component(component, stage, identity, telegram, parts_dir, {name})
+            if number == 0 and digest(stage / name) != component.get('sha256'):
+                raise ValueError('Baseline media checksum mismatch')
+            actual = media_archives.inventory(stage / name, wanted=index['files'], cache=cache)
+            if number == 0 and actual != index['baseline_files']:
+                raise ValueError('Baseline media index mismatch')
+            shutil.rmtree(stage)
+        media_archives.assemble(target / 'media.tar.gz', index['files'], cache)
+    # Logical file contents/metadata are verified above. Gzip bytes are newly
+    # encoded, so retain original transport checksums explicitly as provenance.
+    original.rename(target / 'SOURCE_SHA256SUMS')
+    write_manifest(target)
+
+
 def recover(manifest_path: Path, target: Path, identity: Path, telegram: Telegram | None, parts_dir: Path | None) -> None:
     manifest = json.loads(manifest_path.read_text())
-    if not isinstance(manifest, dict) or manifest.get('version') not in (1, 2):
+    if not isinstance(manifest, dict) or manifest.get('version') not in (1, 2, 3):
         raise ValueError('Unsupported backup manifest')
     if target.exists() and any(target.iterdir()):
         raise ValueError('Recovery target must be empty')
     target.mkdir(mode=0o700, parents=True, exist_ok=True)
-    component = {'kind': 'legacy-v1-bundle' if manifest['version'] == 1 else 'database',
+    component = {'kind': {1: 'legacy-v1-bundle', 2: 'database', 3: 'database-v3'}[manifest['version']],
         'snapshot': manifest.get('snapshot'), 'parts': manifest.get('parts')}
-    recover_component(component, target, identity, telegram, parts_dir, {'postgres.dump', 'SHA256SUMS', 'media.tar.gz'})
+    recover_component(component, target, identity, telegram, parts_dir, {'postgres.dump', 'SHA256SUMS', 'media.tar.gz', 'media-index.json'})
     if manifest['version'] == 2:
         media = manifest.get('media', {})
         if not isinstance(media, dict) or media.get('kind') not in ('media', 'legacy-v1-bundle'):
@@ -365,6 +554,8 @@ def recover(manifest_path: Path, target: Path, identity: Path, telegram: Telegra
         recover_component(media, target, identity, telegram, parts_dir, {'media.tar.gz'})
         if digest(target / 'media.tar.gz') != media.get('sha256'):
             raise ValueError('Recovered media checksum mismatch')
+    if manifest['version'] == 3:
+        recover_incremental_media(manifest, target, identity, telegram, parts_dir)
     verify(target)
     print('AuRoom encrypted Telegram backup recovered and verified')
 
@@ -402,7 +593,7 @@ def main() -> None:
 if __name__ == '__main__':
     try:
         main()
-    except (ValueError, OSError, KeyError, subprocess.SubprocessError) as exc:
+    except (ValueError, OSError, KeyError, tarfile.TarError, subprocess.SubprocessError) as exc:
         # HTTP/subprocess errors may contain tokens or full secret command arguments.
         print(f'Telegram backup failed ({type(exc).__name__}); check configuration, delivery and archive integrity.', file=sys.stderr)
         sys.exit(1)
