@@ -67,11 +67,21 @@
 }
 
 /* Standalone screens have their own headers, outside AppFrame. */
+.telegram-fullscreen-button--header {
+  top: max(10px, calc(env(safe-area-inset-top) + 4px));
+  bottom: auto;
+  right: max(12px, calc(env(safe-area-inset-right) + 12px));
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+}
+.telegram-fullscreen-button--header ~ .questionnaire-shell .questionnaire-topbar {
+  padding-right: max(64px, calc(env(safe-area-inset-right) + 64px));
+}
+
 @media (min-width:1024px) {
   .telegram-fullscreen-button ~ .admin-shell .admin-header {
     padding-right:48px;
-  }
-  .telegram-fullscreen-button ~ .questionnaire-shell .questionnaire-topbar {
-    padding-right:max(66px, calc(env(safe-area-inset-right) + 66px));
   }
 }

@@ -13,6 +13,7 @@ from app.core.resilience import (
     get_circuit_breaker,
     request_with_resilience,
 )
+from app.prompt_builders.image_output import build_image_output_prompt
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +59,7 @@ class NexusImageProvider:
         image_url: str | None,
         model_params: dict[str, object] | None,
         idempotency_key: str,
+        reference_image_urls: list[str] | None = None,
         timeout_seconds: float | None = None,
     ) -> NexusImageResult:
         effective_timeout = (
@@ -73,6 +75,7 @@ class NexusImageProvider:
             prompt=prompt,
             image_url=image_url,
             model_params=model_params,
+            reference_image_urls=reference_image_urls,
         )
 
         headers = {**self.headers, "Idempotency-Key": idempotency_key}
@@ -188,9 +191,10 @@ class NexusImageProvider:
         prompt: str,
         image_url: str | None,
         model_params: dict[str, object] | None,
+        reference_image_urls: list[str] | None = None,
     ) -> dict[str, object]:
         # Operator-controlled tuning parameters must never override provenance-critical
-        # request fields. The generation row must describe what Nexus actually receives.
+        # request fields. Preserve the stored brief, adding only the shared image output contract.
         reserved = {"model_name", "prompt", "image_url", "image_urls"}
         params = {
             key: value
@@ -198,9 +202,14 @@ class NexusImageProvider:
             if key not in reserved
         }
         params["model_name"] = model_name
-        params["prompt"] = prompt
-        if image_url:
-            params["image_urls"] = [image_url]
+        params["prompt"] = build_image_output_prompt(prompt)
+        image_urls = [
+            url.strip()
+            for url in [image_url, *(reference_image_urls or [])]
+            if isinstance(url, str) and url.strip()
+        ]
+        if image_urls:
+            params["image_urls"] = list(dict.fromkeys(image_urls))
         return params
 
     @staticmethod
