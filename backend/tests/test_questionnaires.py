@@ -20,7 +20,7 @@ def _question(key: str, question_id: str) -> dict:
 def test_questionnaire_catalog_matches_source_bundle() -> None:
     catalog = QuestionnaireCatalogResponse.model_validate(build_catalog())
     sources = _load_sources()
-    assert catalog.version == "2026-09-12.1"
+    assert catalog.version == "2026-09-25.1"
     assert CATALOG_VERSION == catalog.version
     assert len(catalog.sections) == 6
     assert len(catalog.questionnaires) == 27

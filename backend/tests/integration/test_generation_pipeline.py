@@ -380,3 +380,234 @@ async def test_public_reserved_prompt_is_rejected_and_internal_questionnaire_ori
         assert calls[0]["prompt"] == structured
         assert "LEGACY MASTER PLAN TEMPLATE" not in calls[0]["prompt"]
         assert calls[0]["model_params"]["aspect_ratio"] == "16:9"
+
+
+
+async def _configure_strict_masked_quality(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    *,
+    retries: int = 1,
+) -> None:
+    response = await client.put(
+        "/api/v1/admin/generation",
+        headers=admin_headers,
+        json={
+            "primary_model": "quality-model",
+            "fallback_model": None,
+            "primary_timeout_seconds": 45,
+            "primary_params": {},
+            "fallback_params": {},
+            "mode_params": {},
+            "masked_edit_provider_context_margin_fraction": 0.05,
+            "masked_edit_feather_fraction": 0.0,
+            "masked_edit_feather_min_px": 0,
+            "masked_edit_feather_max_px": 8,
+            "masked_edit_recomposite_feather_multiplier": 2.0,
+            "masked_edit_boundary_band_px": 2,
+            "masked_edit_max_luma_excess": 1.0,
+            "masked_edit_max_color_excess": 1.0,
+            "masked_edit_max_straight_edge_fraction": 0.1,
+            "generation_quality_max_retries": retries,
+        },
+    )
+    assert response.status_code == 200, response.text
+
+
+async def _create_strict_masked_generation(
+    client: AsyncClient,
+    *,
+    admin_headers: dict[str, str],
+    headers: dict[str, str],
+    user_id: str,
+) -> tuple[UUID, bytes, dict]:
+    await _configure_strict_masked_quality(client, admin_headers)
+    price = await client.put(
+        "/api/v1/admin/generation-prices/master_plan",
+        headers=admin_headers,
+        json={"credits": 2, "is_active": True},
+    )
+    assert price.status_code == 200, price.text
+    credit = await client.post(
+        f"/api/v1/admin/users/{user_id}/credits",
+        headers=admin_headers,
+        json={"delta": 5, "reason": "strict masked quality integration budget"},
+    )
+    assert credit.status_code == 200, credit.text
+
+    project = await client.post(
+        "/api/v1/projects",
+        headers=headers,
+        json={"name": "Strict masked quality", "context": {}},
+    )
+    assert project.status_code == 201, project.text
+    project_id = project.json()["id"]
+    base_data = _png((120, 120), (30, 30, 30))
+    uploaded = await client.post(
+        "/api/v1/assets",
+        headers=headers,
+        data={"purpose": "generation_input", "project_id": project_id},
+        files={"file": ("base.png", base_data, "image/png")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    edit_region = {"x": 0.3, "y": 0.3, "width": 0.4, "height": 0.4}
+    created = await client.post(
+        "/api/v1/generations",
+        headers=headers,
+        json={
+            "project_id": project_id,
+            "input_asset_id": uploaded.json()["id"],
+            "type": "master_plan",
+            "prompt": "temporary public envelope",
+            "composition_mode": "masked_edit",
+            "edit_region": edit_region,
+            "protected_regions": [],
+        },
+    )
+    assert created.status_code == 202, created.text
+    generation_id = UUID(created.json()["id"])
+    async with get_session_factory()() as session:
+        generation = await session.get(Generation, generation_id)
+        assert generation is not None
+        generation.origin = GenerationOrigin.QUESTIONNAIRE.value
+        generation.prompt = "AUROOM_RENDER_SPEC_V1\nSTRUCTURED_SPEC:{\"task\":\"quality-test\"}"
+        generation.edit_policy = {
+            "version": "exterior-edit-policy.v1",
+            "domain": "exterior",
+            "intent": "facade_finish",
+            "quality_checks": ["outside_region_integrity", "boundary_continuity"],
+        }
+        generation.quality_status = "pending"
+        await session.commit()
+    return generation_id, base_data, edit_region
+
+
+@pytest.mark.asyncio
+async def test_questionnaire_masked_quality_retry_reuses_one_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _, admin_headers = await _register_admin(client)
+        tokens, headers = await _register_user(client)
+        generation_id, base_data, edit_region = await _create_strict_masked_generation(
+            client,
+            admin_headers=admin_headers,
+            headers=headers,
+            user_id=tokens["user"]["id"],
+        )
+        calls: list[dict] = []
+        guides: list[bytes] = []
+
+        async def fake_generate(self, **kwargs):  # noqa: ANN001, ARG001
+            calls.append(kwargs)
+            for guide_url in kwargs.get("reference_image_urls") or []:
+                parts = urlsplit(guide_url)
+                response = await client.get(f"{parts.path}?{parts.query}")
+                assert response.status_code == 200, response.text
+                guides.append(response.content)
+            return NexusImageResult(
+                task_id=f"quality-task-{len(calls)}",
+                image_url=f"https://cdn.example.test/quality-{len(calls)}.png",
+            )
+
+        async def fake_download(url, settings):  # noqa: ANN001, ARG001
+            if url.endswith("quality-1.png"):
+                return _png((120, 120), (230, 230, 230))
+            return base_data
+
+        monkeypatch.setattr(NexusImageProvider, "generate", fake_generate)
+        monkeypatch.setattr(generation_worker, "_download_image", fake_download)
+
+        await generation_worker.process_generation(generation_id, get_settings())
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+
+        assert len(calls) == 2
+        assert calls[0]["idempotency_key"] == f"auroom-{generation_id}-primary"
+        assert calls[1]["idempotency_key"] == f"auroom-{generation_id}-quality-1-primary"
+        assert "PREVIOUS CANDIDATE REJECTED" in calls[1]["prompt"]
+        assert len(guides) == 2
+        with Image.open(BytesIO(guides[0])) as opened:
+            guide = opened.convert("RGB")
+            assert guide.getpixel((20, 60)) == (0, 0, 0)
+            assert guide.getpixel((32, 60)) == (255, 255, 255)
+
+        completed = await client.get(f"/api/v1/generations/{generation_id}", headers=headers)
+        assert completed.status_code == 200, completed.text
+        body = completed.json()
+        assert body["status"] == "completed"
+        assert body["quality_status"] == "passed"
+        assert body["quality_report"]["final"] == "passed"
+        assert body["quality_report"]["enforced_checks"] == [
+            "outside_region_integrity",
+            "boundary_continuity",
+        ]
+        assert body["quality_report"]["deferred_checks"] == []
+        assert body["quality_report"]["scene_analysis"] == "not_required"
+        assert len(body["quality_report"]["attempts"]) == 2
+        assert body["quality_report"]["provider_work_region"] == {
+            "x": 0.25,
+            "y": 0.25,
+            "width": 0.5,
+            "height": 0.5,
+        }
+        assert body["edit_region"] == edit_region
+        me = await client.get("/api/v1/me", headers=headers)
+        assert me.status_code == 200
+        assert me.json()["credits_balance"] == 3
+
+
+@pytest.mark.asyncio
+async def test_questionnaire_masked_quality_rejection_refunds_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _, admin_headers = await _register_admin(client)
+        tokens, headers = await _register_user(client)
+        generation_id, _, _ = await _create_strict_masked_generation(
+            client,
+            admin_headers=admin_headers,
+            headers=headers,
+            user_id=tokens["user"]["id"],
+        )
+        calls: list[dict] = []
+
+        async def fake_generate(self, **kwargs):  # noqa: ANN001, ARG001
+            calls.append(kwargs)
+            return NexusImageResult(
+                task_id=f"reject-task-{len(calls)}",
+                image_url=f"https://cdn.example.test/reject-{len(calls)}.png",
+            )
+
+        async def fake_download(url, settings):  # noqa: ANN001, ARG001
+            return _png((120, 120), (240, 240, 240))
+
+        monkeypatch.setattr(NexusImageProvider, "generate", fake_generate)
+        monkeypatch.setattr(generation_worker, "_download_image", fake_download)
+
+        await generation_worker.process_generation(generation_id, get_settings())
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+
+        assert len(calls) == 2
+        failed = await client.get(f"/api/v1/generations/{generation_id}", headers=headers)
+        assert failed.status_code == 200, failed.text
+        body = failed.json()
+        assert body["status"] == "failed"
+        assert body["output_asset"] is None
+        assert body["quality_status"] == "rejected"
+        assert body["quality_report"]["final"] == "rejected"
+        assert len(body["quality_report"]["attempts"]) == 2
+        assert "Не удалось аккуратно выполнить" in body["error"]
+
+        me = await client.get("/api/v1/me", headers=headers)
+        assert me.status_code == 200
+        assert me.json()["credits_balance"] == 5
+
+        await generation_worker._mark_failed_and_refund(
+            generation_id,
+            "duplicate terminal handling",
+        )
+        me_again = await client.get("/api/v1/me", headers=headers)
+        assert me_again.status_code == 200
+        assert me_again.json()["credits_balance"] == 5
