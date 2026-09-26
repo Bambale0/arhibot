@@ -170,6 +170,31 @@ def _house_footprint(spec: dict, objects: list[dict]) -> None:
             _reflow_secondary_zones(spec, item["rect"])
 
 
+def _initial_scene_priority(spec: dict) -> str:
+    if spec.get("schema") != "auroom.initial_concept.v1" or spec.get("source_scene", {}).get(
+        "kind"
+    ) != "synthetic_site":
+        return ""
+    requirements = []
+    contract = spec.get("visual_acceptance_contract", {})
+    if contract.get("hedge_is_only_requested_boundary"):
+        requirements.append(
+            "The living hedge alone forms this property's boundary. No hard fence, mesh, "
+            "panels, masonry wall or fence posts anywhere on this property."
+        )
+        if contract.get("unrequested_gates_forbidden"):
+            requirements.append(
+                "Every entrance is an OPEN GAP in the hedge: no gate, wicket, gate leaves "
+                "or entrance posts. Do not invent an entrance structure."
+            )
+    if not requirements:
+        return ""
+    return "MANDATORY COMPOSITION BEFORE STYLING:\n" + "\n".join(requirements) + (
+        "\nAll measurements are invisible design constraints. Render no text, labels, "
+        "digits, dimension lines or measuring grid.\n\n"
+    )
+
+
 def build_visual_fidelity_prompt(prompt: str) -> str:
     if not prompt.startswith(("AUROOM_INITIAL_CONCEPT_V1\n", "AUROOM_RENDER_SPEC_V1\n")):
         return prompt
@@ -240,7 +265,8 @@ def build_visual_fidelity_prompt(prompt: str) -> str:
         "verification": "provider_instruction_only_not_an_external_scene_measurement",
     }
     return (
-        prompt[:start]
+        _initial_scene_priority(spec)
+        + prompt[:start]
         + dumps(spec, ensure_ascii=False, separators=(",", ":"))
         + prompt[start + end :]
     )

@@ -824,14 +824,19 @@ async def test_accepted_task_checkpoint_commit_failure_does_not_refund_or_repost
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("scene_context", [True, False])
+@pytest.mark.parametrize("frame_mode", [
+    "new_add", "legacy_pair", "single", "new_refine", "new_remove",
+])
 async def test_local_crop_geometry_survives_restart_and_runtime_margin_change(
-    monkeypatch, scene_context
+    monkeypatch, frame_mode
 ):
     import asyncio
     import json
     from app.db.models.admin import GenerationRuntimeSettings
+    from app.db.models.projects import Project
     from app.services.asset_service import LocalMediaStorage
+    scene_context = frame_mode == "legacy_pair"
+    operation = "refine" if frame_mode == "new_refine" else "remove" if frame_mode == "new_remove" else "add"
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -844,13 +849,19 @@ async def test_local_crop_geometry_survives_restart_and_runtime_margin_change(
             row = await db.get(Generation, generation_id)
             row.prompt = "AUROOM_RENDER_SPEC_V1\nSTRUCTURED_SPEC:\n" + json.dumps(
                 {
-                    "task": {"object_key": "banya", "operation": "render_or_refine"},
+                    "task": {
+                        "object_key": "banya",
+                        "operation": "remove_object" if operation == "remove" else "render_or_refine",
+                    },
                     "questionnaire_constraints": [
                         {"question": "Печь", "answer": "Дровяная, с трубой"}
                     ],
                 }
             )
-            if not scene_context:
+            if operation == "refine":
+                project = await db.get(Project, row.project_id)
+                project.context = {"design_session": {"accepted_objects": ["banya"]}}
+            if frame_mode in {"legacy_pair", "single"}:
                 # Geometry saved by a previous release before a second reference existed.
                 row.quality_report = {
                     "provider_geometry": {
@@ -861,6 +872,8 @@ async def test_local_crop_geometry_survives_restart_and_runtime_margin_change(
                         "operation": "add",
                     }
                 }
+                if scene_context:
+                    row.quality_report["provider_geometry"]["scene_context_reference"] = True
             await db.commit()
         tiles = []
         calls = []
@@ -878,9 +891,13 @@ async def test_local_crop_geometry_survives_restart_and_runtime_margin_change(
                 assert len(kwargs["reference_image_urls"]) == 1
                 assert kwargs["reference_image_urls"][0] != kwargs["image_url"]
                 assert '"reference_image":2' in kwargs["prompt"]
+                assert f"{generation_id}.png" in kwargs["image_url"]
+                assert "Modify ONLY reference image 1" in kwargs["prompt"]
             else:
                 assert kwargs["reference_image_urls"] is None
                 assert '"reference_image":2' not in kwargs["prompt"]
+                assert f"{generation_id}.png" in kwargs["image_url"]
+            assert f'"local_operation":"{operation}"' in kwargs["prompt"]
             if len(calls) == 1:
                 await kwargs["on_task_created"]("local-durable-task")
                 raise asyncio.CancelledError()
@@ -914,11 +931,115 @@ async def test_local_crop_geometry_survives_restart_and_runtime_margin_change(
         assert result["status"] == "completed", result
         assert not tile_path.exists(), "Terminal work releases temporary input"
         assert tiles[0] == tiles[1]
-        assert result["quality_report"]["provider_geometry"]["box"] == [33, 33, 87, 87]
+        assert result["quality_report"]["provider_geometry"]["box"] == (
+            [33, 33, 87, 87] if frame_mode in {"legacy_pair", "single"} else [30, 30, 90, 90]
+        )
         assert (
             bool(result["quality_report"]["provider_geometry"].get("scene_context_reference"))
             == scene_context
         )
+        assert "frame_reference_index" not in result["quality_report"]["provider_geometry"]
         assert len(calls) == 2
         assert sum(c["task_id"] is None for c in calls) == 1
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fallback_configured", [True, False])
+@pytest.mark.parametrize("defect,outcome", [
+    ("aspect", "pass"), ("context", "pass"), ("aspect", "reject"),
+    ("context", "resume"), ("aspect", "unacknowledged"), ("context", "no_retry"),
+])
+async def test_local_framing_rejection_uses_bounded_quality_retry_and_durable_checkpoint(
+    monkeypatch, defect, outcome, fallback_configured,
+):
+    import asyncio
+    import json
+    from app.db.models.admin import GenerationRuntimeSettings
+    from app.localized_edit import local_source
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _, admin_headers = await _register_admin(client)
+        tokens, headers = await _register_user(client)
+        generation_id, base_data, _ = await _create_strict_masked_generation(
+            client, admin_headers=admin_headers, headers=headers, user_id=tokens["user"]["id"],
+        )
+        async with get_session_factory()() as db:
+            row = await db.get(Generation, generation_id)
+            row.prompt = "AUROOM_RENDER_SPEC_V1\nSTRUCTURED_SPEC:\n" + json.dumps(
+                {"task": {"object_key": "banya", "operation": "render_or_refine"}}
+            )
+            runtime = await db.get(GenerationRuntimeSettings, 1)
+            runtime.fallback_model = "framing-fallback" if fallback_configured else None
+            runtime.fallback_params = {"quality": "high"}
+            if outcome == "no_retry":
+                runtime.generation_quality_max_retries = 0
+            await db.commit()
+        calls = []
+        retry_cancelled = False
+
+        async def generate(self, **kwargs):
+            nonlocal retry_cancelled
+            calls.append(kwargs)
+            retry = "-quality-1-" in kwargs["idempotency_key"]
+            task_id = "local-retry" if retry else "local-first"
+            if retry:
+                assert kwargs["model_name"] == ("framing-fallback" if fallback_configured else "quality-model")
+                assert kwargs["idempotency_key"].endswith("-fallback" if fallback_configured else "-primary")
+                if fallback_configured:
+                    assert kwargs["model_params"]["quality"] == "high"
+                assert "PREVIOUS CANDIDATE REJECTED" in kwargs["prompt"]
+                assert "reference image 1" in kwargs["prompt"].split("PREVIOUS CANDIDATE REJECTED", 1)[1]
+                assert "full scene" in kwargs["prompt"].split("PREVIOUS CANDIDATE REJECTED", 1)[1]
+            if kwargs["task_id"] is None:
+                if not (retry and outcome == "unacknowledged"):
+                    await kwargs["on_task_created"](task_id)
+                if retry and outcome in {"resume", "unacknowledged"} and not retry_cancelled:
+                    retry_cancelled = True
+                    raise asyncio.CancelledError()
+            else:
+                assert retry and kwargs["task_id"] == "local-retry"
+            return NexusImageResult(task_id=task_id, image_url=f"https://cdn.example.test/{task_id}.png")
+
+        async def download(url, settings):
+            if url.endswith("local-first.png") or outcome == "reject":
+                return _png((120, 60) if defect == "aspect" else (54, 54), (240, 240, 240))
+            async with get_session_factory()() as db:
+                row = await db.get(Generation, generation_id)
+                return local_source(base_data, row.quality_report["provider_geometry"], max_pixels=20000)
+
+        monkeypatch.setattr(NexusImageProvider, "generate", generate)
+        monkeypatch.setattr(generation_worker, "_download_image", download)
+        if outcome in {"resume", "unacknowledged"}:
+            with pytest.raises(asyncio.CancelledError):
+                await generation_worker.process_generation(generation_id, get_settings())
+            if not fallback_configured:
+                # Adding a fallback after a primary retry was accepted/ambiguous
+                # must not reinterpret its checkpoint as a fresh fallback POST.
+                async with get_session_factory()() as db:
+                    runtime = await db.get(GenerationRuntimeSettings, 1)
+                    runtime.fallback_model = "new-fallback-after-restart"
+                    await db.commit()
+            await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+            await redis_client.rpush(generation_worker.GENERATION_PROCESSING_KEY, str(generation_id))
+            await generation_worker._recover_reserved_jobs()
+        await generation_worker.process_generation(generation_id, get_settings())
+        await generation_worker.process_generation(generation_id, get_settings())
+        result = (await client.get(f"/api/v1/generations/{generation_id}", headers=headers)).json()
+        rejected = outcome in {"reject", "no_retry"}
+        expected_status = "failed" if rejected else "processing" if outcome == "unacknowledged" else "completed"
+        assert result["status"] == expected_status, result
+        purchases = 1 if outcome == "no_retry" else 2
+        assert sum(call["task_id"] is None for call in calls) == purchases
+        assert len(calls) == (3 if outcome == "resume" else purchases)
+        assert len(result["quality_report"]["attempts"]) == (
+            1 if outcome in {"unacknowledged", "no_retry"} else 2
+        )
+        assert result["quality_report"]["attempts"][0]["initial"]["framing_error"]
+        assert (await client.get("/api/v1/me", headers=headers)).json()["credits_balance"] == (5 if rejected else 3)
+        if rejected:
+            assert result["output_asset"] is None
+            await generation_worker._mark_failed_and_refund(generation_id, "duplicate terminal handling")
+            assert (await client.get("/api/v1/me", headers=headers)).json()["credits_balance"] == 5
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))

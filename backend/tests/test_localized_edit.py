@@ -6,6 +6,7 @@ from app.image_compositor import compose_masked_edit
 from app.localized_edit import (
     choose_local_geometry,
     local_source,
+    local_region,
     project_local_candidate,
     local_edit_prompt,
 )
@@ -284,6 +285,60 @@ def test_new_house_keeps_requested_footprint_when_existing_scene_is_preserved():
     )
     spec = json.loads(result.split("STRUCTURED_SPEC:\n")[1])
     assert spec["task"]["footprint_shape"]["requested"] == "Г-образная"
+
+
+@pytest.mark.parametrize("operation,object_key,site_preparation", [
+    ("add", "banya", True), ("add", "eskez-doma", True),
+    ("add", "gostevoy", True), ("add", "garazh", True),
+    ("add", "naves", True), ("add", "letnyaya-kuhnya", True),
+    ("add", "besedka", True), ("add", "hozblok", True),
+    ("add", "teplica", True), ("add", "detskiy-domik", True),
+    ("refine", "banya", False), ("remove", "banya", False),
+    ("add", "izgorod", False), ("add", "gazon", False),
+    ("add", "prud", False), ("add", "dorozhki", False),
+    ("add", "basseyn", False), ("add", "unknown-object", False),
+])
+def test_only_new_buildings_may_replace_unprotected_vegetation_in_their_footprint(
+    operation, object_key, site_preparation,
+):
+    original = {
+        "task": {"object_key": object_key, "object_name": "Requested building"},
+        "edit_policy": {"preserve_building_geometry": True},
+        "questionnaire_constraints": [{"question": "Площадь?", "answer": "25 м²"}],
+    }
+    prompt = "AUROOM_RENDER_SPEC_V1\nSTRUCTURED_SPEC:\n" + json.dumps(original)
+    geometry = {
+        "version": "local-tile.v1", "base_size": [100, 100],
+        "box": [20, 20, 80, 80], "aspect_ratio": "1:1", "operation": operation,
+    }
+    region = {"x": 0.25, "y": 0.25, "width": 0.5, "height": 0.5}
+    protected = [{"x": 0.3, "y": 0.3, "width": 0.1, "height": 0.1}]
+    rendered = local_edit_prompt(prompt, geometry, region, protected)
+    spec = json.loads(rendered.split("STRUCTURED_SPEC:\n", 1)[1])
+    priority = rendered.split("STRUCTURED_SPEC:\n", 1)[0]
+    policy = spec["edit_policy"]
+    if site_preparation:
+        preparation = policy["site_preparation"]
+        assert preparation["scope"] == "new_building_footprint_within_allowed_region"
+        assert preparation["protected_regions"] == "preserve_exactly"
+        assert preparation["outside_edit_region"] == "preserve_exactly"
+        assert "trees" in preparation["directive"]
+        assert "Do not shrink" in preparation["directive"]
+        assert "EXISTING BUILDINGS" in policy["new_target_directive"]
+        assert "new roof chimney" in policy["new_target_directive"]
+        assert policy["preserve_building_geometry"] is True
+        assert "SAME CAMERA AND CROP" in priority
+        assert "aerial" in priority
+        assert "Requested building" in priority
+        assert "25 м²" in priority
+        assert "dark" not in priority and "metal" not in priority
+    else:
+        assert "site_preparation" not in policy
+        assert "replace vegetation" not in rendered
+        assert "SAME CAMERA AND CROP" not in priority
+    assert spec["spatial_constraints"]["outside_edit_region"] == "preserve_exactly"
+    assert spec["spatial_constraints"]["locked_regions"] == [local_region(protected[0], geometry)]
+    assert json.loads(prompt.split("STRUCTURED_SPEC:\n", 1)[1]) == original
 
 
 @pytest.mark.parametrize(

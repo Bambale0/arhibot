@@ -10,8 +10,17 @@ from PIL import Image, ImageChops, ImageDraw, ImageStat
 
 from app.image_compositor import _read_rgb, _rect_box, _region_mask
 from app.prompt_builders.visual_fidelity import build_visual_fidelity_prompt
+from app.questionnaires.catalog import SECTION_SPECS
 
 RATIOS = ((1, 1), (4, 3), (3, 4), (16, 9), (9, 16))
+BUILDING_OBJECT_KEYS = frozenset(
+    key for section, _, keys in SECTION_SPECS if section in {"house", "buildings"}
+    for key in keys
+)
+
+
+class LocalCandidateFramingError(ValueError):
+    """A completed provider image failed the deterministic local framing gate."""
 
 
 def _png(image: Image.Image) -> bytes:
@@ -78,7 +87,7 @@ def project_local_candidate(
     width, height = right - left, bottom - top
     # Allow only output-dimension rounding, not a full-scene frame masquerading as a tile.
     if abs(candidate.width / candidate.height / (width / height) - 1) > 0.02:
-        raise ValueError("Provider returned the wrong local edit aspect ratio")
+        raise LocalCandidateFramingError("Provider returned the wrong local edit aspect ratio")
     if candidate.size != (width, height):
         candidate = candidate.resize((width, height), Image.Resampling.LANCZOS)
     if edit_region is not None and max_context_color_error is not None:
@@ -116,7 +125,7 @@ def project_local_candidate(
                     continue
                 mean = ImageStat.Stat(difference, mask=mask).mean
                 if sqrt(sum(channel**2 for channel in mean)) > max_context_color_error:
-                    raise ValueError("Provider local edit changed locked context or framing")
+                    raise LocalCandidateFramingError("Provider local edit changed locked context or framing")
     base.paste(candidate, (left, top))
     return _png(base)
 
@@ -150,6 +159,7 @@ def local_edit_prompt(
     if not isinstance(spec, dict) or not isinstance(spec.get("task"), dict):
         return None
     operation = geometry.get("operation", "add_or_refine")
+    adding_building = operation == "add" and spec["task"].get("object_key") in BUILDING_OBJECT_KEYS
     spec["task"]["local_operation"] = operation
     allowed = local_region(edit_region, geometry)
     spec["source_scene"] = {
@@ -197,14 +207,30 @@ def local_edit_prompt(
                 "geometry_preservation_scope": "existing_scene_not_new_target",
                 "new_target_creation_allowed": True,
                 "new_target_directive": (
-                    "Preserve the geometry and chimney positions of EXISTING scene objects. "
-                    "The target object does not exist yet: create its requested geometry and "
+                    "Preserve the geometry and chimney positions of "
+                    + ("EXISTING BUILDINGS. " if adding_building else "EXISTING scene objects. ")
+                    + "The target object does not exist yet: create its requested geometry and "
                     "required exterior features inside the allowed region. A required new roof "
                     "chimney belongs to the new target and is not relocation of an existing chimney. "
                     "Do not interpret geometry preservation as a ban on adding the target."
                 ),
             }
         )
+        if adding_building:
+            spec["edit_policy"]["site_preparation"] = {
+                "scope": "new_building_footprint_within_allowed_region",
+                "protected_regions": "preserve_exactly",
+                "outside_edit_region": "preserve_exactly",
+                "directive": (
+                    "You must remove or replace vegetation (trees, shrubs and grass) inside "
+                    "allowed_region wherever the new building and its roof need space, except "
+                    "in locked_regions. Do not shrink the building or move it into a corner "
+                    "to preserve vegetation in its intended footprint. Preserve every existing "
+                    "building, every protected region and all vegetation outside allowed_region. "
+                    "This permission does not request new ornamental planting or allow changes outside "
+                    "the selected region."
+                ),
+            }
     elif operation == "refine" or spec.get("edit_policy", {}).get("preserve_building_geometry"):
         spec["task"].pop("footprint_shape", None)
     spec["scene_policy"] = {
@@ -239,7 +265,26 @@ def local_edit_prompt(
         "aspect_ratio": geometry["aspect_ratio"],
         "framing": "same boundaries, camera and ground alignment as reference image 1",
     }
+    priority = ""
+    if adding_building:
+        label = str(spec["task"].get("object_name") or spec["task"]["object_key"])
+        priority = (
+            "SAME CAMERA AND CROP: edit this photograph without changing its viewpoint, "
+            "scale or ground alignment. Preserve its aerial angle when present; never switch "
+            "to an eye-level hero view. Replace vegetation only in the allowed, unprotected "
+            f"building footprint to add the requested full-size {label}. Keep the surrounding "
+            "photograph and existing buildings exactly fixed. The entire new building, roof "
+            "and any explicitly required chimney must fit inside the selected rectangle. "
+            "No text, labels or dimensions. Do not add unrequested decorative planting. "
+            "Requested features: "
+            + dumps(spec.get("questionnaire_constraints", []), ensure_ascii=False)
+            + ". Provided house style reference: "
+            + dumps(spec["house_style_reference"], ensure_ascii=False)
+            + ".\n"
+        )
     return (
-        "AUROOM_LOCALIZED_EDIT_V1\nModify ONLY reference image 1 and return the same local photograph, with the requested edit naturally integrated. Do not return the full site, collage or object cutout.\nSTRUCTURED_SPEC:\n"
+        "AUROOM_LOCALIZED_EDIT_V1\n"
+        + priority
+        + "Modify ONLY reference image 1 and return the same local photograph, with the requested edit naturally integrated. Do not return the full site, collage or object cutout.\nSTRUCTURED_SPEC:\n"
         + dumps(spec, ensure_ascii=False, separators=(",", ":"))
     )
