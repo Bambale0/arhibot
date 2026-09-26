@@ -330,6 +330,16 @@ class GenerationRuntimeUpdate(BaseModel):
     primary_params: dict[str, Any] = Field(default_factory=dict)
     fallback_params: dict[str, Any] = Field(default_factory=dict)
     mode_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    masked_edit_provider_context_margin_fraction: float | None = Field(default=None, ge=0, le=0.25)
+    masked_edit_feather_fraction: float | None = Field(default=None, ge=0, le=0.1)
+    masked_edit_feather_min_px: int | None = Field(default=None, ge=0, le=128)
+    masked_edit_feather_max_px: int | None = Field(default=None, ge=1, le=256)
+    masked_edit_recomposite_feather_multiplier: float | None = Field(default=None, ge=1, le=4)
+    masked_edit_boundary_band_px: int | None = Field(default=None, ge=1, le=64)
+    masked_edit_max_luma_excess: float | None = Field(default=None, ge=0, le=255)
+    masked_edit_max_color_excess: float | None = Field(default=None, ge=0, le=442)
+    masked_edit_max_straight_edge_fraction: float | None = Field(default=None, ge=0, le=1)
+    generation_quality_max_retries: int | None = Field(default=None, ge=0, le=3)
 
     @field_validator("primary_model")
     @classmethod
@@ -365,6 +375,12 @@ class GenerationRuntimeUpdate(BaseModel):
                 raise ValueError(
                     f"{label} cannot override provider fields: {', '.join(sorted(conflict))}"
                 )
+        if (
+            self.masked_edit_feather_min_px is not None
+            and self.masked_edit_feather_max_px is not None
+            and self.masked_edit_feather_min_px > self.masked_edit_feather_max_px
+        ):
+            raise ValueError("masked edit feather min cannot exceed max")
         return self
 
 
@@ -375,6 +391,16 @@ class GenerationRuntimeResponse(BaseModel):
     primary_params: dict[str, Any] = Field(default_factory=dict)
     fallback_params: dict[str, Any] = Field(default_factory=dict)
     mode_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    masked_edit_provider_context_margin_fraction: float
+    masked_edit_feather_fraction: float
+    masked_edit_feather_min_px: int
+    masked_edit_feather_max_px: int
+    masked_edit_recomposite_feather_multiplier: float
+    masked_edit_boundary_band_px: int
+    masked_edit_max_luma_excess: float
+    masked_edit_max_color_excess: float
+    masked_edit_max_straight_edge_fraction: float
+    generation_quality_max_retries: int
     updated_at: datetime | None = None
 
 
