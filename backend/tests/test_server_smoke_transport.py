@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -19,12 +18,44 @@ from app.services import rate_limit_service
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_smoke_login_payload_reaches_authentication_validation() -> None:
+def test_smoke_login_uses_fresh_valid_credentials_without_logging_them(tmp_path: Path) -> None:
     workflow = (REPO_ROOT / '.github/workflows/server-smoke.yml').read_text()
-    body = re.search(r"--data '([^']+)'", workflow)
-    assert body is not None
-    payload = LoginRequest.model_validate_json(body.group(1))
-    assert payload.email.endswith('@example.com')
+    assignment = 'probe_status=' + workflow.split('          probe_status=', 1)[1].split(
+        '          [[ "${probe_status}"', 1,
+    )[0]
+    curl = tmp_path / 'curl'
+    curl.write_text('''#!/usr/bin/env python3
+import os,sys
+from pathlib import Path
+args = sys.argv[1:]
+if '--data' in args:
+    payload = args[args.index('--data') + 1]
+else:
+    assert args[args.index('--data-binary') + 1] == '@-'
+    payload = sys.stdin.read()
+Path(os.environ['PROBE_CAPTURE']).write_text(payload)
+print('401', end='')
+''')
+    curl.chmod(0o700)
+    env = {**os.environ, 'PATH': f'{tmp_path}{os.pathsep}{os.environ["PATH"]}',
+           'PROBE_CAPTURE': str(tmp_path / 'payload.json')}
+    payloads = []
+    for _ in range(2):
+        result = subprocess.run(
+            ['bash', '-c', 'set -Eeuo pipefail\nprobe_ip=198.51.100.77\n' + assignment
+             + '\nprintf "status=%s\n" "$probe_status"'],
+            env=env, text=True, capture_output=True, timeout=5, check=True,
+        )
+        payload = LoginRequest.model_validate_json((tmp_path / 'payload.json').read_text())
+        assert payload.email.endswith('@example.com')
+        assert result.stdout == 'status=401\n'
+        assert result.stderr == ''
+        assert payload.email not in result.stdout + result.stderr
+        assert payload.password not in result.stdout + result.stderr
+        payloads.append(payload)
+    assert payloads[0].email != payloads[1].email
+    assert payloads[0].password != payloads[1].password
+    assert all(len(payload.password) >= 32 for payload in payloads)
 
 
 @pytest.mark.asyncio
