@@ -1,5 +1,36 @@
 # Agent Execution Ledger
 
+## Active work — exterior refinement policy and quality gate, 2026-09-25
+
+- Baseline: `dev` `cdf4d98e08d9ae108d03b7f14a2bdb99b9f70db4`.
+- Branch: `feat/exterior-refinement-policy-p0`.
+- Existing masked-edit safety already provides aligned provider guide, deterministic final compositor, exact preservation outside the final edit region and adaptive inward feather.
+- Root gap: provider success currently flows directly through compositor to a completed user asset; there is no canonical edit-policy decision and no quality gate capable of rejecting a seam or unsupported interior request before publication.
+- Product boundary: this slice is Exterior Refinement Mode. Interior/furniture/fireplace relocation is not a supported refinement operation; visible interior remains locked context.
+- Structural rule: fireplace and exterior chimney are one logical relationship. Unrelated edits must not relocate either; roof/chimney edits are structural-sensitive.
+- Runtime thresholds, retry budget and provider work-region margin belong to the existing DB-backed generation admin control plane, not source constants or environment-only settings.
+
+### Acceptance criteria
+
+1. [ ] Deterministic server-side `EditPolicy` resolves domain/intent from canonical edit question IDs and sanitized review comment.
+2. [ ] Interior-only/refireplace-relocation requests are rejected before generation; mixed requests retain only the supported exterior part.
+3. [ ] House refinement catalog version changes `Камин, труба` to `Дымоход / труба` without mutating historical revisions.
+4. [ ] Refinement prompt locks visible interior and carries fireplace/chimney structural consistency rules.
+5. [ ] Generations persist policy and quality snapshots/status for diagnosis.
+6. [ ] Provider work region may be padded through runtime settings while the final commit region remains exact.
+7. [ ] Quality gate enforces zero outside-region pixel mutations and detects a rectangular boundary exposure/color seam relative to the source.
+8. [ ] Small seam failure tries a wider inward recomposite before any extra provider call.
+9. [ ] Remaining quality failure uses a bounded internal provider retry with a distinct idempotency key; billing remains one generation reservation.
+10. [ ] Exhausted retries fail safely and use the existing idempotent generation refund path.
+11. [ ] Backend regression/integration tests, frontend/admin tests, exact-head CI and review are green before merge.
+12. [ ] After merge: development deploy and server smoke are green before any real provider smoke.
+
+### TDD evidence
+
+- RED contract commit(s): `backend/tests/test_edit_policy.py`, `backend/tests/test_image_quality.py`.
+- Implementation plan: `docs/plans/2026-09-25-exterior-refinement-policy.md`.
+- GREEN evidence, PR/CI/deploy/smoke: pending.
+
 ## Current release status — 2026-09-24
 
 This section is the authoritative status summary. The implementation records below are retained as historical evidence and should not be read as currently open epics.

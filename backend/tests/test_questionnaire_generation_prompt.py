@@ -367,6 +367,45 @@ def test_initial_concept_skips_house_garage_branch_when_garage_is_separate_objec
     assert any(item["object_key"] == "garazh" for item in spec["task"]["objects"])
 
 
+def test_initial_concept_hardens_object_identity_and_detached_structures() -> None:
+    catalog = build_catalog()
+    session = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma", "garazh", "lavochka"],
+        plot_area_sotkas=8,
+        initial_concept_mode=True,
+        source_step_completed=True,
+        answers={
+            "eskez-doma": {"1": "Современный минимализм"},
+            "garazh": {
+                "1": "Как у дома",
+                "4": "Ближе к улице, у въезда",
+            },
+            "lavochka": {
+                "1": "Металл + дерево",
+                "2": "Слева от дома",
+            },
+        },
+    )
+
+    spec = _spec(build_initial_concept_prompt(catalog, session, input_asset_present=False))
+    objects = {item["object_key"]: item for item in spec["task"]["objects"]}
+
+    assert objects["garazh"]["visual_identity"] == {
+        "must_be_recognizable_as": "Гараж, отдельный",
+        "substitution_forbidden": True,
+    }
+    assert objects["garazh"]["structural_constraints"] == ["detached_from_house"]
+    assert objects["lavochka"]["visual_identity"] == {
+        "must_be_recognizable_as": "Лавочка",
+        "substitution_forbidden": True,
+    }
+    assert objects["lavochka"]["structural_constraints"] == []
+    assert spec["object_fidelity"]["strength"] == "hard_constraints"
+    assert "замен" in spec["object_fidelity"]["identity_rule"].lower()
+    assert "общая стена" in spec["object_fidelity"]["detached_structure_rule"].lower()
+
+
 def test_house_followup_with_no_available_options_is_inactive() -> None:
     house = _definition("eskez-doma")
     questions = {question["id"]: question for question in house["questions"]}

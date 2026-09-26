@@ -175,6 +175,33 @@ test('home is a lightweight project dashboard with on-demand projects and three-
   await expect(page.getByText('Что проектируем?')).toBeVisible()
 })
 
+test('stale empty conditional house question is repaired instead of shown as a dead end',async({page})=>{
+  session={
+    ...session,
+    selected_objects:['eskez-doma','garazh'],
+    initial_concept_mode:true,
+    source_step_completed:true,
+    current_object:'eskez-doma',
+    current_question_id:'13',
+    survey_completed_objects:[],
+    answers:{
+      'eskez-doma':{
+        '4':'1 этаж',
+        '12':'Нет',
+      },
+    },
+  }
+  project={...project,name:'Дом + гараж',context:{...project.context,design_session:session}}
+
+  await page.goto(`/?project=${projectId}`)
+
+  await expect(page.getByText('Что еще добавить к дому?')).toHaveCount(0)
+  await expect(page.getByRole('heading',{name:'Заполните параметры всех объектов'})).toBeVisible()
+  await expect(page.getByRole('button',{name:/✓ Дом, фасад/})).toBeVisible()
+  await page.getByRole('button',{name:'Гараж',exact:true}).click()
+  await expect(page.getByText('Какой гараж?')).toBeVisible()
+})
+
 test('canonical create flow supports refinement and own unpublish without technical region UI',async({page})=>{
   const errors:string[]=[]; page.on('console',m=>{if(m.type()==='error')errors.push(m.text())})
   await page.goto('/')
@@ -223,11 +250,8 @@ test('initial concept collects all answers before one generation and supports pr
 
   await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
   expect(generationCount).toBe(0)
-  const sitePlan=page.getByTestId('site-plan-preview')
-  await expect(sitePlan).toBeVisible()
-  await expect(sitePlan.getByText('Схема размещения')).toBeVisible()
-  await expect(sitePlan.getByText('Лавочка')).toBeVisible()
-  await expect(sitePlan.getByText('8 сот.')).toBeVisible()
+  await expect(page.getByTestId('site-plan-preview')).toHaveCount(0)
+  await expect(page.getByText('Схема размещения')).toHaveCount(0)
   await expect(page.getByText('Одна общая генерация · Бесплатно')).toBeVisible()
   await page.getByRole('button',{name:'Создать общую концепцию'}).click()
   await expect(page.getByAltText('Общая концепция участка')).toBeVisible()

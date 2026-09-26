@@ -23,7 +23,6 @@ import type {
   QuestionnaireGenerationCost,
   QuestionnaireQuestion,
   NormalizedRect,
-  SitePlan,
 } from '../questionnaireTypes'
 import type { AdminIdea, Asset, Generation, Project } from '../types'
 import { BackIcon, ImageIcon, SparkIcon, UploadIcon } from './Icons'
@@ -36,29 +35,6 @@ function ResultImage({ url, alt }: { url:string; alt:string }) {
   useEffect(() => setFailed(false), [url])
   if (failed) return <div className="empty-state"><ImageIcon/><p>Изображение временно недоступно. Попробуйте открыть этот шаг позже.</p></div>
   return <img src={url} alt={alt} onError={() => setFailed(true)}/>
-}
-
-function SitePlanPreview({ plan }:{ plan:SitePlan }) {
-  return <section className="site-plan-preview" data-testid="site-plan-preview">
-    <div className="site-plan-preview-head">
-      <div><strong>Схема размещения</strong><span>Относительное расположение объектов до генерации</span></div>
-      <small>{plan.plot.area_sotkas ? `${plan.plot.area_sotkas} сот.` : 'масштаб участка'}</small>
-    </div>
-    <div className="site-plan-canvas" role="img" aria-label="Схема размещения объектов на участке">
-      {plan.objects.map((item) => <div
-        key={item.object_key}
-        className={`site-plan-object ${item.role === 'house' ? 'house' : ''}`}
-        style={{
-          left:`${item.rect.x * 100}%`,
-          top:`${item.rect.y * 100}%`,
-          width:`${item.rect.width * 100}%`,
-          height:`${item.rect.height * 100}%`,
-        }}
-      ><span>{item.object_name}</span></div>)}
-      <div className="site-plan-entry" aria-hidden="true"><span>Въезд / улица</span></div>
-    </div>
-    {plan.warnings.length > 0 && <p className="site-plan-warning">Для части объектов место приблизительное — генерация сохранит выбранную смысловую зону участка.</p>}
-  </section>
 }
 
 function conditionOk(
@@ -214,6 +190,8 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
     Object.entries(stored.answers).map(([key, answers]) => [key, { ...answers }]),
   )
   let currentQuestionId = stored.current_question_id
+  let currentObject = stored.current_object
+  const surveyCompletedObjects = [...stored.survey_completed_objects]
 
   for (const [objectKey, answers] of Object.entries(nextAnswers)) {
     if (stored.accepted_objects.includes(objectKey) || objectKey === 'zayavka') continue
@@ -265,11 +243,18 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
         && questionIsVisible(objectKey, question, answers, houseAccepted, stored.selected_objects)
         && answers[question.id] === undefined,
       )
-      if (firstMissing) currentQuestionId = firstMissing.id
-      else if (currentQuestionId && !definition.questions.some((question) =>
+      if (firstMissing) {
+        currentQuestionId = firstMissing.id
+      } else if (stored.initial_concept_mode && !stored.initial_concept_accepted) {
+        if (!surveyCompletedObjects.includes(objectKey)) surveyCompletedObjects.push(objectKey)
+        currentObject = null
+        currentQuestionId = null
+      } else if (currentQuestionId && !definition.questions.some((question) =>
         question.id === currentQuestionId
         && questionIsVisible(objectKey, question, answers, houseAccepted, stored.selected_objects)
-      )) currentQuestionId = null
+      )) {
+        currentQuestionId = null
+      }
     }
   }
 
@@ -277,6 +262,8 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
     ...stored,
     catalog_version:catalog.version,
     answers:nextAnswers,
+    survey_completed_objects:surveyCompletedObjects,
+    current_object:currentObject,
     current_question_id:currentQuestionId,
   }
 }
@@ -814,15 +801,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     setError(null)
     setRenderOutput(null)
     try {
-      let generationSession = next
-      if (generationSession.plot_area_sotkas !== parsedPlotArea) {
-        generationSession = await saveQuestionnaireSession(project.id, {
-          ...generationSession,
-          plot_area_sotkas:parsedPlotArea,
-        })
-        setSession(generationSession)
-        syncProject(generationSession)
-      }
+      const generationSession = await saveQuestionnaireSession(project.id, {
+        ...next,
+        plot_area_sotkas:parsedPlotArea,
+      })
+      setSession(generationSession)
+      syncProject(generationSession)
       const queued = await createQuestionnaireGeneration(project.id)
       void getQuestionnaireGenerationCost(project.id)
         .then(setGenerationCost)
@@ -1169,7 +1153,6 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
           <span><strong>Размер участка</strong><small>Можно изменить до принятия концепции · 4–15 соток</small></span>
           <span className="create-plot-input"><input aria-label="Размер участка, соток" type="number" min={4} max={15} step={1} inputMode="numeric" value={plotAreaDraft} disabled={busy} onChange={(event) => setPlotAreaDraft(event.target.value)} /><b>сот.</b></span>
         </label>}
-        {ready && !initialGenerationId && session.site_plan && <SitePlanPreview plan={session.site_plan}/>}
         {ready && !initialGenerationId && <div className="questionnaire-answer-review">{session.selected_objects.map((key) => {
           const definition = definitions.get(key)
           const answers = session.answers[key] || {}
@@ -1192,7 +1175,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     const availableToAdd = catalog.sections
       .flatMap((section) => section.object_keys)
       .filter((key) => !session.selected_objects.includes(key))
-    return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{hasAccepted ? 'Что дальше?' : 'Выбор объекта'}</span></header><section className="questionnaire-card"><span className="eyebrow">{hasAccepted ? 'КОНЦЕПЦИЯ ПРИНЯТА' : 'НАЧАЛО ОПРОСА'}</span><h1>{hasAccepted ? (session.initial_concept_mode ? 'Что делаем дальше?' : 'Что проектируем дальше?') : 'С чего начнём?'}</h1><p>{hasAccepted ? 'Любое изменение принятой концепции создаёт новую итерацию. Перед запуском вы увидите её стоимость.' : 'Выберите объект.'}</p>{!hasAccepted && remainingLegacy.length > 0 && <div className="questionnaire-options">{remainingLegacy.map((key) => <button key={key} className="questionnaire-option" disabled={busy} onClick={() => void chooseObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && sceneAsset && <div className="questionnaire-result"><ResultImage url={sceneAsset.url} alt="Последний принятый эскиз"/></div>}{hasAccepted && session.initial_concept_mode && <p className="region-hint">Следующая генерация · {generationCostLabel()}</p>}{hasAccepted && session.initial_concept_mode && <div className="questionnaire-options">{session.accepted_objects.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void startRefinement(key)}><span>Изменить: {definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && session.initial_concept_mode && session.accepted_objects.length > 1 && <details className="idea-work-summary"><summary>Удалить объект</summary><div className="questionnaire-options">{session.accepted_objects.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void startRemoval(key)}><span>Удалить: {definitions.get(key)?.title || key}</span><i/></button>)}</div></details>}{hasAccepted && session.initial_concept_mode && availableToAdd.length > 0 && <details className="idea-work-summary"><summary>Добавить новый объект</summary><div className="questionnaire-options">{availableToAdd.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void addObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div></details>}{hasAccepted && ideaPublishControl}{hasAccepted && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void chooseApplication()}>Перейти к заявке</button></div>}{error && <div className="banner-error">{error}</div>}</section></main>
+    return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{hasAccepted ? 'Что дальше?' : 'Выбор объекта'}</span></header><section className="questionnaire-card"><span className="eyebrow">{hasAccepted ? 'КОНЦЕПЦИЯ ПРИНЯТА' : 'НАЧАЛО ОПРОСА'}</span><h1>{hasAccepted ? (session.initial_concept_mode ? 'Что делаем дальше?' : 'Что проектируем дальше?') : 'С чего начнём?'}</h1><p>{hasAccepted ? 'Любое изменение принятой концепции создаёт новую итерацию. Перед запуском вы увидите её стоимость.' : 'Выберите объект.'}</p>{!hasAccepted && remainingLegacy.length > 0 && <div className="questionnaire-options">{remainingLegacy.map((key) => <button key={key} className="questionnaire-option" disabled={busy} onClick={() => void chooseObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && sceneAsset && <div className="questionnaire-result"><ResultImage url={sceneAsset.url} alt="Последний принятый эскиз"/></div>}{hasAccepted && session.initial_concept_mode && session.accepted_objects.includes('eskez-doma') && <p className="region-hint">В доработке дома меняется внешний вид. Мебель, комнаты и интерьер за окнами не редактируются.</p>}{hasAccepted && session.initial_concept_mode && <p className="region-hint">Следующая генерация · {generationCostLabel()}</p>}{hasAccepted && session.initial_concept_mode && <div className="questionnaire-options">{session.accepted_objects.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void startRefinement(key)}><span>Изменить: {definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && session.initial_concept_mode && session.accepted_objects.length > 1 && <details className="idea-work-summary"><summary>Удалить объект</summary><div className="questionnaire-options">{session.accepted_objects.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void startRemoval(key)}><span>Удалить: {definitions.get(key)?.title || key}</span><i/></button>)}</div></details>}{hasAccepted && session.initial_concept_mode && availableToAdd.length > 0 && <details className="idea-work-summary"><summary>Добавить новый объект</summary><div className="questionnaire-options">{availableToAdd.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void addObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div></details>}{hasAccepted && ideaPublishControl}{hasAccepted && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void chooseApplication()}>Перейти к заявке</button></div>}{error && <div className="banner-error">{error}</div>}</section></main>
   }
 
   if (session.region_mode === 'edit' && session.region_object) {
@@ -1206,9 +1189,9 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       <section className="questionnaire-card region-picker-card">
         <span className="eyebrow">{session.pending_removal_object === session.region_object ? 'УДАЛЕНИЕ ОБЪЕКТА' : 'ТОЧНОЕ МЕСТО НА СЦЕНЕ'}</span>
         <h1>{session.pending_removal_object === session.region_object ? `Что удалить: ${placementDefinition?.title || session.region_object}` : `Где разместить: ${placementDefinition?.title || session.region_object}?`}</h1>
-        <p>{session.pending_removal_object === session.region_object ? 'Точно обведите объект, который нужно убрать. Модель удалит его внутри этой области, а compositor пиксельно сохранит всё снаружи.' : 'Проведите пальцем или мышью по последнему принятому кадру и выделите прямоугольник, внутри которого можно менять или добавлять объект. Всё за пределами этой области compositor сохранит пиксельно.'}</p>
+        <p>{session.pending_removal_object === session.region_object ? 'Точно обведите объект, который нужно убрать. Модель удалит его внутри этой области, а compositor пиксельно сохранит всё снаружи.' : 'Проведите пальцем или мышью по последнему принятому кадру и выделите прямоугольник, внутри которого можно менять или добавлять объект. Выделите область немного шире изменяемого объекта, оставив вокруг него часть исходного окружения. Всё за пределами final area compositor сохранит пиксельно.'}</p>
         <p className="region-hint">Новая итерация · {generationCostLabel()}</p>
-        {session.initial_concept_accepted && session.accepted_objects.includes(session.region_object) && session.pending_removal_object !== session.region_object && <div className="questionnaire-field"><label>Что изменить?<input value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="Например: перенести левее, сделать крышу тёмной"/></label></div>}
+        {session.initial_concept_accepted && session.accepted_objects.includes(session.region_object) && session.pending_removal_object !== session.region_object && <div className="questionnaire-field"><label>Что изменить?<input value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="Например: сделать крышу тёмной, фасад светлее"/></label></div>}
         {sceneAsset ? <div
           className="region-canvas"
           role="img"
@@ -1285,7 +1268,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }}><span>Свой вариант</span><i/></button>}</div>}
   {primaryReview && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void answer(active, options[0])}>Подходит</button><button className="secondary-button" disabled={busy} onClick={() => void answer(active, options[1])}>Уточнить</button></div>}
   {active.kind === 'multi' && <div className="questionnaire-options">{options.map((option) => <button key={option} className={`questionnaire-option ${multi.includes(option) ? 'selected' : ''}`} onClick={() => setMulti((items) => items.includes(option) ? items.filter((item) => item !== option) : active.max_selections && items.length >= active.max_selections ? items : [...items, option])}><span>{option}</span><i/></button>)}</div>}
-  {refinement && <div className="questionnaire-field"><label>{active.field_hint || 'Свой комментарий'}<input value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="Опишите, что ещё нужно изменить"/></label></div>}
+  {refinement && <><p className="region-hint">Редактируется только наружный облик дома. Перенос мебели, внутренних стен, лестницы или камина не выполняется.</p><div className="questionnaire-field"><label>{active.field_hint || 'Свой комментарий'}<input value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="Опишите наружное изменение"/></label></div></>}
   {active.kind === 'single' && hasCustomOption && customOption && <div className="questionnaire-field"><label>{active.field_hint || 'Укажите свой вариант'}<input type={customInputIsNumber ? 'number' : 'text'} inputMode={customInputIsNumber ? 'decimal' : undefined} min={customInputIsNumber ? active.min_value ?? undefined : undefined} max={customInputIsNumber ? active.max_value ?? undefined : undefined} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={customInputIsNumber ? 'Введите значение' : 'Введите свой вариант'}/></label></div>}
   {active.kind === 'number' && <div className="questionnaire-field"><label>{active.field_hint || 'Введите значение'}<input type="number" inputMode="decimal" min={active.min_value ?? undefined} max={active.max_value ?? undefined} value={draft} onChange={(event) => { setCustomOption(hasCustomOption); setDraft(event.target.value) }}/></label></div>}
   {active.kind === 'text' && <div className="questionnaire-field"><label>{active.field_hint || activeTitle}<input value={draft} placeholder={textPlaceholder} onChange={(event) => setDraft(event.target.value)}/></label></div>}

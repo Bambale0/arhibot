@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from json import dumps
 from math import floor
 from typing import Any
@@ -299,6 +299,20 @@ def _initial_site_scale(session: DesignSession) -> dict[str, object]:
     }
 
 
+def _requires_detached_from_house(
+    object_name: str,
+    constraints: list[dict[str, object]],
+) -> bool:
+    fragments = [object_name]
+    for item in constraints:
+        answer = item.get("answer")
+        if isinstance(answer, list):
+            fragments.extend(str(value) for value in answer)
+        elif answer is not None:
+            fragments.append(str(answer))
+    return "отдельн" in " ".join(fragments).casefold()
+
+
 def _initial_concept_objects(
     catalog: dict[str, Any],
     session: DesignSession,
@@ -336,10 +350,20 @@ def _initial_concept_objects(
                     "answer": value,
                 }
             )
+        object_name = str(definition["title"]).strip()
         objects.append(
             {
                 "object_key": object_key,
-                "object_name": str(definition["title"]).strip(),
+                "object_name": object_name,
+                "visual_identity": {
+                    "must_be_recognizable_as": object_name,
+                    "substitution_forbidden": True,
+                },
+                "structural_constraints": (
+                    ["detached_from_house"]
+                    if _requires_detached_from_house(object_name, constraints)
+                    else []
+                ),
                 "questionnaire_constraints": constraints,
             }
         )
@@ -400,6 +424,12 @@ def build_initial_concept_prompt(
             "objects": objects,
         },
         "source_scene": source,
+        "structural_consistency": {
+            "fireplace_chimney": (
+                "If a visible fireplace is created, its chimney stack must be spatially "
+                "and architecturally plausible as the exterior continuation of the same flue system."
+            ),
+        },
         "composition": {
             "rule": (
                 "Сначала спланируй участок как единую композицию и соблюдай реальный "
@@ -409,6 +439,21 @@ def build_initial_concept_prompt(
             "all_selected_objects_must_be_visible": True,
             "preserve_realistic_scale_and_access": True,
             "reserve_space_for_every_selected_object": True,
+        },
+        "object_fidelity": {
+            "strength": "hard_constraints",
+            "identity_rule": (
+                "Каждый selected object должен визуально однозначно распознаваться именно "
+                "как object_name. Нельзя заменять выбранный тип похожим объектом, мебелью "
+                "или декором: лавочка должна оставаться лавочкой, бассейн — бассейном, "
+                "гараж — гаражом."
+            ),
+            "detached_structure_rule": (
+                "Если structural_constraints содержит detached_from_house, объект должен "
+                "быть физически отделён от основного дома заметным проходом/воздушным "
+                "промежутком. Запрещены общая стена, общая кровля и визуальное сращивание "
+                "объёмов."
+            ),
         },
         "site_scale": site_scale,
         "site_plan": site_plan,
@@ -438,6 +483,8 @@ def build_initial_concept_prompt(
             "Не создавать отдельные изображения для отдельных объектов.",
             "Не кадрировать сцену так, чтобы выбранные объекты выпадали из кадра.",
             "Не занимать домом весь участок, если выбраны другие объекты.",
+            "Не заменять выбранный объект визуально похожим объектом, мебелью или декором.",
+            "Не присоединять к дому объект с structural_constraints=detached_from_house.",
             "Не показывать текст, подписи, размеры, UI или технические аннотации.",
         ],
         "output": {
@@ -454,13 +501,17 @@ def build_initial_concept_prompt(
         "3. Соблюдай site_scale: размер участка и относительный масштаб объектов.\n"
         "4. Соблюдай site_plan: normalized rect каждого объекта задаёт его разрешённую семантическую зону участка.\n"
         "5. Соблюдай site_layout: расположение объектов относительно дома/двора/въезда — жёсткое ограничение.\n"
-        "6. Каждый ответ questionnaire_constraints является обязательным.\n"
-        "7. Фотореализм и эстетика после выполнения пунктов 1–6.\n"
+        "6. Сохраняй visual_identity каждого selected object: тип объекта нельзя подменять похожим.\n"
+        "7. Соблюдай structural_constraints: detached_from_house означает физически отдельный объём с видимым промежутком.\n"
+        "8. Каждый ответ questionnaire_constraints является обязательным.\n"
+        "9. Фотореализм и эстетика только после выполнения пунктов 1–8.\n"
         "STRUCTURED_SPEC:\n"
         f"{dumps(spec, ensure_ascii=False, separators=(',', ':'))}\n"
-        "FINAL_CHECK: проверь, что каждый выбранный объект полностью виден, находится "
-        "в своей site_plan semantic zone, ракурс соответствует camera.mode, а относительный "
-        "масштаб соответствует site_scale."
+        "FINAL_CHECK: проверь, что каждый выбранный объект полностью виден, однозначно "
+        "распознаётся как свой object_name, находится в своей site_plan semantic zone, "
+        "detached_from_house объекты не касаются дома, ракурс соответствует camera.mode, "
+        "а относительный масштаб соответствует site_scale. If both fireplace and chimney are visible, "
+        "verify their architectural relationship before output."
     )
 
 
@@ -470,6 +521,7 @@ def build_questionnaire_generation_prompt(
     *,
     accepted_before: Sequence[str],
     input_asset_present: bool,
+    edit_policy: Mapping[str, object] | None = None,
 ) -> str:
     """Build a deterministic, model-facing render specification.
 
@@ -541,15 +593,17 @@ def build_questionnaire_generation_prompt(
     locked_objects = [
         key for key in accepted_before if session.lock_regions.get(key) is not None
     ]
-    refinement = (
-        (
+    if removing_object:
+        refinement = (
             "Полностью удалить текущий объект из выделенной области. Не оставлять его "
             "фрагменты, фундамент, крышу, тени или артефакты; естественно продолжить "
             "ландшафт и фон принятой сцены."
         )
-        if removing_object
-        else session.review_comments.get(object_key, "").strip() or None
-    )
+    elif edit_policy is not None:
+        sanitized = edit_policy.get("sanitized_comment")
+        refinement = str(sanitized).strip() if sanitized else None
+    else:
+        refinement = session.review_comments.get(object_key, "").strip() or None
     full_rerender = (
         object_key == "eskez-doma"
         and isinstance(answers.get("15а"), str)
@@ -625,6 +679,33 @@ def build_questionnaire_generation_prompt(
             "locked_regions_enforced_by_compositor": bool(locked_objects),
             "outside_edit_region": "preserve_exactly" if edit_region else "not_applicable",
         },
+        "edit_policy": dict(edit_policy or {}),
+        "visible_interior_policy": (
+            {
+                "interior_is_context_only": True,
+                "redesign_forbidden": True,
+                "furniture_relocation_forbidden": True,
+                "fireplace_relocation_forbidden": True,
+                "staircase_relocation_forbidden": True,
+                "room_geometry_change_forbidden": True,
+                "preserve_through_glazing": True,
+            }
+            if object_key == "eskez-doma" and edit_policy is not None
+            else {}
+        ),
+        "structural_consistency": (
+            {
+                "enabled": True,
+                "relations": [
+                    {
+                        "type": "fireplace_chimney",
+                        "rule": "preserve_existing_relation",
+                    }
+                ],
+            }
+            if object_key == "eskez-doma" and edit_policy is not None
+            else {"enabled": False, "relations": []}
+        ),
         "scene_policy": definition.get("scene_policy") or {},
         "questionnaire_semantics": {
             "strength": "hard_constraints",
@@ -655,14 +736,27 @@ def build_questionnaire_generation_prompt(
         if removing_object
         else "Точное выполнение каждого активного ответа опросника как обязательного ограничения."
     )
-    priorities = (
-        "ПРИОРИТЕТЫ ВЫПОЛНЕНИЯ:\n"
-        "1. Сохранение исходной/принятой сцены и пространственных блокировок.\n"
-        f"2. {second_priority}\n"
-        "3. Правила камеры, света и размещения из scene_policy, если они не "
-        "конфликтуют с сохранением исходного кадра.\n"
-        "4. Фотореализм и эстетика только после выполнения пунктов 1–3."
-    )
+    if object_key == "eskez-doma" and edit_policy is not None and not removing_object:
+        priorities = (
+            "ПРИОРИТЕТЫ ВЫПОЛНЕНИЯ:\n"
+            "1. Pixel/spatial locks: не менять пиксели и области вне разрешённого edit.\n"
+            "2. Сохранить принятую архитектурную геометрию, которая не является целью edit.\n"
+            "3. Сохранить structural relationships, включая fireplace_chimney.\n"
+            "4. Сохранить visible interior как locked context.\n"
+            "5. Выполнить только запрошенную наружную модификацию.\n"
+            "6. Сохранить непрерывность материала, света и текстуры на границе edit.\n"
+            "7. Фотореализм.\n"
+            "8. Эстетика только после выполнения пунктов 1–7."
+        )
+    else:
+        priorities = (
+            "ПРИОРИТЕТЫ ВЫПОЛНЕНИЯ:\n"
+            "1. Сохранение исходной/принятой сцены и пространственных блокировок.\n"
+            f"2. {second_priority}\n"
+            "3. Правила камеры, света и размещения из scene_policy, если они не "
+            "конфликтуют с сохранением исходного кадра.\n"
+            "4. Фотореализм и эстетика только после выполнения пунктов 1–3."
+        )
     final_check = (
         "FINAL_CHECK: удаляемый объект полностью отсутствует внутри edit_region, фон "
         "восстановлен естественно, а всё за пределами edit_region сохранено без изменений."
@@ -673,11 +767,20 @@ def build_questionnaire_generation_prompt(
             "questionnaire_constraints и не нарушай spatial_constraints."
         )
     )
+    visible_interior_directive = (
+        "VISIBLE INTERIOR IS LOCKED CONTEXT. Any interior visible through windows or glazing "
+        "is context only. Do not redesign, relocate, improve, restyle or regenerate furniture, "
+        "fireplace/firebox, interior walls, stairs, interior lamps, room layout or decor. "
+        "Preserve their apparent positions and geometry from the accepted source scene.\n"
+        if object_key == "eskez-doma" and edit_policy is not None and not removing_object
+        else ""
+    )
     return (
         "AUROOM_RENDER_SPEC_V1\n"
         "СЧИТАЙ STRUCTURED_SPEC единственным источником параметров проектирования. "
         "Не додумывай параметры, которые противоречат данным спецификации.\n"
         f"{priorities}\n"
+        f"{visible_interior_directive}"
         "STRUCTURED_SPEC:\n"
         f"{dumps(spec, ensure_ascii=False, separators=(',', ':'))}\n"
         f"{final_check}"
