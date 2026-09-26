@@ -405,3 +405,12 @@ No new telemetry is required for this client-only interaction. The fullscreen UI
 - This implements the user's explicit common output-format requirement; operator templates/model settings stay DB-managed. No schema migration, price/policy changes or paid provider call.
 - Boundaries: model instructions are not OCR/output validation. Already existing pixels retained outside a masked edit, or the source frame of an animation, are not retroactively cleaned. Use the existing deployment drain before switching provider request formatting; do not interrupt/reissue in-flight provider requests under a changed body.
 - Verification: provider contract regression fails before/passes after; 222 unit/contract tests pass, 11 skipped. Added browser host-contract coverage for dynamic safe insets, scroll, native-control hit testing, Ideas width/nav and reset to zero. Initial browser failure reproduced header y=0 inside native controls; expanded test now waits for the destination screen after the asynchronous deep-link load.
+
+## Active work — Playwright 1.63 and Ideas media loading, 2026-09-26
+
+- Baseline: PR #58 `16c0375`, synchronized with `dev` `23245f4`; preserve the dependency update and existing user flows.
+- Reproduced: a valid image delivered after 2300 ms disappears under the candidate's 1800 ms timer. WebKit can finish an aborted image with `complete=true`, zero natural width and a rejected decode promise without the expected React error transition.
+- Replace the deadline with the actual image decode result; isolate preview/original DOM nodes and discard stale effect callbacks. Retain native load/error handlers. No API, schema, configuration, SDK or provider changes.
+- Acceptance: broken preview falls back to original, final failure is explained, slow valid originals remain visible, and neighboring-image loading/fullscreen behavior remains intact.
+- Progress: [x] red/green slow-image regression; [x] focused Chromium/WebKit checks; [x] independent review (no P1/P2); [x] expanded browser checks (66 resilience/fullscreen + 6 slow original/fallback cases); [ ] exact-head CI, merge and dev deployment.
+- Guidance: tma-codegen lifecycle patterns within the existing app integration; release-hardening, clean-code/testing-principles, webapp-testing, requesting-code-review and verification-before-completion.
