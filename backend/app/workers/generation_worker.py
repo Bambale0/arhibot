@@ -34,6 +34,7 @@ from app.image_compositor import (
 )
 from app.image_quality import analyze_masked_edit_quality
 from app.localized_edit import (
+    LocalCandidateFramingError,
     choose_local_geometry,
     local_source,
     local_edit_prompt,
@@ -111,6 +112,15 @@ class GenerationQualityRejected(RuntimeError):
 
 
 def _quality_retry_prompt(prompt: str, report: dict[str, object]) -> str:
+    if report.get("framing_error"):
+        return (
+            f"{prompt}\n\nPREVIOUS CANDIDATE REJECTED: {report['framing_error']}. "
+            "Return ONLY the exact local crop from reference image 1, with output "
+            f"aspect ratio {report.get('aspect_ratio', 'matching that crop')}. "
+            "Do not return the full scene or zoom out. Keep every locked context pixel "
+            "aligned with the crop; integrate the requested change entirely inside its "
+            "allowed_region, without crossing its boundary or covering protected areas."
+        )
     reasons: list[str] = []
     if int(report.get("changed_outside_pixels", 0) or 0) > 0:
         reasons.append("pixels outside the final commit region changed")
@@ -850,8 +860,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                                 float(quality_settings["provider_margin"])
                                 if quality_settings
                                 else 0
-                            )
-                            * min(edit_region["width"], edit_region["height"]),
+                            ),
                         ),
                         max_pixels=settings.max_image_pixels,
                     )
@@ -877,7 +886,10 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                             )
                             # Freeze the input-image roles with the crop so recovery
                             # never reinterprets an already accepted provider task.
-                            candidate_geometry["scene_context_reference"] = True
+                            # One crop keeps camera/output framing unambiguous. The
+                            # surrounding locked strip anchors the edit; house style
+                            # remains available as structured text below.
+                            candidate_geometry["scene_context_reference"] = False
                 if candidate_geometry:
                     house_answers = (
                         ((project.context or {}).get("design_session") or {})
@@ -1037,10 +1049,18 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             max_quality_retries = (
                 int(quality_settings["max_retries"]) if quality_settings is not None else 0
             )
-            quality_attempts: list[dict[str, object]] = []
-            previous_failure: dict[str, object] | None = None
             base_provider_prompt = prompt
             resume_attempt = int(provider_checkpoint.get("attempt", 0))
+            # Keep completed prior attempts when an accepted retry is resumed.
+            # Re-evaluating the same completed task replaces, rather than duplicates,
+            # its report and never resets the paid attempt index.
+            quality_attempts: list[dict[str, object]] = [
+                item for item in (generation.quality_report or {}).get("attempts", [])
+                if 0 < int(item.get("attempt", 0)) <= resume_attempt
+            ]
+            previous_failure: dict[str, object] | None = (
+                quality_attempts[-1].get("initial") if quality_attempts else None
+            )
             for quality_attempt in range(
                 resume_attempt, max(max_quality_retries, resume_attempt) + 1
             ):
@@ -1051,31 +1071,41 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     if quality_attempt == 0 or previous_failure is None
                     else _quality_retry_prompt(base_provider_prompt, previous_failure)
                 )
-                resume_fallback = (
-                    quality_attempt == resume_attempt
-                    and provider_checkpoint.get("phase") == "fallback"
+                resuming_request = bool(provider_checkpoint) and quality_attempt == resume_attempt
+                # A completed, deterministically rejected frame may use the
+                # configured alternative within the same quality budget. An
+                # accepted/ambiguous checkpoint always retains its original phase.
+                use_fallback = (
+                    provider_checkpoint.get("phase") == "fallback"
+                    if resuming_request
+                    else bool(
+                        quality_attempt > 0
+                        and previous_failure
+                        and previous_failure.get("framing_error")
+                        and fallback_model
+                    )
                 )
                 model_name = (
                     str(provider_checkpoint.get("model") or primary_model)
-                    if quality_attempt == resume_attempt
-                    else primary_model
+                    if resuming_request
+                    else str(fallback_model) if use_fallback else primary_model
                 )
-                fallback_used = fallback_used or resume_fallback
+                fallback_used = fallback_used or use_fallback
                 try:
                     result = await _generate_checkpointed(
                         provider,
                         generation_id,
                         attempt=quality_attempt,
-                        phase="fallback" if resume_fallback else "primary",
+                        phase="fallback" if use_fallback else "primary",
                         model_name=model_name,
                         prompt=attempt_prompt,
                         source_url=source_url,
-                        params=fallback_params if resume_fallback else primary_params,
+                        params=fallback_params if use_fallback else primary_params,
                         reference_image_urls=reference_image_urls,
-                        timeout_seconds=None if resume_fallback else primary_timeout_seconds,
+                        timeout_seconds=None if use_fallback else primary_timeout_seconds,
                     )
                 except NexusProviderError as primary_error:
-                    if not primary_error.retryable or not fallback_model or resume_fallback:
+                    if not primary_error.retryable or not fallback_model or use_fallback:
                         raise
                     logger.warning(
                         "Primary Nexus task failed for %s attempt=%s; using configured fallback",
@@ -1118,16 +1148,47 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                             if quality_settings
                             else None,
                         )
-                    except ValueError as exc:
-                        raise GenerationQualityRejected(
-                            {
-                                "version": "edit-quality.v1",
-                                "final": "rejected",
-                                "provider_geometry": provider_geometry,
-                                "framing_error": str(exc),
-                                "semantic_verification": "not_performed",
-                            }
-                        ) from exc
+                    except LocalCandidateFramingError as exc:
+                        previous_failure = {
+                            "passed": False,
+                            "framing_error": str(exc),
+                            "aspect_ratio": provider_geometry["aspect_ratio"],
+                        }
+                        quality_attempts.append({
+                            "attempt": quality_attempt + 1,
+                            "model": model_name,
+                            "provider_task_id": provider_task_id,
+                            "initial": previous_failure,
+                        })
+                        quality_report = {
+                            "version": "edit-quality.v1",
+                            "attempts": quality_attempts,
+                            "final": (
+                                "rejected" if quality_attempt >= max_quality_retries
+                                else "retry_pending"
+                            ),
+                            "provider_geometry": provider_geometry,
+                            "provider_work_region": provider_work_region,
+                            "provider_edit_region": edit_region,
+                            "framing_error": str(exc),
+                            "semantic_verification": "not_performed",
+                        }
+                        if quality_attempt >= max_quality_retries:
+                            record_masked_edit_quality_rejected()
+                            raise GenerationQualityRejected(quality_report) from exc
+                        # Persist rejection before the next submission intent. On
+                        # restart _generate_checkpointed still owns POST/GET safety.
+                        async with get_session_factory()() as db:
+                            row = await GenerationRepository(db).get_for_update(generation_id)
+                            if row is None or row.status != GenerationStatus.PROCESSING:
+                                raise RuntimeError("Generation stopped before quality retry") from exc
+                            row.quality_report = {**(row.quality_report or {}), **quality_report}
+                            await db.commit()
+                        logger.warning(
+                            "Generation %s local framing rejected attempt=%s/%s: %s",
+                            generation_id, quality_attempt + 1, max_quality_retries + 1, exc,
+                        )
+                        continue
                 if composition_mode != "masked_edit":
                     data = candidate_data
                     break
