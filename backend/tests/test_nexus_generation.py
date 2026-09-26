@@ -48,6 +48,7 @@ def test_nexus_model_params_cannot_override_prompt_model_or_reference() -> None:
         model_name="real-model",
         prompt="canonical prompt",
         image_url="https://media.example.com/base.png",
+        reference_image_urls=["https://media.example.com/edit-mask.png"],
         model_params={
             "model_name": "forged-model",
             "prompt": "forged prompt",
@@ -59,7 +60,10 @@ def test_nexus_model_params_cannot_override_prompt_model_or_reference() -> None:
     assert params["model_name"] == "real-model"
     assert params["prompt"].startswith("canonical prompt\n")
     assert "forged prompt" not in params["prompt"]
-    assert params["image_urls"] == ["https://media.example.com/base.png"]
+    assert params["image_urls"] == [
+        "https://media.example.com/base.png",
+        "https://media.example.com/edit-mask.png",
+    ]
     assert params["steps"] == 24
 
 

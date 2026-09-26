@@ -317,32 +317,39 @@ jobs:
           asyncio.run(main())
           PY
 
-          set +e
-          timeout 3s python backend/scripts/worker_crash_probe.py "${worker_name}" >/tmp/auroom-worker-crash-blocked.log 2>&1
-          blocked_status=$?
-          set -e
-          if [[ "${blocked_status}" -eq 0 || "${blocked_status}" -eq 124 ]]; then
-            cat /tmp/auroom-worker-crash-blocked.log >&2
-            echo "Replacement worker was not blocked by the stale singleton lease" >&2
-            exit 1
-          fi
-          grep -q 'already owns the singleton lease' /tmp/auroom-worker-crash-blocked.log
-
-          # The production singleton lease intentionally survives SIGKILL for 45s.
-          sleep 47
-
+          # Start the replacement immediately. It must stay alive while the
+          # stale owner lease exists, then acquire it by itself after TTL expiry.
           python backend/scripts/worker_crash_probe.py "${worker_name}" >"${replacement_log}" 2>&1 &
           replacement_pid=$!
-          for attempt in $(seq 1 40); do
+          sleep 3
+          kill -0 "${replacement_pid}" >/dev/null 2>&1 || {
+            cat "${replacement_log}" >&2
+            echo "Replacement worker exited instead of waiting for the stale singleton lease" >&2
+            exit 1
+          }
+          if grep -q 'state=ready' "${replacement_log}"; then
+            cat "${replacement_log}" >&2
+            echo "Replacement worker acquired the singleton lease before stale-owner expiry" >&2
+            exit 1
+          fi
+
+          recovered=0
+          for attempt in $(seq 1 220); do
             if grep -q 'state=ready' "${replacement_log}" && python -m app.workers.heartbeat check "${worker_name}" 5 >/dev/null 2>&1; then
+              recovered=1
               break
             fi
             kill -0 "${replacement_pid}" >/dev/null 2>&1 || { cat "${replacement_log}" >&2; exit 1; }
             sleep 0.25
           done
-          grep -q 'state=ready' "${replacement_log}"
+          (( recovered == 1 )) || {
+            cat "${replacement_log}" >&2
+            echo "Replacement worker did not acquire the lease after stale-owner expiry" >&2
+            exit 1
+          }
+          ! grep -q 'already owns the singleton lease' "${replacement_log}"
           python -m app.workers.heartbeat check "${worker_name}" 5
-          echo "Worker SIGKILL recovery probe passed"
+          echo "Worker SIGKILL recovery probe passed without restart loop"
 
   frontend:
     name: Frontend build

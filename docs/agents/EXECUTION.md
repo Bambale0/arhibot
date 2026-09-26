@@ -1,5 +1,47 @@
 # Agent Execution Ledger
 
+## Active work — reduce Telegram backup duplication, 2026-09-26
+
+- Baseline: `dev` `729484974333f91128529cf9449aa9955c3f8264`; separate branch `fix/telegram-backup-dedup-20260926`. User stopped the parallel agent and assigned this session the remaining PR queue and backup spam fix.
+- Evidence: five successive snapshots have identical `media.tar.gz` SHA-256. Each forced pre-deploy backup currently uploads the same 450 MB as 24 encrypted parts plus a manifest to each allowed administrator. A transient download failure interrupted one export; its checkpoint resumed and verified successfully.
+- Reuse existing backup scheduler, fresh pre-migration snapshot, age encryption, administrator allowlist, immutable Telegram parts, hash download verification, OFFSITE_OK gate and restore scripts. No schema, business settings, credentials, retention or paid provider changes.
+- Format v2 separates current database/checksums from the reusable media component. Embed all media part descriptors directly in every manifest; never depend on previous local folders or chains of manifests. Bootstrap reuse from a verified v1 full archive with identical media and recipient; restore only its media, keeping the new DB/checksums.
+- Acceptance: unchanged media sends only the small DB component plus manifest (normally two documents); every reused part is downloaded and verified for the new snapshot; interrupted v1/v2 delivery resumes without duplicate sends; v1 restores remain supported; v2 restores work after deleting original local snapshots; changed media/recipient never reuse an incompatible component. New media still requires its first full upload.
+- Plan: [x] inspect live evidence and independently review design; [x] write failing reuse/restore/failure tests; [x] implement versioned components; [x] run isolated encryption/restore and security regressions; [x] independent implementation review; [ ] exact-SHA CI, sequential dev merge, automatic deploy and live verification.
+- Local verification: four new behavioral tests failed before implementation; full backend unit/contract suite on Python3.12.14 passes (271 passed, 11 skipped). Backup tests also run on the host-compatible Python3.10. Ruff correctness and diff whitespace checks pass. Independent review found no P1/P2; its manifest-caption clarification is incorporated. Initial broad test invocation used system Python3.10 and could not collect the application suite; the supported Python3.12 environment was then used successfully.
+- Guidance: claw release-hardening, wondelai clean-code/testing-principles, dev-agents-pack PR review checklist, anthropics webapp-testing (remaining frontend PRs), ksu and local verification-before-completion/requesting-code-review; agentskills inspected (format specification). Local team-lead/devops, bot-tester and security-audit guide this change; project conventions override generic skill templates.
+
+## Active work — exterior refinement policy and quality gate, 2026-09-25
+
+- Baseline: `dev` `cdf4d98e08d9ae108d03b7f14a2bdb99b9f70db4`.
+- Branch: `feat/exterior-refinement-policy-p0`.
+- Existing masked-edit safety already provides aligned provider guide, deterministic final compositor, exact preservation outside the final edit region and adaptive inward feather.
+- Root gap: provider success currently flows directly through compositor to a completed user asset; there is no canonical edit-policy decision and no quality gate capable of rejecting a seam or unsupported interior request before publication.
+- Product boundary: this slice is Exterior Refinement Mode. Interior/furniture/fireplace relocation is not a supported refinement operation; visible interior remains locked context.
+- Structural rule: fireplace and exterior chimney are one logical relationship. Unrelated edits must not relocate either; roof/chimney edits are structural-sensitive.
+- Runtime thresholds, retry budget and provider work-region margin belong to the existing DB-backed generation admin control plane, not source constants or environment-only settings.
+
+### Acceptance criteria
+
+1. [ ] Deterministic server-side `EditPolicy` resolves domain/intent from canonical edit question IDs and sanitized review comment.
+2. [ ] Interior-only/refireplace-relocation requests are rejected before generation; mixed requests retain only the supported exterior part.
+3. [ ] House refinement catalog version changes `Камин, труба` to `Дымоход / труба` without mutating historical revisions.
+4. [ ] Refinement prompt locks visible interior and carries fireplace/chimney structural consistency rules.
+5. [ ] Generations persist policy and quality snapshots/status for diagnosis.
+6. [ ] Provider work region may be padded through runtime settings while the final commit region remains exact.
+7. [ ] Quality gate enforces zero outside-region pixel mutations and detects a rectangular boundary exposure/color seam relative to the source.
+8. [ ] Small seam failure tries a wider inward recomposite before any extra provider call.
+9. [ ] Remaining quality failure uses a bounded internal provider retry with a distinct idempotency key; billing remains one generation reservation.
+10. [ ] Exhausted retries fail safely and use the existing idempotent generation refund path.
+11. [ ] Backend regression/integration tests, frontend/admin tests, exact-head CI and review are green before merge.
+12. [ ] After merge: development deploy and server smoke are green before any real provider smoke.
+
+### TDD evidence
+
+- RED contract commit(s): `backend/tests/test_edit_policy.py`, `backend/tests/test_image_quality.py`.
+- Implementation plan: `docs/plans/2026-09-25-exterior-refinement-policy.md`.
+- GREEN evidence, PR/CI/deploy/smoke: pending.
+
 ## Current release status — 2026-09-24
 
 This section is the authoritative status summary. The implementation records below are retained as historical evidence and should not be read as currently open epics.
@@ -15,6 +57,25 @@ This section is the authoritative status summary. The implementation records bel
 - Remaining release gates are environment-specific acceptance of any real paid generation/billing path required for launch, followed by an explicitly authorized `dev -> main` production promotion.
 - Dependabot major-version upgrades are maintenance backlog and are not MVP handoff blockers; handle them separately, one upgrade at a time.
 
+
+## Active work — questionnaire cross-object logic and spatial constraints, 2026-09-24
+
+- Baseline: `dev` `678a081b8b12333d175093821fe99321a9e79b6e`.
+- User-reported gaps: duplicate house/garage requirements when a separate garage is selected; empty follow-up questions after conditional option filtering; unclear enforcement of object placement/plot size; plot size unavailable during initial-TZ regeneration.
+- Product rule: a separately selected garage or canopy owns its own questionnaire, so the house garage/canopy branch is inactive for that startup selection.
+- Product rule: a single/multi question with zero currently available options is inactive and is skipped by UI, validation and prompt building.
+- Plot size remains editable at 4–15 sotkas until the initial concept is accepted; after acceptance it is immutable with the initial brief.
+- Prompt contract now elevates extracted location answers into `site_layout.placement_constraints` and strengthens site-scale priority. These are model constraints, not deterministic geometric guarantees; exact placement would require a coordinate/mask/site-plan or deterministic rendering layer.
+
+### Acceptance criteria
+
+1. [x] Skip duplicate house garage/canopy questions when that object is selected separately.
+2. [x] Skip conditional questions whose option set becomes empty.
+3. [x] Apply the same active-question rules in frontend navigation, backend validation and prompt construction.
+4. [x] Allow plot-size edits before initial acceptance and persist `plot_area_m2`.
+5. [x] Promote explicit location answers into a dedicated structured site-layout constraint block.
+6. [x] Add backend/frontend regression coverage.
+7. [ ] Exact-head CI, review, merge to `dev`, development deploy and server smoke.
 
 ## Completed work — lightweight home dashboard
 

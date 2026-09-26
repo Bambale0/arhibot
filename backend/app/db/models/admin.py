@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Float,
     Index,
     Integer,
     Numeric,
@@ -158,6 +159,36 @@ class GenerationRuntimeSettings(Base):
     )
     mode_params: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    masked_edit_provider_context_margin_fraction: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.03, server_default="0.03"
+    )
+    masked_edit_feather_fraction: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.014, server_default="0.014"
+    )
+    masked_edit_feather_min_px: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=4, server_default="4"
+    )
+    masked_edit_feather_max_px: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=24, server_default="24"
+    )
+    masked_edit_recomposite_feather_multiplier: Mapped[float] = mapped_column(
+        Float, nullable=False, default=1.75, server_default="1.75"
+    )
+    masked_edit_boundary_band_px: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=4, server_default="4"
+    )
+    masked_edit_max_luma_excess: Mapped[float] = mapped_column(
+        Float, nullable=False, default=20.0, server_default="20"
+    )
+    masked_edit_max_color_excess: Mapped[float] = mapped_column(
+        Float, nullable=False, default=32.0, server_default="32"
+    )
+    masked_edit_max_straight_edge_fraction: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.65, server_default="0.65"
+    )
+    generation_quality_max_retries: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
     )
     updated_by_user_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
