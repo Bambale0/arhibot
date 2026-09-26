@@ -542,12 +542,13 @@ test('uncertain creation blocks another paid request until server state can be c
   expect(creates).toBe(1)
 })
 
-test('failed accepted-object removal retries without deleting the accepted generation binding',async({page})=>{
+test('checking a failed removal is free and only an explicit priced retry creates a generation',async({page})=>{
   stagedSceneEdit(true)
   session={...session,region_mode:null,region_object:null,generation_ids:{...session.generation_ids,prud:generationIds[1]}}
   project={...project,context:{...project.context,design_session:session}}
   await page.route(`**/api/v1/assets/${assetIds[0]}`,route=>json(route,asset(0)))
   let retried=false
+  let statusReads=0
   let invalidPut=false
   await page.route(`**/api/v1/projects/${projectId}/questionnaire-session`,async route=>{
     if(route.request().method()==='PUT'&&!retried) {
@@ -556,7 +557,10 @@ test('failed accepted-object removal retries without deleting the accepted gener
     }
     return route.fallback()
   })
-  await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation/${generationIds[1]}`,route=>json(route,generation(1,retried?'completed':'failed')))
+  await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation/${generationIds[1]}`,route=>{
+    statusReads++
+    return json(route,generation(1,retried?'completed':'failed'))
+  })
   await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation`,async route=>{
     retried=true
     return json(route,generation(1,'completed'),202)
@@ -564,7 +568,13 @@ test('failed accepted-object removal retries without deleting the accepted gener
   await page.goto(`/?project=${projectId}`)
   await expect(page.getByRole('button',{name:'Проверить генерацию'})).toBeVisible()
   await page.getByRole('button',{name:'Проверить генерацию'}).click()
+  await expect(page.getByRole('button',{name:'Повторить генерацию · 1 кр.'})).toBeVisible()
+  expect(retried).toBe(false)
+  expect(invalidPut).toBe(false)
+  const checkedReads=statusReads
+  await page.getByRole('button',{name:'Повторить генерацию · 1 кр.'}).click()
   await expect(page.getByText('Объект «Пруд или ручей» удалён правильно?')).toBeVisible()
+  expect(statusReads).toBeGreaterThan(checkedReads)
   expect(retried).toBe(true)
   expect(invalidPut).toBe(false)
 })
@@ -578,11 +588,78 @@ test('failed new-object retry preserves placement when the retry request is reje
   await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation`,route=>json(route,{type:'temporary_failure'},503))
   await page.goto(`/?project=${projectId}`)
   await page.getByRole('button',{name:'Проверить генерацию'}).click()
+  await page.getByRole('button',{name:'Повторить генерацию · 1 кр.'}).click()
   await expect(page.getByText('Сервис временно недоступен. Повторите попытку.')).toBeVisible()
   await expect(page.locator('.region-selection')).toBeVisible()
   await expect(page.getByRole('button',{name:'Подтвердить область и создать новую итерацию'})).toBeEnabled()
   expect(session.answers.prud['1']).toBe('Пруд')
 })
+
+
+for (const taskAppears of [false,true]) {
+  test(`legacy launch without a bound task offers a separate priced start; task appears=${taskAppears}`,async({page})=>{
+    session={...session,source_step_completed:true,current_object:'lavochka',current_question_id:'2',answers:{lavochka:{'1':'Деревянная со спинкой'}}}
+    project={...project,context:{...project.context,design_session:session}}
+    let creates=0
+    let sessionReads=0
+    await page.route(`**/api/v1/projects/${projectId}/questionnaire-session`,route=>{
+      if(route.request().method()==='GET') sessionReads++
+      return route.fallback()
+    })
+    await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation`,route=>{
+      creates++
+      return creates===1?json(route,{type:'temporary_failure'},503):json(route,generation(0,'completed'),202)
+    })
+    await page.goto(`/?project=${projectId}`)
+    await page.getByText('Слева от дома',{exact:true}).click()
+    await expect(page.getByText('Сервис временно недоступен. Повторите попытку.')).toBeVisible()
+    expect(creates).toBe(1)
+    await page.getByRole('button',{name:'Проверить запуск'}).click()
+    await expect(page.getByRole('button',{name:'Запустить генерацию · 1 кр.'})).toBeVisible()
+    expect(creates).toBe(1)
+    const readsBeforeStart=sessionReads
+    if(taskAppears) session={...session,generation_ids:{lavochka:generationIds[0]}}
+    await page.getByRole('button',{name:'Запустить генерацию · 1 кр.'}).click()
+    await expect(page.getByText('Эскиз лавочки вам подходит?')).toBeVisible()
+    expect(sessionReads).toBeGreaterThan(readsBeforeStart)
+    expect(creates).toBe(taskAppears?1:2)
+  })
+}
+
+for (const changed of ['completed','missing','different-failed'] as const) {
+  test(`explicit retry rechecks the task and never pays for ${changed} server state`,async({page})=>{
+    stagedSceneEdit(true)
+    session={...session,region_mode:null,region_object:null,generation_ids:{...session.generation_ids,prud:generationIds[1]}}
+    project={...project,context:{...project.context,design_session:session}}
+    await page.route(`**/api/v1/assets/${assetIds[0]}`,route=>json(route,asset(0)))
+    let changedState=false
+    let creates=0
+    await page.route(`**/api/v1/projects/${projectId}/questionnaire-session`,async route=>{
+      if(route.request().method()!=='GET'||!changedState||changed==='completed') return route.fallback()
+      return json(route,{session:{...session,generation_ids:{...session.generation_ids,prud:changed==='missing'?undefined:generationIds[0]}}})
+    })
+    for(let i=0;i<2;i++) await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation/${generationIds[i]}`,route=>json(route,generation(i,changedState&&changed==='completed'?'completed':'failed')))
+    await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation`,route=>{
+      creates++
+      return json(route,generation(1,'completed'),202)
+    })
+    await page.goto(`/?project=${projectId}`)
+    await page.getByRole('button',{name:'Проверить генерацию'}).click()
+    await expect(page.getByRole('button',{name:'Повторить генерацию · 1 кр.'})).toBeVisible()
+    expect(creates).toBe(0)
+    changedState=true
+    await page.getByRole('button',{name:'Повторить генерацию · 1 кр.'}).click()
+    if(changed==='completed') await expect(page.getByText('Объект «Пруд или ручей» удалён правильно?')).toBeVisible()
+    else if(changed==='missing') {
+      await expect(page.getByText('Не удалось найти текущую задачу. Повторный запуск заблокирован. Откройте проект заново.')).toBeVisible()
+      await expect(page.getByRole('button',{name:/Повторить генерацию/})).toHaveCount(0)
+      await page.getByRole('button',{name:'Проверить генерацию'}).click()
+      await expect(page.getByText('Не удалось найти текущую задачу. Повторный запуск заблокирован. Откройте проект заново.')).toBeVisible()
+      await expect(page.getByRole('button',{name:/Запустить генерацию/})).toHaveCount(0)
+    } else await expect(page.getByRole('button',{name:'Повторить генерацию · 1 кр.'})).toBeVisible()
+    expect(creates).toBe(0)
+  })
+}
 
 test('an old completed survey stuck on its first question resumes placement and generates',async({page})=>{
   stagedSceneEdit()

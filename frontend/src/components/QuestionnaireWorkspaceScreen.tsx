@@ -293,6 +293,8 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const [plotAreaDraft, setPlotAreaDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [generationInFlight, setGenerationInFlight] = useState(false)
+  const [checkedUnstarted, setCheckedUnstarted] = useState<{sessionId:string; objectKey:string}|null>(null)
+  const [checkedFailure, setCheckedFailure] = useState<{sessionId:string; objectKey:string; generationId:string}|null>(null)
   const [uncertainCreation, setUncertainCreation] = useState<{session:DesignSession; objectKey:string; message:string}|null>(null)
   const [ideaPublication, setIdeaPublication] = useState<AdminIdea|null|undefined>(undefined)
   const [ideaPublishing, setIdeaPublishing] = useState(false)
@@ -374,6 +376,18 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     : []
   const active = current && session ? visible.find((q) => q.id === session.current_question_id) || null : null
   const currentGenerationId = current && session && session.region_mode == null ? session.generation_ids[current.key] || null : null
+  const canRetryGeneration = Boolean(
+    checkedFailure
+    && checkedFailure.sessionId === session?.session_id
+    && checkedFailure.objectKey === current?.key
+    && checkedFailure.generationId === currentGenerationId
+  )
+  const canStartGeneration = Boolean(
+    checkedUnstarted
+    && checkedUnstarted.sessionId === session?.session_id
+    && checkedUnstarted.objectKey === current?.key
+    && !currentGenerationId
+  )
   const initialGenerationId = session?.initial_generation_id || null
   const parsedPlotArea = Number(plotAreaDraft)
   const plotAreaValid = Number.isInteger(parsedPlotArea) && parsedPlotArea >= 4 && parsedPlotArea <= 15
@@ -985,8 +999,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     }
   }
 
-  async function resumeOrRetryGeneration() {
-    if (!session || !current || current.key === 'zayavka' || uncertainCreation) return
+  async function checkGeneration(action:'check'|'retry'|'start' = 'check') {
+    if (!session || !current || current.key === 'zayavka' || uncertainCreation || busy || generationInFlight) return
+    if (action !== 'check' && (!generationCost?.is_available || generationCost.credits == null)) return
+    if (action === 'retry' && !canRetryGeneration || action === 'start' && !canStartGeneration) return
+    setCheckedFailure(null)
+    setCheckedUnstarted(null)
     setGenerationInFlight(true)
     setBusy(true)
     setError(null)
@@ -995,13 +1013,32 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       if (!fresh || fresh.session_id !== session.session_id || fresh.current_object !== current.key) {
         throw new Error('Состояние проекта изменилось. Откройте проект заново.')
       }
+      const generationId = fresh.generation_ids[current.key]
+      if (!generationId) {
+        // A disappearing known task is ambiguous; preserve its local binding so
+        // repeated checks cannot reinterpret it as a legacy launch without a task.
+        if (currentGenerationId || session.initial_concept_mode || fresh.initial_concept_mode || fresh.accepted_objects.includes(current.key)) {
+          throw new Error('Не удалось найти текущую задачу. Повторный запуск заблокирован. Откройте проект заново.')
+        }
+        setSession(fresh)
+        syncProject(fresh)
+        if (action === 'start') return await startGenerationOrRegion(fresh, current)
+        setCheckedUnstarted({ sessionId:fresh.session_id, objectKey:current.key })
+        setError('Задача ещё не создана. Можно отдельно запустить генерацию за указанную стоимость.')
+        return
+      }
       setSession(fresh)
       syncProject(fresh)
-      const generationId = fresh.generation_ids[current.key]
-      if (!generationId) return await startGenerationOrRegion(fresh, current)
       const existing = await getQuestionnaireGeneration(project.id, generationId)
       if (existing.status !== 'failed') {
         await finishGeneration(fresh, current, existing)
+        return
+      }
+      // Checking never starts a generation. A paid retry requires a separate deliberate click,
+      // and confirmation that the same checked task is still terminally failed.
+      if (action !== 'retry' || checkedFailure?.generationId !== generationId) {
+        setCheckedFailure({ sessionId:fresh.session_id, objectKey:current.key, generationId })
+        setError(existing.error || 'Генерация завершилась ошибкой. Можно запустить новую попытку за указанную стоимость.')
         return
       }
       if (fresh.initial_concept_accepted && fresh.accepted_objects.includes(current.key)) {
@@ -1361,7 +1398,16 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   if ((busy || generationInFlight) && !active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card generating-card"><SparkIcon/><h1>{session.pending_removal_object === current.key ? 'Удаляем' : 'Создаём'}: {current.title}</h1><p>Сохраняем текущую сцену, ракурс и уже принятые объекты.</p>{error && <div className="banner-error">{error}</div>}</section></main>
 
-  if (!active) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>{current.title}</h1><p>{currentGenerationId ? 'Генерация не завершена. Можно безопасно проверить текущую задачу и повторить только если она действительно завершилась ошибкой.' : 'Ответы сохранены. Можно проверить состояние и повторить запуск.'}</p>{error && <div className="banner-error">{error}</div>}<div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void (uncertainCreation ? checkUncertainCreation() : resumeOrRetryGeneration())}>{uncertainCreation ? 'Проверить запуск' : currentGenerationId ? 'Проверить генерацию' : 'Повторить запуск'}</button></div></section></main>
+  if (!active) return <main className="questionnaire-shell"><section className="questionnaire-card">
+    <h1>{current.title}</h1>
+    <p>Проверка статуса бесплатна и не запускает новую генерацию. После подтверждённой ошибки можно отдельно повторить генерацию за указанную стоимость.</p>
+    {error && <div className="banner-error">{error}</div>}
+    <div className="questionnaire-actions">
+      <button className={canRetryGeneration || canStartGeneration ? 'secondary-button' : 'primary-button'} disabled={busy || generationInFlight} onClick={() => void (uncertainCreation ? checkUncertainCreation() : checkGeneration())}>{uncertainCreation || !currentGenerationId ? 'Проверить запуск' : 'Проверить генерацию'}</button>
+      {canStartGeneration && !uncertainCreation && <button className="primary-button" disabled={busy || generationInFlight || !generationCost?.is_available || generationCost.credits == null} onClick={() => void checkGeneration('start')}>Запустить генерацию · {generationCostLabel()}</button>}
+      {canRetryGeneration && !uncertainCreation && <button className="primary-button" disabled={busy || generationInFlight || !generationCost?.is_available || generationCost.credits == null} onClick={() => void checkGeneration('retry')}>Повторить генерацию · {generationCostLabel()}</button>}
+    </div>
+  </section></main>
 
   const options = availableOptions(active)
   const currentValue = objectAnswers[active.id]
