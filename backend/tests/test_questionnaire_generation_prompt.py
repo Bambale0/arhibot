@@ -591,3 +591,78 @@ def test_initial_concept_site_plan_keeps_multiple_spatial_relations() -> None:
     assert bench_item["relations"] == ["right_of_house", "entry_zone"]
     assert bench_item["zone"] == "entry_right"
     assert bench_item["rect"]["y"] < objects["eskez-doma"]["rect"]["y"]
+
+
+def test_house_scale_uses_ground_footprint_and_is_carried_into_edits() -> None:
+    catalog = build_catalog()
+    session = DesignSession(
+        catalog_version=catalog['version'], selected_objects=['eskez-doma', 'izgorod'],
+        plot_area_sotkas=10, initial_concept_mode=True, source_step_completed=True,
+        answers={'eskez-doma': {'3':200, '4':'2 этажа', '11б':'Да'}},
+    )
+    initial = _spec(build_initial_concept_prompt(catalog, session, input_asset_present=False))
+    scale = initial['site_scale']
+    assert scale['estimated_house_footprint_m2'] == 100
+    assert scale['estimated_house_footprint_share_of_plot'] == .1
+    assert scale['plot_to_house_footprint_ratio'] == 10
+    assert scale['remaining_ground_share'] == .9
+    assert 'не площадь изображения' in scale['directive']
+    edit = _spec(build_questionnaire_generation_prompt(
+        _definition('izgorod'), session, accepted_before=['eskez-doma'], input_asset_present=True,
+    ))
+    assert edit['site_scale'] == scale
+
+
+def test_flowering_hedge_location_does_not_request_an_additional_fence() -> None:
+    catalog = build_catalog()
+    session = DesignSession(
+        catalog_version=catalog['version'], selected_objects=['izgorod'],
+        initial_concept_mode=True, source_step_completed=True,
+        answers={'izgorod': {'1':'Цветущая', '2':'Около 1,5 м', '3':'Весь периметр внутри забора'}},
+    )
+    spec = _spec(build_initial_concept_prompt(catalog, session, input_asset_present=False))
+    boundary = spec['boundary_policy']
+    assert boundary['hedge_requested'] is True
+    assert boundary['built_fence_requested'] is False
+    assert boundary['location_reference_does_not_request_fence'] is True
+    both = session.model_copy(update={'selected_objects':['izgorod','zabor']})
+    spec = _spec(build_initial_concept_prompt(catalog, both, input_asset_present=False))
+    assert spec['boundary_policy']['built_fence_requested'] is True
+
+
+def test_fireplace_requests_roof_chimney_without_rendering_interior() -> None:
+    catalog = build_catalog()
+    for answer, required in [('Да', True), ('Нет', False)]:
+        session = DesignSession(
+            catalog_version=catalog['version'], selected_objects=['eskez-doma'],
+            initial_concept_mode=True, source_step_completed=True,
+            answers={'eskez-doma': {'11б':answer}},
+        )
+        spec = _spec(build_initial_concept_prompt(catalog, session, input_asset_present=False))
+        feature = spec['house_exterior_features']
+        assert feature['roof_chimney_required'] is required
+        assert feature['interior_fireplace_visible_required'] is False
+        assert feature['interior_layout_inference_forbidden'] is True
+
+
+def test_house_removal_does_not_require_preserving_house_or_chimney() -> None:
+    from app.services.edit_policy import build_object_removal_policy
+    catalog = build_catalog()
+    state = DesignSession(
+        catalog_version=catalog['version'], selected_objects=['eskez-doma','banya'],
+        initial_concept_mode=True, initial_concept_accepted=True, initial_generation_id=uuid4(),
+        source_step_completed=True, accepted_objects=['eskez-doma','banya'],
+        pending_removal_object='eskez-doma', current_object='eskez-doma',
+        answers={'eskez-doma':{'11б':'Да', '3':200, '4':'2 этажа'}},
+    )
+    spec = _spec(build_questionnaire_generation_prompt(
+        _definition('eskez-doma'), state, accepted_before=['banya'], input_asset_present=True,
+        edit_policy=build_object_removal_policy('eskez-doma').to_dict(),
+    ))
+    assert spec['house_exterior_features']['roof_chimney_required'] is False
+    assert spec['site_scale']['house_total_area_m2'] is None
+    assert spec['structural_consistency']['enabled'] is False
+    assert spec['visible_interior_policy'] == {}
+    assert spec['edit_policy']['preserve_building_geometry'] is False
+    assert 'Сохрани остальные объекты' in spec['source_scene']['directive']
+    assert 'существующий дом' not in spec['source_scene']['directive']

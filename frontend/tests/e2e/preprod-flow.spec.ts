@@ -470,3 +470,148 @@ test('Telegram generation deep-link opens the exact completed result',async({pag
   await expect(page.getByText('Готовая работа')).toBeVisible()
   await expect(page.getByAltText('Сгенерированная работа AuRoom')).toBeVisible()
 })
+function stagedSceneEdit(removal=false) {
+  session={...session,initial_concept_mode:true,initial_concept_accepted:true,
+    initial_generation_id:generationIds[0],scene_generation_id:generationIds[0],
+    selected_objects:['lavochka','prud'],survey_completed_objects:['lavochka'],
+    accepted_objects:removal?['lavochka','prud']:['lavochka'],
+    source_step_completed:true,scene_asset_id:assetIds[0],current_object:'prud',current_question_id:null,
+    answers:{lavochka:{'1':'Деревянная со спинкой','2':'Слева от дома'},prud:{'1':'Пруд'}},
+    generation_ids:removal?{lavochka:generationIds[0],prud:generationIds[0]}:{lavochka:generationIds[0]},
+    pending_removal_object:removal?'prud':null,region_mode:'edit',region_object:'prud',
+    edit_regions:{prud:{x:.3,y:.3,width:.2,height:.2}},
+    lock_regions:{lavochka:{x:.1,y:.1,width:.8,height:.8}},
+  }
+  project={...project,context:{...project.context,design_session:session}}
+}
+
+for (const removal of [false,true]) {
+  test(`scene ${removal?'removal':'addition'} preserves selected region and answers on create failure`,async({page})=>{
+    stagedSceneEdit(removal)
+    await page.route(`**/api/v1/assets/${assetIds[0]}`,route=>json(route,asset(0)))
+    await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation`,route=>json(route,{type:'temporary_failure'},503))
+    await page.goto(`/?project=${projectId}`)
+    await page.getByRole('button',{name:removal?'Удалить в новой итерации':'Подтвердить область и создать новую итерацию'}).click()
+    await expect(page.getByText('Сервис временно недоступен. Повторите попытку.')).toBeVisible()
+    await expect(page.locator('.region-selection')).toBeVisible()
+    await expect(page.getByRole('heading',{name:'Что делаем?'})).toHaveCount(0)
+    await expect(page.getByText('Эскиз воды вам подходит?')).toHaveCount(0)
+    expect(session.answers.prud['1']).toBe('Пруд')
+  })
+}
+
+test('lost scene-edit response recovers the server-bound task without creating another generation',async({page})=>{
+  stagedSceneEdit()
+  await page.route(`**/api/v1/assets/${assetIds[0]}`,route=>json(route,asset(0)))
+  let creates=0
+  await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation`,async route=>{
+    creates++
+    session={...session,generation_ids:{...session.generation_ids,prud:generationIds[1]},region_mode:null,region_object:null}
+    return json(route,{type:'temporary_proxy_failure'},503)
+  })
+  await page.goto(`/?project=${projectId}`)
+  await page.getByRole('button',{name:'Подтвердить область и создать новую итерацию'}).click()
+  await expect(page.getByText('Эскиз воды вам подходит?')).toBeVisible()
+  expect(session.generation_ids.prud).toBe(generationIds[1])
+  expect(creates).toBe(1)
+})
+
+test('uncertain creation blocks another paid request until server state can be checked',async({page})=>{
+  stagedSceneEdit(true)
+  await page.route(`**/api/v1/assets/${assetIds[0]}`,route=>json(route,asset(0)))
+  let unavailable=false
+  let creates=0
+  await page.route(`**/api/v1/projects/${projectId}/questionnaire-session`,async route=>{
+    if(route.request().method()!=='GET') return route.fallback()
+    return unavailable?json(route,{type:'temporary_failure'},503):json(route,{session})
+  })
+  await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation`,async route=>{
+    creates++
+    session={...session,generation_ids:{...session.generation_ids,prud:generationIds[1]},region_mode:null,region_object:null}
+    unavailable=true
+    return json(route,{type:'temporary_failure'},503)
+  })
+  await page.goto(`/?project=${projectId}`)
+  await page.getByRole('button',{name:'Удалить в новой итерации'}).click()
+  await expect(page.getByRole('button',{name:'Проверить запуск'})).toBeVisible()
+  await expect(page.getByRole('button',{name:'Удалить в новой итерации'})).toBeDisabled()
+  expect(creates).toBe(1)
+  unavailable=false
+  await page.getByRole('button',{name:'Проверить запуск'}).click()
+  await expect(page.getByText('Эскиз воды вам подходит?')).toBeVisible()
+  expect(creates).toBe(1)
+})
+
+test('failed accepted-object removal retries without deleting the accepted generation binding',async({page})=>{
+  stagedSceneEdit(true)
+  session={...session,region_mode:null,region_object:null,generation_ids:{...session.generation_ids,prud:generationIds[1]}}
+  project={...project,context:{...project.context,design_session:session}}
+  await page.route(`**/api/v1/assets/${assetIds[0]}`,route=>json(route,asset(0)))
+  let retried=false
+  let invalidPut=false
+  await page.route(`**/api/v1/projects/${projectId}/questionnaire-session`,async route=>{
+    if(route.request().method()==='PUT'&&!retried) {
+      invalidPut=true
+      return json(route,{type:'invalid_accepted_generation'},422)
+    }
+    return route.fallback()
+  })
+  await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation/${generationIds[1]}`,route=>json(route,generation(1,retried?'completed':'failed')))
+  await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation`,async route=>{
+    retried=true
+    return json(route,generation(1,'completed'),202)
+  })
+  await page.goto(`/?project=${projectId}`)
+  await expect(page.getByRole('button',{name:'Проверить генерацию'})).toBeVisible()
+  await page.getByRole('button',{name:'Проверить генерацию'}).click()
+  await expect(page.getByText('Эскиз воды вам подходит?')).toBeVisible()
+  expect(retried).toBe(true)
+  expect(invalidPut).toBe(false)
+})
+
+test('failed new-object retry preserves placement when the retry request is rejected',async({page})=>{
+  stagedSceneEdit()
+  session={...session,region_mode:null,region_object:null,generation_ids:{...session.generation_ids,prud:generationIds[1]}}
+  project={...project,context:{...project.context,design_session:session}}
+  await page.route(`**/api/v1/assets/${assetIds[0]}`,route=>json(route,asset(0)))
+  await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation/${generationIds[1]}`,route=>json(route,generation(1,'failed')))
+  await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation`,route=>json(route,{type:'temporary_failure'},503))
+  await page.goto(`/?project=${projectId}`)
+  await page.getByRole('button',{name:'Проверить генерацию'}).click()
+  await expect(page.getByText('Сервис временно недоступен. Повторите попытку.')).toBeVisible()
+  await expect(page.locator('.region-selection')).toBeVisible()
+  await expect(page.getByRole('button',{name:'Подтвердить область и создать новую итерацию'})).toBeEnabled()
+  expect(session.answers.prud['1']).toBe('Пруд')
+})
+
+test('an old completed survey stuck on its first question resumes placement and generates',async({page})=>{
+  stagedSceneEdit()
+  session={...session,current_question_id:'1',region_mode:null,region_object:null}
+  project={...project,context:{...project.context,design_session:session}}
+  await page.route(`**/api/v1/assets/${assetIds[0]}`,route=>json(route,asset(0)))
+  await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation`,async route=>{
+    session={...session,generation_ids:{...session.generation_ids,prud:generationIds[1]},region_mode:null,region_object:null}
+    return json(route,generation(1,'queued'),202)
+  })
+  await page.goto(`/?project=${projectId}`)
+  await expect(page.locator('.region-selection')).toBeVisible()
+  await expect(page.locator('.region-protected')).toHaveCount(0)
+  await page.getByRole('button',{name:'Подтвердить область и создать новую итерацию'}).click()
+  await expect(page.getByText('Эскиз воды вам подходит?')).toBeVisible()
+  expect(session.generation_ids.prud).toBe(generationIds[1])
+})
+
+for (const [errorType,message] of [
+  ['questionnaire_edit_region_blocked','Выделенная область перекрыта защищёнными объектами. Выберите свободное место.'],
+  ['questionnaire_prompt_too_long','Описание проекта слишком большое. Сократите комментарии или число объектов.'],
+]) {
+  test(`scene edit explains ${errorType} and keeps placement`,async({page})=>{
+    stagedSceneEdit()
+    await page.route(`**/api/v1/assets/${assetIds[0]}`,route=>json(route,asset(0)))
+    await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation`,route=>json(route,{type:errorType},422))
+    await page.goto(`/?project=${projectId}`)
+    await page.getByRole('button',{name:'Подтвердить область и создать новую итерацию'}).click()
+    await expect(page.getByText(message)).toBeVisible()
+    await expect(page.locator('.region-selection')).toBeVisible()
+  })
+}

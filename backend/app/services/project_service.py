@@ -3,6 +3,7 @@ from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import select
+
 from app.core.cursor import decode_cursor, encode_cursor
 from app.core.errors import AppError
 from app.db.models.assets import Asset
@@ -12,13 +13,13 @@ from app.db.models.users import User
 from app.domain.generations.enums import GenerationStatus
 from app.repositories.credits import CreditRepository
 from app.repositories.projects import ProjectRepository
-from app.services.credit_service import CreditService
 from app.schemas.projects import (
     ProjectCreateRequest,
     ProjectListResponse,
     ProjectResponse,
     ProjectUpdateRequest,
 )
+from app.services.credit_service import CreditService
 
 ProjectListSort = Literal["created", "updated"]
 
@@ -95,8 +96,10 @@ class ProjectService:
         project = await self.get_owned_model(user, project_id)
         return self.to_response(project)
 
-    async def get_owned_model(self, user: User, project_id: UUID) -> Project:
-        project = await self.repository.get_owned(project_id, user.id)
+    async def get_owned_model(
+        self, user: User, project_id: UUID, *, for_update: bool = False,
+    ) -> Project:
+        project = await self.repository.get_owned(project_id, user.id, for_update=for_update)
         if not project:
             raise AppError(
                 type="project_not_found",

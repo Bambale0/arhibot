@@ -1,5 +1,25 @@
 # Agent Execution Ledger
 
+## Active work — generation editing feedback, 2026-09-26
+
+Baseline: `dev` `06f780f1133e7990d0a2208ad9d90b36c2c01a18`. User reports removal errors, added bathhouse returning to questionnaire, oversized house, unwanted fence beside flowering hedge, and fireplace/chimney semantics.
+
+Evidence: read-only runtime inspection found a bathhouse with complete saved answers and selected edit region but no generation. Building its request reproduces an uncaught Pydantic error: edit region fully covered by protected regions. The UI backfills guessed object locks even for one-shot initial concepts, despite those regions not being image segmentation. Failed creation then allows the first-question effect to restart the survey. All 26 retained generations since September 24 are completed; the historical timeout itself cannot be attributed from the screenshots alone.
+
+Acceptance and sequence:
+1. [x] Ignore inferred initial-concept locks without user-selected regions; preserve actual selected and legacy locks, plus exact composition outside edit area. Handle blocked regions as actionable 422 before charging or queueing.
+2. [x] Keep completed answers and placement on creation failure; reconcile uncertain creation with server state before retrying; do not treat the previous accepted image as a completed edit.
+3. [x] Explicit ground-area scale (10 sotkas, 200 total m², two floors = 100 m² footprint / 10%); preserve it in subsequent edits. Selected hedge does not imply a second built fence. Fireplace requires roof chimney, never visible interior redesign.
+4. [x] Regression tests: backend contracts/integration and browser add/remove/error/recovery; affected suites/build and independent review.
+5. [ ] Exact-head CI, PR to dev, automatic deploy and server smoke (delivery evidence tracked in PR).
+
+No schema migration or new credentials expected. Existing catalog, prompt admin, provider configuration, authorization and pricing remain authoritative. New prompt constraints are domain invariants derived from saved selections, not operator settings. Existing saved projects are repaired through normal application behavior, without manual database changes. Do not claim deterministic image geometry from prompt-only tests. Rollback is a normal revert PR to dev; backups remain enabled.
+
+Skills: upstream release-hardening (Bambale0/claw), clean-code (wondelai/skills), PR review checklist (Bambale0/dev-agents-pack), webapp-testing (anthropics/skills), systematic-debugging (Bambale0/ksu plus local mirror), requesting-code-review (obra/superpowers), and local tma-codegen/bot-tester/devops. agentskills/agentskills supplies the skill specification, not a matching debugging skill. Preserve project SDK/toolchain rather than copying older setup examples.
+
+
+Verification: initial red tests reproduced the actual masks and navigation failures. 284 unit/contract tests (11 skipped) and 47 integration tests passed, including failed removal → retry → acceptance → add bathhouse → acceptance. All 26 catalog objects fit the validated internal prompt budget; overflow is an explicit 422. Full intermediate browser suite: 147 passed; final preprod-flow: 60 passed; latest build: 27 new browser regressions passed across three browser projects. Frontend build, compileall and Ruff correctness passed. Independent review has no outstanding P1/P2. Exact-head CI and delivery tracked in the fix PR. Detailed findings and limitations: `docs/generation-edit-audit-2026-09-26.md`.
+
 ## Completed work — reduce Telegram backup duplication, 2026-09-26
 
 - Baseline: `dev` `729484974333f91128529cf9449aa9955c3f8264`; separate branch `fix/telegram-backup-dedup-20260926`. User stopped the parallel agent and assigned this session the remaining PR queue and backup spam fix.

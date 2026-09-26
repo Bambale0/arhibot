@@ -881,8 +881,9 @@ async def test_accepted_object_removal_is_a_paid_masked_iteration() -> None:
 
         region = {"x": 0.08, "y": 0.20, "width": 0.32, "height": 0.46}
         session["edit_regions"][remove_key] = region
-        session["region_mode"] = None
-        session["region_object"] = None
+        # Old UI guessed this protection for an initial-concept object.
+        # It has no user-selected segmentation and must not swallow the removal.
+        session["lock_regions"][remaining_key] = {"x":0, "y":0, "width":1, "height":1}
         region_saved = await client.put(
             f"/api/v1/projects/{project_id}/questionnaire-session",
             headers=headers,
@@ -896,6 +897,27 @@ async def test_accepted_object_removal_is_a_paid_masked_iteration() -> None:
         )
         assert removal.status_code == 202, removal.text
         removal_id = UUID(removal.json()["id"])
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(removal_id))
+        current = await client.get(f"/api/v1/projects/{project_id}/questionnaire-session", headers=headers)
+        assert current.json()["session"]["region_mode"] is None
+        assert current.json()["session"]["generation_ids"][remove_key] == str(removal_id)
+        stale_save = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session", headers=headers,
+            json=region_saved.json()["session"],
+        )
+        assert stale_save.status_code == 422, stale_save.text
+        duplicate = await client.post(f"/api/v1/projects/{project_id}/questionnaire-generation", headers=headers)
+        assert duplicate.status_code == 409, duplicate.text
+        async with get_session_factory()() as db:
+            failed = await db.get(Generation, removal_id)
+            failed.status = GenerationStatus.FAILED
+            failed.error = "Synthetic provider failure"
+            await db.commit()
+        # Retry directly: removing the accepted object's ID with PUT is invalid.
+        retry = await client.post(f"/api/v1/projects/{project_id}/questionnaire-generation", headers=headers)
+        assert retry.status_code == 202, retry.text
+        assert retry.json()["id"] != str(removal_id)
+        removal_id = UUID(retry.json()["id"])
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(removal_id))
 
         removal_asset = Asset(
@@ -919,6 +941,7 @@ async def test_accepted_object_removal_is_a_paid_masked_iteration() -> None:
             assert generation.composition_mode == "masked_edit"
             assert generation.input_asset_id == initial_asset.id
             assert generation.edit_region == region
+            assert generation.protected_regions == []
             assert '"operation":"remove_object"' in generation.prompt
             generation.status = GenerationStatus.COMPLETED
             generation.output_asset_id = removal_asset.id
@@ -948,6 +971,63 @@ async def test_accepted_object_removal_is_a_paid_masked_iteration() -> None:
             json=session,
         )
         assert ordinary_save.status_code == 200, ordinary_save.text
+
+        session["current_object"] = None
+        session["current_question_id"] = None
+        overview = await client.put(f"/api/v1/projects/{project_id}/questionnaire-session", headers=headers, json=session)
+        assert overview.status_code == 200, overview.text
+
+        # Add a bathhouse to the accepted scene after removal, using saved answers and placement.
+        added = await client.post(
+            f"/api/v1/projects/{project_id}/questionnaire-objects", headers=headers,
+            json={"object_key":"banya"},
+        )
+        assert added.status_code == 200, added.text
+        bath = added.json()["session"]
+        definition = next(item for item in catalog["questionnaires"] if item["key"] == "banya")
+        bath_answers = _valid_object_answers(definition, house_accepted=False)
+        for question in definition["questions"]:
+            if question["phase"] == "review":
+                bath_answers.pop(question["id"], None)
+        bath["answers"]["banya"] = bath_answers
+        bath["edit_regions"]["banya"] = region
+        bath["region_mode"] = "edit"
+        bath["region_object"] = "banya"
+        bath["current_question_id"] = None
+        saved = await client.put(f"/api/v1/projects/{project_id}/questionnaire-session", headers=headers, json=bath)
+        assert saved.status_code == 200, saved.text
+        created = await client.post(f"/api/v1/projects/{project_id}/questionnaire-generation", headers=headers)
+        assert created.status_code == 202, created.text
+        assert created.json()["input_asset_id"] == str(removal_asset.id)
+        assert created.json()["protected_regions"] == []
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, created.json()["id"])
+        bath_asset = Asset(
+            user_id=user_id, project_id=UUID(project_id), type=AssetType.IMAGE,
+            purpose=AssetPurpose.GENERATION_OUTPUT, original_filename="bath-result.webp",
+            mime_type="image/webp", size_bytes=128, width=1280, height=720,
+            storage_path=f"integration/questionnaires/{uuid4()}.webp",
+        )
+        async with get_session_factory()() as db:
+            db.add(bath_asset)
+            await db.flush()
+            bath_generation = await db.get(Generation, UUID(created.json()["id"]))
+            bath_generation.status = GenerationStatus.COMPLETED
+            bath_generation.output_asset_id = bath_asset.id
+            await db.commit()
+            await db.refresh(bath_asset)
+        current = await client.get(f"/api/v1/projects/{project_id}/questionnaire-session", headers=headers)
+        bath = current.json()["session"]
+        review = next(question for question in definition["questions"] if question["phase"] == "review")
+        bath["answers"]["banya"][review["id"]] = review["options"][0]
+        bath["accepted_objects"].append("banya")
+        bath["lock_regions"]["banya"] = region
+        bath["scene_asset_id"] = str(bath_asset.id)
+        bath["scene_generation_id"] = created.json()["id"]
+        bath["current_object"] = None
+        bath["current_question_id"] = None
+        accepted_bath = await client.put(f"/api/v1/projects/{project_id}/questionnaire-session", headers=headers, json=bath)
+        assert accepted_bath.status_code == 200, accepted_bath.text
+        assert accepted_bath.json()["session"]["accepted_objects"] == [remaining_key, "banya"]
 
 
 @pytest.mark.asyncio

@@ -27,8 +27,11 @@ from app.questionnaires.generation_prompt import (
 )
 from app.questionnaires.generation_prompt import (
     condition_ok as questionnaire_condition_ok,
+)
+from app.questionnaires.generation_prompt import (
     question_is_active as questionnaire_question_is_active,
 )
+from app.questionnaires.regions import protected_object_regions
 from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
 from app.repositories.credits import CreditRepository
@@ -36,17 +39,21 @@ from app.repositories.generations import GenerationRepository
 from app.repositories.operations import OperationalSettingsRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.questionnaires import QuestionnaireRepository
-from app.schemas.generations import QuestionnaireGenerationCreate
+from app.schemas.generations import (
+    QUESTIONNAIRE_PROMPT_MAX_LENGTH,
+    QuestionnaireGenerationCreate,
+    has_editable_area,
+)
 from app.schemas.questionnaires import (
     DesignSession,
-    QuestionnaireGenerationCostResponse,
     QuestionnaireApplicationResponse,
     QuestionnaireCatalogAdminResponse,
     QuestionnaireCatalogAdminUpdate,
     QuestionnaireCatalogResponse,
+    QuestionnaireGenerationCostResponse,
 )
 from app.services.asset_service import LocalMediaStorage
-from app.services.edit_policy import build_edit_policy
+from app.services.edit_policy import build_edit_policy, build_object_removal_policy
 from app.services.project_service import ProjectService
 
 
@@ -91,7 +98,7 @@ class QuestionnaireService:
     ) -> DesignSession:
         if payload.application_submitted:
             raise self._invalid("Submit the application through the application endpoint.")
-        project = await ProjectService(self.projects).get_owned_model(user, project_id)
+        project = await ProjectService(self.projects).get_owned_model(user, project_id, for_update=True)
         previous = self._stored_session(project.context)
         catalog = await self.catalog()
         payload = self._canonicalize_site_plan(
@@ -512,6 +519,7 @@ class QuestionnaireService:
                 session,
                 input_asset_present=session.source_asset_id is not None,
             )
+            self._validate_prompt_length(prompt)
             return (
                 QuestionnaireGenerationCreate(
                     project_id=project_id,
@@ -534,6 +542,22 @@ class QuestionnaireService:
             and session.initial_concept_accepted
             and object_key in session.accepted_objects
         )
+        bound_id = session.generation_ids.get(object_key)
+        if refinement and bound_id is not None:
+            bound_generation = await self.generations.get_owned(bound_id, user.id)
+            if bound_generation is not None and bound_generation.input_asset_id == session.scene_asset_id:
+                pending = bound_generation.status in {GenerationStatus.QUEUED, GenerationStatus.PROCESSING}
+                awaiting_review = (
+                    bound_generation.status == GenerationStatus.COMPLETED
+                    and session.region_mode != "edit"
+                )
+                if pending or awaiting_review:
+                    raise AppError(
+                        type="questionnaire_generation_exists",
+                        title="Правка уже создана",
+                        status=409,
+                        detail="Проверьте существующую генерацию перед повторным запуском.",
+                    )
         if object_key in session.accepted_objects and not refinement:
             raise self._invalid("An accepted questionnaire object cannot be regenerated.")
         if object_key in session.generation_ids and not refinement:
@@ -581,11 +605,7 @@ class QuestionnaireService:
             raise self._invalid(
                 "Choose the edit region before changing the accepted scene."
             )
-        protected_regions = [
-            session.lock_regions[key]
-            for key in accepted_before
-            if session.lock_regions.get(key) is not None
-        ]
+        protected_regions = protected_object_regions(session, accepted_before)
         if masked and not session.initial_concept_mode:
             missing_locks = [
                 key for key in accepted_before if session.lock_regions.get(key) is None
@@ -595,6 +615,14 @@ class QuestionnaireService:
                     "Every previously accepted object must have a locked visual region."
                 )
 
+        if masked and edit_region is not None and not has_editable_area(edit_region, protected_regions):
+            raise AppError(
+                type="questionnaire_edit_region_blocked",
+                title="Область перекрыта защищёнными объектами",
+                status=422,
+                detail="Выделите свободную область, не перекрытую защищёнными объектами.",
+            )
+
         edit_policy: dict[str, object] = {}
         if masked:
             policy = build_edit_policy(
@@ -602,6 +630,8 @@ class QuestionnaireService:
                 edit_question_ids=list(session.edit_question_ids) if refinement else [],
                 review_comment=session.review_comments.get(object_key, ""),
             )
+            if session.pending_removal_object == object_key:
+                policy = build_object_removal_policy(object_key)
             if not policy.allow_generation:
                 record_interior_request_blocked()
                 raise AppError(
@@ -623,6 +653,7 @@ class QuestionnaireService:
             input_asset_present=input_asset_id is not None,
             edit_policy=edit_policy or None,
         )
+        self._validate_prompt_length(prompt)
         return (
             QuestionnaireGenerationCreate(
                 project_id=project_id,
@@ -637,6 +668,16 @@ class QuestionnaireService:
             session,
             object_key,
         )
+
+    @staticmethod
+    def _validate_prompt_length(prompt: str) -> None:
+        if len(prompt) > QUESTIONNAIRE_PROMPT_MAX_LENGTH:
+            raise AppError(
+                type="questionnaire_prompt_too_long",
+                title="Описание проекта слишком большое",
+                status=422,
+                detail="Сократите комментарии или число объектов перед запуском.",
+            )
 
     @classmethod
     def bind_generation_before_commit(
@@ -682,6 +723,8 @@ class QuestionnaireService:
                     detail="This questionnaire object already has a generation task.",
                 )
             bound.generation_ids[object_key] = generation_id
+            bound.region_mode = None
+            bound.region_object = None
         project.context = {
             **(project.context or {}),
             "design_session": bound.model_dump(mode="json"),
@@ -1005,7 +1048,6 @@ class QuestionnaireService:
             if (
                 payload.generation_ids.get(object_key)
                 != previous.generation_ids.get(object_key)
-                and not refining_object
             ):
                 raise cls._invalid(f"Accepted object {object_key} cannot change generation.")
             previous_answers = previous.answers.get(object_key, {})
@@ -1174,6 +1216,18 @@ class QuestionnaireService:
         *,
         previous: DesignSession | None = None,
     ) -> None:
+        if previous is not None:
+            for key, previous_id in previous.generation_ids.items():
+                if payload.generation_ids.get(key) == previous_id:
+                    continue
+                bound = await self.generations.get_owned(previous_id, user.id)
+                if bound is not None and bound.status in {GenerationStatus.QUEUED, GenerationStatus.PROCESSING}:
+                    raise AppError(
+                        type="questionnaire_generation_state_changed",
+                        title="Генерация уже выполняется",
+                        status=409,
+                        detail="Обновите состояние проекта перед следующим действием.",
+                    )
         resolved = {}
         for object_key, generation_id in payload.generation_ids.items():
             generation = await self.generations.get_owned(generation_id, user.id)

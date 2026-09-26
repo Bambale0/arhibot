@@ -5,6 +5,7 @@ from json import dumps
 from math import floor
 from typing import Any
 
+from app.questionnaires.regions import protected_object_keys
 from app.questionnaires.site_plan import build_site_plan
 from app.schemas.questionnaires import DesignSession
 
@@ -254,7 +255,11 @@ def _house_floor_count_reference(answer: object) -> float | None:
 def _initial_site_scale(session: DesignSession) -> dict[str, object]:
     plot_sotkas = session.plot_area_sotkas
     plot_m2 = plot_sotkas * 100 if plot_sotkas is not None else None
-    house_answers = session.answers.get("eskez-doma", {})
+    house_answers = (
+        session.answers.get("eskez-doma", {})
+        if "eskez-doma" not in session.removed_objects and session.pending_removal_object != "eskez-doma"
+        else {}
+    )
     raw_house_area = house_answers.get("3")
     house_area_m2 = (
         float(raw_house_area)
@@ -277,7 +282,10 @@ def _initial_site_scale(session: DesignSession) -> dict[str, object]:
         "Соблюдай правдоподобный относительный масштаб. Размер участка является "
         "жёстким ориентиром композиции: 1 сотка = 100 м². Площадь дома — общая "
         "площадь по этажам; estimated_house_footprint_m2 используется только как "
-        "ориентир пятна застройки. Не увеличивай дом так, чтобы он визуально занимал "
+        "целевое пятно застройки на земле, а не площадь изображения или сумма этажей. "
+        "Доля пятна относится ко всей площади земли внутри границ участка: оставшаяся "
+        "земля должна сохранять соответствующую долю, даже если перспективная проекция "
+        "крыши выглядит крупнее. Не увеличивай дом так, чтобы он визуально занимал "
         "несоразмерную долю участка. Не растягивай и не сжимай границы участка ради "
         "удобства композиции: сначала зафиксируй масштаб участка, затем вписывай в него объекты."
         if scale_known
@@ -295,7 +303,52 @@ def _initial_site_scale(session: DesignSession) -> dict[str, object]:
         "house_floor_count_reference": floor_count,
         "estimated_house_footprint_m2": estimated_footprint_m2,
         "estimated_house_footprint_share_of_plot": estimated_footprint_share,
+        "plot_to_house_footprint_ratio": (
+            round(plot_m2 / estimated_footprint_m2, 4)
+            if plot_m2 and estimated_footprint_m2 else None
+        ),
+        "remaining_ground_share": (
+            round(1 - estimated_footprint_share, 4)
+            if estimated_footprint_share is not None else None
+        ),
         "directive": directive,
+    }
+
+
+
+def _boundary_policy(session: DesignSession) -> dict[str, object]:
+    visible_objects = set(session.selected_objects) - set(session.removed_objects) - {session.pending_removal_object}
+    return {
+        "hedge_requested": "izgorod" in visible_objects,
+        "built_fence_requested": "zabor" in visible_objects,
+        "location_reference_does_not_request_fence": True,
+        "directive": (
+            "Создавай только выбранные ограждения. Живая, в том числе цветущая, изгородь "
+            "не означает дополнительный обычный забор, стену, сетку или панели. Слова "
+            "«вдоль забора» и «внутри забора» в ответе о месте задают линию границы участка, "
+            "а не требование построить забор. Если выбраны и изгородь, и забор — покажи оба. "
+            "Существующее ограждение на исходном фото сохраняй, если его удаление не запрошено."
+        ),
+    }
+
+
+def _house_exterior_features(session: DesignSession) -> dict[str, object]:
+    fireplace = session.answers.get("eskez-doma", {}).get("11б")
+    return {
+        "roof_chimney_required": (
+            "eskez-doma" in session.selected_objects and fireplace == "Да"
+            and "eskez-doma" not in session.removed_objects
+            and session.pending_removal_object != "eskez-doma"
+        ),
+        "interior_fireplace_visible_required": False,
+        "interior_layout_inference_forbidden": True,
+        "directive": (
+            "Если roof_chimney_required=true, покажи видимую каминную трубу из кровли "
+            "основного дома в архитектурно правдоподобном месте. Не ставь её отдельно "
+            "на участке или на другом здании. Сам камин, топку, мебель и комнаты внутри "
+            "не показывай специально и не придумывай их расположение. В доработке "
+            "сохраняй существующий дымовой канал, если наружная труба не является целью правки."
+        ),
     }
 
 
@@ -456,6 +509,8 @@ def build_initial_concept_prompt(
             ),
         },
         "site_scale": site_scale,
+        "boundary_policy": _boundary_policy(session),
+        "house_exterior_features": _house_exterior_features(session),
         "site_plan": site_plan,
         "site_layout": {
             "placement_constraints": placement_constraints,
@@ -576,6 +631,20 @@ def build_questionnaire_generation_prompt(
                 else "Создавай или изменяй только текущий объект."
             )
         )
+        if removing_object:
+            source_directive = (
+                "Используй входное изображение как принятую сцену. Полностью удали только "
+                "текущий объект внутри edit_region и естественно восстанови фон/ландшафт. "
+                "Сохрани остальные объекты, участок, перспективу, ракурс и свет. Требования "
+                "сохранения геометрии не распространяются на удаляемый объект."
+            )
+        elif session.initial_concept_mode:
+            source_directive = (
+                "Используй входное изображение как принятую сцену. Меняй только текущий "
+                "объект внутри edit_region согласно запрошенной правке и edit_policy. "
+                "Сохрани остальные объекты, участок, перспективу, ракурс и свет. "
+                "Сохраняй геометрию текущего объекта, кроме явно запрошенных наружных изменений."
+            )
     elif input_asset_present:
         source_kind = "site_photo"
         source_directive = (
@@ -590,9 +659,7 @@ def build_questionnaire_generation_prompt(
         )
 
     edit_region = _region_percent(session.edit_regions.get(object_key))
-    locked_objects = [
-        key for key in accepted_before if session.lock_regions.get(key) is not None
-    ]
+    locked_objects = protected_object_keys(session, accepted_before)
     if removing_object:
         refinement = (
             "Полностью удалить текущий объект из выделенной области. Не оставлять его "
@@ -657,6 +724,11 @@ def build_questionnaire_generation_prompt(
 
     spec = {
         "schema": "auroom.questionnaire_render.v1",
+        **({
+            "site_scale": _initial_site_scale(session),
+            "boundary_policy": _boundary_policy(session),
+            "house_exterior_features": _house_exterior_features(session),
+        } if session.initial_concept_mode else {}),
         "task": {
             "object_key": object_key,
             "object_name": str(definition["title"]).strip(),
@@ -690,7 +762,7 @@ def build_questionnaire_generation_prompt(
                 "room_geometry_change_forbidden": True,
                 "preserve_through_glazing": True,
             }
-            if object_key == "eskez-doma" and edit_policy is not None
+            if object_key == "eskez-doma" and edit_policy is not None and not removing_object
             else {}
         ),
         "structural_consistency": (
@@ -703,7 +775,7 @@ def build_questionnaire_generation_prompt(
                     }
                 ],
             }
-            if object_key == "eskez-doma" and edit_policy is not None
+            if object_key == "eskez-doma" and edit_policy is not None and not removing_object
             else {"enabled": False, "relations": []}
         ),
         "scene_policy": definition.get("scene_policy") or {},

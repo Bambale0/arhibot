@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 
 
@@ -24,6 +24,7 @@ class EditIntent(StrEnum):
     INTERIOR = "interior"
     MIXED_INTERIOR_EXTERIOR = "mixed_interior_exterior"
     GENERIC_EXTERIOR = "generic_exterior"
+    OBJECT_REMOVAL = "object_removal"
 
 
 class EditDomain(StrEnum):
@@ -386,4 +387,17 @@ def build_edit_policy(
         enforced_quality_checks=enforced_checks,
         deferred_quality_checks=deferred_checks,
         scene_analysis_enforced=False,
+    )
+
+
+def build_object_removal_policy(object_key: str) -> EditPolicySnapshot:
+    base = build_edit_policy(object_key=object_key, edit_question_ids=[], review_comment="")
+    return replace(
+        base,
+        intent=EditIntent.OBJECT_REMOVAL,
+        preserve_building_geometry=False,
+        preserve_visible_interior=False,
+        structural_links=(),
+        quality_checks=("outside_region_integrity", "boundary_continuity"),
+        deferred_quality_checks=(),
     )

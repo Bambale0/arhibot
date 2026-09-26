@@ -23,7 +23,7 @@ class NormalizedRect(BaseModel):
         return self
 
 
-def _has_editable_area(edit: NormalizedRect, protected: list[NormalizedRect]) -> bool:
+def has_editable_area(edit: NormalizedRect, protected: list[NormalizedRect]) -> bool:
     clips: list[tuple[float, float, float, float]] = []
     edit_right = edit.x + edit.width
     edit_bottom = edit.y + edit.height
@@ -82,7 +82,7 @@ class GenerationCreate(BaseModel):
                 raise ValueError("Masked edit requires an input image.")
             if self.edit_region is None:
                 raise ValueError("Masked edit requires an edit region.")
-            if not _has_editable_area(self.edit_region, self.protected_regions):
+            if not has_editable_area(self.edit_region, self.protected_regions):
                 raise ValueError("Masked edit region is fully covered by protected regions.")
         elif self.edit_region is not None or self.protected_regions:
             raise ValueError("Edit/protected regions require masked_edit composition mode.")
@@ -95,10 +95,15 @@ class AdminSandboxGenerationCreate(GenerationCreate):
     prompt: str = Field(default="", max_length=12000)
 
 
+# Covers the full 26-object catalog plus canonical spatial/edit constraints.
+# This internal envelope is never accepted by the generic public generation API.
+QUESTIONNAIRE_PROMPT_MAX_LENGTH = 64_000
+
+
 class QuestionnaireGenerationCreate(GenerationCreate):
     """Server-built questionnaire prompt; never accepted from the public generation API."""
 
-    prompt: str = Field(default="", max_length=16000)
+    prompt: str = Field(default="", max_length=QUESTIONNAIRE_PROMPT_MAX_LENGTH)
     edit_policy: dict[str, Any] = Field(default_factory=dict)
 
 

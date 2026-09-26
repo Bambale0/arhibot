@@ -191,6 +191,8 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
   )
   let currentQuestionId = stored.current_question_id
   let currentObject = stored.current_object
+  let regionMode = stored.region_mode
+  let regionObject = stored.region_object
   const surveyCompletedObjects = [...stored.survey_completed_objects]
 
   for (const [objectKey, answers] of Object.entries(nextAnswers)) {
@@ -249,6 +251,10 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
         if (!surveyCompletedObjects.includes(objectKey)) surveyCompletedObjects.push(objectKey)
         currentObject = null
         currentQuestionId = null
+      } else if (stored.initial_concept_accepted && stored.edit_regions[objectKey] && !stored.generation_ids[objectKey]) {
+        currentQuestionId = null
+        regionMode = 'edit'
+        regionObject = objectKey
       } else if (currentQuestionId && !definition.questions.some((question) =>
         question.id === currentQuestionId
         && questionIsVisible(objectKey, question, answers, houseAccepted, stored.selected_objects)
@@ -265,6 +271,8 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
     survey_completed_objects:surveyCompletedObjects,
     current_object:currentObject,
     current_question_id:currentQuestionId,
+    region_mode:regionMode,
+    region_object:regionObject,
   }
 }
 
@@ -285,6 +293,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const [plotAreaDraft, setPlotAreaDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [generationInFlight, setGenerationInFlight] = useState(false)
+  const [uncertainCreation, setUncertainCreation] = useState<{session:DesignSession; objectKey:string; message:string}|null>(null)
   const [ideaPublication, setIdeaPublication] = useState<AdminIdea|null|undefined>(undefined)
   const [ideaPublishing, setIdeaPublishing] = useState(false)
   const [error, setError] = useState<string|null>(null)
@@ -385,7 +394,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   useEffect(() => {
     if (!session || !current || session.current_question_id || session.region_mode || generationInFlight) return
     if (current.key !== 'zayavka' && currentGenerationId) return
-    const first = visible.find((q) => q.phase === (current.key === 'zayavka' ? 'application' : 'pre_render'))
+    const first = visible.find((q) => q.phase === (current.key === 'zayavka' ? 'application' : 'pre_render') && objectAnswers[q.id] === undefined)
     if (first && session.source_step_completed) void persist({ ...session, current_question_id:first.id })
   }, [session?.source_step_completed, current?.key, currentGenerationId, generationInFlight])
 
@@ -445,7 +454,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }, [project.id, initialGenerationId, session?.initial_concept_accepted, current?.key])
 
   useEffect(() => {
-    if (!session || busy || generationInFlight || session.current_object || !sceneAsset) return
+    if (!session || session.initial_concept_mode || busy || generationInFlight || session.current_object || !sceneAsset) return
     // Backfill only legacy accepted sessions that predate explicit placement.
     // New masked edits always require the user-selected edit region below.
     const missingLock = session.accepted_objects.find((key) => !session.lock_regions[key])
@@ -663,7 +672,13 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       })
     }
     setGenerationInFlight(true)
-    const staged = await persist({ ...next, current_question_id:null, region_mode:null, region_object:null })
+    const editingScene = Boolean(next.scene_asset_id && next.edit_regions[definition.key] && next.accepted_objects.length)
+    const staged = await persist({
+      ...next,
+      current_question_id:null,
+      region_mode:editingScene ? 'edit' : null,
+      region_object:editingScene ? definition.key : null,
+    })
     if (!staged) {
       setGenerationInFlight(false)
       return null
@@ -728,13 +743,35 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       setError('Опишите, что именно нужно изменить в выделенной области.')
       return
     }
+    setBusy(true)
+    setError(null)
+    try {
+      const fresh = await getQuestionnaireSession(project.id)
+      if (!fresh || fresh.session_id !== session.session_id || fresh.current_object !== definition.key) {
+        throw new Error('Состояние проекта изменилось. Откройте проект заново.')
+      }
+      if (fresh.generation_ids[definition.key] !== session.generation_ids[definition.key]) {
+        setSession(fresh)
+        syncProject(fresh)
+        setGenerationInFlight(true)
+        const queued = await getQuestionnaireGeneration(project.id, fresh.generation_ids[definition.key])
+        await finishGeneration(fresh, definition, queued)
+        return
+      }
+    } catch (err) {
+      setError(generationErrorMessage(err))
+      return
+    } finally {
+      setBusy(false)
+      setGenerationInFlight(false)
+    }
     setGenerationInFlight(true)
     const saved = await persist({
       ...session,
       edit_regions:{ ...session.edit_regions, [definition.key]:regionDraft },
       review_comments:refinement && !removal ? { ...session.review_comments, [definition.key]:reviewComment.trim() } : session.review_comments,
-      region_mode:null,
-      region_object:null,
+      region_mode:'edit',
+      region_object:definition.key,
     })
     if (saved) await generate(saved, definition)
     else setGenerationInFlight(false)
@@ -817,8 +854,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       const completed = await poll(queued)
       setRenderOutput(completed.output_asset)
     } catch (err) {
-      if (err instanceof api.ApiError && err.errorType === 'insufficient_credits') setError('Недостаточно кредитов. Пополните баланс в Профиле.')
-      else setError(err instanceof Error ? err.message : 'Не удалось создать общую концепцию')
+      setError(generationErrorMessage(err))
     } finally {
       setBusy(false)
       setGenerationInFlight(false)
@@ -846,32 +882,86 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     }
   }
 
+  function generationErrorMessage(err:unknown):string {
+    if (err instanceof api.ApiError) {
+      if (err.errorType === 'insufficient_credits') return 'Недостаточно кредитов. Пополните баланс в Профиле.'
+      if (err.errorType === 'questionnaire_prompt_too_long') return 'Описание проекта слишком большое. Сократите комментарии или число объектов.'
+      if (err.errorType === 'questionnaire_edit_region_blocked') return 'Выделенная область перекрыта защищёнными объектами. Выберите свободное место.'
+      if (err.errorType === 'exterior_refinement_interior_not_supported') return 'Можно менять внешний вид дома и трубу на крыше. Изменение комнат, мебели и внутреннего камина не поддерживается.'
+    }
+    return err instanceof Error ? err.message : 'Не удалось создать эскиз'
+  }
+
+  async function finishGeneration(next:DesignSession, definition:QuestionnaireDefinition, queued:Generation) {
+    const generation = await poll(queued)
+    setRenderOutput(generation.output_asset)
+    const review = definition.questions.find((q) => q.phase === 'review')
+    await persist({ ...next, current_question_id:review?.id || null })
+  }
+
+  async function reconcileCreation(next:DesignSession, definition:QuestionnaireDefinition, message:string) {
+    let fresh:DesignSession|null
+    try {
+      fresh = await getQuestionnaireSession(project.id)
+      if (!fresh || fresh.session_id !== next.session_id) throw new Error('Project state unavailable')
+    } catch {
+      setUncertainCreation({ session:next, objectKey:definition.key, message })
+      setError('Не удалось проверить запуск. Сначала проверьте состояние — повторная генерация пока заблокирована.')
+      return
+    }
+    setUncertainCreation(null)
+    setSession(fresh)
+    syncProject(fresh)
+    const recoveredId = fresh.generation_ids[definition.key]
+    if (recoveredId && recoveredId !== next.generation_ids[definition.key]) {
+      const queued = await getQuestionnaireGeneration(project.id, recoveredId)
+      await finishGeneration(fresh, definition, queued)
+    } else {
+      setError(message)
+    }
+  }
+
+  async function checkUncertainCreation() {
+    if (!uncertainCreation || busy) return
+    const definition = definitions.get(uncertainCreation.objectKey)
+    if (!definition) return
+    setBusy(true)
+    setGenerationInFlight(true)
+    try {
+      await reconcileCreation(uncertainCreation.session, definition, uncertainCreation.message)
+    } catch (err) {
+      setError(generationErrorMessage(err))
+    } finally {
+      setBusy(false)
+      setGenerationInFlight(false)
+    }
+  }
+
   async function generate(next:DesignSession, definition:QuestionnaireDefinition) {
     setGenerationInFlight(true)
     setBusy(true)
     setError(null)
     setRenderOutput(null)
     try {
-      const queued = await createQuestionnaireGeneration(project.id)
-      const queuedState = {
+      let queued:Generation
+      try {
+        queued = await createQuestionnaireGeneration(project.id)
+      } catch (err) {
+        await reconcileCreation(next, definition, generationErrorMessage(err))
+        return
+      }
+      const queuedState:DesignSession = {
         ...next,
         generation_ids:{ ...next.generation_ids, [definition.key]:queued.id },
+        region_mode:null,
+        region_object:null,
       }
-      // The backend stores this generation ID atomically with generation creation.
-      // Mirror it locally only; a second PUT here would reopen the race this endpoint removes.
+      // The task and transition out of placement are committed atomically by the API.
       setSession(queuedState)
       syncProject(queuedState)
-
-      const generation = await poll(queued)
-      setRenderOutput(generation.output_asset)
-      const review = definition.questions.find((q) => q.phase === 'review')
-      await persist({
-        ...queuedState,
-        current_question_id:review?.id || null,
-      })
+      await finishGeneration(queuedState, definition, queued)
     } catch (err) {
-      if (err instanceof api.ApiError && err.errorType === 'insufficient_credits') setError('Недостаточно кредитов. Пополните баланс в Профиле.')
-      else setError(err instanceof Error ? err.message : 'Не удалось создать эскиз')
+      setError(generationErrorMessage(err))
     } finally {
       setBusy(false)
       setGenerationInFlight(false)
@@ -879,27 +969,40 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }
 
   async function resumeOrRetryGeneration() {
-    if (!session || !current || current.key === 'zayavka') return
-    const generationId = session.generation_ids[current.key]
-    if (!generationId) return startGenerationOrRegion(session, current)
+    if (!session || !current || current.key === 'zayavka' || uncertainCreation) return
     setGenerationInFlight(true)
     setBusy(true)
     setError(null)
     try {
+      const fresh = await getQuestionnaireSession(project.id)
+      if (!fresh || fresh.session_id !== session.session_id || fresh.current_object !== current.key) {
+        throw new Error('Состояние проекта изменилось. Откройте проект заново.')
+      }
+      setSession(fresh)
+      syncProject(fresh)
+      const generationId = fresh.generation_ids[current.key]
+      if (!generationId) return await startGenerationOrRegion(fresh, current)
       const existing = await getQuestionnaireGeneration(project.id, generationId)
       if (existing.status !== 'failed') {
-        const generation = await poll(existing)
-        setRenderOutput(generation.output_asset)
-        const review = current.questions.find((q) => q.phase === 'review')
-        await persist({ ...session, current_question_id:review?.id || null })
+        await finishGeneration(fresh, current, existing)
         return
       }
-      const generationIds = { ...session.generation_ids }
+      if (fresh.initial_concept_accepted && fresh.accepted_objects.includes(current.key)) {
+        await generate(fresh, current)
+        return
+      }
+      const generationIds = { ...fresh.generation_ids }
       delete generationIds[current.key]
-      const saved = await persist({ ...session, generation_ids:generationIds })
+      const editingScene = Boolean(fresh.scene_asset_id && fresh.edit_regions[current.key] && fresh.accepted_objects.length)
+      const saved = await persist({
+        ...fresh,
+        generation_ids:generationIds,
+        region_mode:editingScene ? 'edit' : null,
+        region_object:editingScene ? current.key : null,
+      })
       if (saved) await generate(saved, current)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Не удалось восстановить генерацию')
+      setError(generationErrorMessage(err))
     } finally {
       setBusy(false)
       setGenerationInFlight(false)
@@ -1182,14 +1285,14 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     const placementDefinition = definitions.get(session.region_object)
     const protectedRegions = session.accepted_objects
       .filter((key) => key !== session.region_object)
-      .map((key) => ({ key, region:session.lock_regions[key] }))
+      .map((key) => ({ key, region:session.initial_concept_mode ? (session.lock_regions[key] ? session.edit_regions[key] : undefined) : session.lock_regions[key] }))
       .filter((item):item is { key:string; region:NormalizedRect } => Boolean(item.region))
     return <main className="questionnaire-shell">
-      <header className="questionnaire-topbar"><button className="back-button" disabled={busy} onClick={() => void cancelEditRegion()}><BackIcon/> Назад</button><strong>{project.name}</strong><span>Размещение</span></header>
+      <header className="questionnaire-topbar"><button className="back-button" disabled={busy || Boolean(uncertainCreation)} onClick={() => void cancelEditRegion()}><BackIcon/> Назад</button><strong>{project.name}</strong><span>Размещение</span></header>
       <section className="questionnaire-card region-picker-card">
         <span className="eyebrow">{session.pending_removal_object === session.region_object ? 'УДАЛЕНИЕ ОБЪЕКТА' : 'ТОЧНОЕ МЕСТО НА СЦЕНЕ'}</span>
         <h1>{session.pending_removal_object === session.region_object ? `Что удалить: ${placementDefinition?.title || session.region_object}` : `Где разместить: ${placementDefinition?.title || session.region_object}?`}</h1>
-        <p>{session.pending_removal_object === session.region_object ? 'Точно обведите объект, который нужно убрать. Модель удалит его внутри этой области, а compositor пиксельно сохранит всё снаружи.' : 'Проведите пальцем или мышью по последнему принятому кадру и выделите прямоугольник, внутри которого можно менять или добавлять объект. Выделите область немного шире изменяемого объекта, оставив вокруг него часть исходного окружения. Всё за пределами final area compositor сохранит пиксельно.'}</p>
+        <p>{session.pending_removal_object === session.region_object ? 'Точно обведите объект, который нужно убрать. Объект будет удалён внутри выделения. Всё за его пределами останется без изменений.' : 'Проведите пальцем или мышью по последнему принятому кадру и выделите прямоугольник, внутри которого можно менять или добавлять объект. Выделите область немного шире изменяемого объекта, оставив вокруг него часть исходного окружения. Всё за пределами выделения останется без изменений.'}</p>
         <p className="region-hint">Новая итерация · {generationCostLabel()}</p>
         {session.initial_concept_accepted && session.accepted_objects.includes(session.region_object) && session.pending_removal_object !== session.region_object && <div className="questionnaire-field"><label>Что изменить?<input value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="Например: сделать крышу тёмной, фасад светлее"/></label></div>}
         {sceneAsset ? <div
@@ -1224,9 +1327,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         </div> : <div className="banner-error">Последний принятый кадр недоступен. Вернитесь в проект и откройте его заново.</div>}
         <p className="region-hint">Пунктиром показаны уже принятые объекты — их пиксели защищены. Если выделение неточное, просто проведите по изображению ещё раз.</p>
         {error && <div className="banner-error">{error}</div>}
+        {uncertainCreation && <button className="primary-button" disabled={busy} onClick={() => void checkUncertainCreation()}>Проверить запуск</button>}
         <div className="questionnaire-actions">
-          <button className="secondary-button" disabled={busy} onClick={() => setRegionDraft(null)}>Очистить</button>
-          <button className="primary-button" disabled={busy || !sceneAsset || !regionDraft || regionDraft.width < 0.03 || regionDraft.height < 0.03 || (session.initial_concept_accepted && session.accepted_objects.includes(session.region_object) && session.pending_removal_object !== session.region_object && !reviewComment.trim())} onClick={() => void confirmEditRegion()}>{session.pending_removal_object === session.region_object ? 'Удалить в новой итерации' : 'Подтвердить область и создать новую итерацию'}</button>
+          <button className="secondary-button" disabled={busy || Boolean(uncertainCreation)} onClick={() => setRegionDraft(null)}>Очистить</button>
+          <button className="primary-button" disabled={busy || Boolean(uncertainCreation) || !sceneAsset || !regionDraft || regionDraft.width < 0.03 || regionDraft.height < 0.03 || (session.initial_concept_accepted && session.accepted_objects.includes(session.region_object) && session.pending_removal_object !== session.region_object && !reviewComment.trim())} onClick={() => void confirmEditRegion()}>{session.pending_removal_object === session.region_object ? 'Удалить в новой итерации' : 'Подтвердить область и создать новую итерацию'}</button>
         </div>
       </section>
     </main>
@@ -1234,7 +1338,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   if ((busy || generationInFlight) && !active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card generating-card"><SparkIcon/><h1>Создаём: {current.title}</h1><p>Сохраняем текущую сцену, ракурс и уже принятые объекты.</p>{error && <div className="banner-error">{error}</div>}</section></main>
 
-  if (!active) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>{current.title}</h1><p>{currentGenerationId ? 'Генерация не завершена. Можно безопасно проверить текущую задачу и повторить только если она действительно завершилась ошибкой.' : 'Подготавливаем следующий шаг…'}</p>{error && <div className="banner-error">{error}</div>}{currentGenerationId && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void resumeOrRetryGeneration()}>Проверить генерацию</button></div>}</section></main>
+  if (!active) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>{current.title}</h1><p>{currentGenerationId ? 'Генерация не завершена. Можно безопасно проверить текущую задачу и повторить только если она действительно завершилась ошибкой.' : 'Ответы сохранены. Можно проверить состояние и повторить запуск.'}</p>{error && <div className="banner-error">{error}</div>}<div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void (uncertainCreation ? checkUncertainCreation() : resumeOrRetryGeneration())}>{uncertainCreation ? 'Проверить запуск' : currentGenerationId ? 'Проверить генерацию' : 'Повторить запуск'}</button></div></section></main>
 
   const options = availableOptions(active)
   const currentValue = objectAnswers[active.id]
