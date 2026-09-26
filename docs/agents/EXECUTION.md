@@ -1,5 +1,16 @@
 # Agent Execution Ledger
 
+## Active work — reduce Telegram backup duplication, 2026-09-26
+
+- Baseline: `dev` `729484974333f91128529cf9449aa9955c3f8264`; separate branch `fix/telegram-backup-dedup-20260926`. User stopped the parallel agent and assigned this session the remaining PR queue and backup spam fix.
+- Evidence: five successive snapshots have identical `media.tar.gz` SHA-256. Each forced pre-deploy backup currently uploads the same 450 MB as 24 encrypted parts plus a manifest to each allowed administrator. A transient download failure interrupted one export; its checkpoint resumed and verified successfully.
+- Reuse existing backup scheduler, fresh pre-migration snapshot, age encryption, administrator allowlist, immutable Telegram parts, hash download verification, OFFSITE_OK gate and restore scripts. No schema, business settings, credentials, retention or paid provider changes.
+- Format v2 separates current database/checksums from the reusable media component. Embed all media part descriptors directly in every manifest; never depend on previous local folders or chains of manifests. Bootstrap reuse from a verified v1 full archive with identical media and recipient; restore only its media, keeping the new DB/checksums.
+- Acceptance: unchanged media sends only the small DB component plus manifest (normally two documents); every reused part is downloaded and verified for the new snapshot; interrupted v1/v2 delivery resumes without duplicate sends; v1 restores remain supported; v2 restores work after deleting original local snapshots; changed media/recipient never reuse an incompatible component. New media still requires its first full upload.
+- Plan: [x] inspect live evidence and independently review design; [x] write failing reuse/restore/failure tests; [x] implement versioned components; [x] run isolated encryption/restore and security regressions; [x] independent implementation review; [ ] exact-SHA CI, sequential dev merge, automatic deploy and live verification.
+- Local verification: four new behavioral tests failed before implementation; full backend unit/contract suite on Python3.12.14 passes (271 passed, 11 skipped). Backup tests also run on the host-compatible Python3.10. Ruff correctness and diff whitespace checks pass. Independent review found no P1/P2; its manifest-caption clarification is incorporated. Initial broad test invocation used system Python3.10 and could not collect the application suite; the supported Python3.12 environment was then used successfully.
+- Guidance: claw release-hardening, wondelai clean-code/testing-principles, dev-agents-pack PR review checklist, anthropics webapp-testing (remaining frontend PRs), ksu and local verification-before-completion/requesting-code-review; agentskills inspected (format specification). Local team-lead/devops, bot-tester and security-audit guide this change; project conventions override generic skill templates.
+
 ## Active work — exterior refinement policy and quality gate, 2026-09-25
 
 - Baseline: `dev` `cdf4d98e08d9ae108d03b7f14a2bdb99b9f70db4`.
@@ -394,3 +405,12 @@ No new telemetry is required for this client-only interaction. The fullscreen UI
 - This implements the user's explicit common output-format requirement; operator templates/model settings stay DB-managed. No schema migration, price/policy changes or paid provider call.
 - Boundaries: model instructions are not OCR/output validation. Already existing pixels retained outside a masked edit, or the source frame of an animation, are not retroactively cleaned. Use the existing deployment drain before switching provider request formatting; do not interrupt/reissue in-flight provider requests under a changed body.
 - Verification: provider contract regression fails before/passes after; 222 unit/contract tests pass, 11 skipped. Added browser host-contract coverage for dynamic safe insets, scroll, native-control hit testing, Ideas width/nav and reset to zero. Initial browser failure reproduced header y=0 inside native controls; expanded test now waits for the destination screen after the asynchronous deep-link load.
+
+## Active work — Playwright 1.63 and Ideas media loading, 2026-09-26
+
+- Baseline: PR #58 `16c0375`, synchronized with `dev` `23245f4`; preserve the dependency update and existing user flows.
+- Reproduced: a valid image delivered after 2300 ms disappears under the candidate's 1800 ms timer. WebKit can finish an aborted image with `complete=true`, zero natural width and a rejected decode promise without the expected React error transition.
+- Replace the deadline with the actual image decode result; isolate preview/original DOM nodes and discard stale effect callbacks. Retain native load/error handlers. No API, schema, configuration, SDK or provider changes.
+- Acceptance: broken preview falls back to original, final failure is explained, slow valid originals remain visible, and neighboring-image loading/fullscreen behavior remains intact.
+- Progress: [x] red/green slow-image regression; [x] focused Chromium/WebKit checks; [x] independent review (no P1/P2); [x] expanded browser checks (66 resilience/fullscreen + 6 slow original/fallback cases); [ ] exact-head CI, merge and dev deployment.
+- Guidance: tma-codegen lifecycle patterns within the existing app integration; release-hardening, clean-code/testing-principles, webapp-testing, requesting-code-review and verification-before-completion.
