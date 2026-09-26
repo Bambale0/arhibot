@@ -1,6 +1,8 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from uuid import UUID
+
+from fastapi import APIRouter, Query, Response, status
 
 from app.api.dependencies.auth import AdminUser, DbSession
 from app.schemas.questionnaires import (
@@ -35,6 +37,22 @@ async def admin_update_questionnaire_catalog(
     session: DbSession,
 ) -> QuestionnaireCatalogAdminResponse:
     return await QuestionnaireService(session).update_admin_catalog(admin, payload)
+
+
+@router.post(
+    "/questionnaire-applications/{application_id}/telegram-retry",
+    operation_id="adminRetryQuestionnaireApplicationTelegram",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def admin_retry_questionnaire_application_telegram(
+    application_id: UUID,
+    admin: AdminUser,
+    session: DbSession,
+) -> Response:
+    await QuestionnaireService(session).retry_application_telegram_delivery(
+        admin, application_id
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(

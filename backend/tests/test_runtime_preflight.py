@@ -17,9 +17,15 @@ def valid_env() -> dict[str, str]:
         "JWT_SECRET": "access-secret-that-is-long-enough-and-random-001",
         "REFRESH_TOKEN_SECRET": "refresh-secret-that-is-long-enough-and-random-002",
         "MEDIA_SIGNING_SECRET": "media-secret-that-is-long-enough-and-random-003",
+        "POSTGRES_PASSWORD": "postgres-secret-that-is-long-enough-004",
+        "DATABASE_URL": "postgresql+asyncpg://app:postgres-secret-that-is-long-enough-004@postgres:5432/app",
+        "REDIS_PASSWORD": "redis-secret-that-is-long-enough-005",
+        "REDIS_URL": "redis://:redis-secret-that-is-long-enough-005@redis:6379/0",
         "MEDIA_PUBLIC_BASE_URL": "https://app.example.test",
         "NEXUS_BASE_URL": "https://nexus.example.test",
         "TELEGRAM_WEBAPP_URL": "https://app.example.test",
+        "YOOKASSA_BASE_URL": "https://api.yookassa.test/v3",
+        "YOOKASSA_RETURN_URL": "https://app.example.test/billing-return",
         "CORS_ORIGINS": "https://app.example.test",
     }
 
@@ -41,6 +47,39 @@ def test_runtime_preflight_rejects_local_mode_and_default_secrets() -> None:
     assert any("APP_ENV" in error for error in errors)
     assert any("JWT_SECRET" in error for error in errors)
     assert any("REFRESH_TOKEN_SECRET" in error for error in errors)
+
+
+def test_runtime_preflight_rejects_default_or_unauthenticated_data_credentials() -> None:
+    module = _module()
+    values = valid_env()
+    values["POSTGRES_PASSWORD"] = "app"
+    values["DATABASE_URL"] = "postgresql+asyncpg://app:app@postgres:5432/app"
+    values["REDIS_PASSWORD"] = ""
+    values["REDIS_URL"] = "redis://redis:6379/0"
+    errors = module.validate(values)
+    assert any("POSTGRES_PASSWORD" in error for error in errors)
+    assert any("REDIS_PASSWORD" in error for error in errors)
+    assert any("authenticate to Redis" in error for error in errors)
+
+
+def test_runtime_preflight_rejects_data_url_secret_mismatch() -> None:
+    module = _module()
+    values = valid_env()
+    values["DATABASE_URL"] = "postgresql+asyncpg://app:different-password@postgres:5432/app"
+    values["REDIS_URL"] = "redis://:different-password@redis:6379/0"
+    errors = module.validate(values)
+    assert any("DATABASE_URL password must match" in error for error in errors)
+    assert any("REDIS_URL password must match" in error for error in errors)
+
+
+def test_runtime_preflight_rejects_insecure_yookassa_urls() -> None:
+    module = _module()
+    values = valid_env()
+    values["YOOKASSA_BASE_URL"] = "http://payments.example.test"
+    values["YOOKASSA_RETURN_URL"] = "http://app.example.test/return"
+    errors = module.validate(values)
+    assert any("YOOKASSA_BASE_URL" in error for error in errors)
+    assert any("YOOKASSA_RETURN_URL" in error for error in errors)
 
 
 def test_runtime_preflight_rejects_localhost_cors() -> None:

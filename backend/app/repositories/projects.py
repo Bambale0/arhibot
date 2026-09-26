@@ -1,10 +1,13 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.projects import Project
+
+ProjectSort = Literal["created_at", "updated_at"]
 
 
 class ProjectRepository:
@@ -32,23 +35,53 @@ class ProjectRepository:
         user_id: UUID,
         *,
         limit: int,
-        cursor_created_at: datetime | None = None,
+        cursor_at: datetime | None = None,
         cursor_id: UUID | None = None,
+        sort_by: ProjectSort = "created_at",
         include_questionnaire_drafts: bool = False,
     ) -> list[Project]:
         query = select(Project).where(Project.user_id == user_id, Project.deleted_at.is_(None))
         if not include_questionnaire_drafts:
-            query = query.where(Project.context["questionnaire_draft"].as_boolean().is_not(True))
-        if cursor_created_at is not None and cursor_id is not None:
+            query = query.where(
+                Project.context["questionnaire_draft"].as_boolean().is_not(True),
+                Project.context["admin_ai_sandbox"].as_boolean().is_not(True),
+            )
+        timestamp_column = Project.updated_at if sort_by == "updated_at" else Project.created_at
+        if cursor_at is not None and cursor_id is not None:
             query = query.where(
                 or_(
-                    Project.created_at < cursor_created_at,
-                    and_(Project.created_at == cursor_created_at, Project.id < cursor_id),
+                    timestamp_column < cursor_at,
+                    and_(timestamp_column == cursor_at, Project.id < cursor_id),
                 )
             )
-        query = query.order_by(Project.created_at.desc(), Project.id.desc()).limit(limit)
+        query = query.order_by(timestamp_column.desc(), Project.id.desc()).limit(limit)
         result = await self.session.execute(query)
         return list(result.scalars().all())
+
+    async def list_admin_ai_sandboxes(self, user_id: UUID) -> list[Project]:
+        result = await self.session.execute(
+            select(Project)
+            .where(
+                Project.user_id == user_id,
+                Project.deleted_at.is_(None),
+                Project.context["admin_ai_sandbox"].as_boolean().is_(True),
+            )
+            .order_by(Project.created_at.asc(), Project.id.asc())
+        )
+        return list(result.scalars().all())
+
+    async def get_admin_ai_sandbox(self, user_id: UUID) -> Project | None:
+        result = await self.session.execute(
+            select(Project)
+            .where(
+                Project.user_id == user_id,
+                Project.deleted_at.is_(None),
+                Project.context["admin_ai_sandbox"].as_boolean().is_(True),
+            )
+            .order_by(Project.created_at.asc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
     async def list_expired_questionnaire_drafts(
         self,

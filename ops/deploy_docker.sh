@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 unset DOCKER_HOST DOCKER_CONTEXT
 
@@ -60,6 +61,9 @@ rollback_code() {
   tar -xzf "${code_backup}" -C "${restore_root}"
   rsync --archive --delete \
     --exclude='backend/.env' \
+  --exclude='.backup.env' \
+  --exclude='.runtime-monitor/' \
+  --exclude='.runtime-mutation.lock' \
     --exclude='.git/' \
     --exclude='backups/' \
     --exclude='.release/' \
@@ -92,6 +96,12 @@ on_exit() {
 trap on_exit EXIT
 
 mkdir -p "${app_dir}" "${release_root}" "${backup_dir}"
+command -v flock >/dev/null || { echo "flock is required for AuRoom deploy" >&2; exit 1; }
+if [[ "${AUROOM_RUNTIME_LOCK_HELD:-0}" != "1" ]]; then
+  exec 9>"${app_dir}/.runtime-mutation.lock"
+  flock -n 9 || { echo "Another AuRoom runtime mutation is already in progress" >&2; exit 75; }
+  export AUROOM_RUNTIME_LOCK_HELD=1
+fi
 [[ -f "${app_dir}/backend/.env" ]] || {
   echo "Missing ${app_dir}/backend/.env" >&2
   exit 1
@@ -109,7 +119,7 @@ rm -rf "${candidate}"
 mkdir -p "${candidate}"
 tar -xzf "${archive}" -C "${candidate}"
 python3 -m compileall -q "${candidate}/backend/app" "${candidate}/backend/scripts"
-bash -n "${candidate}/ops/backup_runtime.sh" "${candidate}/ops/restore_runtime.sh" "${candidate}/ops/runtime_housekeeping.sh" "${candidate}/ops/runtime_monitor.sh" "${candidate}/ops/install_host_nginx.sh"
+bash -n "${candidate}/ops/backup_runtime.sh" "${candidate}/ops/export_offsite_backup.sh" "${candidate}/ops/fetch_offsite_backup.sh" "${candidate}/ops/restore_runtime.sh" "${candidate}/ops/verify_restore_isolated.sh" "${candidate}/ops/runtime_housekeeping.sh" "${candidate}/ops/runtime_monitor.sh" "${candidate}/ops/install_host_nginx.sh"
 python3 -m py_compile "${candidate}/ops/runtime_preflight.py"
 
 # The public development host is internet-facing; fail closed before touching code, DB, or containers.
@@ -138,6 +148,7 @@ if find "${app_dir}" -mindepth 1 -maxdepth 1 \
     --exclude='./.release' \
     --exclude='./.git' \
     --exclude='./backend/.env' \
+    --exclude='./.backup.env' \
     -czf "${code_backup}" -C "${app_dir}" .
   sha256sum "${code_backup}" > "${code_backup}.sha256"
 
@@ -146,11 +157,15 @@ if find "${app_dir}" -mindepth 1 -maxdepth 1 \
   echo "${backup_output}"
   runtime_backup=$(printf '%s\n' "${backup_output}" | sed -n 's/^AuRoom runtime backup: //p' | tail -n1)
   [[ -n "${runtime_backup}" ]] || { echo "Could not determine pre-migration runtime backup path" >&2; exit 1; }
+  python3 "${candidate}/ops/backup_readiness.py" "${app_dir}" "${runtime_backup}"
 fi
 
 mutation_started=1
 rsync --archive --delete \
   --exclude='backend/.env' \
+  --exclude='.backup.env' \
+  --exclude='.runtime-monitor/' \
+  --exclude='.runtime-mutation.lock' \
   --exclude='.git/' \
   --exclude='backups/' \
   --exclude='.release/' \
@@ -159,6 +174,35 @@ rsync --archive --delete \
 cd "${app_dir}"
 echo "Building API, bot, workers and frontend"
 compose build api bot worker broadcast-worker maintenance frontend
+
+# Stop public writers before any security/data backfill. Let the old generation
+# worker finish accepted jobs so historical rows are terminal before provenance
+# migration. YooKassa/Telegram callers can safely retry during this bounded drain.
+echo "Draining write traffic before database migrations"
+compose stop api bot
+drain_passed=0
+for attempt in $(seq 1 180); do
+  active_generations=$(compose exec -T postgres psql -U app -d app -Atc "select count(*) from generations where status in ('queued','processing')" | tr -d '[:space:]')
+  if [[ "${active_generations}" == "0" ]]; then
+    drain_passed=1
+    break
+  fi
+  if (( attempt % 10 == 0 )); then
+    echo "Waiting for ${active_generations} active generation(s) to drain"
+  fi
+  sleep 5
+done
+if (( drain_passed == 0 )); then
+  echo "Refusing migration: generation queue did not drain within 15 minutes" >&2
+  exit 1
+fi
+
+# Freeze remaining DB writers while Alembic runs.
+compose stop worker broadcast-worker maintenance
+
+# Existing volumes were created by older root images; writers are stopped above.
+echo "Preparing media ownership for the unprivileged runtime"
+compose run --rm --user 0:0 --cap-add CHOWN --cap-add DAC_OVERRIDE api chown -R 10001:10001 /data/media
 
 echo "Applying database migrations"
 compose run --rm api alembic upgrade head
@@ -205,7 +249,7 @@ for service in bot worker broadcast-worker maintenance; do
   fi
 done
 
-for service in worker broadcast-worker maintenance frontend; do
+for service in api worker broadcast-worker maintenance frontend; do
   service_id=$(compose ps -q "${service}")
   health_passed=0
   for attempt in $(seq 1 18); do

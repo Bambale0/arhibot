@@ -26,37 +26,84 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3).read()"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     mem_limit: "${AUROOM_API_MEMORY_LIMIT:-512m}"
     cpus: "${AUROOM_API_CPU_LIMIT:-0.75}"
     pids_limit: ${AUROOM_API_PIDS_LIMIT:-256}
     logging: *default-logging
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - app
+      - data
+
 
   bot:
     labels:
       com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     build: .
     command: ["python", "-m", "app.telegram_bot.main"]
-    env_file:
-      - .env
     environment:
+      APP_ENV: "${APP_ENV:-local}"
+      RUNTIME_ROLE: "bot"
+      API_V1_PREFIX: "${API_V1_PREFIX:-/api/v1}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_WEBAPP_URL: "${TELEGRAM_WEBAPP_URL:-}"
+      BOT_INTERNAL_API_BASE_URL: "${BOT_INTERNAL_API_BASE_URL:-http://api:8000}"
       RELEASE_SHA: "${AUROOM_RELEASE_SHA:-unknown}"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     mem_limit: "${AUROOM_BOT_MEMORY_LIMIT:-192m}"
     cpus: "${AUROOM_BOT_CPU_LIMIT:-0.25}"
     pids_limit: ${AUROOM_BOT_PIDS_LIMIT:-128}
     logging: *default-logging
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - app
+
 
   worker:
     labels:
       com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     build: .
     command: ["python", "-m", "app.workers.generation_worker"]
-    env_file:
-      - .env
     environment:
+      APP_ENV: "${APP_ENV:-local}"
+      RUNTIME_ROLE: "generation_worker"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://app:local-only-postgres-password-change-me@postgres:5432/app}"
+      REDIS_URL: "${REDIS_URL:-redis://:local-only-redis-password-change-me@redis:6379/0}"
+      REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: "${REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS:-2}"
+      REDIS_SOCKET_TIMEOUT_SECONDS: "${REDIS_SOCKET_TIMEOUT_SECONDS:-5}"
+      NEXUS_API_KEY: "${NEXUS_API_KEY:-}"
+      NEXUS_BASE_URL: "${NEXUS_BASE_URL:-https://nexusapi.dev}"
+      NEXUS_TASK_TIMEOUT_SECONDS: "${NEXUS_TASK_TIMEOUT_SECONDS:-180}"
+      NEXUS_POLL_INTERVAL_SECONDS: "${NEXUS_POLL_INTERVAL_SECONDS:-2}"
+      NEXUS_HTTP_CONNECT_TIMEOUT_SECONDS: "${NEXUS_HTTP_CONNECT_TIMEOUT_SECONDS:-5}"
+      NEXUS_HTTP_READ_TIMEOUT_SECONDS: "${NEXUS_HTTP_READ_TIMEOUT_SECONDS:-30}"
+      NEXUS_RETRY_ATTEMPTS: "${NEXUS_RETRY_ATTEMPTS:-3}"
+      NEXUS_CIRCUIT_FAILURE_THRESHOLD: "${NEXUS_CIRCUIT_FAILURE_THRESHOLD:-5}"
+      NEXUS_CIRCUIT_RECOVERY_SECONDS: "${NEXUS_CIRCUIT_RECOVERY_SECONDS:-30}"
+      MEDIA_ROOT: "${MEDIA_ROOT:-/data/media}"
+      MEDIA_PUBLIC_BASE_URL: "${MEDIA_PUBLIC_BASE_URL:-http://localhost:8000}"
+      MEDIA_SIGNING_SECRET: "${MEDIA_SIGNING_SECRET:-}"
+      MEDIA_URL_TTL_SECONDS: "${MEDIA_URL_TTL_SECONDS:-900}"
+      MAX_IMAGE_SIZE_BYTES: "${MAX_IMAGE_SIZE_BYTES:-20971520}"
+      MAX_IMAGE_PIXELS: "${MAX_IMAGE_PIXELS:-80000000}"
       RELEASE_SHA: "${AUROOM_RELEASE_SHA:-unknown}"
     volumes:
       - media_data:/data/media
@@ -76,6 +123,14 @@ services:
     pids_limit: ${AUROOM_WORKER_PIDS_LIMIT:-256}
     logging: *default-logging
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - app
+      - data
+
 
   renderer-worker:
     profiles: ["3d"]
@@ -94,15 +149,29 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - app
+      - data
+
 
   broadcast-worker:
     labels:
       com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     build: .
     command: ["python", "-m", "app.workers.broadcast_worker"]
-    env_file:
-      - .env
     environment:
+      APP_ENV: "${APP_ENV:-local}"
+      RUNTIME_ROLE: "broadcast_worker"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://app:local-only-postgres-password-change-me@postgres:5432/app}"
+      REDIS_URL: "${REDIS_URL:-redis://:local-only-redis-password-change-me@redis:6379/0}"
+      REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: "${REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS:-2}"
+      REDIS_SOCKET_TIMEOUT_SECONDS: "${REDIS_SOCKET_TIMEOUT_SECONDS:-5}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       RELEASE_SHA: "${AUROOM_RELEASE_SHA:-unknown}"
     depends_on:
       postgres:
@@ -120,15 +189,36 @@ services:
     pids_limit: ${AUROOM_BROADCAST_WORKER_PIDS_LIMIT:-128}
     logging: *default-logging
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - app
+      - data
+
 
   maintenance:
     labels:
       com.auroom.release: "${AUROOM_RELEASE_SHA:-unknown}"
     build: .
     command: ["python", "-m", "app.workers.maintenance_worker"]
-    env_file:
-      - .env
     environment:
+      APP_ENV: "${APP_ENV:-local}"
+      RUNTIME_ROLE: "maintenance"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://app:local-only-postgres-password-change-me@postgres:5432/app}"
+      REDIS_URL: "${REDIS_URL:-redis://:local-only-redis-password-change-me@redis:6379/0}"
+      REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS: "${REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS:-2}"
+      REDIS_SOCKET_TIMEOUT_SECONDS: "${REDIS_SOCKET_TIMEOUT_SECONDS:-5}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_WEBAPP_URL: "${TELEGRAM_WEBAPP_URL:-}"
+      MEDIA_ROOT: "${MEDIA_ROOT:-/data/media}"
+      MEDIA_PUBLIC_BASE_URL: "${MEDIA_PUBLIC_BASE_URL:-http://localhost:8000}"
+      MEDIA_SIGNING_SECRET: "${MEDIA_SIGNING_SECRET:-}"
+      MEDIA_URL_TTL_SECONDS: "${MEDIA_URL_TTL_SECONDS:-900}"
+      MAX_IMAGE_SIZE_BYTES: "${MAX_IMAGE_SIZE_BYTES:-20971520}"
+      MAX_IMAGE_PIXELS: "${MAX_IMAGE_PIXELS:-80000000}"
       RELEASE_SHA: "${AUROOM_RELEASE_SHA:-unknown}"
     volumes:
       - media_data:/data/media
@@ -148,6 +238,14 @@ services:
     pids_limit: ${AUROOM_MAINTENANCE_PIDS_LIMIT:-128}
     logging: *default-logging
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - app
+      - data
+
 
   frontend:
     labels:
@@ -164,6 +262,9 @@ services:
     pids_limit: ${AUROOM_FRONTEND_PIDS_LIMIT:-64}
     logging: *default-logging
     restart: unless-stopped
+    networks:
+      - edge
+
 
   nginx:
     labels:
@@ -174,20 +275,26 @@ services:
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      - api
-      - frontend
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
     mem_limit: "${AUROOM_NGINX_MEMORY_LIMIT:-128m}"
     cpus: "${AUROOM_NGINX_CPU_LIMIT:-0.25}"
     pids_limit: ${AUROOM_NGINX_PIDS_LIMIT:-64}
     logging: *default-logging
     restart: unless-stopped
+    networks:
+      - edge
+      - app
+
 
   postgres:
     image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     environment:
       POSTGRES_DB: app
       POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-local-only-postgres-password-change-me}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -200,14 +307,18 @@ services:
     pids_limit: ${AUROOM_POSTGRES_PIDS_LIMIT:-256}
     logging: *default-logging
     restart: unless-stopped
+    networks:
+      - data
 
   redis:
     image: redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
-    command: ["redis-server", "--appendonly", "yes"]
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-local-only-redis-password-change-me}"
+    command: ["sh", "-ec", "exec redis-server --appendonly yes --requirepass \"${REDIS_PASSWORD}\""]
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"${REDIS_PASSWORD}\" redis-cli ping >/dev/null"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -216,8 +327,16 @@ services:
     pids_limit: ${AUROOM_REDIS_PIDS_LIMIT:-128}
     logging: *default-logging
     restart: unless-stopped
+    networks:
+      - data
 
 volumes:
   postgres_data:
   redis_data:
   media_data:
+
+networks:
+  edge:
+  app:
+  data:
+    internal: true

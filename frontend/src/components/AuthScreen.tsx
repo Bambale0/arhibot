@@ -3,7 +3,7 @@ import { useAuth } from '../auth'
 import { HomeIcon, SiteIcon, SparkIcon } from './Icons'
 
 export function AuthScreen() {
-  const { loginWithEmail, error, clearError } = useAuth()
+  const { loginWithEmail, retrySession, error, canRetrySession, clearError } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -52,7 +52,7 @@ export function AuthScreen() {
             <label>Пароль
               <input value={password} onChange={(e) => setPassword(e.target.value)} required type="password" minLength={1} placeholder="Ваш пароль" autoComplete="current-password" />
             </label>
-            {error && <div className="inline-error">{error}</div>}
+            {error && <div className="inline-error" role="alert">{error}{canRetrySession && <button type="button" onClick={retrySession}>Повторить восстановление сессии</button>}</div>}
             <button className="primary-button auth-submit" disabled={busy} type="submit">
               {busy ? 'Подождите…' : 'Войти'}
             </button>

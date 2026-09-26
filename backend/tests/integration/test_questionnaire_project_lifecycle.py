@@ -40,7 +40,7 @@ async def test_questionnaire_project_is_hidden_until_source_step_and_can_be_disc
         start = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["banya", "eskez-doma"]},
+            json={"selected_objects": ["banya", "eskez-doma"], "plot_area_sotkas": 8},
         )
         assert start.status_code == 201, start.text
         project = start.json()
@@ -49,6 +49,12 @@ async def test_questionnaire_project_is_hidden_until_source_step_and_can_be_disc
         design_session = project["context"]["design_session"]
         assert design_session["catalog_version"] == catalog["version"]
         assert design_session["selected_objects"] == ["eskez-doma", "banya"]
+        assert design_session["plot_area_sotkas"] == 8
+        assert project["context"]["plot_area_m2"] == 800
+        assert design_session["initial_concept_mode"] is True
+        assert design_session["survey_completed_objects"] == []
+        assert design_session["initial_generation_id"] is None
+        assert design_session["initial_concept_accepted"] is False
         assert design_session["source_step_completed"] is False
 
         hidden_list = await client.get("/api/v1/projects", headers=headers)
@@ -69,10 +75,66 @@ async def test_questionnaire_project_is_hidden_until_source_step_and_can_be_disc
             json=design_session,
         )
         assert saved.status_code == 200, saved.text
+        design_session = saved.json()["session"]
+
+        design_session["plot_area_sotkas"] = 12
+        resized = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=design_session,
+        )
+        assert resized.status_code == 200, resized.text
+        assert resized.json()["session"]["plot_area_sotkas"] == 12
+        design_session = resized.json()["session"]
+        site_plan = design_session["site_plan"]
+        assert site_plan["schema"] == "auroom.site_plan.v1"
+        assert site_plan["plot"]["area_sotkas"] == 12
+        assert site_plan["plot"]["area_m2"] == 1200
+        assert [item["object_key"] for item in site_plan["objects"]] == [
+            "eskez-doma",
+            "banya",
+        ]
+
+        forged_plan = {
+            **site_plan,
+            "plot": {**site_plan["plot"], "area_m2": 999999},
+            "warnings": [{"object_key": "banya", "code": "client_forged"}],
+        }
+        design_session["site_plan"] = forged_plan
+        canonicalized = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session",
+            headers=headers,
+            json=design_session,
+        )
+        assert canonicalized.status_code == 200, canonicalized.text
+        design_session = canonicalized.json()["session"]
+        assert design_session["site_plan"]["plot"]["area_m2"] == 1200
+        assert design_session["site_plan"]["warnings"] != forged_plan["warnings"]
 
         promoted = await client.get(f"/api/v1/projects/{project_id}", headers=headers)
         assert promoted.status_code == 200, promoted.text
         assert promoted.json()["context"]["questionnaire_draft"] is False
+        assert promoted.json()["context"]["plot_area_m2"] == 1200
+
+        forged_session = await client.patch(
+            f"/api/v1/projects/{project_id}",
+            headers=headers,
+            json={"context": {"design_session": {}}},
+        )
+        assert forged_session.status_code == 422, forged_session.text
+
+        generic_update = await client.patch(
+            f"/api/v1/projects/{project_id}",
+            headers=headers,
+            json={"context": {"house_area_m2": 155}},
+        )
+        assert generic_update.status_code == 200, generic_update.text
+        assert generic_update.json()["context"]["house_area_m2"] == 155
+        assert (
+            generic_update.json()["context"]["design_session"]["session_id"]
+            == design_session["session_id"]
+        )
+        assert generic_update.json()["context"]["design_session"]["source_step_completed"] is True
 
         visible_list = await client.get("/api/v1/projects", headers=headers)
         assert visible_list.status_code == 200, visible_list.text
@@ -87,7 +149,7 @@ async def test_questionnaire_project_is_hidden_until_source_step_and_can_be_disc
         draft = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["banya"]},
+            json={"selected_objects": ["banya"], "plot_area_sotkas": 8},
         )
         assert draft.status_code == 201, draft.text
         draft_id = draft.json()["id"]
@@ -111,21 +173,35 @@ async def test_questionnaire_project_start_rejects_unknown_duplicates_and_client
         unknown = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["not-a-real-object"]},
+            json={"selected_objects": ["not-a-real-object"], "plot_area_sotkas": 8},
         )
         assert unknown.status_code == 422, unknown.text
 
         duplicate = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["eskez-doma", "eskez-doma"]},
+            json={"selected_objects": ["eskez-doma", "eskez-doma"], "plot_area_sotkas": 8},
         )
         assert duplicate.status_code == 422, duplicate.text
+
+        too_small_plot = await client.post(
+            "/api/v1/questionnaire-projects",
+            headers=headers,
+            json={"selected_objects": ["eskez-doma"], "plot_area_sotkas": 3},
+        )
+        assert too_small_plot.status_code == 422, too_small_plot.text
+
+        too_large_plot = await client.post(
+            "/api/v1/questionnaire-projects",
+            headers=headers,
+            json={"selected_objects": ["eskez-doma"], "plot_area_sotkas": 16},
+        )
+        assert too_large_plot.status_code == 422, too_large_plot.text
 
         client_version = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["eskez-doma"], "catalog_version": "stale-client-value"},
+            json={"selected_objects": ["eskez-doma"], "plot_area_sotkas": 8, "catalog_version": "stale-client-value"},
         )
         assert client_version.status_code == 422, client_version.text
 
@@ -148,7 +224,7 @@ async def test_abandoned_questionnaire_draft_is_expired_by_cleanup() -> None:
         draft = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["eskez-doma"]},
+            json={"selected_objects": ["eskez-doma"], "plot_area_sotkas": 8},
         )
         assert draft.status_code == 201, draft.text
         project_id = UUID(draft.json()["id"])

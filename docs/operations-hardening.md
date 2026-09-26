@@ -34,6 +34,16 @@ If a deploy fails before migrations complete, the deploy script may restore the 
 
 `ops/restore_runtime.sh ... RESTORE` is destructive and requires explicit operator approval. After restoring the database and media, it migrates the restored database forward to the code currently installed on disk before bringing the stack back up.
 
+Before relying on a snapshot, run the non-destructive isolated restore drill:
+
+```bash
+bash ops/verify_restore_isolated.sh /root/arhibot /root/arhibot/backups/runtime/<snapshot>
+```
+
+The drill verifies checksums and the media archive, restores `postgres.dump` into an ephemeral PostgreSQL container with no host port or production volume attached, runs the currently deployed API image's Alembic migrations to head, checks the migrated revision, prints safe row-count diagnostics, and removes the temporary container when finished. It does not stop production services, connect to the live database, or overwrite live media.
+
+This drill proves that the local artifact is restorable. It is not an off-site durability guarantee. Off-site export requires host-only `.backup.env` and `age`, using either the Telegram transport described below or an rclone remote with `AUROOM_OFFSITE_BACKUP_REMOTE` and `AUROOM_BACKUP_AGE_RECIPIENT`. Provider credentials and the age private identity must never be committed to the repository or injected into application containers.
+
 ## Disk steady state
 
 Deploy refuses to start at 90% filesystem usage and warns at 80%. `ops/runtime_housekeeping.sh` is read-only by default:
@@ -56,18 +66,57 @@ Compose applies environment-overridable CPU, memory, PID and json-file log-rotat
 
 `ops/runtime_monitor.sh` runs from root cron every 15 minutes. It checks HTTP readiness, release SHA parity, Docker health, worker heartbeats, stale processing generations, filesystem usage and runtime-backup age. State transitions to WARN/FAIL and recovery back to OK are sent once to active Telegram admins; unchanged state is not re-sent every cycle. Thresholds are environment-overridable.
 
+### Bounded authenticated load probe
+
+`backend/scripts/http_load_probe.py` measures concurrent authenticated HTTP traffic against an API v1 endpoint and reports throughput, error rate and p50/p95/p99 latency. Read mode calls only `GET /me`; `project-write` mode creates temporary Projects and immediately soft-deletes them. It never starts Generations, payments, broadcasts or provider calls.
+
+The probe refuses non-loopback targets by default. A remote read requires `--allow-remote`; remote Project writes require both `--allow-remote` and `--allow-remote-writes`. Supply the bearer token through `AUROOM_LOAD_TOKEN`, not a command-line argument, so it is not exposed in process listings or shell history.
+
+CI runs the probe over a real Uvicorn TCP listener with a disposable authenticated user for both read traffic and reversible Project writes. This is a bounded regression gate, not a long-duration capacity certification. Provider-backed soak testing remains a separate staging exercise because it consumes external AI capacity and can incur provider cost.
+
+### Controlled crash and dependency failure probes
+
+Backend integration CI deliberately pauses and resumes isolated Redis/PostgreSQL instances, then verifies bounded failure detection and recovery through the application's real client paths. It also SIGKILLs a worker process that owns the production singleton lease/heartbeat primitives, verifies a replacement cannot overlap while the stale lease is alive, waits for lease expiry, and proves a clean replacement becomes healthy. Provider resilience tests simulate sustained HTTP 429/5xx storms and assert retry counts remain bounded and the shared circuit breaker opens rather than hammering the dependency.
+
 ## Public surface and supply chain
 
 Production disables FastAPI Swagger/ReDoc/OpenAPI HTTP routes and the public host Nginx explicitly returns 404 for docs, OpenAPI and metrics. The HTTPS ingress sets HSTS, nosniff, a strict referrer policy, a conservative permissions policy and a Telegram-compatible CSP; Nginx version disclosure is disabled. Deploy applies the canonical host Nginx config with backup, syntax validation, reload verification and rollback on failure.
 
-CI audits the hash-locked Python runtime dependency set with pip-audit and frontend production dependencies with npm audit, builds backend/frontend Docker images, and pins GitHub Actions plus runtime base images to immutable commit/digest identities. Dependabot watches Python, npm, Actions and Docker sources weekly. `backend/requirements.lock` and `backend/requirements-build.lock` are generated deterministically with pip-tools from `pyproject.toml`; CI regenerates both and fails on drift. The wheel builder installs only the hash-locked build graph and runs with `--no-build-isolation`; production runtime stages install only the hash-locked runtime graph, then install the already-built AuRoom wheel with `--no-deps`. A Docker build therefore cannot silently resolve a different runtime or Python build dependency graph.
+CI audits the hash-locked Python runtime dependency set with pip-audit and frontend runtime and development dependencies with npm audit, builds backend/frontend Docker images, and pins GitHub Actions plus runtime base images to immutable commit/digest identities. Dependabot watches Python, npm, Actions and Docker sources weekly. `backend/requirements.lock` and `backend/requirements-build.lock` are generated deterministically with pip-tools from `pyproject.toml`; CI regenerates both and fails on drift. The wheel builder installs only the hash-locked build graph and runs with `--no-build-isolation`; production runtime stages install only the hash-locked runtime graph, then install the already-built AuRoom wheel with `--no-deps`. A Docker build therefore cannot silently resolve a different runtime or Python build dependency graph.
 
 To update the Python locks after an intentional dependency change, install backend dev dependencies and run `./scripts/dependency_locks.sh UPDATE` from `backend/`. Use `CHECK` for a read-only freshness verification; CI runs exactly that mode.
 
 ## Still required before a production-grade promotion
 
-- encrypted off-site backups plus periodic isolated restore drills; choose the storage provider from the deployment environment and define RPO/RTO first;
+- encrypted off-site backups are a mandatory release gate; Telegram export and independent restore were verified on 2026-09-22 (see the dated readiness report); maintain operator key custody and the documented recovery policy;
 - persistent telemetry storage/dashboards and distributed tracing; the API now exposes internal Prometheus-compatible RED/runtime metrics, while the runtime watchdog covers immediate operational alerts;
-- soak/load tests that include authenticated writes and generation-provider latency, not only public read paths;
+- long-duration soak/capacity testing with generation-provider latency is still required in staging; CI now has a bounded authenticated TCP load gate covering reads and reversible Project writes without external provider cost;
 - blue-green/canary or another zero-downtime release strategy;
-- broader controlled failure-injection beyond the Redis pause/recovery CI probe: PostgreSQL outage, provider 429/5xx storms and process-kill recovery in a non-production environment.
+- controlled failure-injection now covers Redis/PostgreSQL pause-recovery, worker SIGKILL singleton/heartbeat recovery, and sustained simulated provider 429/5xx storms; continue extending these probes when new stateful workers or providers are introduced.
+
+## Encrypted Telegram off-site backups
+
+The alternative to rclone is `AUROOM_BACKUP_TRANSPORT=telegram` in host-only `.backup.env` (0600), with `AUROOM_BACKUP_AGE_RECIPIENT` containing an age **public** recipient. Install `age` on the host. The private age identity must stay with the operator, outside the application server and Telegram backup chat.
+
+The transport uses the existing bot token and active admin/superadmin Telegram identities from PostgreSQL. Optional `AUROOM_BACKUP_TELEGRAM_RECIPIENT_IDS` selects private administrator chats; it never overrides DB role checks. Each selected administrator must have started the bot. Group chats are deliberately not accepted by this admin-only transport.
+
+The archive is encrypted before leaving the host and split into 19,000,000-byte chunks, below the cloud Bot API download limit. Upload progress persists per part/recipient. Every encrypted part and the manifest are downloaded and hashed before `OFFSITE_OK` is written. A lost send response can produce a duplicate document, but ordered part names and manifest hashes make recovery unambiguous. Partial delivery never marks the snapshot successful. See the [Telegram file API](https://core.telegram.org/bots/api#getfile).
+
+```bash
+# Export or resume a verified snapshot to selected administrators.
+python3 ops/telegram_backup.py export /path/20260922T120000Z --app-dir /root/arhibot
+
+# On a separate recovery machine, save the manifest and all parts from Telegram.
+# --parts-dir needs no bot token; target must be empty.
+python3 ops/telegram_backup.py recover /safe/snapshot.manifest.json \
+  --parts-dir /safe/downloaded-parts --identity /safe/private.agekey --target /safe/recovered
+
+# Or retrieve chunks via the original bot's token supplied through environment/secret storage.
+python3 ops/telegram_backup.py recover /safe/snapshot.manifest.json \
+  --identity /safe/private.agekey --target /safe/recovered
+
+# Validate checksums after relocation, including historical absolute-path manifests.
+python3 ops/backup_manifest.py verify /safe/recovered
+```
+
+Use `verify_restore_isolated.sh` against the recovered directory before any real restore. `backup_readiness.py` prevents an existing-runtime deployment without a verified off-site snapshot. Backup cadence/retention remain database-managed; backup destination and encryption material are host infrastructure configuration. Backend images run as UID/GID 10001; deployment changes existing media volume ownership only after writers stop, and restore extracts files as that user.

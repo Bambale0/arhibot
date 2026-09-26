@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 app_dir=${1:-/root/arhibot}
 backup_dir=${2:?backup directory is required}
 confirm=${3:-}
 compose_file="${app_dir}/backend/docker-compose.yml"
+
+mkdir -p "${app_dir}"
+command -v flock >/dev/null || { echo "flock is required by AuRoom restore" >&2; exit 1; }
+if [[ "${AUROOM_RUNTIME_LOCK_HELD:-0}" != "1" ]]; then
+  exec 9>"${app_dir}/.runtime-mutation.lock"
+  flock -n 9 || { echo "Restore refused: another runtime mutation is in progress" >&2; exit 75; }
+  export AUROOM_RUNTIME_LOCK_HELD=1
+fi
 
 [[ "${confirm}" == "RESTORE" || "${confirm}" == "VERIFY" ]] || {
   echo "Use VERIFY for a non-destructive backup check or RESTORE for an actual restore" >&2
@@ -13,7 +23,7 @@ compose_file="${app_dir}/backend/docker-compose.yml"
 [[ -s "${backup_dir}/postgres.dump" ]] || { echo "Missing postgres.dump" >&2; exit 1; }
 [[ -s "${backup_dir}/media.tar.gz" ]] || { echo "Missing media.tar.gz" >&2; exit 1; }
 [[ -s "${backup_dir}/SHA256SUMS" ]] || { echo "Missing SHA256SUMS" >&2; exit 1; }
-(cd "${backup_dir}" && sha256sum -c SHA256SUMS)
+python3 "${script_dir}/backup_manifest.py" verify "${backup_dir}"
 
 if docker compose version >/dev/null 2>&1; then
   compose() { docker compose --project-directory "${app_dir}/backend" -f "${compose_file}" "$@"; }
@@ -37,7 +47,8 @@ DROP DATABASE IF EXISTS app;
 CREATE DATABASE app OWNER app;
 SQL
 compose exec -T postgres pg_restore -U app -d app --no-owner --no-privileges < "${backup_dir}/postgres.dump"
-compose run --rm -T api sh -lc 'rm -rf /data/media/* && tar -xzf - -C /data/media' < "${backup_dir}/media.tar.gz"
+compose run --rm --user 0:0 --cap-add CHOWN --cap-add DAC_OVERRIDE api chown -R 10001:10001 /data/media
+compose run --rm -T api sh -lc 'find /data/media -mindepth 1 -maxdepth 1 -exec rm -rf {} + && tar --no-same-owner -xzf - -C /data/media' < "${backup_dir}/media.tar.gz"
 # Restore data first, then migrate it forward to the code currently installed on disk.
 compose run --rm api alembic upgrade head
 compose stop renderer-worker >/dev/null 2>&1 || true

@@ -1,11 +1,17 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import * as api from '../api'
 import {
+  acceptQuestionnaireInitialConcept,
+  acceptQuestionnaireObjectRemoval,
+  addQuestionnaireObject,
+  cancelQuestionnaireObjectRemoval,
   createQuestionnaireGeneration,
   getQuestionnaireCatalog,
   getQuestionnaireGeneration,
+  getQuestionnaireGenerationCost,
   getQuestionnaireSession,
   saveQuestionnaireSession,
+  startQuestionnaireObjectRemoval,
   submitQuestionnaireApplication,
 } from '../questionnaireApi'
 import type {
@@ -14,6 +20,7 @@ import type {
   QuestionnaireCatalog,
   QuestionnaireCondition,
   QuestionnaireDefinition,
+  QuestionnaireGenerationCost,
   QuestionnaireQuestion,
   NormalizedRect,
 } from '../questionnaireTypes'
@@ -23,11 +30,28 @@ import { BackIcon, ImageIcon, SparkIcon, UploadIcon } from './Icons'
 const delay = (ms:number) => new Promise((resolve) => setTimeout(resolve, ms))
 const text = (value:QuestionnaireAnswer|undefined) => Array.isArray(value) ? value.join(', ') : value === true ? 'Согласен' : value == null ? '' : String(value)
 
-function conditionOk(condition:QuestionnaireCondition|null, answers:Record<string,QuestionnaireAnswer>, houseAccepted:boolean):boolean {
+function ResultImage({ url, alt }: { url:string; alt:string }) {
+  const [failed, setFailed] = useState(false)
+  useEffect(() => setFailed(false), [url])
+  if (failed) return <div className="empty-state"><ImageIcon/><p>Изображение временно недоступно. Попробуйте открыть этот шаг позже.</p></div>
+  return <img src={url} alt={alt} onError={() => setFailed(true)}/>
+}
+
+function conditionOk(
+  condition:QuestionnaireCondition|null,
+  answers:Record<string,QuestionnaireAnswer>,
+  houseAccepted:boolean,
+  selectedObjects:string[] = [],
+):boolean {
   if (!condition) return true
   if (condition.operator === 'house_accepted') return houseAccepted
-  if (condition.operator === 'all') return (condition.conditions || []).every((item) => conditionOk(item, answers, houseAccepted))
-  if (condition.operator === 'any') return (condition.conditions || []).some((item) => conditionOk(item, answers, houseAccepted))
+  if (condition.operator === 'all') return (condition.conditions || []).every((item) => conditionOk(item, answers, houseAccepted, selectedObjects))
+  if (condition.operator === 'any') return (condition.conditions || []).some((item) => conditionOk(item, answers, houseAccepted, selectedObjects))
+  if (condition.operator === 'object_not_selected') {
+    if (typeof condition.value === 'string') return !selectedObjects.includes(condition.value)
+    if (Array.isArray(condition.value)) return !condition.value.some((item) => selectedObjects.includes(item))
+    return true
+  }
   const answer = condition.question_id ? answers[condition.question_id] : undefined
   if (condition.operator === 'eq') return answer === condition.value
   if (condition.operator === 'neq') return answer !== condition.value
@@ -35,21 +59,109 @@ function conditionOk(condition:QuestionnaireCondition|null, answers:Record<strin
   if (condition.operator === 'contains') return Array.isArray(answer) && typeof condition.value === 'string' && answer.includes(condition.value)
   if (condition.operator === 'starts_with') return typeof answer === 'string' && typeof condition.value === 'string' && answer.startsWith(condition.value)
   if (condition.operator === 'not_contains_any') return !Array.isArray(answer) || !Array.isArray(condition.value) || !condition.value.some((item) => answer.includes(item))
+  if (condition.operator === 'floor_option') {
+    if (typeof answer !== 'string' || typeof condition.value !== 'string') return false
+    const floorAnswer = answer.toLowerCase()
+    if (condition.value === 'Первый этаж') return true
+    if (condition.value === 'Второй этаж') return !floorAnswer.startsWith('1 ')
+    if (condition.value === 'Третий этаж') return floorAnswer.includes('3')
+    if (condition.value === 'Мансарда') return floorAnswer.includes('мансард')
+    return false
+  }
   return true
 }
 
-function newSession(version:string, selected:string[]):DesignSession {
+function questionEnabledForSelection(
+  objectKey:string,
+  question:QuestionnaireQuestion,
+  selectedObjects:string[],
+):boolean {
+  // A separately selected garage owns its own questionnaire. Keeping the house
+  // garage branch as well would ask for the same object twice and create
+  // conflicting prompt constraints.
+  if (objectKey === 'eskez-doma' && selectedObjects.some((key) => key === 'garazh' || key === 'naves') && ['6','6а','6б','6в'].includes(question.id)) {
+    return false
+  }
+  return true
+}
+
+function questionIsVisible(
+  objectKey:string,
+  question:QuestionnaireQuestion,
+  answers:Record<string,QuestionnaireAnswer>,
+  houseAccepted:boolean,
+  selectedObjects:string[],
+):boolean {
+  if (!questionEnabledForSelection(objectKey, question, selectedObjects)) return false
+  if (!conditionOk(question.condition, answers, houseAccepted, selectedObjects)) return false
+  if ((question.kind === 'single' || question.kind === 'multi') && question.options.length > 0) {
+    return question.options.some((option) =>
+      conditionOk(question.option_rules[option] || null, answers, houseAccepted, selectedObjects),
+    )
+  }
+  return true
+}
+
+function sanitizeObjectAnswers(
+  definition:QuestionnaireDefinition,
+  answers:Record<string,QuestionnaireAnswer>,
+  houseAccepted:boolean,
+  selectedObjects:string[],
+) {
+  const next = { ...answers }
+  for (let pass=0; pass<definition.questions.length; pass++) {
+    let changed = false
+    for (const question of definition.questions) {
+      const value = next[question.id]
+      if (value === undefined) continue
+      if (!questionIsVisible(definition.key, question, next, houseAccepted, selectedObjects)) {
+        delete next[question.id]
+        changed = true
+        continue
+      }
+      if (question.kind === 'single' && typeof value === 'string') {
+        const custom = value.startsWith('Свой вариант:') && question.options.includes('Свой вариант')
+        const listed = question.options.length === 0 || question.options.includes(value)
+        if (!custom && (!listed || !conditionOk(question.option_rules[value] || null, next, houseAccepted, selectedObjects))) {
+          delete next[question.id]
+          changed = true
+        }
+      }
+      if (question.kind === 'multi' && Array.isArray(value)) {
+        const filtered = value.filter((item) => question.options.includes(item) && conditionOk(question.option_rules[item] || null, next, houseAccepted, selectedObjects))
+        if (filtered.length !== value.length) {
+          if (filtered.length) next[question.id] = filtered
+          else delete next[question.id]
+          changed = true
+        }
+      }
+    }
+    if (!changed) break
+  }
+  return next
+}
+
+function newSession(version:string, selected:string[], plotAreaSotkas:number|null):DesignSession {
   return {
     session_id:crypto.randomUUID(),
     catalog_version:version,
     selected_objects:selected,
+    plot_area_sotkas:plotAreaSotkas,
+    site_plan:null,
+    initial_concept_mode:true,
+    survey_completed_objects:[],
+    initial_generation_id:null,
+    initial_concept_accepted:false,
     current_object:selected.length === 1 ? selected[0] : null,
     current_question_id:null,
     source_step_completed:false,
     source_asset_id:null,
     scene_asset_id:null,
+    scene_generation_id:null,
     answers:{},
     accepted_objects:[],
+    removed_objects:[],
+    pending_removal_object:null,
     generation_ids:{},
     edit_question_ids:[],
     review_comments:{},
@@ -67,14 +179,19 @@ function answerEquals(left:QuestionnaireAnswer|undefined, right:QuestionnaireAns
 }
 
 function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCatalog):DesignSession {
-  if (stored.catalog_version === catalog.version) return stored
-
   const definitions = new Map(catalog.questionnaires.map((item) => [item.key, item]))
   const houseAccepted = stored.accepted_objects.includes('eskez-doma')
+    || Boolean(
+      stored.initial_concept_mode
+      && !stored.initial_concept_accepted
+      && stored.selected_objects.includes('eskez-doma')
+    )
   const nextAnswers:DesignSession['answers'] = Object.fromEntries(
     Object.entries(stored.answers).map(([key, answers]) => [key, { ...answers }]),
   )
   let currentQuestionId = stored.current_question_id
+  let currentObject = stored.current_object
+  const surveyCompletedObjects = [...stored.survey_completed_objects]
 
   for (const [objectKey, answers] of Object.entries(nextAnswers)) {
     if (stored.accepted_objects.includes(objectKey) || objectKey === 'zayavka') continue
@@ -88,12 +205,12 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
       for (const question of definition.questions) {
         const value = answers[question.id]
         if (value === undefined) continue
-        if (!conditionOk(question.condition, answers, houseAccepted)) {
+        if (!questionIsVisible(objectKey, question, answers, houseAccepted, stored.selected_objects)) {
           delete answers[question.id]
           changed = true
           continue
         }
-        if (question.skip_default !== null && answerEquals(value, question.skip_default) && !conditionOk(question.skip_condition, answers, houseAccepted)) {
+        if (question.skip_default !== null && answerEquals(value, question.skip_default) && !conditionOk(question.skip_condition, answers, houseAccepted, stored.selected_objects)) {
           delete answers[question.id]
           changed = true
           continue
@@ -102,14 +219,14 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
           const custom = value.startsWith('Свой вариант:') && question.options.includes('Свой вариант')
           const placeholder = value === 'Свой вариант' && question.options.includes('Свой вариант')
           const listed = question.options.length === 0 || question.options.includes(value)
-          const allowed = custom || (listed && conditionOk(question.option_rules[value] || null, answers, houseAccepted))
+          const allowed = custom || (listed && conditionOk(question.option_rules[value] || null, answers, houseAccepted, stored.selected_objects))
           if (placeholder || !allowed) {
             delete answers[question.id]
             changed = true
           }
         }
         if (question.kind === 'multi' && Array.isArray(value)) {
-          const filtered = value.filter((item) => question.options.includes(item) && conditionOk(question.option_rules[item] || null, answers, houseAccepted))
+          const filtered = value.filter((item) => question.options.includes(item) && conditionOk(question.option_rules[item] || null, answers, houseAccepted, stored.selected_objects))
           if (filtered.length !== value.length) {
             if (filtered.length) answers[question.id] = filtered
             else delete answers[question.id]
@@ -123,11 +240,21 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
     if (stored.current_object === objectKey) {
       const firstMissing = definition.questions.find((question) =>
         question.phase === 'pre_render'
-        && conditionOk(question.condition, answers, houseAccepted)
+        && questionIsVisible(objectKey, question, answers, houseAccepted, stored.selected_objects)
         && answers[question.id] === undefined,
       )
-      if (firstMissing) currentQuestionId = firstMissing.id
-      else if (currentQuestionId && !definition.questions.some((question) => question.id === currentQuestionId && conditionOk(question.condition, answers, houseAccepted))) currentQuestionId = null
+      if (firstMissing) {
+        currentQuestionId = firstMissing.id
+      } else if (stored.initial_concept_mode && !stored.initial_concept_accepted) {
+        if (!surveyCompletedObjects.includes(objectKey)) surveyCompletedObjects.push(objectKey)
+        currentObject = null
+        currentQuestionId = null
+      } else if (currentQuestionId && !definition.questions.some((question) =>
+        question.id === currentQuestionId
+        && questionIsVisible(objectKey, question, answers, houseAccepted, stored.selected_objects)
+      )) {
+        currentQuestionId = null
+      }
     }
   }
 
@@ -135,6 +262,8 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
     ...stored,
     catalog_version:catalog.version,
     answers:nextAnswers,
+    survey_completed_objects:surveyCompletedObjects,
+    current_object:currentObject,
     current_question_id:currentQuestionId,
   }
 }
@@ -143,21 +272,29 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const fileRef = useRef<HTMLInputElement>(null)
   const [catalog, setCatalog] = useState<QuestionnaireCatalog|null>(null)
   const [session, setSession] = useState<DesignSession|null>(null)
+  const [generationCost, setGenerationCost] = useState<QuestionnaireGenerationCost|null>(null)
   const [sourceAsset, setSourceAsset] = useState<Asset|null>(null)
   const [sceneAsset, setSceneAsset] = useState<Asset|null>(null)
   const [renderOutput, setRenderOutput] = useState<Asset|null>(null)
   const [draft, setDraft] = useState<string>('')
   const [multi, setMulti] = useState<string[]>([])
   const [reviewComment, setReviewComment] = useState<string>('')
+  const [regionDraft, setRegionDraft] = useState<NormalizedRect|null>(null)
+  const regionStartRef = useRef<{x:number;y:number}|null>(null)
   const [customOption, setCustomOption] = useState(false)
+  const [plotAreaDraft, setPlotAreaDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [generationInFlight, setGenerationInFlight] = useState(false)
   const [ideaPublication, setIdeaPublication] = useState<AdminIdea|null|undefined>(undefined)
   const [ideaPublishing, setIdeaPublishing] = useState(false)
   const [error, setError] = useState<string|null>(null)
+  const [bootstrapVersion, setBootstrapVersion] = useState(0)
 
   useEffect(() => {
     let stop=false
+    setError(null)
+    setCatalog(null)
+    setSession(null)
     void (async () => {
       try {
         const loaded = await getQuestionnaireCatalog()
@@ -169,7 +306,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         if (stop) return
         const storedStarted = Boolean(stored && (
           stored.source_step_completed
+          || stored.survey_completed_objects.length
+          || Boolean(stored.initial_generation_id)
+          || stored.initial_concept_accepted
           || stored.accepted_objects.length
+          || stored.removed_objects.length
+          || Boolean(stored.pending_removal_object)
           || Object.keys(stored.answers).length
           || Object.keys(stored.generation_ids).length
           || stored.application_submitted
@@ -180,7 +322,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
             && stored.catalog_version === loaded.version
             && JSON.stringify(stored.selected_objects) === JSON.stringify(selected)
             ? stored
-            : newSession(loaded.version, selected)
+            : newSession(loaded.version, selected, project.context.plot_area_m2 ? Math.round(project.context.plot_area_m2 / 100) : null)
         setSession(initial)
         if (initial.source_asset_id) {
           try { setSourceAsset(await api.getAsset(initial.source_asset_id)) } catch { /* deleted source */ }
@@ -193,17 +335,42 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       }
     })()
     return () => { stop=true }
+  }, [project.id, bootstrapVersion])
+
+  useEffect(() => {
+    let stopped = false
+    getQuestionnaireGenerationCost(project.id)
+      .then((cost) => { if (!stopped) setGenerationCost(cost) })
+      .catch(() => { if (!stopped) setGenerationCost(null) })
+    return () => { stopped = true }
   }, [project.id])
+
+  useEffect(() => {
+    setPlotAreaDraft(session?.plot_area_sotkas == null ? '' : String(session.plot_area_sotkas))
+  }, [session?.plot_area_sotkas])
 
   const definitions = useMemo(() => new Map((catalog?.questionnaires || []).map((item) => [item.key, item])), [catalog])
   const current = session?.current_object ? definitions.get(session.current_object) || null : null
-  const houseAccepted = session?.accepted_objects.includes('eskez-doma') || false
+  const houseAccepted = session?.accepted_objects.includes('eskez-doma')
+    || Boolean(
+      session?.initial_concept_mode
+      && !session.initial_concept_accepted
+      && session.selected_objects.includes('eskez-doma')
+    )
   const objectAnswers = current && session ? session.answers[current.key] || {} : {}
-  const visible = current ? current.questions.filter((q) => conditionOk(q.condition, objectAnswers, houseAccepted)) : []
+  const visible = current && session
+    ? current.questions.filter((q) =>
+      questionIsVisible(current.key, q, objectAnswers, houseAccepted, session.selected_objects),
+    )
+    : []
   const active = current && session ? visible.find((q) => q.id === session.current_question_id) || null : null
-  const currentGenerationId = current && session ? session.generation_ids[current.key] || null : null
+  const currentGenerationId = current && session && session.region_mode == null ? session.generation_ids[current.key] || null : null
+  const initialGenerationId = session?.initial_generation_id || null
+  const parsedPlotArea = Number(plotAreaDraft)
+  const plotAreaValid = Number.isInteger(parsedPlotArea) && parsedPlotArea >= 4 && parsedPlotArea <= 15
   const latestAcceptedKey = session?.accepted_objects.at(-1) || null
-  const latestAcceptedGenerationId = latestAcceptedKey ? session?.generation_ids[latestAcceptedKey] || null : null
+  const latestAcceptedGenerationId = session?.scene_generation_id
+    || (latestAcceptedKey ? session?.generation_ids[latestAcceptedKey] || null : null)
 
   useEffect(() => {
     setIdeaPublication(undefined)
@@ -223,7 +390,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }, [session?.source_step_completed, current?.key, currentGenerationId, generationInFlight])
 
   useEffect(() => {
-    if (!session || !current || current.key === 'zayavka' || !currentGenerationId || generationInFlight) return
+    if (!session || !current || current.key === 'zayavka' || !currentGenerationId || generationInFlight || session.region_mode) return
     let stopped = false
     setGenerationInFlight(true)
     setBusy(true)
@@ -255,32 +422,51 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }, [project.id, current?.key, currentGenerationId])
 
   useEffect(() => {
-    if (!session || busy || generationInFlight) return
-    if (session.region_mode && session.region_object) {
-      const definition = definitions.get(session.region_object)
-      if (!definition) return
-      if (session.region_mode === 'edit') {
-        const region = session.edit_regions[definition.key] || suggestedRegion(session, definition)
-        const next = { ...session, edit_regions:{ ...session.edit_regions, [definition.key]:region }, region_mode:null, region_object:null }
-        void persist(next).then((saved) => { if (saved) void generate(saved, definition) })
-        return
+    if (!session?.initial_concept_mode || session.initial_concept_accepted || !initialGenerationId || current || generationInFlight) return
+    let stopped = false
+    setGenerationInFlight(true)
+    setBusy(true)
+    setError(null)
+    void (async () => {
+      try {
+        const existing = await getQuestionnaireGeneration(project.id, initialGenerationId)
+        const completed = await poll(existing)
+        if (!stopped) setRenderOutput(completed.output_asset)
+      } catch (err) {
+        if (!stopped) setError(err instanceof Error ? err.message : 'Не удалось восстановить общую концепцию')
+      } finally {
+        if (!stopped) {
+          setBusy(false)
+          setGenerationInFlight(false)
+        }
       }
-      if (renderOutput) {
-        const region = session.lock_regions[definition.key] || session.edit_regions[definition.key] || (definition.key === 'eskez-doma' ? { x:0.12, y:0.10, width:0.76, height:0.78 } : suggestedRegion(session, definition))
-        void finalizeAccept({ ...session, region_mode:null, region_object:null }, definition, region)
-      }
+    })()
+    return () => { stopped = true }
+  }, [project.id, initialGenerationId, session?.initial_concept_accepted, current?.key])
+
+  useEffect(() => {
+    if (!session || busy || generationInFlight || session.current_object || !sceneAsset) return
+    // Backfill only legacy accepted sessions that predate explicit placement.
+    // New masked edits always require the user-selected edit region below.
+    const missingLock = session.accepted_objects.find((key) => !session.lock_regions[key])
+    if (!missingLock) return
+    const definition = definitions.get(missingLock)
+    if (!definition) return
+    const region = session.edit_regions[missingLock]
+      || (missingLock === 'eskez-doma'
+        ? { x:0.12, y:0.10, width:0.76, height:0.78 }
+        : suggestedRegion(session, definition))
+    void persist({ ...session, lock_regions:{ ...session.lock_regions, [missingLock]:region } })
+  }, [session?.current_object, sceneAsset?.id])
+
+  useEffect(() => {
+    regionStartRef.current = null
+    if (session?.region_mode === 'edit' && session.region_object) {
+      setRegionDraft(session.edit_regions[session.region_object] || null)
       return
     }
-    if (!session.current_object && sceneAsset) {
-      const missingLock = session.accepted_objects.find((key) => !session.lock_regions[key])
-      if (missingLock) {
-        const definition = definitions.get(missingLock)
-        if (!definition) return
-        const region = session.edit_regions[missingLock] || (missingLock === 'eskez-doma' ? { x:0.12, y:0.10, width:0.76, height:0.78 } : suggestedRegion(session, definition))
-        void persist({ ...session, lock_regions:{ ...session.lock_regions, [missingLock]:region } })
-      }
-    }
-  }, [session?.region_mode, session?.region_object, session?.current_object, renderOutput?.id, sceneAsset?.id])
+    setRegionDraft(null)
+  }, [session?.region_mode, session?.region_object])
 
   useEffect(() => {
     if (!active || !current || !session) return
@@ -295,7 +481,14 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }, [active?.id, current?.key])
 
   function syncProject(next:DesignSession) {
-    onProjectChange({ ...project, context:{ ...project.context, design_session:next } })
+    onProjectChange({
+      ...project,
+      context:{
+        ...project.context,
+        design_session:next,
+        plot_area_m2:next.plot_area_sotkas == null ? project.context.plot_area_m2 : next.plot_area_sotkas * 100,
+      },
+    })
   }
 
   async function persist(next:DesignSession) {
@@ -329,16 +522,89 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }
 
   function availableOptions(question:QuestionnaireQuestion) {
-    return question.options.filter((option) => conditionOk(question.option_rules[option] || null, objectAnswers, houseAccepted))
+    return question.options.filter((option) =>
+      conditionOk(
+        question.option_rules[option] || null,
+        objectAnswers,
+        houseAccepted,
+        session?.selected_objects || [],
+      ),
+    )
+  }
+
+  function generationCostLabel() {
+    if (!generationCost) return 'Стоимость уточняется'
+    if (!generationCost.is_available || generationCost.credits == null) return 'Генерация временно недоступна'
+    return generationCost.credits === 0 ? 'Бесплатно' : `${generationCost.credits} кр.`
+  }
+
+  function initialGenerationCostLabel() {
+    if (!generationCost) return 'Стоимость уточняется'
+    if (!generationCost.is_available) return 'Генерация временно недоступна'
+    const credits = generationCost.initial_offer_available
+      ? generationCost.initial_credits
+      : generationCost.credits
+    if (credits === null) return 'Генерация временно недоступна'
+    return credits === 0 ? 'Бесплатно' : `${credits} кр.`
+  }
+
+  async function addObject(key:string) {
+    if (!session || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await addQuestionnaireObject(project.id, key)
+      setSession(result.session)
+      syncProject(result.session)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось добавить объект')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function editInitialQuestion(key:string, questionId:string) {
+    if (!session || session.initial_concept_accepted || session.initial_generation_id) return
+    await persist({ ...session, current_object:key, current_question_id:questionId })
   }
 
   async function chooseObject(key:string) {
-    if (!session || session.accepted_objects.includes(key) || !session.selected_objects.includes(key)) return
+    if (!session || !session.selected_objects.includes(key)) return
+    if (session.accepted_objects.includes(key) && !(session.initial_concept_mode && !session.initial_concept_accepted)) return
     const definition = definitions.get(key)
     if (!definition) return
     const next = { ...session, current_object:key, current_question_id:null, edit_question_ids:[] }
     const first = preQuestions(definition, next)[0]
     await persist({ ...next, current_question_id:first?.id || null })
+  }
+
+  async function startRemoval(key:string) {
+    if (!session?.initial_concept_accepted || !session.accepted_objects.includes(key) || busy) return
+    setBusy(true)
+    setError(null)
+    setRegionDraft(null)
+    setReviewComment('')
+    try {
+      const result = await startQuestionnaireObjectRemoval(project.id, key)
+      setSession(result.session)
+      syncProject(result.session)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось начать удаление объекта')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function startRefinement(key:string) {
+    if (!session?.initial_concept_accepted || !session.accepted_objects.includes(key)) return
+    setReviewComment('')
+    await persist({
+      ...session,
+      current_object:key,
+      current_question_id:null,
+      region_mode:'edit',
+      region_object:key,
+    })
   }
 
   async function chooseApplication() {
@@ -370,7 +636,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   function preQuestions(definition:QuestionnaireDefinition, next:DesignSession) {
     const answers = next.answers[definition.key] || {}
-    return definition.questions.filter((q) => q.phase === 'pre_render' && conditionOk(q.condition, answers, next.accepted_objects.includes('eskez-doma')))
+    const houseReference = next.accepted_objects.includes('eskez-doma')
+      || (next.initial_concept_mode && !next.initial_concept_accepted && next.selected_objects.includes('eskez-doma'))
+    return definition.questions.filter((q) =>
+      q.phase === 'pre_render'
+      && questionIsVisible(definition.key, q, answers, houseReference, next.selected_objects),
+    )
   }
 
   function suggestedRegion(next:DesignSession, definition:QuestionnaireDefinition):NormalizedRect {
@@ -383,17 +654,118 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }
 
   async function startGenerationOrRegion(next:DesignSession, definition:QuestionnaireDefinition) {
-    let prepared = next
     if (next.accepted_objects.length > 0 && next.scene_asset_id && !next.edit_regions[definition.key]) {
-      prepared = { ...next, edit_regions:{ ...next.edit_regions, [definition.key]:suggestedRegion(next, definition) } }
+      return persist({
+        ...next,
+        current_question_id:null,
+        region_mode:'edit',
+        region_object:definition.key,
+      })
     }
     setGenerationInFlight(true)
-    const staged = await persist({ ...prepared, current_question_id:null, region_mode:null, region_object:null })
+    const staged = await persist({ ...next, current_question_id:null, region_mode:null, region_object:null })
     if (!staged) {
       setGenerationInFlight(false)
       return null
     }
     return generate(staged, definition)
+  }
+
+  function clampRegionCoordinate(value:number) {
+    return Math.max(0, Math.min(1, value))
+  }
+
+  function regionPoint(event:ReactPointerEvent<HTMLDivElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    return {
+      x:clampRegionCoordinate((event.clientX - bounds.left) / bounds.width),
+      y:clampRegionCoordinate((event.clientY - bounds.top) / bounds.height),
+    }
+  }
+
+  function beginRegionSelection(event:ReactPointerEvent<HTMLDivElement>) {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    const point = regionPoint(event)
+    regionStartRef.current = point
+    setRegionDraft({ x:point.x, y:point.y, width:0, height:0 })
+  }
+
+  function moveRegionSelection(event:ReactPointerEvent<HTMLDivElement>) {
+    const start = regionStartRef.current
+    if (!start) return
+    event.preventDefault()
+    const point = regionPoint(event)
+    setRegionDraft({
+      x:Math.min(start.x, point.x),
+      y:Math.min(start.y, point.y),
+      width:Math.abs(point.x - start.x),
+      height:Math.abs(point.y - start.y),
+    })
+  }
+
+  function endRegionSelection(event:ReactPointerEvent<HTMLDivElement>) {
+    if (!regionStartRef.current) return
+    event.preventDefault()
+    regionStartRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  async function confirmEditRegion() {
+    if (!session || session.region_mode !== 'edit' || !session.region_object || !regionDraft) return
+    if (regionDraft.width < 0.03 || regionDraft.height < 0.03) {
+      setError('Выделите область крупнее: она должна точно покрывать место будущего объекта.')
+      return
+    }
+    const definition = definitions.get(session.region_object)
+    if (!definition) return
+    const refinement = session.initial_concept_mode && session.initial_concept_accepted && session.accepted_objects.includes(definition.key)
+    const removal = session.pending_removal_object === definition.key
+    if (refinement && !removal && !reviewComment.trim()) {
+      setError('Опишите, что именно нужно изменить в выделенной области.')
+      return
+    }
+    setGenerationInFlight(true)
+    const saved = await persist({
+      ...session,
+      edit_regions:{ ...session.edit_regions, [definition.key]:regionDraft },
+      review_comments:refinement && !removal ? { ...session.review_comments, [definition.key]:reviewComment.trim() } : session.review_comments,
+      region_mode:null,
+      region_object:null,
+    })
+    if (saved) await generate(saved, definition)
+    else setGenerationInFlight(false)
+  }
+
+  async function cancelEditRegion() {
+    if (!session || session.region_mode !== 'edit' || !session.region_object) return
+    if (session.pending_removal_object === session.region_object) {
+      setBusy(true)
+      setError(null)
+      try {
+        const result = await cancelQuestionnaireObjectRemoval(project.id)
+        setSession(result.session)
+        syncProject(result.session)
+        setRegionDraft(null)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Не удалось отменить удаление объекта')
+      } finally {
+        setBusy(false)
+      }
+      return
+    }
+    const definition = definitions.get(session.region_object)
+    if (!definition) return
+    const lastQuestion = preQuestions(definition, session).at(-1)
+    await persist({
+      ...session,
+      current_question_id:lastQuestion?.id || null,
+      region_mode:null,
+      region_object:null,
+    })
   }
 
   async function poll(generation:Generation) {
@@ -417,6 +789,61 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       throw new Error(currentGeneration.error || 'Генерация не завершилась')
     }
     return currentGeneration
+  }
+
+  async function generateInitial(next:DesignSession) {
+    if (!plotAreaValid) {
+      setError('Укажите размер участка от 4 до 15 соток.')
+      return
+    }
+    setGenerationInFlight(true)
+    setBusy(true)
+    setError(null)
+    setRenderOutput(null)
+    try {
+      const generationSession = await saveQuestionnaireSession(project.id, {
+        ...next,
+        plot_area_sotkas:parsedPlotArea,
+      })
+      setSession(generationSession)
+      syncProject(generationSession)
+      const queued = await createQuestionnaireGeneration(project.id)
+      void getQuestionnaireGenerationCost(project.id)
+        .then(setGenerationCost)
+        .catch(() => setGenerationCost(null))
+      const queuedState = { ...generationSession, initial_generation_id:queued.id }
+      setSession(queuedState)
+      syncProject(queuedState)
+      const completed = await poll(queued)
+      setRenderOutput(completed.output_asset)
+    } catch (err) {
+      if (err instanceof api.ApiError && err.errorType === 'insufficient_credits') setError('Недостаточно кредитов. Пополните баланс в Профиле.')
+      else setError(err instanceof Error ? err.message : 'Не удалось создать общую концепцию')
+    } finally {
+      setBusy(false)
+      setGenerationInFlight(false)
+    }
+  }
+
+  async function reopenInitialAnswers() {
+    if (!session) return
+    const saved = await persist({ ...session, initial_generation_id:null })
+    if (saved) setRenderOutput(null)
+  }
+
+  async function acceptInitial() {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await acceptQuestionnaireInitialConcept(project.id)
+      setSession(result.session)
+      syncProject(result.session)
+      if (renderOutput) setSceneAsset(renderOutput)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось принять общую концепцию')
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function generate(next:DesignSession, definition:QuestionnaireDefinition) {
@@ -491,14 +918,24 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     const base = current.key === 'eskez-doma' && question.id === '15б'
       ? { ...session, review_comments:{ ...session.review_comments, [current.key]:reviewComment.trim() } }
       : session
+    const rawObjectAnswers = { ...(base.answers[current.key] || {}), [question.id]:value }
+    const sanitizedObjectAnswers = sanitizeObjectAnswers(
+      current,
+      rawObjectAnswers,
+      houseAccepted,
+      base.selected_objects,
+    )
     const nextAnswers = {
       ...base.answers,
-      [current.key]:{ ...(base.answers[current.key] || {}), [question.id]:value },
+      [current.key]:sanitizedObjectAnswers,
     }
     let next:DesignSession = { ...base, answers:nextAnswers }
 
     if (current.key === 'zayavka') {
-      const questions = current.questions.filter((q) => q.phase === 'application' && conditionOk(q.condition, nextAnswers[current.key], houseAccepted))
+      const questions = current.questions.filter((q) =>
+        q.phase === 'application'
+        && questionIsVisible(current.key, q, nextAnswers[current.key], houseAccepted, next.selected_objects),
+      )
       const index = questions.findIndex((q) => q.id === question.id)
       if (index < questions.length - 1) return persist({ ...next, current_question_id:questions[index + 1].id })
       if (question.id === '25' && value === true) {
@@ -513,7 +950,13 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         .filter((id) => id !== question.id)
         .filter((id) => {
           const target = current.questions.find((item) => item.id === id)
-          return Boolean(target && conditionOk(target.condition, answers, next.accepted_objects.includes('eskez-doma')))
+          return Boolean(target && questionIsVisible(
+            current.key,
+            target,
+            answers,
+            next.accepted_objects.includes('eskez-doma'),
+            next.selected_objects,
+          ))
         })
       next = { ...next, edit_question_ids:rest }
       if (rest.length) return persist({ ...next, current_question_id:rest[0] })
@@ -524,6 +967,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       const questions = preQuestions(current, next)
       const index = questions.findIndex((q) => q.id === question.id)
       if (index < questions.length - 1) return persist({ ...next, current_question_id:questions[index + 1].id })
+      if (next.initial_concept_mode && !next.initial_concept_accepted) {
+        const completed = next.survey_completed_objects.includes(current.key)
+          ? next.survey_completed_objects
+          : [...next.survey_completed_objects, current.key]
+        return persist({ ...next, survey_completed_objects:completed, current_object:null, current_question_id:null })
+      }
       return startGenerationOrRegion({ ...next, current_question_id:null }, current)
     }
 
@@ -535,7 +984,11 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     if (current.key === 'eskez-doma' && question.id === '15а') {
       if (typeof value === 'string' && value.startsWith('Всё')) {
         const first = preQuestions(current, next)[0]
-        return persist({ ...next, current_question_id:first?.id || null, edit_question_ids:[] })
+        const reviewComments = { ...next.review_comments }
+        delete reviewComments[current.key]
+        setReviewComment('')
+        const reset = clearUnacceptedGeneration({ ...next, review_comments:reviewComments })
+        return persist({ ...reset, current_question_id:first?.id || null, edit_question_ids:[] })
       }
       const q = current.questions.find((item) => item.id === '15б')
       return persist({ ...next, current_question_id:q?.id || null })
@@ -548,10 +1001,35 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
     if (question.phase === 'review') {
       if (typeof value === 'string' && value.startsWith('Да')) return accept(next, current)
+      if (next.pending_removal_object === current.key) {
+        return persist({ ...next, current_question_id:null, region_mode:'edit', region_object:current.key })
+      }
+      if (next.initial_concept_mode && next.initial_concept_accepted && next.accepted_objects.includes(current.key)) {
+        setReviewComment(next.review_comments[current.key] || '')
+        return persist({ ...next, current_question_id:null, region_mode:'edit', region_object:current.key })
+      }
       const cleared = clearUnacceptedGeneration(next)
       const first = preQuestions(current, cleared)[0]
       return persist({ ...cleared, current_question_id:first?.id || null })
     }
+  }
+
+  async function previousQuestion() {
+    if (!session || !current || !active || busy) return
+    const phaseQuestions = current.questions.filter((question) =>
+      question.phase === active.phase
+      && questionIsVisible(current.key, question, objectAnswers, houseAccepted, session.selected_objects)
+    )
+    const index = phaseQuestions.findIndex((question) => question.id === active.id)
+    if (index > 0) {
+      await persist({ ...session, current_question_id:phaseQuestions[index - 1].id })
+      return
+    }
+    if (session.initial_concept_mode && !session.initial_concept_accepted) {
+      await persist({ ...session, current_object:null, current_question_id:null })
+      return
+    }
+    onBack()
   }
 
   async function finalizeAccept(next:DesignSession, definition:QuestionnaireDefinition, lockRegion:NormalizedRect) {
@@ -567,6 +1045,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       accepted_objects:accepted,
       lock_regions:{ ...next.lock_regions, [definition.key]:lockRegion },
       scene_asset_id:renderOutput.id,
+      scene_generation_id:next.generation_ids[definition.key] || next.scene_generation_id,
       current_object:null,
       current_question_id:null,
       edit_question_ids:[],
@@ -576,7 +1055,30 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     if (saved) setSceneAsset(renderOutput)
   }
 
+  async function acceptRemoval(next:DesignSession, definition:QuestionnaireDefinition) {
+    if (!renderOutput || next.pending_removal_object !== definition.key) return
+    setBusy(true)
+    setError(null)
+    try {
+      const reviewed = await persist({ ...next, current_question_id:null })
+      if (!reviewed) return
+      const result = await acceptQuestionnaireObjectRemoval(project.id)
+      setSession(result.session)
+      syncProject(result.session)
+      setSceneAsset(renderOutput)
+      setRenderOutput(null)
+      setRegionDraft(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось принять удаление объекта')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function accept(next:DesignSession, definition:QuestionnaireDefinition) {
+    if (next.pending_removal_object === definition.key) {
+      return acceptRemoval(next, definition)
+    }
     if (!renderOutput) {
       setError('Нет готового эскиза для принятия.')
       return
@@ -585,7 +1087,13 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       || next.edit_regions[definition.key]
       || (definition.key === 'eskez-doma'
         ? { x:0.12, y:0.10, width:0.76, height:0.78 }
-        : suggestedRegion(next, definition))
+        : next.accepted_objects.length === 0
+          ? suggestedRegion(next, definition)
+          : null)
+    if (!lockRegion) {
+      setError('Перед принятием следующего объекта нужно выбрать его точную область на сцене.')
+      return
+    }
     return finalizeAccept(next, definition, lockRegion)
   }
 
@@ -594,7 +1102,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     setIdeaPublishing(true)
     setError(null)
     try {
-      setIdeaPublication(ideaPublication?.is_active
+      setIdeaPublication(ideaPublication?.owner_published
         ? await api.unpublishIdea(latestAcceptedGenerationId)
         : await api.publishIdea(latestAcceptedGenerationId))
     } catch (err) {
@@ -615,14 +1123,14 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     <button
       type="button"
       className="secondary-button questionnaire-wide"
-      disabled={ideaPublishing || ideaPublication === undefined || Boolean(ideaPublication && !ideaPublication.is_active)}
+      disabled={ideaPublishing || ideaPublication === undefined}
       onClick={() => void publishLatestIdea()}
     >
-      {ideaPublishing ? 'Сохраняем…' : ideaPublication?.is_active ? 'Убрать из Идей' : ideaPublication ? 'Убрано из Идей' : ideaPublication === undefined ? 'Проверяем публикацию…' : 'Добавить в Идеи'}
+      {ideaPublishing ? 'Сохраняем…' : ideaPublication?.owner_published ? 'Убрать из Идей' : ideaPublication ? 'Вернуть в Идеи' : ideaPublication === undefined ? 'Проверяем публикацию…' : 'Добавить в Идеи'}
     </button>
   </div> : null
 
-  if (error && (!catalog || !session)) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>Опросник не открылся</h1><div className="banner-error">{error}</div><button className="secondary-button" onClick={onBack}>Назад</button></section></main>
+  if (error && (!catalog || !session)) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>Опросник не открылся</h1><div className="banner-error" role="alert">{error}</div><div className="questionnaire-actions"><button className="primary-button" onClick={() => setBootstrapVersion((value) => value + 1)}>Повторить</button><button className="secondary-button" onClick={onBack}>Назад</button></div></section></main>
   if (!catalog || !session) return <main className="questionnaire-shell"><section className="questionnaire-card"><h1>Загружаем опросник…</h1></section></main>
 
   if (!session.source_step_completed) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon /> Назад</button><strong>{project.name}</strong><span>Исходный кадр</span></header><section className="questionnaire-card"><span className="eyebrow">ОДИН РАЗ ДО ОПРОСА</span><h1>Загрузите фото участка</h1><p>Или продолжите без фотографии. Для следующих объектов будет использоваться последний принятый кадр.</p><input ref={fileRef} hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={upload}/><button className="questionnaire-upload" disabled={busy} onClick={() => fileRef.current?.click()}><UploadIcon/><strong>Выбрать фото</strong><span>JPG, PNG или WebP</span></button><button className="secondary-button questionnaire-wide" disabled={busy} onClick={() => void setSource(null)}>Продолжить без фото</button>{error && <div className="banner-error">{error}</div>}</section></main>
@@ -632,9 +1140,96 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
 
   if (!current) {
-    const remaining = session.selected_objects.filter((key) => !session.accepted_objects.includes(key))
+    if (session.initial_concept_mode && !session.initial_concept_accepted) {
+      const remaining = session.selected_objects.filter((key) => !session.survey_completed_objects.includes(key))
+      const ready = remaining.length === 0
+      return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{initialGenerationId ? 'Общая концепция' : 'Опрос проекта'}</span></header><section className="questionnaire-card">
+        <span className="eyebrow">{initialGenerationId ? 'ОДНА ГЕНЕРАЦИЯ' : ready ? 'ПРОВЕРЬТЕ ТЗ' : 'СОБИРАЕМ ОБЩЕЕ ТЗ'}</span>
+        <h1>{initialGenerationId ? 'Общая концепция участка' : ready ? 'Всё готово к одной генерации' : 'Заполните параметры всех объектов'}</h1>
+        <p>{initialGenerationId ? 'В одной визуализации собраны все объекты, выбранные до старта проекта.' : 'AuRoom сначала соберёт полное ТЗ по всем выбранным объектам и только потом сделает одну общую визуализацию участка.'}</p>
+        {renderOutput && <div className="questionnaire-result"><ResultImage url={renderOutput.url} alt="Общая концепция участка"/></div>}
+        {!initialGenerationId && <div className="questionnaire-options">{session.selected_objects.map((key) => <button key={key} className={`questionnaire-option ${session.survey_completed_objects.includes(key) ? 'selected' : ''}`} disabled={busy} onClick={() => void chooseObject(key)}><span>{session.survey_completed_objects.includes(key) ? '✓ ' : ''}{definitions.get(key)?.title || key}</span><i/></button>)}</div>}
+        {ready && !initialGenerationId && <label className="create-plot-size">
+          <span><strong>Размер участка</strong><small>Можно изменить до принятия концепции · 4–15 соток</small></span>
+          <span className="create-plot-input"><input aria-label="Размер участка, соток" type="number" min={4} max={15} step={1} inputMode="numeric" value={plotAreaDraft} disabled={busy} onChange={(event) => setPlotAreaDraft(event.target.value)} /><b>сот.</b></span>
+        </label>}
+        {ready && !initialGenerationId && <div className="questionnaire-answer-review">{session.selected_objects.map((key) => {
+          const definition = definitions.get(key)
+          const answers = session.answers[key] || {}
+          if (!definition) return null
+          const answered = definition.questions.filter((question) =>
+            question.phase === 'pre_render'
+            && answers[question.id] !== undefined
+            && questionIsVisible(key, question, answers, houseAccepted, session.selected_objects)
+          )
+          return <details key={key}><summary>{definition.title}</summary>{answered.map((question) => <button type="button" key={question.id} disabled={busy} onClick={() => void editInitialQuestion(key, question.id)}><span>{question.text}</span><strong>{text(answers[question.id])}</strong></button>)}</details>
+        })}</div>}
+        {ready && !initialGenerationId && <><p className="region-hint">Одна общая генерация · {initialGenerationCostLabel()}</p><div className="questionnaire-actions"><button className="primary-button" disabled={busy || !plotAreaValid || generationCost?.is_available === false} onClick={() => void generateInitial(session)}>Создать общую концепцию</button></div></>}
+        {initialGenerationId && renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void acceptInitial()}>Принять концепцию</button><button className="secondary-button" disabled={busy} onClick={() => void reopenInitialAnswers()}>Изменить ТЗ · новая генерация</button></div>}
+        {(busy || generationInFlight) && initialGenerationId && !renderOutput && <div className="empty-inline">Создаём весь участок одной генерацией…</div>}
+        {error && <div className="banner-error">{error}</div>}
+      </section></main>
+    }
     const hasAccepted = session.accepted_objects.length > 0
-    return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{hasAccepted ? 'Что дальше?' : 'Выбор объекта'}</span></header><section className="questionnaire-card"><span className="eyebrow">{hasAccepted ? 'ЭСКИЗ ПРИНЯТ' : 'НАЧАЛО ОПРОСА'}</span><h1>{hasAccepted ? 'Что проектируем дальше?' : 'С чего начнём?'}</h1><p>{hasAccepted ? 'Принятый кадр зафиксирован. Выберите следующий объект или переходите к заявке.' : 'Вы выбрали несколько элементов. Выберите, какой опросник пройти первым.'}</p>{hasAccepted && sceneAsset && <div className="questionnaire-result"><img src={sceneAsset.url} alt="Последний принятый эскиз"/></div>}{remaining.length > 0 && <div className="questionnaire-options">{remaining.map((key) => <button key={key} className="questionnaire-option" disabled={busy} onClick={() => void chooseObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && ideaPublishControl}{hasAccepted && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void chooseApplication()}>Перейти к заявке</button></div>}{error && <div className="banner-error">{error}</div>}</section></main>
+    const remainingLegacy = session.selected_objects.filter((key) => !session.accepted_objects.includes(key))
+    const availableToAdd = catalog.sections
+      .flatMap((section) => section.object_keys)
+      .filter((key) => !session.selected_objects.includes(key))
+    return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{hasAccepted ? 'Что дальше?' : 'Выбор объекта'}</span></header><section className="questionnaire-card"><span className="eyebrow">{hasAccepted ? 'КОНЦЕПЦИЯ ПРИНЯТА' : 'НАЧАЛО ОПРОСА'}</span><h1>{hasAccepted ? (session.initial_concept_mode ? 'Что делаем дальше?' : 'Что проектируем дальше?') : 'С чего начнём?'}</h1><p>{hasAccepted ? 'Любое изменение принятой концепции создаёт новую итерацию. Перед запуском вы увидите её стоимость.' : 'Выберите объект.'}</p>{!hasAccepted && remainingLegacy.length > 0 && <div className="questionnaire-options">{remainingLegacy.map((key) => <button key={key} className="questionnaire-option" disabled={busy} onClick={() => void chooseObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && sceneAsset && <div className="questionnaire-result"><ResultImage url={sceneAsset.url} alt="Последний принятый эскиз"/></div>}{hasAccepted && session.initial_concept_mode && session.accepted_objects.includes('eskez-doma') && <p className="region-hint">В доработке дома меняется внешний вид. Мебель, комнаты и интерьер за окнами не редактируются.</p>}{hasAccepted && session.initial_concept_mode && <p className="region-hint">Следующая генерация · {generationCostLabel()}</p>}{hasAccepted && session.initial_concept_mode && <div className="questionnaire-options">{session.accepted_objects.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void startRefinement(key)}><span>Изменить: {definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && session.initial_concept_mode && session.accepted_objects.length > 1 && <details className="idea-work-summary"><summary>Удалить объект</summary><div className="questionnaire-options">{session.accepted_objects.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void startRemoval(key)}><span>Удалить: {definitions.get(key)?.title || key}</span><i/></button>)}</div></details>}{hasAccepted && session.initial_concept_mode && availableToAdd.length > 0 && <details className="idea-work-summary"><summary>Добавить новый объект</summary><div className="questionnaire-options">{availableToAdd.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void addObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div></details>}{hasAccepted && ideaPublishControl}{hasAccepted && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void chooseApplication()}>Перейти к заявке</button></div>}{error && <div className="banner-error">{error}</div>}</section></main>
+  }
+
+  if (session.region_mode === 'edit' && session.region_object) {
+    const placementDefinition = definitions.get(session.region_object)
+    const protectedRegions = session.accepted_objects
+      .filter((key) => key !== session.region_object)
+      .map((key) => ({ key, region:session.lock_regions[key] }))
+      .filter((item):item is { key:string; region:NormalizedRect } => Boolean(item.region))
+    return <main className="questionnaire-shell">
+      <header className="questionnaire-topbar"><button className="back-button" disabled={busy} onClick={() => void cancelEditRegion()}><BackIcon/> Назад</button><strong>{project.name}</strong><span>Размещение</span></header>
+      <section className="questionnaire-card region-picker-card">
+        <span className="eyebrow">{session.pending_removal_object === session.region_object ? 'УДАЛЕНИЕ ОБЪЕКТА' : 'ТОЧНОЕ МЕСТО НА СЦЕНЕ'}</span>
+        <h1>{session.pending_removal_object === session.region_object ? `Что удалить: ${placementDefinition?.title || session.region_object}` : `Где разместить: ${placementDefinition?.title || session.region_object}?`}</h1>
+        <p>{session.pending_removal_object === session.region_object ? 'Точно обведите объект, который нужно убрать. Модель удалит его внутри этой области, а compositor пиксельно сохранит всё снаружи.' : 'Проведите пальцем или мышью по последнему принятому кадру и выделите прямоугольник, внутри которого можно менять или добавлять объект. Выделите область немного шире изменяемого объекта, оставив вокруг него часть исходного окружения. Всё за пределами final area compositor сохранит пиксельно.'}</p>
+        <p className="region-hint">Новая итерация · {generationCostLabel()}</p>
+        {session.initial_concept_accepted && session.accepted_objects.includes(session.region_object) && session.pending_removal_object !== session.region_object && <div className="questionnaire-field"><label>Что изменить?<input value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="Например: сделать крышу тёмной, фасад светлее"/></label></div>}
+        {sceneAsset ? <div
+          className="region-canvas"
+          role="img"
+          aria-label="Выбор области для нового объекта"
+          onPointerDown={beginRegionSelection}
+          onPointerMove={moveRegionSelection}
+          onPointerUp={endRegionSelection}
+          onPointerCancel={endRegionSelection}
+        >
+          <ResultImage url={sceneAsset.url} alt="Последний принятый кадр для размещения объекта"/>
+          {protectedRegions.map(({key,region}) => <div
+            key={key}
+            className="region-protected"
+            style={{
+              left:`${region.x * 100}%`,
+              top:`${region.y * 100}%`,
+              width:`${region.width * 100}%`,
+              height:`${region.height * 100}%`,
+            }}
+          />)}
+          {regionDraft && <div
+            className="region-selection"
+            style={{
+              left:`${regionDraft.x * 100}%`,
+              top:`${regionDraft.y * 100}%`,
+              width:`${regionDraft.width * 100}%`,
+              height:`${regionDraft.height * 100}%`,
+            }}
+          ><span>{session.pending_removal_object === session.region_object ? 'ОБЛАСТЬ УДАЛЕНИЯ' : 'ОБЛАСТЬ ИЗМЕНЕНИЯ'}</span></div>}
+        </div> : <div className="banner-error">Последний принятый кадр недоступен. Вернитесь в проект и откройте его заново.</div>}
+        <p className="region-hint">Пунктиром показаны уже принятые объекты — их пиксели защищены. Если выделение неточное, просто проведите по изображению ещё раз.</p>
+        {error && <div className="banner-error">{error}</div>}
+        <div className="questionnaire-actions">
+          <button className="secondary-button" disabled={busy} onClick={() => setRegionDraft(null)}>Очистить</button>
+          <button className="primary-button" disabled={busy || !sceneAsset || !regionDraft || regionDraft.width < 0.03 || regionDraft.height < 0.03 || (session.initial_concept_accepted && session.accepted_objects.includes(session.region_object) && session.pending_removal_object !== session.region_object && !reviewComment.trim())} onClick={() => void confirmEditRegion()}>{session.pending_removal_object === session.region_object ? 'Удалить в новой итерации' : 'Подтвердить область и создать новую итерацию'}</button>
+        </div>
+      </section>
+    </main>
   }
 
   if ((busy || generationInFlight) && !active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card generating-card"><SparkIcon/><h1>Создаём: {current.title}</h1><p>Сохраняем текущую сцену, ракурс и уже принятые объекты.</p>{error && <div className="banner-error">{error}</div>}</section></main>
@@ -658,8 +1253,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     && (active.min_value == null || numericDraft >= active.min_value)
     && (active.max_value == null || numericDraft <= active.max_value)
   const customDraftValid = Boolean(draft.trim()) && (!customInputIsNumber || numericDraftValid)
+  const activeTitle = active.text
+  const textPlaceholder = active.placeholder || undefined
 
-  return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><div className="questionnaire-layout"><aside className="questionnaire-progress"><span className="eyebrow">ВЫБРАНО</span>{session.selected_objects.map((key, index) => <div key={key} className={`questionnaire-progress-item ${session.accepted_objects.includes(key) ? 'done' : key === current.key ? 'current' : ''}`}><b>{session.accepted_objects.includes(key) ? '✓' : index + 1}</b><span>{definitions.get(key)?.title || key}</span></div>)}<div className={`questionnaire-progress-item ${current.key === 'zayavka' ? 'current' : ''}`}><b>✓</b><span>Заявка</span></div>{sourceAsset && <div className="questionnaire-source-mini"><ImageIcon/><span>Фото участка загружено</span></div>}</aside><section className="questionnaire-card question-card"><div className="questionnaire-question-head"><div><span className="eyebrow">{active.phase === 'application' ? 'ЗАЯВКА' : review ? 'ОЦЕНКА ЭСКИЗА' : current.title.toUpperCase()}</span><h1>{active.text}</h1></div>{canSkip && <span className="optional-badge">можно пропустить</span>}</div>{review && renderOutput && <div className="questionnaire-result"><img src={renderOutput.url} alt={`Эскиз ${current.title}`}/></div>}
+  return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={() => void previousQuestion()}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><div className="questionnaire-layout"><aside className="questionnaire-progress"><span className="eyebrow">ВЫБРАНО</span>{session.selected_objects.map((key, index) => <div key={key} className={`questionnaire-progress-item ${session.accepted_objects.includes(key) ? 'done' : key === current.key ? 'current' : ''}`}><b>{session.accepted_objects.includes(key) ? '✓' : index + 1}</b><span>{definitions.get(key)?.title || key}</span></div>)}<div className={`questionnaire-progress-item ${current.key === 'zayavka' ? 'current' : ''}`}><b>✓</b><span>Заявка</span></div>{sourceAsset && <div className="questionnaire-source-mini"><ImageIcon/><span>Фото участка загружено</span></div>}</aside><section className="questionnaire-card question-card"><div className="questionnaire-question-head"><div><span className="eyebrow">{active.phase === 'application' ? 'ЗАЯВКА' : review ? 'ОЦЕНКА ЭСКИЗА' : current.title.toUpperCase()}</span><h1>{activeTitle}</h1></div>{canSkip && <span className="optional-badge">можно пропустить</span>}</div>{review && renderOutput && <div className="questionnaire-result"><ResultImage url={renderOutput.url} alt={`Эскиз ${current.title}`}/></div>}
 
   {!primaryReview && (active.kind === 'single' || (active.kind === 'number' && options.length > 0)) && <div className="questionnaire-options">{standardOptions.map((option) => <button key={option} className={`questionnaire-option ${!customOption && (String(currentValue) === option || draft === option) ? 'selected' : ''}`} onClick={() => {
     setCustomOption(false)
@@ -671,10 +1268,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }}><span>Свой вариант</span><i/></button>}</div>}
   {primaryReview && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void answer(active, options[0])}>Подходит</button><button className="secondary-button" disabled={busy} onClick={() => void answer(active, options[1])}>Уточнить</button></div>}
   {active.kind === 'multi' && <div className="questionnaire-options">{options.map((option) => <button key={option} className={`questionnaire-option ${multi.includes(option) ? 'selected' : ''}`} onClick={() => setMulti((items) => items.includes(option) ? items.filter((item) => item !== option) : active.max_selections && items.length >= active.max_selections ? items : [...items, option])}><span>{option}</span><i/></button>)}</div>}
-  {refinement && <div className="questionnaire-field"><label>{active.field_hint || 'Свой комментарий'}<input value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="Опишите, что ещё нужно изменить"/></label></div>}
+  {refinement && <><p className="region-hint">Редактируется только наружный облик дома. Перенос мебели, внутренних стен, лестницы или камина не выполняется.</p><div className="questionnaire-field"><label>{active.field_hint || 'Свой комментарий'}<input value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="Опишите наружное изменение"/></label></div></>}
   {active.kind === 'single' && hasCustomOption && customOption && <div className="questionnaire-field"><label>{active.field_hint || 'Укажите свой вариант'}<input type={customInputIsNumber ? 'number' : 'text'} inputMode={customInputIsNumber ? 'decimal' : undefined} min={customInputIsNumber ? active.min_value ?? undefined : undefined} max={customInputIsNumber ? active.max_value ?? undefined : undefined} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={customInputIsNumber ? 'Введите значение' : 'Введите свой вариант'}/></label></div>}
   {active.kind === 'number' && <div className="questionnaire-field"><label>{active.field_hint || 'Введите значение'}<input type="number" inputMode="decimal" min={active.min_value ?? undefined} max={active.max_value ?? undefined} value={draft} onChange={(event) => { setCustomOption(hasCustomOption); setDraft(event.target.value) }}/></label></div>}
-  {active.kind === 'text' && <div className="questionnaire-field"><label>{active.field_hint || active.text}<input value={draft} onChange={(event) => setDraft(event.target.value)}/></label></div>}
+  {active.kind === 'text' && <div className="questionnaire-field"><label>{active.field_hint || activeTitle}<input value={draft} placeholder={textPlaceholder} onChange={(event) => setDraft(event.target.value)}/></label></div>}
   {active.kind === 'consent' && <label className="consent-row"><input type="checkbox" checked={currentValue === true} onChange={(event) => event.target.checked && void answer(active, true)}/><span>Согласен на обработку персональных данных</span></label>}
   {error && <div className="banner-error">{error}</div>}
   <div className="questionnaire-actions">{active.kind === 'multi' && <button className="primary-button" disabled={!multiCanContinue || busy} onClick={() => void answer(active, multi)}>Продолжить</button>}{active.kind === 'single' && hasCustomOption && customOption && <button className="primary-button" disabled={!customDraftValid || busy} onClick={() => void answer(active, `Свой вариант: ${draft.trim()}`)}>Продолжить</button>}{active.kind === 'number' && <button className="primary-button" disabled={!numericDraftValid || busy} onClick={() => void answer(active, numericDraft)}>Продолжить</button>}{active.kind === 'text' && <button className="primary-button" disabled={!draft.trim() || busy} onClick={() => void answer(active, draft.trim())}>Продолжить</button>}{canSkip && active.kind !== 'consent' && <button className="secondary-button" disabled={busy} onClick={() => void answer(active, active.skip_default ?? (active.kind === 'multi' ? [] : ''))}>Пропустить</button>}</div></section></div></main>

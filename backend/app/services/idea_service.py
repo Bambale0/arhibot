@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.db.models.admin import IdeaPublication
+from app.db.models.admin import IdeaPublication, IdeaSave
 from app.db.models.assets import Asset
 from app.db.models.generations import Generation
 from app.db.models.projects import Project
@@ -23,6 +24,7 @@ from app.schemas.admin import (
     IdeaPublicationCreate,
     IdeaPublicationResponse,
     IdeaPublicationUpdate,
+    IdeaSaveResponse,
     PublicIdeaPublicationResponse,
 )
 from app.schemas.projects import ProjectResponse
@@ -30,6 +32,9 @@ from app.schemas.questionnaires import DesignSession, QuestionnaireProjectStartR
 from app.services.asset_service import LocalMediaStorage
 from app.services.questionnaire_project_service import QuestionnaireProjectService
 from app.services.questionnaire_service import QuestionnaireService
+
+
+logger = logging.getLogger(__name__)
 
 
 def _answer_text(value: object) -> str:
@@ -55,21 +60,59 @@ class IdeaService:
         self.repository = IdeaRepository(session)
         self.storage = LocalMediaStorage(settings)
 
-    async def _image_url(self, generation: Generation) -> str | None:
+    async def _image_urls(self, generation: Generation) -> tuple[str | None, str | None]:
         if generation.output_asset_id is None:
-            return None
+            return None, None
         asset = await self.session.get(Asset, generation.output_asset_id)
         if asset is None or asset.deleted_at is not None:
-            return None
-        return self.storage.signed_url(asset.storage_path)
+            return None, None
+        return (
+            self.storage.signed_url(asset.storage_path),
+            self.storage.signed_feed_preview_url(asset.storage_path),
+        )
+
+    async def _image_url(self, generation: Generation) -> str | None:
+        image_url, _preview_url = await self._image_urls(generation)
+        return image_url
+
+    async def _prewarm_feed_preview(self, generation: Generation) -> None:
+        if generation.output_asset_id is None:
+            return
+        asset = await self.session.get(Asset, generation.output_asset_id)
+        if asset is None or asset.deleted_at is not None:
+            return
+        try:
+            await self.storage.ensure_feed_preview(asset.storage_path)
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            # Preview generation is only a cache optimization. The signed original
+            # remains the authoritative fallback if cache preparation fails.
+            logger.warning(
+                "Could not prewarm Ideas feed preview for generation %s: %s",
+                generation.id,
+                exc,
+            )
 
     async def _publication_response(
-        self, publication: IdeaPublication, *, require_public_ready: bool = False
+        self,
+        publication: IdeaPublication,
+        *,
+        require_public_ready: bool = False,
+        is_saved: bool = False,
+        generation: Generation | None = None,
+        asset: Asset | None = None,
     ) -> IdeaPublicationResponse | None:
-        generation = await self.session.get(Generation, publication.generation_id)
+        if generation is None:
+            generation = await self.session.get(Generation, publication.generation_id)
         if generation is None:
             return None
-        image_url = await self._image_url(generation)
+        if asset is None and generation.output_asset_id is not None:
+            asset = await self.session.get(Asset, generation.output_asset_id)
+        if asset is None or asset.deleted_at is not None:
+            image_url = None
+            preview_url = None
+        else:
+            image_url = self.storage.signed_url(asset.storage_path)
+            preview_url = self.storage.signed_feed_preview_url(asset.storage_path)
         if require_public_ready and (
             generation.status != GenerationStatus.COMPLETED or image_url is None
         ):
@@ -89,18 +132,38 @@ class IdeaService:
             category=category,
             generation_type=generation.type,
             image_url=image_url,
+            preview_url=preview_url,
             objects=objects,
             selected_objects=selected_objects,
             published_at=publication.created_at,
+            is_saved=is_saved,
+            owner_published=publication.owner_published,
             is_active=publication.is_active,
             sort_order=publication.sort_order,
             updated_at=publication.updated_at,
         )
 
-    async def list_public(self, *, limit: int = 50) -> list[PublicIdeaPublicationResponse]:
+    async def list_public(
+        self,
+        user: User,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[PublicIdeaPublicationResponse]:
         result: list[PublicIdeaPublicationResponse] = []
-        for publication in await self.repository.list(active_only=True, limit=limit):
-            response = await self._publication_response(publication, require_public_ready=True)
+        rows = await self.repository.list_public_media_rows(limit=limit, offset=offset)
+        saved_ids = await self.repository.saved_publication_ids(
+            user.id,
+            [publication.id for publication, _generation, _asset in rows],
+        )
+        for publication, generation, asset in rows:
+            response = await self._publication_response(
+                publication,
+                require_public_ready=True,
+                is_saved=publication.id in saved_ids,
+                generation=generation,
+                asset=asset,
+            )
             if response is None:
                 continue
             result.append(
@@ -111,6 +174,35 @@ class IdeaService:
                 )
             )
         return result
+
+    async def get_public(
+        self, user: User, idea_id: UUID
+    ) -> PublicIdeaPublicationResponse:
+        publication = await self.repository.get(idea_id)
+        if (
+            publication is None
+            or not publication.is_active
+            or not publication.owner_published
+        ):
+            raise AppError(
+                type="idea_not_found",
+                title="Idea not found",
+                status=404,
+                detail="The published work does not exist or is no longer available.",
+            )
+        response = await self._publication_response(
+            publication,
+            require_public_ready=True,
+            is_saved=await self.repository.get_save(user.id, idea_id) is not None,
+        )
+        if response is None:
+            raise AppError(
+                type="idea_not_found",
+                title="Idea not found",
+                status=404,
+                detail="The published work is no longer available.",
+            )
+        return PublicIdeaPublicationResponse.model_validate(response.model_dump())
 
     async def _owned_generation(self, user: User, generation_id: UUID) -> Generation:
         generation = await self.session.get(Generation, generation_id)
@@ -149,13 +241,33 @@ class IdeaService:
                 detail="The source project has an invalid questionnaire session.",
             ) from exc
 
+        if (
+            design_session.initial_concept_mode
+            and design_session.initial_concept_accepted
+            and design_session.scene_generation_id is not None
+            and generation.id != design_session.scene_generation_id
+        ):
+            raise AppError(
+                type="idea_source_not_accepted",
+                title="Current accepted work required",
+                status=422,
+                detail="Only the current accepted scene can be added to Ideas.",
+            )
+
+        whole_site_scene = bool(
+            design_session.initial_concept_mode
+            and design_session.initial_concept_accepted
+            and design_session.scene_generation_id == generation.id
+        )
         object_key = self._accepted_object_key(design_session, generation.id)
+        if object_key is None and whole_site_scene and design_session.accepted_objects:
+            object_key = design_session.accepted_objects[-1]
         if object_key is None:
             raise AppError(
                 type="idea_source_not_accepted",
                 title="Accepted work required",
                 status=422,
-                detail="Only an accepted result from Create can be added to Ideas.",
+                detail="Only the current accepted result from Create can be added to Ideas.",
             )
 
         catalog = await QuestionnaireService(self.session).catalog_for_version(
@@ -173,7 +285,12 @@ class IdeaService:
 
         definitions = {item["key"]: item for item in catalog["questionnaires"]}
         accepted_index = design_session.accepted_objects.index(object_key)
-        selected_objects = design_session.accepted_objects[: accepted_index + 1]
+        selected_objects = (
+            list(design_session.accepted_objects)
+            if design_session.initial_concept_mode
+            and design_session.initial_concept_accepted
+            else design_session.accepted_objects[: accepted_index + 1]
+        )
         section_by_object = {
             key: section["title"]
             for section in catalog["sections"]
@@ -186,7 +303,10 @@ class IdeaService:
             if definition is None:
                 continue
             answers = design_session.answers.get(key, {})
-            house_accepted = "eskez-doma" in accepted_before
+            house_accepted = "eskez-doma" in accepted_before or (
+                design_session.initial_concept_mode
+                and "eskez-doma" in selected_objects
+            )
             summary: list[dict] = []
             for question in definition["questions"]:
                 if question.get("phase") != "pre_render":
@@ -211,10 +331,14 @@ class IdeaService:
             accepted_before.append(key)
 
         definition = definitions[object_key]
+        whole_site = (
+            design_session.initial_concept_mode
+            and design_session.initial_concept_accepted
+        )
         return {
             "catalog_version": design_session.catalog_version,
-            "title": definition["title"],
-            "category": section_by_object.get(object_key, "Проект"),
+            "title": project.name if whole_site else definition["title"],
+            "category": "Проект участка" if whole_site else section_by_object.get(object_key, "Проект"),
             "selected_objects": selected_objects,
             "object_key": object_key,
             "objects": objects,
@@ -243,13 +367,42 @@ class IdeaService:
                 status=422,
                 detail="Only a completed generated work can be added to Ideas.",
             )
-        if await self.repository.get_by_generation(generation.id) is not None:
-            raise AppError(
-                type="idea_already_published",
-                title="Work already published",
-                status=409,
-                detail="This generated work already has an Ideas publication record.",
-            )
+        existing = await self.repository.get_by_generation(generation.id)
+        if existing is not None:
+            if existing.published_by_user_id != user.id:
+                raise AppError(
+                    type="idea_already_published",
+                    title="Work already published",
+                    status=409,
+                    detail="This generated work already has an Ideas publication record.",
+                )
+            if existing.owner_published:
+                raise AppError(
+                    type="idea_already_published",
+                    title="Work already published",
+                    status=409,
+                    detail="This generated work is already published by its owner.",
+                )
+            if await self._image_url(generation) is None:
+                raise AppError(
+                    type="idea_image_not_found",
+                    title="Generated image not found",
+                    status=404,
+                    detail="The generated result image is no longer available.",
+                )
+            await self._prewarm_feed_preview(generation)
+            existing.owner_published = True
+            await self.session.commit()
+            await self.session.refresh(existing)
+            response = await self._publication_response(existing)
+            if response is None:
+                raise AppError(
+                    type="idea_publication_invalid",
+                    title="Publication is invalid",
+                    status=409,
+                    detail="The publication source is no longer available.",
+                )
+            return response
 
         project = await self.session.get(Project, generation.project_id)
         if project is None or project.deleted_at is not None or project.user_id != user.id:
@@ -268,10 +421,12 @@ class IdeaService:
                 detail="The generated result image is no longer available.",
             )
 
+        await self._prewarm_feed_preview(generation)
         publication = IdeaPublication(
             generation_id=generation.id,
             published_by_user_id=user.id,
             presentation_snapshot=snapshot,
+            owner_published=True,
             is_active=True,
             sort_order=0,
         )
@@ -308,7 +463,7 @@ class IdeaService:
                 status=404,
                 detail="This work is not published by the current user.",
             )
-        publication.is_active = False
+        publication.owner_published = False
         await self.session.commit()
         await self.session.refresh(publication)
         response = await self._publication_response(publication)
@@ -316,9 +471,46 @@ class IdeaService:
             raise AppError(type="idea_publication_invalid", title="Publication is invalid", status=409, detail="The publication source is no longer available.")
         return response
 
+    async def save(self, user: User, idea_id: UUID) -> IdeaSaveResponse:
+        publication = await self.repository.get(idea_id)
+        if (
+            publication is None
+            or not publication.is_active
+            or not publication.owner_published
+        ):
+            raise AppError(
+                type="idea_not_found",
+                title="Idea not found",
+                status=404,
+                detail="The published work does not exist or is no longer available.",
+            )
+        if await self._publication_response(publication, require_public_ready=True) is None:
+            raise AppError(
+                type="idea_not_found",
+                title="Idea not found",
+                status=404,
+                detail="The published work is no longer available.",
+            )
+        if await self.repository.get_save(user.id, idea_id) is None:
+            self.repository.add_save(IdeaSave(user_id=user.id, idea_publication_id=idea_id))
+            try:
+                await self.session.commit()
+            except IntegrityError:
+                await self.session.rollback()
+        return IdeaSaveResponse(idea_id=idea_id, is_saved=True)
+
+    async def unsave(self, user: User, idea_id: UUID) -> IdeaSaveResponse:
+        await self.repository.remove_save(user.id, idea_id)
+        await self.session.commit()
+        return IdeaSaveResponse(idea_id=idea_id, is_saved=False)
+
     async def start_project(self, user: User, idea_id: UUID) -> ProjectResponse:
         publication = await self.repository.get(idea_id)
-        if publication is None or not publication.is_active:
+        if (
+            publication is None
+            or not publication.is_active
+            or not publication.owner_published
+        ):
             raise AppError(
                 type="idea_not_found",
                 title="Idea not found",

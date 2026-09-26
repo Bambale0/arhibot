@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Float,
     Index,
     Integer,
     Numeric,
@@ -105,6 +106,9 @@ class IdeaPublication(Base):
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     presentation_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    owner_published: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
@@ -117,12 +121,36 @@ class IdeaPublication(Base):
     )
 
 
+class IdeaSave(Base):
+    __tablename__ = "idea_saves"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idea_publication_id", name="uq_idea_saves_user_publication"),
+        Index("ix_idea_saves_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    idea_publication_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("idea_publications.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class GenerationRuntimeSettings(Base):
     __tablename__ = "generation_runtime_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     primary_model: Mapped[str] = mapped_column(String(120), nullable=False)
     fallback_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    primary_timeout_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=90, server_default="90"
+    )
     primary_params: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default="{}"
     )
@@ -131,6 +159,36 @@ class GenerationRuntimeSettings(Base):
     )
     mode_params: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    masked_edit_provider_context_margin_fraction: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.03, server_default="0.03"
+    )
+    masked_edit_feather_fraction: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.014, server_default="0.014"
+    )
+    masked_edit_feather_min_px: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=4, server_default="4"
+    )
+    masked_edit_feather_max_px: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=24, server_default="24"
+    )
+    masked_edit_recomposite_feather_multiplier: Mapped[float] = mapped_column(
+        Float, nullable=False, default=1.75, server_default="1.75"
+    )
+    masked_edit_boundary_band_px: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=4, server_default="4"
+    )
+    masked_edit_max_luma_excess: Mapped[float] = mapped_column(
+        Float, nullable=False, default=20.0, server_default="20"
+    )
+    masked_edit_max_color_excess: Mapped[float] = mapped_column(
+        Float, nullable=False, default=32.0, server_default="32"
+    )
+    masked_edit_max_straight_edge_fraction: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.65, server_default="0.65"
+    )
+    generation_quality_max_retries: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
     )
     updated_by_user_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True

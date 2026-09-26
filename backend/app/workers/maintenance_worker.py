@@ -10,15 +10,17 @@ from sqlalchemy import or_, select
 
 from app.core.config import get_settings
 from app.core.redis import redis_client
-from app.db.models.admin import IdeaTemplate
+from app.db.models.admin import IdeaPublication, IdeaTemplate
 from app.db.models.assets import Asset
 from app.db.models.generations import Generation
 from app.db.session import dispose_engine, get_session_factory
+from app.domain.generations.enums import GenerationStatus
 from app.repositories.operations import OperationalSettingsRepository
 from app.services.asset_service import LocalMediaStorage
 from app.services.questionnaire_project_service import QuestionnaireProjectService
+from app.telegram_bot.generation_notifications import deliver_pending_generations_once
 from app.telegram_bot.questionnaire_notifications import deliver_pending_applications_once
-from app.workers.heartbeat import worker_heartbeat
+from app.workers.heartbeat import worker_heartbeat, worker_singleton
 
 logger = logging.getLogger(__name__)
 WORKER_INTERVAL_SECONDS = 30
@@ -27,23 +29,48 @@ CLEANUP_BATCH_SIZE = 100
 QUESTIONNAIRE_DRAFT_RETENTION_HOURS = 24
 
 
-async def _is_referenced(session, asset_id) -> bool:
-    generation_ref = await session.execute(
-        select(Generation.id)
+async def _prepare_asset_for_cleanup(session, asset_id) -> bool:
+    """Detach terminal history refs while preserving active/admin-published media."""
+
+    idea_ref = await session.execute(
+        select(IdeaTemplate.id).where(IdeaTemplate.image_asset_id == asset_id).limit(1)
+    )
+    if idea_ref.scalar_one_or_none() is not None:
+        return False
+
+    media_rows = await session.execute(
+        select(IdeaTemplate.media_items).where(IdeaTemplate.media_items != [])
+    )
+    asset_id_text = str(asset_id)
+    for media_items in media_rows.scalars().all():
+        if any(str(item.get("asset_id") or "") == asset_id_text for item in (media_items or [])):
+            return False
+
+    generation_refs = await session.execute(
+        select(Generation)
         .where(
             or_(
                 Generation.input_asset_id == asset_id,
                 Generation.output_asset_id == asset_id,
             )
         )
-        .limit(1)
+        .with_for_update()
     )
-    if generation_ref.scalar_one_or_none() is not None:
-        return True
-    idea_ref = await session.execute(
-        select(IdeaTemplate.id).where(IdeaTemplate.image_asset_id == asset_id).limit(1)
-    )
-    return idea_ref.scalar_one_or_none() is not None
+    rows = list(generation_refs.scalars().all())
+    if any(
+        row.status in {GenerationStatus.QUEUED, GenerationStatus.PROCESSING}
+        for row in rows
+    ):
+        return False
+
+    for row in rows:
+        if row.input_asset_id == asset_id:
+            row.input_asset_id = None
+        if row.output_asset_id == asset_id:
+            row.output_asset_id = None
+    if rows:
+        await session.flush()
+    return True
 
 
 async def cleanup_media_once() -> int:
@@ -63,10 +90,13 @@ async def cleanup_media_once() -> int:
             .limit(CLEANUP_BATCH_SIZE)
         )
         for asset in result.scalars().all():
-            if await _is_referenced(session, asset.id):
+            if not await _prepare_asset_for_cleanup(session, asset.id):
                 continue
             path: Path = storage.absolute_path(asset.storage_path)
+            preview_path = storage.feed_preview_path(asset.storage_path)
             try:
+                if preview_path.exists():
+                    await asyncio.to_thread(preview_path.unlink)
                 if path.exists():
                     await asyncio.to_thread(path.unlink)
             except OSError:
@@ -77,6 +107,38 @@ async def cleanup_media_once() -> int:
         if removed:
             await session.commit()
     return removed
+
+
+async def prewarm_idea_feed_previews_once() -> int:
+    settings = get_settings()
+    storage = LocalMediaStorage(settings)
+    async with get_session_factory()() as session:
+        rows = await session.execute(
+            select(Asset.storage_path)
+            .join(Generation, Generation.output_asset_id == Asset.id)
+            .join(IdeaPublication, IdeaPublication.generation_id == Generation.id)
+            .where(
+                IdeaPublication.is_active.is_(True),
+                IdeaPublication.owner_published.is_(True),
+                Generation.status == GenerationStatus.COMPLETED,
+                Asset.deleted_at.is_(None),
+            )
+            .order_by(IdeaPublication.sort_order.asc(), IdeaPublication.created_at.desc())
+            .limit(100)
+        )
+        paths = list(rows.scalars().all())
+
+    warmed = 0
+    for storage_path in paths:
+        preview_path = storage.feed_preview_path(storage_path)
+        if preview_path.is_file():
+            continue
+        try:
+            await storage.ensure_feed_preview(storage_path)
+            warmed += 1
+        except (FileNotFoundError, OSError):
+            logger.exception("Could not prewarm Ideas preview for %s", storage_path)
+    return warmed
 
 
 async def cleanup_questionnaire_drafts_once() -> int:
@@ -94,10 +156,18 @@ async def run_worker() -> None:
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    logger.info("AuRoom maintenance worker started; retention and application delivery enabled")
+    logger.info("AuRoom maintenance worker started; retention and Telegram delivery enabled")
     next_cleanup_at = 0.0
     while True:
         try:
+            generation_delivered, generation_failed = await deliver_pending_generations_once()
+            if generation_delivered or generation_failed:
+                logger.info(
+                    "Generation Telegram delivery: sent=%s pending_failed=%s",
+                    generation_delivered,
+                    generation_failed,
+                )
+
             delivered, failed = await deliver_pending_applications_once()
             if delivered or failed:
                 logger.info(
@@ -108,6 +178,9 @@ async def run_worker() -> None:
 
             now = monotonic()
             if now >= next_cleanup_at:
+                warmed_previews = await prewarm_idea_feed_previews_once()
+                if warmed_previews:
+                    logger.info("Prewarmed %s Ideas feed preview(s)", warmed_previews)
                 removed_drafts = await cleanup_questionnaire_drafts_once()
                 if removed_drafts:
                     logger.info("Discarded %s abandoned questionnaire draft project(s)", removed_drafts)
@@ -124,8 +197,9 @@ async def run_worker() -> None:
 
 async def _main() -> None:
     try:
-        async with worker_heartbeat("maintenance"):
-            await run_worker()
+        async with worker_singleton("maintenance"):
+            async with worker_heartbeat("maintenance"):
+                await run_worker()
     finally:
         await redis_client.aclose()
         await dispose_engine()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from json import JSONDecodeError, dumps, loads
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -11,12 +12,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.db.models.admin import BillingPlan, BroadcastCampaign, GenerationPromptTemplate, GenerationRuntimeSettings, IdeaTemplate
+from app.db.models.projects import Project
 from app.db.models.users import User
-from app.domain.generations.enums import GenerationType
+from app.domain.generations.enums import GenerationOrigin, GenerationStatus, GenerationType
 from app.domain.users.enums import UserRole
 from app.repositories.admin import AdminRepository
 from app.repositories.billing import BillingRepository
+from app.repositories.generations import GenerationRepository
+from app.repositories.projects import ProjectRepository
 from app.schemas.admin import (
+    AdminAiFlyoverGifCreate,
+    AdminAiHistoryItem,
+    AdminAiOrbitCreate,
+    AdminAiSandboxCreate,
     AdminOverviewResponse,
     AdminPaymentResponse,
     AdminUserResponse,
@@ -37,9 +45,63 @@ from app.schemas.admin import (
     PublicIdeaResponse,
     UserStateUpdate,
 )
+from app.schemas.generations import AdminSandboxGenerationCreate, GenerationResponse
 from app.services.billing_service import BillingService
+from app.services.generation_service import build_generation_service
 from app.telegram_bot.broadcast import send_broadcast
 from app.telegram_bot.main import TelegramBotApi
+
+
+ADMIN_SANDBOX_PROMPT_PREFIX = "AUROOM_ADMIN_SANDBOX_V1\n"
+ADMIN_ORBIT_PROMPT_PREFIX = "AUROOM_ADMIN_ORBIT_V1\n"
+ADMIN_FLYOVER_GIF_PROMPT_PREFIX = "AUROOM_ADMIN_FLYOVER_GIF_V1\n"
+
+
+def _parse_admin_ai_envelope(
+    prompt: str,
+    prefix: str,
+) -> tuple[str, dict[str, object], int | None, int | None]:
+    try:
+        payload = loads(prompt.removeprefix(prefix))
+    except (JSONDecodeError, TypeError):
+        return "", {}, None, None
+    if not isinstance(payload, dict):
+        return "", {}, None, None
+
+    operator_prompt = payload.get("prompt")
+    params = payload.get("params")
+    frame_count = payload.get("frame_count")
+    frame_duration_ms = payload.get("frame_duration_ms")
+    return (
+        operator_prompt if isinstance(operator_prompt, str) else "",
+        params if isinstance(params, dict) else {},
+        frame_count if isinstance(frame_count, int) else None,
+        frame_duration_ms if isinstance(frame_duration_ms, int) else None,
+    )
+
+
+def _parse_flyover_gif_envelope(
+    prompt: str,
+) -> tuple[str, dict[str, object], int | None, int | None, int | None]:
+    try:
+        payload = loads(prompt.removeprefix(ADMIN_FLYOVER_GIF_PROMPT_PREFIX))
+    except (JSONDecodeError, TypeError):
+        return "", {}, None, None, None
+    if not isinstance(payload, dict):
+        return "", {}, None, None, None
+
+    operator_prompt = payload.get("prompt")
+    params = payload.get("params")
+    keyframe_count = payload.get("keyframe_count")
+    inbetween_frames = payload.get("inbetween_frames")
+    frame_duration_ms = payload.get("frame_duration_ms")
+    return (
+        operator_prompt if isinstance(operator_prompt, str) else "",
+        params if isinstance(params, dict) else {},
+        keyframe_count if isinstance(keyframe_count, int) else None,
+        inbetween_frames if isinstance(inbetween_frames, int) else None,
+        frame_duration_ms if isinstance(frame_duration_ms, int) else None,
+    )
 
 
 class AdminService:
@@ -48,6 +110,7 @@ class AdminService:
         self.settings = settings
         self.repository = AdminRepository(session)
         self.billing_repository = BillingRepository(session)
+        self.projects = ProjectRepository(session)
 
     def overview(self) -> AdminOverviewResponse:
         return AdminOverviewResponse(
@@ -235,34 +298,395 @@ class AdminService:
         return GenerationRuntimeResponse(
             primary_model=row.primary_model,
             fallback_model=row.fallback_model,
+            primary_timeout_seconds=row.primary_timeout_seconds,
             primary_params=row.primary_params or {},
             fallback_params=row.fallback_params or {},
             mode_params=row.mode_params or {},
+            masked_edit_provider_context_margin_fraction=row.masked_edit_provider_context_margin_fraction,
+            masked_edit_feather_fraction=row.masked_edit_feather_fraction,
+            masked_edit_feather_min_px=row.masked_edit_feather_min_px,
+            masked_edit_feather_max_px=row.masked_edit_feather_max_px,
+            masked_edit_recomposite_feather_multiplier=row.masked_edit_recomposite_feather_multiplier,
+            masked_edit_boundary_band_px=row.masked_edit_boundary_band_px,
+            masked_edit_max_luma_excess=row.masked_edit_max_luma_excess,
+            masked_edit_max_color_excess=row.masked_edit_max_color_excess,
+            masked_edit_max_straight_edge_fraction=row.masked_edit_max_straight_edge_fraction,
+            generation_quality_max_retries=row.generation_quality_max_retries,
             updated_at=row.updated_at,
         )
 
     async def update_generation_settings(
         self, actor: User, payload: GenerationRuntimeUpdate
     ) -> GenerationRuntimeResponse:
+        if payload.primary_timeout_seconds > self.settings.nexus_task_timeout_seconds:
+            raise AppError(
+                type="generation_primary_timeout_too_large",
+                title="Primary generation timeout exceeds provider timeout",
+                status=422,
+                detail=(
+                    "Primary timeout must not exceed the configured Nexus task timeout "
+                    f"({self.settings.nexus_task_timeout_seconds} seconds)."
+                ),
+            )
         row = await self.repository.get_generation_settings(for_update=True)
         if row is None:
             row = GenerationRuntimeSettings(id=1, primary_model=payload.primary_model)
             self.repository.add_generation_settings(row)
         row.primary_model = payload.primary_model
         row.fallback_model = payload.fallback_model
+        row.primary_timeout_seconds = payload.primary_timeout_seconds
         row.primary_params = payload.primary_params
         row.fallback_params = payload.fallback_params
         row.mode_params = payload.mode_params
+        quality_fields = (
+            "masked_edit_provider_context_margin_fraction",
+            "masked_edit_feather_fraction",
+            "masked_edit_feather_min_px",
+            "masked_edit_feather_max_px",
+            "masked_edit_recomposite_feather_multiplier",
+            "masked_edit_boundary_band_px",
+            "masked_edit_max_luma_excess",
+            "masked_edit_max_color_excess",
+            "masked_edit_max_straight_edge_fraction",
+            "generation_quality_max_retries",
+        )
+        for field in quality_fields:
+            value = getattr(payload, field)
+            if value is not None:
+                setattr(row, field, value)
+        if row.masked_edit_feather_min_px > row.masked_edit_feather_max_px:
+            raise AppError(
+                type="masked_edit_feather_range_invalid",
+                title="Invalid masked edit feather range",
+                status=422,
+                detail="Masked edit feather minimum cannot exceed maximum.",
+            )
         row.updated_by_user_id = actor.id
         self.repository.add_audit(
             actor_user_id=actor.id,
             action="generation.settings.update",
             entity_type="generation_settings",
             entity_id="1",
+            details={
+                "primary_model": payload.primary_model,
+                "fallback_model": payload.fallback_model,
+                "primary_timeout_seconds": payload.primary_timeout_seconds,
+            },
         )
         await self.session.commit()
         await self.session.refresh(row)
         return await self.get_generation_settings()
+
+    async def create_ai_sandbox_generation(
+        self, actor: User, payload: AdminAiSandboxCreate
+    ) -> GenerationResponse:
+        project = await self.projects.get_admin_ai_sandbox(actor.id)
+        if project is None:
+            project = Project(
+                user_id=actor.id,
+                name="AI Sandbox",
+                description="Служебный проект для админских тестов AI-моделей.",
+                context={"admin_ai_sandbox": True},
+            )
+            self.projects.add(project)
+            await self.session.commit()
+            await self.session.refresh(project)
+
+        envelope = ADMIN_SANDBOX_PROMPT_PREFIX + dumps(
+            {"prompt": payload.prompt, "params": payload.params},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if len(envelope) > 12_000:
+            raise AppError(
+                type="sandbox_payload_too_large",
+                title="AI sandbox payload is too large",
+                status=422,
+                detail="Shorten the prompt or reduce sandbox parameters.",
+            )
+
+        def bind_sandbox(generation, _project) -> None:  # noqa: ANN001
+            generation.model_name = payload.model_name
+            generation.telegram_delivery_status = "skipped"
+
+        generated = await build_generation_service(self.session, self.settings).create(
+            actor,
+            AdminSandboxGenerationCreate(
+                project_id=project.id,
+                type=GenerationType.MASTER_PLAN,
+                prompt=envelope,
+            ),
+            before_commit=bind_sandbox,
+            skip_pricing=True,
+            origin=GenerationOrigin.ADMIN_SANDBOX,
+        )
+        self.repository.add_audit(
+            actor_user_id=actor.id,
+            action="generation.sandbox.create",
+            entity_type="generation",
+            entity_id=str(generated.id),
+            details={
+                "model_name": payload.model_name,
+                "prompt_length": len(payload.prompt),
+                "param_keys": sorted(payload.params),
+            },
+        )
+        await self.session.commit()
+        return generated
+
+    async def create_ai_orbit_generation(
+        self, actor: User, payload: AdminAiOrbitCreate
+    ) -> GenerationResponse:
+        source = await GenerationRepository(self.session).get_owned(
+            payload.source_generation_id,
+            actor.id,
+        )
+        if source is None:
+            raise AppError(
+                type="orbit_source_not_found",
+                title="Orbit source not found",
+                status=404,
+                detail="The source generation does not exist or is not available.",
+            )
+        if source.status != GenerationStatus.COMPLETED or source.output_asset_id is None:
+            raise AppError(
+                type="orbit_source_not_ready",
+                title="Orbit source is not ready",
+                status=409,
+                detail="Complete an AI Sandbox image before building an orbit loop.",
+            )
+        if source.origin != GenerationOrigin.ADMIN_SANDBOX.value:
+            raise AppError(
+                type="orbit_source_not_sandbox",
+                title="Orbit source must be an AI Sandbox image",
+                status=422,
+                detail="Use the completed still image from the admin AI Sandbox.",
+            )
+
+        project = await self.session.get(Project, source.project_id)
+        if project is None or not bool((project.context or {}).get("admin_ai_sandbox")):
+            raise AppError(
+                type="orbit_source_not_sandbox",
+                title="Orbit source must be an AI Sandbox result",
+                status=422,
+                detail="Use a completed result from the admin AI Sandbox.",
+            )
+
+        envelope = ADMIN_ORBIT_PROMPT_PREFIX + dumps(
+            {
+                "prompt": payload.prompt,
+                "params": payload.params,
+                "frame_count": payload.frame_count,
+                "frame_duration_ms": payload.frame_duration_ms,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if len(envelope) > 12_000:
+            raise AppError(
+                type="orbit_payload_too_large",
+                title="Orbit payload is too large",
+                status=422,
+                detail="Shorten the prompt or reduce orbit parameters.",
+            )
+
+        def bind_orbit(generation, _project) -> None:  # noqa: ANN001
+            generation.model_name = payload.model_name
+            generation.telegram_delivery_status = "skipped"
+
+        generated = await build_generation_service(self.session, self.settings).create(
+            actor,
+            AdminSandboxGenerationCreate(
+                project_id=project.id,
+                input_asset_id=source.output_asset_id,
+                type=GenerationType.MASTER_PLAN,
+                prompt=envelope,
+            ),
+            before_commit=bind_orbit,
+            skip_pricing=True,
+            origin=GenerationOrigin.ADMIN_ORBIT,
+        )
+        self.repository.add_audit(
+            actor_user_id=actor.id,
+            action="generation.orbit.create",
+            entity_type="generation",
+            entity_id=str(generated.id),
+            details={
+                "source_generation_id": str(source.id),
+                "model_name": payload.model_name,
+                "frame_count": payload.frame_count,
+                "frame_duration_ms": payload.frame_duration_ms,
+                "param_keys": sorted(payload.params),
+            },
+        )
+        await self.session.commit()
+        return generated
+
+
+    async def create_ai_flyover_gif_generation(
+        self, actor: User, payload: AdminAiFlyoverGifCreate
+    ) -> GenerationResponse:
+        source = await GenerationRepository(self.session).get_owned(
+            payload.source_generation_id,
+            actor.id,
+        )
+        if source is None:
+            raise AppError(
+                type="flyover_source_not_found",
+                title="Flyover source not found",
+                status=404,
+                detail="The source generation does not exist or is not available.",
+            )
+        if source.status != GenerationStatus.COMPLETED or source.output_asset_id is None:
+            raise AppError(
+                type="flyover_source_not_ready",
+                title="Flyover source is not ready",
+                status=409,
+                detail="Complete an AI Sandbox image before building a GIF flyover.",
+            )
+        if source.origin != GenerationOrigin.ADMIN_SANDBOX.value:
+            raise AppError(
+                type="flyover_source_not_sandbox",
+                title="Flyover source must be an AI Sandbox image",
+                status=422,
+                detail="Use a completed still image from the admin AI Sandbox.",
+            )
+
+        project = await self.session.get(Project, source.project_id)
+        if project is None or not bool((project.context or {}).get("admin_ai_sandbox")):
+            raise AppError(
+                type="flyover_source_not_sandbox",
+                title="Flyover source must be an AI Sandbox result",
+                status=422,
+                detail="Use a completed result from the admin AI Sandbox.",
+            )
+
+        envelope = ADMIN_FLYOVER_GIF_PROMPT_PREFIX + dumps(
+            {
+                "prompt": payload.prompt,
+                "params": payload.params,
+                "keyframe_count": payload.keyframe_count,
+                "inbetween_frames": payload.inbetween_frames,
+                "frame_duration_ms": payload.frame_duration_ms,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if len(envelope) > 12_000:
+            raise AppError(
+                type="flyover_payload_too_large",
+                title="Flyover payload is too large",
+                status=422,
+                detail="Shorten the prompt or reduce flyover parameters.",
+            )
+
+        def bind_flyover(generation, _project) -> None:  # noqa: ANN001
+            generation.model_name = payload.model_name
+            generation.telegram_delivery_status = "skipped"
+
+        generated = await build_generation_service(self.session, self.settings).create(
+            actor,
+            AdminSandboxGenerationCreate(
+                project_id=project.id,
+                input_asset_id=source.output_asset_id,
+                type=GenerationType.MASTER_PLAN,
+                prompt=envelope,
+            ),
+            before_commit=bind_flyover,
+            skip_pricing=True,
+            origin=GenerationOrigin.ADMIN_FLYOVER_GIF,
+        )
+        self.repository.add_audit(
+            actor_user_id=actor.id,
+            action="generation.flyover_gif.create",
+            entity_type="generation",
+            entity_id=str(generated.id),
+            details={
+                "source_generation_id": str(source.id),
+                "model_name": payload.model_name,
+                "keyframe_count": payload.keyframe_count,
+                "inbetween_frames": payload.inbetween_frames,
+                "frame_duration_ms": payload.frame_duration_ms,
+                "param_keys": sorted(payload.params),
+            },
+        )
+        await self.session.commit()
+        return generated
+
+
+    async def list_ai_sandbox_history(
+        self,
+        actor: User,
+        *,
+        limit: int = 30,
+    ) -> list[AdminAiHistoryItem]:
+        projects = await self.projects.list_admin_ai_sandboxes(actor.id)
+        if not projects:
+            return []
+
+        generation_repository = GenerationRepository(self.session)
+        rows = []
+        for project in projects:
+            rows.extend(
+                await generation_repository.list_owned(
+                    actor.id,
+                    project_id=project.id,
+                    limit=limit,
+                )
+            )
+        rows.sort(key=lambda item: (item.created_at, item.id), reverse=True)
+        rows = rows[:limit]
+        generation_service = build_generation_service(self.session, self.settings)
+        history: list[AdminAiHistoryItem] = []
+        for row in rows:
+            if row.prompt.startswith(ADMIN_SANDBOX_PROMPT_PREFIX):
+                kind = "sandbox"
+                prefix = ADMIN_SANDBOX_PROMPT_PREFIX
+            elif row.prompt.startswith(ADMIN_ORBIT_PROMPT_PREFIX):
+                kind = "orbit"
+                prefix = ADMIN_ORBIT_PROMPT_PREFIX
+            elif row.prompt.startswith(ADMIN_FLYOVER_GIF_PROMPT_PREFIX):
+                kind = "flyover_gif"
+                prefix = ADMIN_FLYOVER_GIF_PROMPT_PREFIX
+            else:
+                continue
+
+            if kind == "flyover_gif":
+                (
+                    prompt,
+                    params,
+                    keyframe_count,
+                    inbetween_frames,
+                    frame_duration_ms,
+                ) = _parse_flyover_gif_envelope(row.prompt)
+                frame_count = None
+            else:
+                prompt, params, frame_count, frame_duration_ms = _parse_admin_ai_envelope(
+                    row.prompt,
+                    prefix,
+                )
+                keyframe_count = None
+                inbetween_frames = None
+            generation = await generation_service.to_response(row)
+            generation = generation.model_copy(update={"prompt": prompt})
+            history.append(
+                AdminAiHistoryItem(
+                    kind=kind,
+                    generation=generation,
+                    prompt=prompt,
+                    params=params,
+                    frame_count=frame_count if kind == "orbit" else None,
+                    frame_duration_ms=(
+                        frame_duration_ms if kind in {"orbit", "flyover_gif"} else None
+                    ),
+                    keyframe_count=keyframe_count if kind == "flyover_gif" else None,
+                    inbetween_frames=(
+                        inbetween_frames if kind == "flyover_gif" else None
+                    ),
+                )
+            )
+        return history
+
 
     async def list_prompts(self) -> list[PromptTemplateResponse]:
         rows = await self.repository.list_prompt_templates()

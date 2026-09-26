@@ -44,8 +44,12 @@ class QuestionnaireProjectService:
             session.source_step_completed
             or session.source_asset_id
             or session.scene_asset_id
+            or session.scene_generation_id
             or session.current_question_id
             or session.answers
+            or session.survey_completed_objects
+            or session.initial_generation_id
+            or session.initial_concept_accepted
             or session.accepted_objects
             or session.generation_ids
             or session.edit_question_ids
@@ -98,16 +102,21 @@ class QuestionnaireProjectService:
         design_session = DesignSession(
             catalog_version=catalog["version"],
             selected_objects=selected,
+            plot_area_sotkas=payload.plot_area_sotkas,
+            initial_concept_mode=True,
             current_object=selected[0] if len(selected) == 1 else None,
         )
+        project_context: dict[str, object] = {
+            "questionnaire_draft": True,
+            "design_session": design_session.model_dump(mode="json"),
+        }
+        if payload.plot_area_sotkas is not None:
+            project_context["plot_area_m2"] = payload.plot_area_sotkas * 100
         project = Project(
             user_id=user.id,
             name=name,
             description="Проект создан через опросник AuRoom.",
-            context={
-                "questionnaire_draft": True,
-                "design_session": design_session.model_dump(mode="json"),
-            },
+            context=project_context,
         )
         self.projects.add(project)
         await self.session.commit()

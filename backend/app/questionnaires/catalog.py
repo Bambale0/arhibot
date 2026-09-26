@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-CATALOG_VERSION = "2026-09-10.1"
+CATALOG_VERSION = "2026-09-25.1"
 
 SECTION_SPECS = [
     ("house", "Дом", ["eskez-doma"]),
@@ -165,6 +165,7 @@ def _parse_question(
         "skip_default": skip_default,
         "help": " ".join(notes) if notes else None,
         "field_hint": field,
+        "placeholder": None,
         "max_selections": None,
         "phase": "pre_render",
         "condition": None,
@@ -208,12 +209,20 @@ def _parse_questions(
             ],
         }
         by_id["12б"]["condition"] = {
-            "operator": "all",
-            "conditions": [
-                {"question_id": "12", "operator": "neq", "value": "Нет"},
-                {"question_id": "4", "operator": "neq", "value": "1 этаж"},
-            ],
+            "question_id": "12",
+            "operator": "neq",
+            "value": "Нет",
         }
+        for qid in ("12б", "13а2"):
+            if qid not in by_id:
+                continue
+            for option in ("Первый этаж", "Второй этаж", "Третий этаж", "Мансарда"):
+                if option in by_id[qid]["options"]:
+                    by_id[qid]["option_rules"][option] = {
+                        "question_id": "4",
+                        "operator": "floor_option",
+                        "value": option,
+                    }
         by_id["13а"]["condition"] = {"question_id": "13", "operator": "contains", "value": "Балкон"}
         by_id["13а2"]["condition"] = {"question_id": "13", "operator": "contains", "value": "Балкон"}
         by_id["13б"]["condition"] = {"question_id": "13", "operator": "contains", "value": "Терраса на плоской кровле"}
@@ -245,7 +254,7 @@ def _parse_questions(
             "Стиль", "Форма дома", "Размер и этажность", "Цоколь",
             "Гараж, навес, пристрой", "Кровля", "Материалы фасада", "Окна",
             "Терраса, балкон, кровля", "Второй свет или зимний сад",
-            "Камин, труба", "Освещение",
+            "Дымоход / труба", "Освещение",
         ]
         by_id["15б"]["edit_targets"] = {
             "Стиль": ["1"],
@@ -258,10 +267,14 @@ def _parse_questions(
             "Окна": ["9"],
             "Терраса, балкон, кровля": ["12", "12б", "13", "13а", "13а2", "13б", "13б2"],
             "Второй свет или зимний сад": ["11"],
-            "Камин, труба": ["11б"],
+            "Дымоход / труба": ["11б"],
             "Освещение": ["14"],
         }
         by_id["15б"]["field_hint"] = "Свой комментарий"
+        by_id["15б"]["help"] = (
+            "Можно изменять наружный облик дома. Для дымохода доступны внешний вид, "
+            "материал и оформление; перенос внутреннего камина в режиме доработки не выполняется."
+        )
     else:
         if questions:
             questions[-1]["phase"] = "review"
@@ -379,6 +392,8 @@ def _application_questions(text: str, *, user_facing: bool = True) -> list[dict[
         by_id[qid]["phase"] = "application"
     by_id["23"]["kind"] = "text"
     by_id["24"]["kind"] = "text"
+    by_id["24"]["text"] = "Оставьте телефон или @username Telegram"
+    by_id["24"]["placeholder"] = "+7 999 123-45-67 или @username"
     by_id["25"]["kind"] = "consent"
     by_id["25"]["options"] = []
     return questions
@@ -401,7 +416,7 @@ def build_catalog(
                 "order": order,
                 "questions": questions,
                 "scene_policy": {
-                    "camera": "Дом: дрон 40–50 м, сверху угловой. Остальные объекты: как у принятого кадра дома; без дома — дрон сверху угловой.",
+                    "camera": "Первая общая концепция: дрон 50–70 м, сверху угловой, весь участок и все выбранные объекты в кадре. Платные правки: сохранять ракурс принятого кадра.",
                     "lighting": "У дома — ответ шага 14. Остальные объекты наследуют свет текущего кадра.",
                     "placement": "Каждый следующий объект добавляется в текущий принятый кадр, если он есть.",
                 },

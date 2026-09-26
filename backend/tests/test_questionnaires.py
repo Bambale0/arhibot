@@ -20,7 +20,7 @@ def _question(key: str, question_id: str) -> dict:
 def test_questionnaire_catalog_matches_source_bundle() -> None:
     catalog = QuestionnaireCatalogResponse.model_validate(build_catalog())
     sources = _load_sources()
-    assert catalog.version == "2026-09-10.1"
+    assert catalog.version == "2026-09-25.1"
     assert CATALOG_VERSION == catalog.version
     assert len(catalog.sections) == 6
     assert len(catalog.questionnaires) == 27
@@ -81,6 +81,9 @@ def test_each_object_ends_with_review_and_application_is_separate() -> None:
         assert reviews[0]["options"][1].startswith("Нет")
     application = _definition("zayavka")
     assert [q["id"] for q in application["questions"]] == ["20", "21", "22", "23", "24", "25"]
+    contact = _question("zayavka", "24")
+    assert contact["text"] == "Оставьте телефон или @username Telegram"
+    assert contact["placeholder"] == "+7 999 123-45-67 или @username"
     assert _question("zayavka", "25")["kind"] == "consent"
 
 
@@ -244,6 +247,46 @@ def test_server_rejects_options_hidden_by_questionnaire_rules() -> None:
         extras,
         ["Балкон"],
         {"4": "2 этажа", "12б": ["Первый этаж"]},
+        False,
+    )
+
+
+def test_house_floor_dependent_options_follow_selected_storeys() -> None:
+    service = QuestionnaireService(None)
+    terrace_floors = _question("eskez-doma", "12б")
+
+    service._validate_answer(
+        terrace_floors,
+        ["Первый этаж"],
+        {"4": "1 этаж", "12": "Терраса"},
+        False,
+    )
+    with pytest.raises(AppError) as exc:
+        service._validate_answer(
+            terrace_floors,
+            ["Второй этаж"],
+            {"4": "1 этаж", "12": "Терраса"},
+            False,
+        )
+    assert "inactive" in exc.value.detail
+
+    service._validate_answer(
+        terrace_floors,
+        ["Первый этаж", "Второй этаж"],
+        {"4": "2 этажа", "12": "Терраса"},
+        False,
+    )
+    with pytest.raises(AppError):
+        service._validate_answer(
+            terrace_floors,
+            ["Третий этаж"],
+            {"4": "2 этажа", "12": "Терраса"},
+            False,
+        )
+    service._validate_answer(
+        terrace_floors,
+        ["Мансарда"],
+        {"4": "2 этажа + мансарда", "12": "Терраса"},
         False,
     )
 
@@ -430,3 +473,45 @@ def test_catalog_bump_keeps_accepted_answers_but_revalidates_unfinished_answers(
     with pytest.raises(AppError) as exc:
         service._validate(unfinished, catalog, allow_submitted=False, previous=unfinished_previous)
     assert "cannot be skipped" in exc.value.detail
+
+def test_plot_size_can_change_before_initial_acceptance_but_not_after() -> None:
+    session_id = uuid4()
+    initial_generation_id = uuid4()
+    previous = DesignSession(
+        session_id=session_id,
+        catalog_version=CATALOG_VERSION,
+        selected_objects=["eskez-doma"],
+        plot_area_sotkas=8,
+        initial_concept_mode=True,
+        source_step_completed=True,
+    )
+    changed_before_acceptance = previous.model_copy(
+        update={"plot_area_sotkas": 12}
+    )
+    QuestionnaireService._validate_accepted_object_locks(
+        previous,
+        changed_before_acceptance,
+        build_catalog(),
+    )
+
+    accepted = previous.model_copy(
+        update={
+            "plot_area_sotkas": 8,
+            "initial_generation_id": initial_generation_id,
+            "initial_concept_accepted": True,
+            "survey_completed_objects": ["eskez-doma"],
+            "accepted_objects": ["eskez-doma"],
+        }
+    )
+    changed_after_acceptance = accepted.model_copy(
+        update={"plot_area_sotkas": 12}
+    )
+
+    with pytest.raises(AppError) as exc:
+        QuestionnaireService._validate_accepted_object_locks(
+            accepted,
+            changed_after_acceptance,
+            build_catalog(),
+        )
+    assert "plot size" in exc.value.detail.lower()
+

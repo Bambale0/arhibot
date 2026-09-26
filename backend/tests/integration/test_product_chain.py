@@ -1,3 +1,4 @@
+import base64
 import os
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -101,16 +102,50 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
             "/api/v1/admin/operations",
             headers=admin_headers,
             json={
-                "auth_rate_limit_per_minute": None,
+                "auth_rate_limit_per_minute": 30,
                 "generation_rate_limit_per_minute": 50,
                 "payment_rate_limit_per_minute": 20,
+                "registration_rate_limit_per_day": 40,
+                "yookassa_webhook_rate_limit_per_minute": 80,
+                "asset_upload_rate_limit_per_minute": 24,
+                "asset_max_retained_count_per_user": 200,
+                "asset_max_retained_bytes_per_user": 536870912,
+                "generation_max_inflight_per_user": 2,
+                "initial_concept_offer_limit_per_day": 3,
                 "media_retention_days": 30,
                 "backup_interval_hours": 24,
                 "backup_retention_days": 14,
+                "media_min_free_bytes": 67108864,
             },
         )
         assert ops.status_code == 200, ops.text
         assert ops.json()["backup_interval_hours"] == 24
+        assert ops.json()["registration_rate_limit_per_day"] == 40
+        assert ops.json()["yookassa_webhook_rate_limit_per_minute"] == 80
+        assert ops.json()["asset_upload_rate_limit_per_minute"] == 24
+        assert ops.json()["asset_max_retained_count_per_user"] == 200
+        assert ops.json()["asset_max_retained_bytes_per_user"] == 536870912
+        assert ops.json()["generation_max_inflight_per_user"] == 2
+        assert ops.json()["initial_concept_offer_limit_per_day"] == 3
+        assert ops.json()["media_min_free_bytes"] == 67108864
+
+        partial_ops = await client.put(
+            "/api/v1/admin/operations",
+            headers=admin_headers,
+            json={"media_retention_days": 31},
+        )
+        assert partial_ops.status_code == 200, partial_ops.text
+        assert partial_ops.json()["media_retention_days"] == 31
+        assert partial_ops.json()["generation_rate_limit_per_minute"] == 50
+        assert partial_ops.json()["payment_rate_limit_per_minute"] == 20
+        assert partial_ops.json()["registration_rate_limit_per_day"] == 40
+        assert partial_ops.json()["yookassa_webhook_rate_limit_per_minute"] == 80
+        assert partial_ops.json()["asset_upload_rate_limit_per_minute"] == 24
+        assert partial_ops.json()["asset_max_retained_count_per_user"] == 200
+        assert partial_ops.json()["asset_max_retained_bytes_per_user"] == 536870912
+        assert partial_ops.json()["generation_max_inflight_per_user"] == 2
+        assert partial_ops.json()["initial_concept_offer_limit_per_day"] == 3
+        assert partial_ops.json()["media_min_free_bytes"] == 67108864
 
         project = await client.post(
             "/api/v1/projects",
@@ -178,6 +213,155 @@ async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_asset_upload_retained_quota_survives_soft_delete() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _, admin_headers = await _register_admin(client)
+        _tokens, headers = await _register_user(client, display_name="Asset Quota User")
+
+        configured = await client.put(
+            "/api/v1/admin/operations",
+            headers=admin_headers,
+            json={
+                "asset_upload_rate_limit_per_minute": 100,
+                "asset_max_retained_count_per_user": 1,
+                "asset_max_retained_bytes_per_user": 1048576,
+            },
+        )
+        assert configured.status_code == 200, configured.text
+
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        )
+        first = await client.post(
+            "/api/v1/assets",
+            headers=headers,
+            files={"file": ("tiny.png", png, "image/png")},
+            data={"purpose": "generation_input"},
+        )
+        assert first.status_code == 201, first.text
+
+        deleted = await client.delete(f"/api/v1/assets/{first.json()['id']}", headers=headers)
+        assert deleted.status_code == 204, deleted.text
+
+        second = await client.post(
+            "/api/v1/assets",
+            headers=headers,
+            files={"file": ("tiny-2.png", png, "image/png")},
+            data={"purpose": "generation_input"},
+        )
+        assert second.status_code == 409, second.text
+        assert second.json()["type"] == "asset_storage_quota_exceeded"
+
+        restored = await client.put(
+            "/api/v1/admin/operations",
+            headers=admin_headers,
+            json={
+                "asset_upload_rate_limit_per_minute": 12,
+                "asset_max_retained_count_per_user": 200,
+                "asset_max_retained_bytes_per_user": 536870912,
+            },
+        )
+        assert restored.status_code == 200, restored.text
+
+
+@pytest.mark.asyncio
+async def test_project_delete_refunds_active_generation_and_hides_media() -> None:
+    from app.db.models.assets import Asset
+    from app.db.models.generations import Generation
+    from app.domain.generations.enums import GenerationStatus
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _, admin_headers = await _register_admin(client)
+        tokens, headers = await _register_user(client, display_name="Delete Lifecycle User")
+        user_id = tokens["user"]["id"]
+
+        runtime = await client.put(
+            "/api/v1/admin/generation",
+            headers=admin_headers,
+            json={
+                "primary_model": "integration-image-model",
+                "fallback_model": None,
+                "primary_params": {},
+                "fallback_params": {},
+                "mode_params": {},
+            },
+        )
+        assert runtime.status_code == 200, runtime.text
+        prompt = await client.put(
+            "/api/v1/admin/prompts/floor_plan",
+            headers=admin_headers,
+            json={"template": "Delete lifecycle {user_prompt}"},
+        )
+        assert prompt.status_code == 200, prompt.text
+        price = await client.put(
+            "/api/v1/admin/generation-prices/floor_plan",
+            headers=admin_headers,
+            json={"credits": 2, "is_active": True},
+        )
+        assert price.status_code == 200, price.text
+        credit = await client.post(
+            f"/api/v1/admin/users/{user_id}/credits",
+            headers=admin_headers,
+            json={"delta": 2, "reason": "delete lifecycle budget"},
+        )
+        assert credit.status_code == 200, credit.text
+
+        project = await client.post(
+            "/api/v1/projects", headers=headers, json={"name": "Delete lifecycle", "context": {}}
+        )
+        assert project.status_code == 201, project.text
+        project_id = project.json()["id"]
+
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        )
+        uploaded = await client.post(
+            "/api/v1/assets",
+            headers=headers,
+            files={"file": ("delete.png", png, "image/png")},
+            data={"purpose": "generation_input", "project_id": project_id},
+        )
+        assert uploaded.status_code == 201, uploaded.text
+        asset_id = uploaded.json()["id"]
+
+        created = await client.post(
+            "/api/v1/generations",
+            headers=headers,
+            json={
+                "project_id": project_id,
+                "input_asset_id": asset_id,
+                "type": "floor_plan",
+                "prompt": "queued before deletion",
+            },
+        )
+        assert created.status_code == 202, created.text
+        generation_id = created.json()["id"]
+        assert created.json()["credits_charged"] == 2
+
+        deleted = await client.delete(f"/api/v1/projects/{project_id}", headers=headers)
+        assert deleted.status_code == 204, deleted.text
+        assert (await client.get(f"/api/v1/projects/{project_id}", headers=headers)).status_code == 404
+        assert (await client.get(f"/api/v1/generations/{generation_id}", headers=headers)).status_code == 404
+        assert (await client.get(f"/api/v1/assets/{asset_id}", headers=headers)).status_code == 404
+
+        me = await client.get("/api/v1/me", headers=headers)
+        assert me.status_code == 200, me.text
+        assert me.json()["credits_balance"] == 2
+
+        async with get_session_factory()() as session:
+            generation = await session.get(Generation, UUID(generation_id))
+            asset = await session.get(Asset, UUID(asset_id))
+            assert generation is not None
+            assert generation.status == GenerationStatus.FAILED
+            assert generation.error == "Project was deleted before generation completed."
+            assert asset is not None and asset.deleted_at is not None
+
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, generation_id)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("role", [UserRole.ADMIN, UserRole.SUPERADMIN])
 async def test_admin_generation_is_free_and_writes_no_credit_movement(role: UserRole) -> None:
     transport = ASGITransport(app=app)
@@ -234,6 +418,198 @@ async def test_admin_generation_is_free_and_writes_no_credit_movement(role: User
         assert generation_movements == []
 
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, row["id"])
+
+
+@pytest.mark.asyncio
+async def test_payment_create_retry_reuses_uncertain_idempotence_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        tokens, headers = await _register_admin(client)
+        user_id = tokens["user"]["id"]
+        plan_code = f"retry-{uuid4().hex[:10]}"
+        remote_payment_id = f"pay-{uuid4().hex}"
+        tariff = await client.post(
+            "/api/v1/admin/tariffs",
+            headers=headers,
+            json={
+                "code": plan_code,
+                "name": "Retry-safe pack",
+                "credits": 5,
+                "amount": "90.00",
+                "currency": "RUB",
+                "is_active": True,
+                "sort_order": 0,
+            },
+        )
+        assert tariff.status_code == 201, tariff.text
+
+        attempt_keys: list[str] = []
+        local_ids: list[str] = []
+        provider_requests: list[dict] = []
+
+        async def create_payment(
+            self,
+            *,
+            amount,
+            currency,
+            description,
+            return_url,
+            metadata,
+            idempotence_key,
+            receipt=None,
+        ):  # noqa: ANN001, ARG001
+            attempt_keys.append(idempotence_key)
+            local_ids.append(metadata["billing_payment_id"])
+            provider_requests.append(
+                {
+                    "amount": str(amount),
+                    "currency": currency,
+                    "description": description,
+                    "return_url": return_url,
+                    "metadata": dict(metadata),
+                    "receipt": receipt,
+                }
+            )
+            if len(attempt_keys) == 1:
+                raise YooKassaError("provider response lost", ambiguous=True)
+            return YooKassaPayment(
+                id=remote_payment_id,
+                status="pending",
+                amount=Decimal("90.00"),
+                currency="RUB",
+                metadata=metadata,
+                confirmation_url="https://payments.example.test/retry-safe",
+            )
+
+        monkeypatch.setattr(YooKassaProvider, "create_payment", create_payment)
+
+        first = await client.post(
+            "/api/v1/billing/payments",
+            headers=headers,
+            json={"package_code": plan_code},
+        )
+        assert first.status_code == 503, first.text
+        assert first.json()["type"] == "payment_provider_uncertain"
+
+        changed = await client.patch(
+            f"/api/v1/admin/tariffs/{tariff.json()['id']}",
+            headers=headers,
+            json={
+                "name": "Changed after uncertain create",
+                "credits": 99,
+                "amount": "150.00",
+                "is_active": False,
+            },
+        )
+        assert changed.status_code == 200, changed.text
+
+        second = await client.post(
+            "/api/v1/billing/payments",
+            headers=headers,
+            json={"package_code": plan_code},
+        )
+        assert second.status_code == 201, second.text
+        assert second.json()["confirmation_url"] == "https://payments.example.test/retry-safe"
+        assert len(attempt_keys) == 2
+        assert attempt_keys[0] == attempt_keys[1]
+        assert local_ids[0] == local_ids[1] == second.json()["id"]
+        assert provider_requests[0] == provider_requests[1]
+        assert provider_requests[1]["amount"] == "90.00"
+        assert provider_requests[1]["description"] == "AuRoom: Retry-safe pack"
+
+        payments = await client.get("/api/v1/admin/payments", headers=headers)
+        assert payments.status_code == 200, payments.text
+        matching = [
+            item
+            for item in payments.json()
+            if item["user_id"] == user_id and item["package_code"] == plan_code
+        ]
+        assert len(matching) == 1
+        assert matching[0]["yookassa_payment_id"] == remote_payment_id
+
+
+@pytest.mark.asyncio
+async def test_payment_create_outside_replay_window_requires_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.db.models.billing import BillingPayment
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _tokens, headers = await _register_admin(client)
+        plan_code = f"expired-retry-{uuid4().hex[:10]}"
+        tariff = await client.post(
+            "/api/v1/admin/tariffs",
+            headers=headers,
+            json={
+                "code": plan_code,
+                "name": "Expired retry pack",
+                "credits": 4,
+                "amount": "70.00",
+                "currency": "RUB",
+                "is_active": True,
+                "sort_order": 0,
+            },
+        )
+        assert tariff.status_code == 201, tariff.text
+
+        local_payment_id: str | None = None
+
+        async def ambiguous_create(
+            self,
+            *,
+            amount,
+            currency,
+            description,
+            return_url,
+            metadata,
+            idempotence_key,
+            receipt=None,
+        ):  # noqa: ANN001, ARG001
+            nonlocal local_payment_id
+            local_payment_id = metadata["billing_payment_id"]
+            raise YooKassaError("provider response lost", ambiguous=True)
+
+        monkeypatch.setattr(YooKassaProvider, "create_payment", ambiguous_create)
+        first = await client.post(
+            "/api/v1/billing/payments",
+            headers=headers,
+            json={"package_code": plan_code},
+        )
+        assert first.status_code == 503, first.text
+        assert local_payment_id is not None
+
+        async with get_session_factory()() as session:
+            payment = await session.get(BillingPayment, UUID(local_payment_id))
+            assert payment is not None
+            payment.created_at = datetime.now(UTC) - timedelta(hours=24)
+            await session.commit()
+
+        provider_called = False
+
+        async def must_not_create(self, **kwargs):  # noqa: ANN001, ARG001
+            nonlocal provider_called
+            provider_called = True
+            raise AssertionError("expired uncertain payment must not be replayed")
+
+        monkeypatch.setattr(YooKassaProvider, "create_payment", must_not_create)
+        retry = await client.post(
+            "/api/v1/billing/payments",
+            headers=headers,
+            json={"package_code": plan_code},
+        )
+        assert retry.status_code == 503, retry.text
+        assert retry.json()["type"] == "payment_reconciliation_required"
+        assert provider_called is False
+
+        payments = await client.get("/api/v1/admin/payments", headers=headers)
+        assert payments.status_code == 200, payments.text
+        matching = [item for item in payments.json() if item["package_code"] == plan_code]
+        assert len(matching) == 1
 
 
 @pytest.mark.asyncio
@@ -541,3 +917,147 @@ async def test_new_user_receives_configured_starter_credits_with_ledger() -> Non
             json={"starter_credits": 0},
         )
         assert reset.status_code == 200, reset.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('recovery', ['webhook', 'admin'])
+async def test_uncertain_payment_verified_recovery_is_idempotent(monkeypatch, recovery):
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+    from app.db.models.billing import BillingPayment
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+        tokens, headers = await _register_admin(client)
+        code = f'recover-{uuid4().hex[:10]}'
+        tariff = await client.post('/api/v1/admin/tariffs', headers=headers, json={
+            'code': code, 'name': 'Recovery pack', 'credits': 7, 'amount': '100.00',
+            'currency': 'RUB', 'is_active': True, 'sort_order': 0,
+        })
+        assert tariff.status_code == 201
+        metadata = {}
+
+        async def lost_response(self, **kwargs):
+            metadata.update(kwargs['metadata'])
+            raise YooKassaError('response lost', ambiguous=True)
+
+        monkeypatch.setattr(YooKassaProvider, 'create_payment', lost_response)
+        response = await client.post('/api/v1/billing/payments', headers=headers, json={'package_code': code})
+        assert response.status_code == 503
+        local_id = metadata['billing_payment_id']
+        provider_id = f'payment-{uuid4()}'
+        async with get_session_factory()() as session:
+            payment = await session.get(BillingPayment, UUID(local_id))
+            payment.created_at = datetime.now(UTC) - timedelta(days=2)
+            await session.commit()
+
+        async def verify(self, payment_id):
+            assert payment_id == provider_id
+            return YooKassaPayment(id=provider_id, status='succeeded', amount=Decimal('100.00'), currency='RUB', metadata=dict(metadata))
+
+        monkeypatch.setattr(YooKassaProvider, 'get_payment', verify)
+        path = f'/api/v1/admin/payments/{local_id}/reconcile'
+        if recovery == 'admin':
+            missing = await client.post(path, headers=headers)
+            assert missing.status_code == 409, missing.text
+            _, regular_headers = await _register_user(client)
+            forbidden = await client.post(path, headers=regular_headers, json={'provider_payment_id': provider_id})
+            assert forbidden.status_code == 403
+            responses = await asyncio.gather(*[
+                client.post(path, headers=headers, json={'provider_payment_id': provider_id}) for _ in range(2)
+            ])
+        else:
+            responses = await asyncio.gather(*[
+                client.post('/api/v1/billing/webhooks/yookassa', json={
+                    'event': 'payment.succeeded', 'object': {'id': provider_id, 'metadata': dict(metadata)},
+                }) for _ in range(2)
+            ])
+        assert all(r.status_code == 200 for r in responses), [r.text for r in responses]
+        assert (await client.get('/api/v1/me', headers=headers)).json()['credits_balance'] == 7
+        ledger = await client.get('/api/v1/admin/credit-transactions', headers=headers, params={'user_id': tokens['user']['id']})
+        assert len([row for row in ledger.json() if row['kind'] == 'payment_credit']) == 1
+        async def stale(self, payment_id):
+            return YooKassaPayment(id=provider_id, status='pending', amount=Decimal('100.00'), currency='RUB', metadata=dict(metadata))
+        monkeypatch.setattr(YooKassaProvider, 'get_payment', stale)
+        stale_result = await client.post(path, headers=headers)
+        assert stale_result.status_code == 200
+        assert stale_result.json()['status'] == 'succeeded'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('field', ['billing_payment_id', 'user_id', 'package_code', 'amount', 'currency'])
+async def test_admin_recovery_rejects_provider_mismatch(monkeypatch, field):
+    from app.db.models.billing import BillingPayment
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+        tokens, headers = await _register_admin(client)
+        local_id = uuid4()
+        async with get_session_factory()() as session:
+            session.add(BillingPayment(id=local_id, user_id=UUID(tokens['user']['id']), package_code='recovery', credits=3,
+                amount_value=Decimal('100.00'), currency='RUB', status='uncertain', idempotence_key=str(uuid4())))
+            await session.commit()
+        metadata = {'billing_payment_id': str(local_id), 'user_id': tokens['user']['id'], 'package_code': 'recovery'}
+        if field in metadata:
+            metadata[field] = str(uuid4())
+        async def verify(self, payment_id):
+            return YooKassaPayment(id=payment_id, status='succeeded', metadata=metadata,
+                amount=Decimal('99.00' if field == 'amount' else '100.00'), currency='USD' if field == 'currency' else 'RUB')
+        monkeypatch.setattr(YooKassaProvider, 'get_payment', verify)
+        result = await client.post(f'/api/v1/admin/payments/{local_id}/reconcile', headers=headers, json={'provider_payment_id': str(uuid4())})
+        assert result.status_code in {409, 502}, result.text
+        async with get_session_factory()() as session:
+            row = await session.get(BillingPayment, local_id)
+            assert row.status == 'uncertain'
+            assert row.yookassa_payment_id is None
+        assert (await client.get('/api/v1/me', headers=headers)).json()['credits_balance'] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('create_result', ['lost_response', 'stale_pending'])
+async def test_webhook_wins_over_late_create_result(monkeypatch, create_result):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+        _, headers = await _register_admin(client)
+        code = f'race-{uuid4().hex[:10]}'
+        result = await client.post('/api/v1/admin/tariffs', headers=headers, json={
+            'code': code, 'name': 'Concurrent payment', 'credits': 2, 'amount': '50.00', 'currency': 'RUB', 'is_active': True,
+        })
+        assert result.status_code == 201
+        remote_id = str(uuid4())
+        metadata = {}
+
+        async def verified(self, payment_id):
+            return YooKassaPayment(id=remote_id, status='succeeded', amount=Decimal('50.00'), currency='RUB', metadata=metadata)
+
+        async def create(self, **kwargs):
+            metadata.update(kwargs['metadata'])
+            webhook = await client.post('/api/v1/billing/webhooks/yookassa', json={
+                'event': 'payment.succeeded', 'object': {'id': remote_id, 'metadata': metadata},
+            })
+            assert webhook.status_code == 200, webhook.text
+            if create_result == 'lost_response':
+                raise YooKassaError('lost response after webhook', ambiguous=True)
+            return YooKassaPayment(id=remote_id, status='pending', amount=Decimal('50.00'), currency='RUB', metadata=metadata)
+
+        monkeypatch.setattr(YooKassaProvider, 'get_payment', verified)
+        monkeypatch.setattr(YooKassaProvider, 'create_payment', create)
+        payment = await client.post('/api/v1/billing/payments', headers=headers, json={'package_code': code})
+        assert payment.status_code == 201, payment.text
+        assert payment.json()['status'] == 'succeeded'
+        assert (await client.get('/api/v1/me', headers=headers)).json()['credits_balance'] == 2
+
+
+@pytest.mark.asyncio
+async def test_credit_lock_refreshes_previously_authenticated_user():
+    from app.services.credit_service import CreditService
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+        tokens, _ = await _register_user(client)
+    user_id = UUID(tokens['user']['id'])
+    async with get_session_factory()() as first:
+        cached_user = await first.get(User, user_id)
+        assert cached_user.credits_balance == 0
+        async with get_session_factory()() as second:
+            await CreditService(second).apply(user_id=user_id, amount=7, kind='admin_adjustment', idempotency_key=str(uuid4()))
+            await second.commit()
+        movement = await CreditService(first).apply(user_id=user_id, amount=-3, kind='generation_reserve', idempotency_key=str(uuid4()))
+        assert movement.balance_after == 4
+        await first.commit()
+    async with get_session_factory()() as check:
+        assert (await check.get(User, user_id)).credits_balance == 4

@@ -35,6 +35,7 @@ class QuestionnaireQuestion(BaseModel):
     skip_condition: dict[str, Any] | None = None
     help: str | None = None
     field_hint: str | None = None
+    placeholder: str | None = None
     max_selections: int | None = None
     min_value: float | None = None
     max_value: float | None = None
@@ -89,6 +90,20 @@ class QuestionnaireCatalogAdminResponse(QuestionnaireCatalogAdminUpdate):
 class QuestionnaireProjectStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     selected_objects: list[str] = Field(min_length=1, max_length=26)
+    plot_area_sotkas: int | None = Field(default=None, ge=4, le=15)
+
+
+class QuestionnaireObjectAddRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    object_key: str = Field(min_length=1, max_length=80)
+
+
+class QuestionnaireGenerationCostResponse(BaseModel):
+    generation_type: Literal["master_plan"] = "master_plan"
+    initial_credits: int = 0
+    credits: int | None = None
+    initial_offer_available: bool = True
+    is_available: bool
 
 
 class DesignSession(BaseModel):
@@ -96,13 +111,22 @@ class DesignSession(BaseModel):
     session_id: UUID = Field(default_factory=uuid4)
     catalog_version: str
     selected_objects: list[str] = Field(default_factory=list, max_length=26)
+    plot_area_sotkas: int | None = Field(default=None, ge=4, le=15)
+    site_plan: dict[str, Any] | None = None
+    initial_concept_mode: bool = False
+    survey_completed_objects: list[str] = Field(default_factory=list)
+    initial_generation_id: UUID | None = None
+    initial_concept_accepted: bool = False
     current_object: str | None = None
     current_question_id: str | None = None
     source_step_completed: bool = False
     source_asset_id: UUID | None = None
     scene_asset_id: UUID | None = None
+    scene_generation_id: UUID | None = None
     answers: dict[str, dict[str, QuestionAnswer]] = Field(default_factory=dict)
     accepted_objects: list[str] = Field(default_factory=list)
+    removed_objects: list[str] = Field(default_factory=list)
+    pending_removal_object: str | None = None
     generation_ids: dict[str, UUID] = Field(default_factory=dict)
     edit_question_ids: list[str] = Field(default_factory=list)
     review_comments: dict[str, str] = Field(default_factory=dict)
@@ -118,22 +142,61 @@ class DesignSession(BaseModel):
             raise ValueError("Region mode and region object must be set together.")
         if self.region_object is not None and self.region_object not in self.selected_objects:
             raise ValueError("Region object must belong to the selected questionnaire objects.")
+        if len(self.survey_completed_objects) != len(set(self.survey_completed_objects)):
+            raise ValueError("Completed questionnaire objects must be unique.")
+        if any(key not in self.selected_objects for key in self.survey_completed_objects):
+            raise ValueError("Completed questionnaire objects must be selected.")
+        if self.initial_concept_accepted and not self.initial_generation_id:
+            raise ValueError("Accepted initial concept must reference its generation.")
+        if len(self.removed_objects) != len(set(self.removed_objects)):
+            raise ValueError("Removed questionnaire objects must be unique.")
+        if any(key not in self.selected_objects for key in self.removed_objects):
+            raise ValueError("Removed questionnaire objects must be selected.")
+        if set(self.removed_objects) & set(self.accepted_objects):
+            raise ValueError("A questionnaire object cannot be accepted and removed at once.")
+        if (
+            self.pending_removal_object is not None
+            and self.pending_removal_object not in self.accepted_objects
+        ):
+            raise ValueError("Pending removal object must currently be accepted.")
         return self
 
     @model_validator(mode="after")
     def require_accepted_house_for_inherited_style(self) -> DesignSession:
-        if "eskez-doma" in self.accepted_objects:
+        house_reference_available = "eskez-doma" in self.accepted_objects or (
+            self.initial_concept_mode
+            and not self.initial_concept_accepted
+            and "eskez-doma" in self.selected_objects
+        )
+        if house_reference_available:
             return self
         for object_key in HOUSE_STYLE_INHERITANCE_OBJECTS:
-            if self.answers.get(object_key, {}).get("1") == "Как у дома":
+            if (
+                self.answers.get(object_key, {}).get("1") == "Как у дома"
+                and object_key not in self.accepted_objects
+                and object_key not in self.removed_objects
+            ):
                 raise ValueError(
-                    "Вариант «Как у дома» доступен только после принятия основного дома."
+                    "Вариант «Как у дома» доступен только при наличии основного дома."
                 )
         return self
 
 
 class DesignSessionResponse(BaseModel):
     session: DesignSession | None = None
+
+
+class QuestionnaireBriefAnswer(BaseModel):
+    question_id: str
+    question: str
+    answer: QuestionAnswer
+
+
+class QuestionnaireBriefObject(BaseModel):
+    key: str
+    title: str
+    accepted: bool
+    answers: list[QuestionnaireBriefAnswer] = Field(default_factory=list)
 
 
 class QuestionnaireApplicationResponse(BaseModel):
@@ -151,6 +214,14 @@ class QuestionnaireApplicationResponse(BaseModel):
     telegram_delivery_status: str
     telegram_notified_at: datetime | None
     created_at: datetime
+    project_name: str | None = None
+    user_name: str | None = None
+    scene_asset_url: str | None = None
+    final_generation_id: UUID | None = None
+    application_contact: str | None = None
+    user_email: str | None = None
+    telegram_user_id: str | None = None
+    brief: list[QuestionnaireBriefObject] = Field(default_factory=list)
 
 
 class QuestionnaireApplicationSubmitResponse(BaseModel):

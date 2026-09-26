@@ -1,5 +1,6 @@
-import type { NormalizedRect } from './questionnaireTypes'
+import type { AdminQuestionnaireCatalog, NormalizedRect, QuestionnaireApplication, QuestionnaireCatalog, QuestionnaireSourceText } from './questionnaireTypes'
 import type {
+  AdminAiHistoryItem,
   AdminAudit,
   AdminBillingSettings,
   AdminBroadcast,
@@ -23,7 +24,7 @@ import type {
   GenerationMode,
   Idea,
   Project,
-  ProjectContext,
+  ProjectContextWrite,
   ProjectList,
   TokenPair,
   User,
@@ -35,10 +36,14 @@ const ACCESS_KEY = 'auroom.access_token'
 const REFRESH_KEY = 'auroom.refresh_token'
 const LEGACY_ACCESS_KEY = 'archiai.access_token'
 const LEGACY_REFRESH_KEY = 'archiai.refresh_token'
+const configuredTimeout = Number(import.meta.env.VITE_API_TIMEOUT_MS || 20_000)
+const API_TIMEOUT_MS = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 20_000
 
 function migrateLegacyTokens() {
-  if (!localStorage.getItem(ACCESS_KEY) && localStorage.getItem(LEGACY_ACCESS_KEY)) localStorage.setItem(ACCESS_KEY, localStorage.getItem(LEGACY_ACCESS_KEY) || '')
+  const previousAccess = localStorage.getItem(ACCESS_KEY) || localStorage.getItem(LEGACY_ACCESS_KEY)
+  if (!sessionStorage.getItem(ACCESS_KEY) && previousAccess) sessionStorage.setItem(ACCESS_KEY, previousAccess)
   if (!localStorage.getItem(REFRESH_KEY) && localStorage.getItem(LEGACY_REFRESH_KEY)) localStorage.setItem(REFRESH_KEY, localStorage.getItem(LEGACY_REFRESH_KEY) || '')
+  localStorage.removeItem(ACCESS_KEY)
   localStorage.removeItem(LEGACY_ACCESS_KEY)
   localStorage.removeItem(LEGACY_REFRESH_KEY)
 }
@@ -54,9 +59,23 @@ export class ApiError extends Error {
 }
 
 type RequestOptions = RequestInit & { auth?: boolean; retryAuth?: boolean }
-function saveTokens(pair: TokenPair) { localStorage.setItem(ACCESS_KEY, pair.access_token); localStorage.setItem(REFRESH_KEY, pair.refresh_token) }
-export function clearTokens() { localStorage.removeItem(ACCESS_KEY); localStorage.removeItem(REFRESH_KEY); localStorage.removeItem(LEGACY_ACCESS_KEY); localStorage.removeItem(LEGACY_REFRESH_KEY) }
-export function hasStoredSession() { return Boolean(localStorage.getItem(ACCESS_KEY) || localStorage.getItem(REFRESH_KEY)) }
+function saveTokens(pair: TokenPair) {
+  sessionStorage.setItem(ACCESS_KEY, pair.access_token)
+  // New browser sessions keep refresh credentials only in the HttpOnly cookie.
+  // Keep the localStorage key solely as a one-time migration source for old clients.
+  localStorage.removeItem(ACCESS_KEY)
+  localStorage.removeItem(REFRESH_KEY)
+}
+let sessionVersion = 0
+export function clearTokens() {
+  sessionVersion += 1
+  sessionStorage.removeItem(ACCESS_KEY)
+  localStorage.removeItem(ACCESS_KEY)
+  localStorage.removeItem(REFRESH_KEY)
+  localStorage.removeItem(LEGACY_ACCESS_KEY)
+  localStorage.removeItem(LEGACY_REFRESH_KEY)
+}
+export function hasStoredSession() { return Boolean(sessionStorage.getItem(ACCESS_KEY) || localStorage.getItem(REFRESH_KEY)) }
 
 async function parseError(response: Response): Promise<ApiError> {
   let body: Record<string, unknown> = {}
@@ -68,30 +87,129 @@ async function parseError(response: Response): Promise<ApiError> {
   if (response.status === 401 && tokenError) {
     return new ApiError(response.status, 'Сессия истекла. Откройте приложение заново.', detail, errorType)
   }
-  return new ApiError(response.status, detail || title, detail, errorType)
+  const message = response.status === 401
+    ? 'Не удалось подтвердить вход. Проверьте данные или откройте приложение заново.'
+    : response.status === 403
+      ? 'Недостаточно прав для этого действия.'
+      : response.status === 404
+        ? 'Запрошенные данные не найдены или больше недоступны.'
+        : response.status === 408
+          ? 'Сервер отвечает слишком долго. Повторите попытку.'
+          : response.status === 409
+            ? 'Действие нельзя выполнить в текущем состоянии. Обновите данные и попробуйте снова.'
+            : response.status === 413
+              ? 'Файл слишком большой. Выберите файл меньшего размера.'
+              : response.status === 422
+                ? 'Проверьте введённые данные и попробуйте снова.'
+                : response.status === 429
+                  ? 'Слишком много запросов. Подождите немного и повторите попытку.'
+                  : response.status >= 500
+                    ? 'Сервис временно недоступен. Повторите попытку.'
+                    : 'Не удалось выполнить запрос. Повторите попытку.'
+  return new ApiError(response.status, message, detail || title, errorType)
 }
 
-let refreshPromise: Promise<TokenPair> | null = null
-async function refreshSession(): Promise<TokenPair> {
-  const token = localStorage.getItem(REFRESH_KEY)
-  if (!token) throw new ApiError(401, 'Сессия закончилась')
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}) {
+  const controller = new AbortController()
+  let timedOut = false
+  const abortFromCaller = () => controller.abort(init.signal?.reason)
+  if (init.signal?.aborted) abortFromCaller()
+  else init.signal?.addEventListener('abort', abortFromCaller, { once: true })
+  const timeout = window.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, API_TIMEOUT_MS)
+  try {
+    return await fetch(input, { ...init, signal: controller.signal })
+  } catch (error) {
+    if (timedOut) throw new ApiError(408, 'Сервер отвечает слишком долго. Повторите попытку.')
+    if (init.signal?.aborted) throw error
+    throw new ApiError(0, 'Не удалось связаться с сервером. Проверьте соединение и повторите попытку.')
+  } finally {
+    window.clearTimeout(timeout)
+    init.signal?.removeEventListener('abort', abortFromCaller)
+  }
+}
+
+let refreshPromise: Promise<void> | null = null
+
+type BrowserLockManager = {
+  request<T>(name: string, callback: () => Promise<T>): Promise<T>
+}
+
+let authQueue: Promise<unknown> = Promise.resolve()
+async function serializeAuth<T>(action: () => Promise<T>): Promise<T> {
+  const queued = authQueue.catch(() => {}).then(async () => {
+    const locks = (navigator as Navigator & { locks?: BrowserLockManager }).locks
+    return locks ? locks.request('auroom-auth-refresh', action) : action()
+  })
+  authQueue = queued.catch(() => {})
+  return queued
+}
+function requireCurrentSession(version: number) {
+  if (version !== sessionVersion) throw new ApiError(401, 'Сессия завершена. Войдите снова.')
+}
+
+async function refreshSession(): Promise<void> {
   if (!refreshPromise) {
-    refreshPromise = fetch(`${API_BASE}/auth/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: token }) })
-      .then(async (response) => { if (!response.ok) throw await parseError(response); const pair = (await response.json()) as TokenPair; saveTokens(pair); return pair })
-      .finally(() => { refreshPromise = null })
+    const version = sessionVersion
+    refreshPromise = serializeAuth(async () => {
+        requireCurrentSession(version)
+        if (sessionStorage.getItem('auroom.explicit_logout') === '1') throw new ApiError(401, 'Вы вышли из аккаунта.')
+        const legacyToken = localStorage.getItem(REFRESH_KEY)
+        const options: RequestInit = {
+          method: 'POST',
+          credentials: 'same-origin',
+        }
+        if (legacyToken) {
+          options.headers = { 'Content-Type': 'application/json' }
+          options.body = JSON.stringify({ refresh_token: legacyToken })
+        }
+        const response = await fetchWithTimeout(`${API_BASE}/auth/refresh`, options)
+        if (!response.ok) throw await parseError(response)
+        const pair = (await response.json()) as TokenPair
+        requireCurrentSession(version)
+        saveTokens(pair)
+    }).finally(() => { refreshPromise = null })
   }
   return refreshPromise
 }
 
+async function clearBrowserRefreshCookie(): Promise<void> {
+  try {
+    await serializeAuth(() => fetchWithTimeout(`${API_BASE}/auth/logout`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    }))
+  } catch { /* best-effort cookie cleanup */ }
+}
+
+export async function restoreSession(): Promise<User | null> {
+  const version = sessionVersion
+  try {
+    await refreshSession()
+    return await getMe()
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401 && version === sessionVersion) {
+      clearTokens()
+      await clearBrowserRefreshCookie()
+      return null
+    }
+    throw error
+  }
+}
+
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const version = sessionVersion
   const { auth = true, retryAuth = true, headers, ...rest } = options
   const finalHeaders = new Headers(headers)
-  const accessToken = localStorage.getItem(ACCESS_KEY)
+  const accessToken = sessionStorage.getItem(ACCESS_KEY)
   if (auth && accessToken) finalHeaders.set('Authorization', `Bearer ${accessToken}`)
-  const response = await fetch(`${API_BASE}${path}`, { ...rest, headers: finalHeaders })
-  if (response.status === 401 && auth && retryAuth && localStorage.getItem(REFRESH_KEY)) {
+  const response = await fetchWithTimeout(`${API_BASE}${path}`, { credentials: 'same-origin', ...rest, headers: finalHeaders })
+  if (auth) requireCurrentSession(version)
+  if (response.status === 401 && auth && retryAuth) {
     try { await refreshSession(); return request<T>(path, { ...options, retryAuth: false }) }
-    catch (error) { clearTokens(); throw error }
+    catch (error) { if (version === sessionVersion) clearTokens(); throw error }
   }
   if (!response.ok) throw await parseError(response)
   if (response.status === 204) return undefined as T
@@ -99,26 +217,41 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 }
 
 export async function login(email: string, password: string): Promise<TokenPair> {
+  const version = sessionVersion
+  return serializeAuth(async () => {
+  requireCurrentSession(version)
   const pair = await request<TokenPair>('/auth/login', { method: 'POST', auth: false, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) })
+  requireCurrentSession(version)
   saveTokens(pair); return pair
+  })
 }
 export async function loginTelegram(initData: string): Promise<TokenPair> {
+  const version = sessionVersion
+  return serializeAuth(async () => {
+  requireCurrentSession(version)
   const pair = await request<TokenPair>('/auth/telegram', { method: 'POST', auth: false, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ init_data: initData }) })
+  requireCurrentSession(version)
   saveTokens(pair); return pair
+  })
 }
 export function getMe() { return request<User>('/me') }
 export async function logout() {
-  const refreshToken = localStorage.getItem(REFRESH_KEY)
-  try { if (refreshToken) await request('/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: refreshToken }) }) }
-  finally { clearTokens() }
+  const legacyRefreshToken = localStorage.getItem(REFRESH_KEY)
+  const options: RequestOptions = { method: 'POST', auth: false, retryAuth: false }
+  if (legacyRefreshToken) {
+    options.headers = { 'Content-Type': 'application/json' }
+    options.body = JSON.stringify({ refresh_token: legacyRefreshToken })
+  }
+  clearTokens()
+  await serializeAuth(() => request('/auth/logout', options))
 }
 
-export function listProjects(cursor?: string | null, limit = 20) {
-  const params = new URLSearchParams({ limit: String(limit) }); if (cursor) params.set('cursor', cursor); return request<ProjectList>(`/projects?${params}`)
+export function listProjects(cursor?: string | null, limit = 20, sort?: 'created' | 'updated') {
+  const params = new URLSearchParams({ limit: String(limit) }); if (cursor) params.set('cursor', cursor); if (sort) params.set('sort', sort); return request<ProjectList>(`/projects?${params}`)
 }
 export function getProject(projectId: string) { return request<Project>(`/projects/${projectId}`) }
-export function createProject(payload: { name: string; description?: string; context?: ProjectContext }) { return request<Project>('/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
-export function updateProject(projectId: string, payload: Partial<{ name: string; description: string | null; status: string; context: ProjectContext }>) { return request<Project>(`/projects/${projectId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
+export function createProject(payload: { name: string; description?: string; context?: ProjectContextWrite }) { return request<Project>('/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
+export function updateProject(projectId: string, payload: Partial<{ name: string; description: string | null; status: string; context: ProjectContextWrite }>) { return request<Project>(`/projects/${projectId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
 export function deleteProject(projectId: string) { return request<void>(`/projects/${projectId}`, { method: 'DELETE' }) }
 
 export async function uploadAsset(projectId: string | null, file: File, purpose: 'generation_input' | 'project_reference' = 'generation_input') {
@@ -137,10 +270,16 @@ export function listGenerations(projectId?: string, limit = 50, cursor?: string 
   const params = new URLSearchParams({ limit: String(limit) }); if (projectId) params.set('project_id', projectId); if (cursor) params.set('cursor', cursor)
   return request<GenerationList>(`/generations?${params}`)
 }
-export function listIdeas(limit = 50) { return request<Idea[]>(`/ideas?limit=${limit}`) }
+export function listIdeas(limit = 50, offset = 0) {
+  const params = new URLSearchParams({ limit:String(limit), offset:String(offset) })
+  return request<Idea[]>(`/ideas?${params}`)
+}
+export function getIdea(ideaId: string) { return request<Idea>(`/ideas/${ideaId}`) }
 export function publishIdea(generationId: string) { return request<AdminIdea>('/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generation_id: generationId }) }) }
 export function getOwnIdeaPublication(generationId: string) { return request<AdminIdea | null>(`/ideas/mine/${generationId}`) }
 export function unpublishIdea(generationId: string) { return request<AdminIdea>(`/ideas/mine/${generationId}`, { method: 'DELETE' }) }
+export function saveIdea(ideaId: string) { return request<{ idea_id:string; is_saved:boolean }>(`/ideas/${ideaId}/save`, { method: 'PUT' }) }
+export function unsaveIdea(ideaId: string) { return request<{ idea_id:string; is_saved:boolean }>(`/ideas/${ideaId}/save`, { method: 'DELETE' }) }
 export function startProjectFromIdea(ideaId: string) { return request<Project>(`/ideas/${ideaId}/project`, { method: 'POST' }) }
 
 export function getBillingSummary() { return request<BillingSummary>('/billing') }
@@ -161,6 +300,13 @@ export function adminArchiveTariff(id: string) { return request<AdminTariff>(`/a
 export function adminGetBillingSettings() { return request<AdminBillingSettings>('/admin/billing-settings') }
 export function adminUpdateBillingSettings(payload: Omit<AdminBillingSettings, 'updated_at'>) { return request<AdminBillingSettings>('/admin/billing-settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
 
+export function adminGetQuestionnaireCatalog() { return request<AdminQuestionnaireCatalog>('/admin/questionnaires') }
+export function adminUpdateQuestionnaireCatalog(payload: { catalog: QuestionnaireCatalog; source_texts: Record<string, QuestionnaireSourceText> }) {
+  return request<AdminQuestionnaireCatalog>('/admin/questionnaires', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+}
+export function adminListQuestionnaireApplications() { return request<QuestionnaireApplication[]>('/admin/questionnaire-applications') }
+export function adminRetryQuestionnaireApplicationTelegram(applicationId: string) { return request<void>(`/admin/questionnaire-applications/${applicationId}/telegram-retry`, { method: 'POST' }) }
+
 export function adminListIdeas() { return request<AdminIdea[]>('/admin/ideas') }
 export function adminUpdateIdea(id: string, payload: Partial<{ is_active: boolean; sort_order: number }>) {
   return request<AdminIdea>(`/admin/ideas/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -168,8 +314,37 @@ export function adminUpdateIdea(id: string, payload: Partial<{ is_active: boolea
 export function adminArchiveIdea(id: string) { return request<AdminIdea>(`/admin/ideas/${id}`, { method: 'DELETE' }) }
 
 export function adminGetGenerationSettings() { return request<AdminGenerationSettings>('/admin/generation') }
-export function adminUpdateGenerationSettings(payload: { primary_model: string; fallback_model: string | null; primary_params: Record<string, unknown>; fallback_params: Record<string, unknown>; mode_params: Record<string, Record<string, unknown>> }) {
+export function adminUpdateGenerationSettings(payload: {
+  primary_model: string
+  fallback_model: string | null
+  primary_timeout_seconds: number
+  primary_params: Record<string, unknown>
+  fallback_params: Record<string, unknown>
+  mode_params: Record<string, Record<string, unknown>>
+  masked_edit_provider_context_margin_fraction: number
+  masked_edit_feather_fraction: number
+  masked_edit_feather_min_px: number
+  masked_edit_feather_max_px: number
+  masked_edit_recomposite_feather_multiplier: number
+  masked_edit_boundary_band_px: number
+  masked_edit_max_luma_excess: number
+  masked_edit_max_color_excess: number
+  masked_edit_max_straight_edge_fraction: number
+  generation_quality_max_retries: number
+}) {
   return request<AdminGenerationSettings>('/admin/generation', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+}
+export function adminListGenerationSandboxHistory(limit = 30) {
+  return request<AdminAiHistoryItem[]>(`/admin/generation/sandbox/history?limit=${limit}`)
+}
+export function adminCreateGenerationSandbox(payload: { model_name: string; prompt: string; params: Record<string, unknown> }) {
+  return request<Generation>('/admin/generation/sandbox', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+}
+export function adminCreateGenerationFlyoverGif(payload: { source_generation_id: string; model_name: string; prompt: string; params: Record<string, unknown>; keyframe_count: number; inbetween_frames: number; frame_duration_ms: number }) {
+  return request<Generation>('/admin/generation/flyover-gif', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+}
+export function adminCreateGenerationOrbit(payload: { source_generation_id: string; model_name: string; prompt: string; params: Record<string, unknown>; frame_count: number; frame_duration_ms: number }) {
+  return request<Generation>('/admin/generation/orbit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 }
 export function adminListGenerationPrices() { return request<AdminGenerationPrice[]>('/admin/generation-prices') }
 export function adminUpdateGenerationPrice(mode: GenerationMode, credits: number, isActive: boolean) { return request<AdminGenerationPrice>(`/admin/generation-prices/${mode}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credits, is_active: isActive }) }) }
@@ -182,7 +357,7 @@ export function adminListCreditTransactions(userId?: string) { const params = ne
 export function adminUpdateUser(userId: string, payload: { status?: 'active' | 'disabled'; role?: UserRole }) { return request<AdminUser>(`/admin/users/${userId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }) }
 
 export function adminListPayments() { return request<AdminPayment[]>('/admin/payments') }
-export function adminReconcilePayment(paymentId: string) { return request<AdminPayment>(`/admin/payments/${paymentId}/reconcile`, { method: 'POST' }) }
+export function adminReconcilePayment(paymentId: string, providerPaymentId?: string) { return request<AdminPayment>(`/admin/payments/${paymentId}/reconcile`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: providerPaymentId ? JSON.stringify({ provider_payment_id: providerPaymentId }) : undefined }) }
 export function adminRefundPayment(paymentId: string) { return request<AdminPayment>(`/admin/payments/${paymentId}/refund`, { method: 'POST' }) }
 
 export function adminListBroadcasts() { return request<AdminBroadcast[]>('/admin/broadcasts') }

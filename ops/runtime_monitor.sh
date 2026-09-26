@@ -58,7 +58,7 @@ else
   fail "could not determine disk usage"
 fi
 
-latest_backup=$(find "${app_dir}/backups/runtime" -mindepth 2 -maxdepth 2 -type f -name SHA256SUMS -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)
+latest_backup=$(find "${app_dir}/backups/runtime" -mindepth 2 -maxdepth 2 -type f -name SHA256SUMS ! -path "${app_dir}/backups/runtime/.partial-*/*" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)
 if [[ -z "${latest_backup}" ]]; then
   fail "no runtime backup checksum found"
 else
@@ -68,6 +68,41 @@ else
   metrics+=("backup_age=${backup_age_hours}h")
   if (( backup_age_hours >= backup_fail_hours )); then fail "runtime backup age ${backup_age_hours}h >= ${backup_fail_hours}h";
   elif (( backup_age_hours >= backup_warn_hours )); then warn "runtime backup age ${backup_age_hours}h >= ${backup_warn_hours}h"; fi
+fi
+
+backup_env=${AUROOM_BACKUP_ENV_FILE:-${app_dir}/.backup.env}
+offsite_configured=0
+if [[ -f "${backup_env}" ]]; then
+  offsite_configured=$(python3 - "${backup_env}" <<'PY'
+import sys
+from pathlib import Path
+
+values = {}
+for raw in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    line = raw.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    key, value = line.split("=", 1)
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    values[key.strip()] = value
+print(1 if (values.get("AUROOM_OFFSITE_BACKUP_REMOTE") or values.get("AUROOM_BACKUP_TRANSPORT") == "telegram") and values.get("AUROOM_BACKUP_AGE_RECIPIENT") else 0)
+PY
+)
+fi
+if [[ "${offsite_configured}" == "1" ]]; then
+  latest_offsite=$(find "${app_dir}/backups/runtime" -mindepth 2 -maxdepth 2 -type f -name OFFSITE_OK -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)
+  if [[ -z "${latest_offsite}" ]]; then
+    fail "off-site backup is configured but no successful export marker exists"
+  else
+    offsite_epoch=$(stat -c %Y "${latest_offsite}")
+    now_epoch=${now_epoch:-$(date +%s)}
+    offsite_age_hours=$(( (now_epoch - offsite_epoch) / 3600 ))
+    metrics+=("offsite_backup_age=${offsite_age_hours}h")
+    if (( offsite_age_hours >= backup_fail_hours )); then fail "off-site backup age ${offsite_age_hours}h >= ${backup_fail_hours}h";
+    elif (( offsite_age_hours >= backup_warn_hours )); then warn "off-site backup age ${offsite_age_hours}h >= ${backup_warn_hours}h"; fi
+  fi
 fi
 
 expected_sha=$(awk -F= '$1 == "RELEASE_SHA" {print $2}' "${app_dir}/.release/current.env" 2>/dev/null || true)
@@ -112,9 +147,12 @@ for service in worker broadcast-worker maintenance frontend postgres redis; do
   [[ "${health}" == "healthy" ]] || fail "container health ${service}=${health:-missing}"
 done
 
-generation_queued=$(compose exec -T redis redis-cli --raw LLEN auroom:generation_queue 2>/dev/null | tr -d '\r' || echo unknown)
-generation_processing=$(compose exec -T redis redis-cli --raw LLEN auroom:generation_processing 2>/dev/null | tr -d '\r' || echo unknown)
-broadcast_queued=$(compose exec -T redis redis-cli --raw LLEN auroom:broadcast_queue 2>/dev/null | tr -d '\r' || echo unknown)
+redis_cli() {
+  compose exec -T redis sh -lc 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --raw "$@"' sh "$@"
+}
+generation_queued=$(redis_cli LLEN auroom:generation_queue 2>/dev/null | tr -d '\r' || echo unknown)
+generation_processing=$(redis_cli LLEN auroom:generation_processing 2>/dev/null | tr -d '\r' || echo unknown)
+broadcast_queued=$(redis_cli LLEN auroom:broadcast_queue 2>/dev/null | tr -d '\r' || echo unknown)
 metrics+=("generation_queue=${generation_queued}" "generation_processing=${generation_processing}" "broadcast_queue=${broadcast_queued}")
 
 stale_generations=$(compose exec -T postgres psql -U app -d app -Atc "select count(*) from generations where status='processing' and coalesce(started_at, created_at) < now() - interval '${generation_stale_minutes} minutes'" 2>/dev/null | tr -d '[:space:]' || echo unknown)

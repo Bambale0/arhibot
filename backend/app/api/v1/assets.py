@@ -1,14 +1,16 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile, status
 
+from app.api.client import request_identity
 from app.api.dependencies.auth import CurrentUser, DbSession
 from app.core.config import Settings, get_settings
 from app.domain.assets.enums import AssetUploadPurpose
 from app.schemas.assets import AssetResponse
 from app.schemas.errors import ProblemDetails
 from app.services.asset_service import build_asset_service
+from app.services.rate_limit_service import RateLimitService
 
 router = APIRouter(prefix="/assets", tags=["Assets"])
 
@@ -31,6 +33,7 @@ router = APIRouter(prefix="/assets", tags=["Assets"])
     },
 )
 async def upload_asset(
+    request: Request,
     user: CurrentUser,
     session: DbSession,
     file: Annotated[UploadFile, File(description="JPEG, PNG, or WebP image")],
@@ -38,6 +41,9 @@ async def upload_asset(
     project_id: Annotated[UUID | None, Form()] = None,
     settings: Settings = Depends(get_settings),
 ) -> AssetResponse:
+    limiter = RateLimitService(session)
+    await limiter.enforce_asset_upload(f"user:{user.id}")
+    await limiter.enforce_asset_upload(f"ip:{request_identity(request)}")
     data = await file.read(settings.max_image_size_bytes + 1)
     return await build_asset_service(session, settings).upload(
         user,

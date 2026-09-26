@@ -33,13 +33,15 @@ def test_ci_regenerates_and_audits_the_lock() -> None:
     assert './scripts/dependency_locks.sh CHECK' in ci
     assert '--no-header' in lock_script
     assert '--build-deps-for=wheel' in lock_script
-    assert 'cmp requirements.lock' in lock_script
-    assert 'cmp requirements-build.lock' in lock_script
+    assert 'diff -u requirements.lock' in lock_script
+    assert 'diff -u requirements-build.lock' in lock_script
     assert 'pip-audit -r requirements.lock --require-hashes' in ci
     assert 'pip-audit -r requirements-build.lock --require-hashes' in ci
+    assert ci.count('python -m pip install --require-hashes -r requirements.lock') >= 2
+    assert ci.count('python -m pip check') >= 2
 
 
 def test_lock_tool_version_is_pinned() -> None:
     pyproject = (REPO_ROOT / 'backend' / 'pyproject.toml').read_text()
     assert 'pip-tools==7.6.1' in pyproject
-    assert 'requires = ["hatchling==1.32.0"]' in pyproject
+    assert 'requires = ["hatchling==1.32.4"]' in pyproject

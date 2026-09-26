@@ -19,4 +19,5 @@ class AssetResponse(BaseModel):
     width: int
     height: int
     url: str
+    preview_url: str | None = None
     created_at: datetime

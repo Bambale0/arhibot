@@ -10,11 +10,12 @@ from app.core.redis import redis_client
 from app.db.models.generations import Generation
 from app.db.models.projects import Project
 from app.db.models.users import User
-from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.domain.generations.enums import GenerationOrigin, GenerationStatus, GenerationType
 from app.domain.users.enums import UserRole
 from app.repositories.assets import AssetRepository
 from app.repositories.credits import CreditRepository
 from app.repositories.generations import GenerationRepository
+from app.repositories.operations import OperationalSettingsRepository
 from app.repositories.projects import ProjectRepository
 from app.schemas.assets import AssetResponse
 from app.schemas.generations import GenerationCreate, GenerationListResponse, GenerationResponse
@@ -25,6 +26,13 @@ from app.services.rate_limit_service import RateLimitService
 GENERATION_QUEUE_KEY = "auroom:generation_queue"
 REFERENCE_REQUIRED_TYPES = {GenerationType.FACADE, GenerationType.INTERIOR}
 FREE_GENERATION_ROLES = {UserRole.ADMIN, UserRole.SUPERADMIN}
+RESERVED_INTERNAL_PROMPT_PREFIXES = (
+    "AUROOM_RENDER_SPEC_V1",
+    "AUROOM_INITIAL_CONCEPT_V1",
+    "AUROOM_ADMIN_SANDBOX_V1",
+    "AUROOM_ADMIN_ORBIT_V1",
+    "AUROOM_ADMIN_FLYOVER_GIF_V1",
+)
 
 
 class GenerationService:
@@ -35,6 +43,7 @@ class GenerationService:
         self.assets = AssetRepository(session)
         self.projects = ProjectRepository(session)
         self.credit_repository = CreditRepository(session)
+        self.operations = OperationalSettingsRepository(session)
         self.credit_service = CreditService(session)
         self.asset_service: AssetService = build_asset_service(session, settings)
 
@@ -44,8 +53,38 @@ class GenerationService:
         payload: GenerationCreate,
         *,
         before_commit: Callable[[Generation, Project], None] | None = None,
+        skip_pricing: bool = False,
+        credits_override: int | None = None,
+        origin: GenerationOrigin = GenerationOrigin.GENERIC,
     ) -> GenerationResponse:
         await RateLimitService(self.session).enforce("generation", str(user.id))
+        # Serialize generation admission for one account. This makes the inflight
+        # cap authoritative even when the client submits several requests in parallel.
+        await self.credit_repository.get_user_for_update(user.id)
+        operations = await self.operations.get()
+        max_inflight = (
+            operations.generation_max_inflight_per_user
+            if operations is not None
+            else 2
+        )
+        if await self.repository.count_inflight(user.id) >= max_inflight:
+            raise AppError(
+                type="generation_inflight_limit_exceeded",
+                title="Too many active generations",
+                status=429,
+                detail="Wait for an active generation to finish before starting another.",
+                meta={"max_inflight": max_inflight},
+            )
+        normalized_prompt = payload.prompt.strip()
+        if origin == GenerationOrigin.GENERIC and normalized_prompt.startswith(
+            RESERVED_INTERNAL_PROMPT_PREFIXES
+        ):
+            raise AppError(
+                type="reserved_generation_prompt",
+                title="Reserved generation prompt",
+                status=422,
+                detail="This prompt prefix is reserved for server-managed generation flows.",
+            )
         if not (self.settings.nexus_api_key or "").strip():
             raise AppError(
                 type="generation_provider_not_configured",
@@ -55,7 +94,7 @@ class GenerationService:
             )
 
         project = await self.projects.get_owned(
-            payload.project_id, user.id, for_update=before_commit is not None
+            payload.project_id, user.id, for_update=True
         )
         if not project:
             raise AppError(
@@ -83,16 +122,24 @@ class GenerationService:
                 detail="Facade and interior generation require a reference image.",
             )
 
-        price = await self.credit_repository.get_price(payload.type.value)
-        if price is None or not price.is_active:
-            raise AppError(
-                type="generation_price_not_configured",
-                title="Generation price not configured",
-                status=503,
-                detail="The credit price for this generation scenario is not configured.",
+        credits_charged = 0
+        if not skip_pricing:
+            configured_credits = credits_override
+            if configured_credits is None:
+                price = await self.credit_repository.get_price(payload.type.value)
+                if price is None or not price.is_active:
+                    raise AppError(
+                        type="generation_price_not_configured",
+                        title="Generation price not configured",
+                        status=503,
+                        detail="The credit price for this generation scenario is not configured.",
+                    )
+                configured_credits = price.credits
+            if configured_credits < 0:
+                raise ValueError("Generation credits override must not be negative.")
+            credits_charged = (
+                0 if user.role in FREE_GENERATION_ROLES else configured_credits
             )
-
-        credits_charged = 0 if user.role in FREE_GENERATION_ROLES else price.credits
 
         generation = Generation(
             id=uuid4(),
@@ -101,7 +148,8 @@ class GenerationService:
             input_asset_id=asset.id if asset else None,
             type=payload.type,
             status=GenerationStatus.QUEUED,
-            prompt=payload.prompt.strip(),
+            origin=origin.value,
+            prompt=normalized_prompt,
             credits_charged=credits_charged,
             composition_mode=payload.composition_mode,
             edit_region=(
@@ -110,6 +158,13 @@ class GenerationService:
             protected_regions=[
                 item.model_dump(mode="json") for item in payload.protected_regions
             ],
+            edit_policy=dict(getattr(payload, "edit_policy", {}) or {}),
+            quality_status=(
+                "pending"
+                if payload.composition_mode == "masked_edit"
+                and bool(getattr(payload, "edit_policy", {}))
+                else None
+            ),
         )
         self.repository.add(generation)
         try:
@@ -164,6 +219,13 @@ class GenerationService:
                 title="Generation not found",
                 status=404,
                 detail="The generation does not exist or is not available to this user.",
+            )
+        if source.origin != GenerationOrigin.GENERIC.value:
+            raise AppError(
+                type="generation_repeat_not_allowed",
+                title="Generation cannot be repeated here",
+                status=409,
+                detail="Server-managed generations must be repeated through their product workflow.",
             )
         return await self.create(
             user,
@@ -237,13 +299,20 @@ class GenerationService:
             output_asset=output_asset,
             type=generation.type,
             status=generation.status,
-            prompt=generation.prompt,
+            prompt=(
+                generation.prompt
+                if generation.origin == GenerationOrigin.GENERIC.value
+                else ""
+            ),
             credits_charged=generation.credits_charged,
             model_name=generation.model_name,
             fallback_used=generation.fallback_used,
             composition_mode=generation.composition_mode,
             edit_region=generation.edit_region,
             protected_regions=generation.protected_regions or [],
+            edit_policy=generation.edit_policy or {},
+            quality_report=generation.quality_report,
+            quality_status=generation.quality_status,
             error=generation.error,
             created_at=generation.created_at,
             updated_at=generation.updated_at,
