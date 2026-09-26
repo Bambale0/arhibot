@@ -189,6 +189,28 @@ test('Ideas retries its initial load and explains a broken final image', async (
   expect(attempts).toBe(2)
 })
 
+for (const brokenPreview of [false, true]) {
+  test(`Ideas keeps a slow successful ${brokenPreview ? 'fallback' : 'original'} image request alive`, async ({ page }) => {
+    await authenticate(page)
+    await page.route('**/api/v1/ideas?**', (route) => json(route, [{
+      id: 'slow-image', title: 'Медленное изображение', category: 'Дом', generation_type: 'master_plan',
+      image_url: '/slow/original.svg', preview_url: brokenPreview ? '/slow/broken.webp' : null, objects: [], selected_objects: ['house'],
+      published_at: now, is_saved: false,
+    }]))
+    await page.route('**/slow/broken.webp', (route) => route.abort('failed'))
+    await page.route('**/slow/original.svg', async (route) => {
+      // A valid mobile download can exceed the former 1.8-second cutoff.
+      await new Promise((resolve) => setTimeout(resolve, 2300))
+      await route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"></svg>' })
+    })
+    await page.goto('/?section=ideas', { waitUntil: 'domcontentloaded' })
+    const image = page.locator('.idea-work-stage img')
+    await expect(image).toHaveJSProperty('naturalWidth', 640)
+    await expect(page.locator('.idea-work-stage')).toHaveClass(/media-ready/)
+    await expect(page.getByText('Изображение временно недоступно')).toHaveCount(0)
+  })
+}
+
 test('Ideas confirms that a share link was copied', async ({ page }) => {
   await authenticate(page)
   await page.addInitScript(() => {
