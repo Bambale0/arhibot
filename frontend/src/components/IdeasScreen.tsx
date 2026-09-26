@@ -80,6 +80,7 @@ function WorkCard({
   const [previewFailed, setPreviewFailed] = useState(false)
   const [imageReady, setImageReady] = useState(false)
   const [imageFailed, setImageFailed] = useState(false)
+  const imageRef = useRef<HTMLImageElement>(null)
   const imageUrl = idea.preview_url
     ? (previewFailed ? (active ? idea.image_url : null) : idea.preview_url)
     : (active ? idea.image_url : null)
@@ -97,6 +98,28 @@ function WorkCard({
 
   const shouldRenderImage = Boolean(imageUrl) && shouldLoadImage && !imageFailed
   const shouldRenderUnavailable = !shouldRenderImage && imageFailed && hasMedia
+  const handleImageFailure = useCallback(() => {
+    setImageReady(false)
+    if (idea.preview_url && !previewFailed) {
+      setPreviewFailed(true)
+      return
+    }
+    setImageFailed(true)
+  }, [idea.preview_url, previewFailed])
+
+  useEffect(() => {
+    const image = imageRef.current
+    if (!shouldRenderImage || !image || typeof image.decode !== 'function') return
+    let current = true
+    // WebKit can settle an aborted image without delivering React's error event.
+    // Decode observes the real result without imposing a deadline on slow images.
+    void image.decode().then(
+      () => { if (current) setImageReady(true) },
+      () => { if (current) handleImageFailure() },
+    )
+    return () => { current = false }
+  }, [handleImageFailure, imageUrl, shouldRenderImage])
+
   return <article id={`idea-${idea.id}`} className="idea-feed-card idea-work-card" data-idea-id={idea.id}>
     <div className="idea-feed-copy">
       <div className="idea-feed-kicker"><span>Идеи AuRoom</span><b>{index + 1} / {total}</b></div>
@@ -108,6 +131,8 @@ function WorkCard({
       <button type="button" className="idea-work-open" aria-label="Открыть работу на весь экран" onClick={onOpen} />
       {shouldRenderImage ? (
         <img
+          key={imageUrl}
+          ref={imageRef}
           src={imageUrl ?? undefined}
           alt={idea.title}
           loading="eager"
@@ -115,15 +140,7 @@ function WorkCard({
           fetchPriority={active ? 'high' : 'low'}
           draggable={false}
           onLoad={() => setImageReady(true)}
-          onError={() => {
-            if (idea.preview_url && !previewFailed) {
-              setPreviewFailed(true)
-              setImageReady(false)
-              return
-            }
-            setImageReady(false)
-            setImageFailed(true)
-          }}
+          onError={handleImageFailure}
         />
       ) : shouldRenderUnavailable ? <div className="idea-work-empty">Изображение временно недоступно</div> : hasMedia ? <div className="idea-work-image-placeholder" aria-hidden="true" /> : <div className="idea-work-empty">Работа временно недоступна</div>}
       <div className="idea-work-actions">
