@@ -867,6 +867,23 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     if (saved) setRenderOutput(null)
   }
 
+  async function checkInitialGeneration() {
+    if (!initialGenerationId || busy || generationInFlight) return
+    setGenerationInFlight(true)
+    setBusy(true)
+    setError(null)
+    try {
+      const existing = await getQuestionnaireGeneration(project.id, initialGenerationId)
+      const completed = await poll(existing)
+      setRenderOutput(completed.output_asset)
+    } catch (err) {
+      setError(generationErrorMessage(err))
+    } finally {
+      setBusy(false)
+      setGenerationInFlight(false)
+    }
+  }
+
   async function acceptInitial() {
     setBusy(true)
     setError(null)
@@ -1270,6 +1287,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         {ready && !initialGenerationId && <><p className="region-hint">Одна общая генерация · {initialGenerationCostLabel()}</p><div className="questionnaire-actions"><button className="primary-button" disabled={busy || !plotAreaValid || generationCost?.is_available === false} onClick={() => void generateInitial(session)}>Создать общую концепцию</button></div></>}
         {initialGenerationId && renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void acceptInitial()}>Принять концепцию</button><button className="secondary-button" disabled={busy} onClick={() => void reopenInitialAnswers()}>Изменить ТЗ · новая генерация</button></div>}
         {(busy || generationInFlight) && initialGenerationId && !renderOutput && <div className="empty-inline">Создаём весь участок одной генерацией…</div>}
+        {initialGenerationId && !renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy || generationInFlight} onClick={() => void checkInitialGeneration()}>Проверить генерацию</button></div>}
         {error && <div className="banner-error">{error}</div>}
       </section></main>
     }
@@ -1283,6 +1301,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   if (session.region_mode === 'edit' && session.region_object) {
     const placementDefinition = definitions.get(session.region_object)
+    const addingObject = !session.accepted_objects.includes(session.region_object)
     const protectedRegions = session.accepted_objects
       .filter((key) => key !== session.region_object)
       .map((key) => ({ key, region:session.initial_concept_mode ? (session.lock_regions[key] ? session.edit_regions[key] : undefined) : session.lock_regions[key] }))
@@ -1292,7 +1311,11 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       <section className="questionnaire-card region-picker-card">
         <span className="eyebrow">{session.pending_removal_object === session.region_object ? 'УДАЛЕНИЕ ОБЪЕКТА' : 'ТОЧНОЕ МЕСТО НА СЦЕНЕ'}</span>
         <h1>{session.pending_removal_object === session.region_object ? `Что удалить: ${placementDefinition?.title || session.region_object}` : `Где разместить: ${placementDefinition?.title || session.region_object}?`}</h1>
-        <p>{session.pending_removal_object === session.region_object ? 'Точно обведите объект, который нужно убрать. Объект будет удалён внутри выделения. Всё за его пределами останется без изменений.' : 'Проведите пальцем или мышью по последнему принятому кадру и выделите прямоугольник, внутри которого можно менять или добавлять объект. Выделите область немного шире изменяемого объекта, оставив вокруг него часть исходного окружения. Всё за пределами выделения останется без изменений.'}</p>
+        <p>{session.pending_removal_object === session.region_object
+          ? 'Точно обведите объект, который нужно убрать. Объект будет удалён внутри выделения. Всё за его пределами останется без изменений.'
+          : addingObject
+            ? 'Проведите пальцем или мышью по последнему принятому кадру. Размер выделения задаёт примерный размер нового объекта. Выделите место для него целиком, включая крышу и трубу, если они предусмотрены, и оставьте небольшой запас окружения. Всё за пределами выделения останется без изменений.'
+            : 'Проведите пальцем или мышью по последнему принятому кадру и выделите прямоугольник, внутри которого можно менять или добавлять объект. Выделите область немного шире изменяемого объекта, оставив вокруг него часть исходного окружения. Всё за пределами выделения останется без изменений.'}</p>
         <p className="region-hint">Новая итерация · {generationCostLabel()}</p>
         {session.initial_concept_accepted && session.accepted_objects.includes(session.region_object) && session.pending_removal_object !== session.region_object && <div className="questionnaire-field"><label>Что изменить?<input value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="Например: сделать крышу тёмной, фасад светлее"/></label></div>}
         {sceneAsset ? <div

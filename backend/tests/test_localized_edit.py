@@ -137,8 +137,67 @@ def test_global_location_answer_does_not_push_added_object_against_local_edge():
     spec = json.loads(result.split("STRUCTURED_SPEC:\n")[1])
     assert spec["task"]["local_operation"] == "add"
     assert all(item["answer"] != "Справа от дома" for item in spec["questionnaire_constraints"])
-    assert spec["resolved_global_placement"]["answers"][0]["answer"] == "Справа от дома"
+    assert "Справа от дома" not in result
+    assert spec["resolved_global_placement"]["resolved_by_selected_region"] is True
     assert "CENTER" in spec["visual_acceptance_contract"]["mask_directive"]
+
+
+@pytest.mark.parametrize("garage_location", ["В доме", "Не в доме"])
+def test_local_house_prompt_retains_structural_garage_location_from_catalog(garage_location):
+    from app.questionnaires.catalog import build_catalog
+    from app.questionnaires.generation_prompt import build_questionnaire_generation_prompt
+    from app.schemas.questionnaires import DesignSession
+
+    catalog = build_catalog()
+    definition = next(item for item in catalog["questionnaires"] if item["key"] == "eskez-doma")
+    state = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma"],
+        current_object="eskez-doma",
+        answers={"eskez-doma": {"6": "Да", "6а": garage_location}},
+    )
+    canonical = build_questionnaire_generation_prompt(
+        definition, state, accepted_before=[], input_asset_present=True
+    )
+    geometry = {
+        "version": "local-tile.v1", "base_size": [100, 100],
+        "box": [10, 10, 90, 90], "aspect_ratio": "1:1",
+        "operation": "add", "scene_context_reference": True,
+    }
+    result = local_edit_prompt(
+        canonical, geometry, {"x": 0.2, "y": 0.2, "width": 0.6, "height": 0.6}, []
+    )
+    constraints = json.loads(result.split("STRUCTURED_SPEC:\n", 1)[1])["questionnaire_constraints"]
+    assert {"question": "Нужен гараж?", "answer": "Да"} in constraints
+    assert {"question": "Где гараж?", "answer": garage_location} in constraints
+    assert canonical == build_questionnaire_generation_prompt(
+        definition, state, accepted_before=[], input_asset_present=True
+    )
+
+
+@pytest.mark.parametrize("with_context", [True, False])
+def test_scene_reference_is_appearance_context_never_the_output_frame(with_context):
+    prompt = 'AUROOM_RENDER_SPEC_V1\nSTRUCTURED_SPEC:\n{"task":{"object_key":"banya"}}'
+    geometry = {
+        "version": "local-tile.v1",
+        "base_size": [120, 100],
+        "box": [20, 20, 80, 80],
+        "aspect_ratio": "1:1",
+        "operation": "add",
+    }
+    if with_context:
+        geometry["scene_context_reference"] = True
+    result = local_edit_prompt(
+        prompt, geometry, {"x": 0.25, "y": 0.25, "width": 0.3, "height": 0.4}, []
+    )
+    data = json.loads(result.split("STRUCTURED_SPEC:\n")[1])
+    if with_context:
+        assert data["appearance_context"]["reference_image"] == 2
+        assert data["appearance_context"]["tile_box_in_full_scene_pixels"] == [20, 20, 80, 80]
+        assert "image 1 is the ONLY output frame" in data["source_scene"]["directive"]
+    else:
+        assert "appearance_context" not in data
+        assert "image 2" not in result
 
 
 def test_local_house_refinement_never_requires_whole_plot_or_house_in_tile():
@@ -163,6 +222,68 @@ def test_local_house_refinement_never_requires_whole_plot_or_house_in_tile():
     assert "Keep the entire plot in view" not in result
     assert "footprint_shape" not in spec["task"]
     assert spec["site_scale"]["ground_footprint_contract"]["target_share"] == 0.1
+
+
+@pytest.mark.parametrize("operation", ["add", "refine", "remove"])
+def test_geometry_preservation_does_not_forbid_creating_a_new_bath(operation):
+    from app.services.edit_policy import build_edit_policy, build_object_removal_policy
+
+    policy = (
+        build_object_removal_policy("banya")
+        if operation == "remove"
+        else build_edit_policy(object_key="banya", edit_question_ids=[], review_comment="")
+    ).to_dict()
+    canonical_spec = {
+        "task": {
+            "object_key": "banya",
+            "operation": "remove_object" if operation == "remove" else "render_or_refine",
+        },
+        "edit_policy": policy,
+        "questionnaire_constraints": [{"question": "Какая печь?", "answer": "Дровяная, с трубой"}],
+    }
+    prompt = "AUROOM_RENDER_SPEC_V1\nSTRUCTURED_SPEC:\n" + json.dumps(canonical_spec)
+    geometry = {
+        "version": "local-tile.v1",
+        "base_size": [100, 100],
+        "box": [20, 20, 80, 80],
+        "aspect_ratio": "1:1",
+        "operation": operation,
+    }
+    result = local_edit_prompt(
+        prompt, geometry, {"x": 0.25, "y": 0.25, "width": 0.5, "height": 0.5}, []
+    )
+    spec = json.loads(result.split("STRUCTURED_SPEC:\n")[1])
+    if operation == "add":
+        assert spec["edit_policy"]["preserve_building_geometry"] is True
+        assert spec["edit_policy"]["geometry_preservation_scope"] == "existing_scene_not_new_target"
+        assert spec["edit_policy"]["new_target_creation_allowed"] is True
+        assert "new roof chimney" in spec["edit_policy"]["new_target_directive"]
+        assert spec["visual_acceptance_contract"]["required_roof_chimneys_on_objects"] == ["banya"]
+    else:
+        assert spec["edit_policy"] == policy
+    assert json.loads(prompt.split("STRUCTURED_SPEC:\n")[1]) == canonical_spec
+
+
+def test_new_house_keeps_requested_footprint_when_existing_scene_is_preserved():
+    prompt = "AUROOM_RENDER_SPEC_V1\nSTRUCTURED_SPEC:\n" + json.dumps(
+        {
+            "task": {"object_key": "eskez-doma", "operation": "render_or_refine"},
+            "edit_policy": {"preserve_building_geometry": True},
+            "questionnaire_constraints": [{"question": "Форма дома?", "answer": "Г-образная"}],
+        }
+    )
+    geometry = {
+        "version": "local-tile.v1",
+        "base_size": [100, 100],
+        "box": [20, 20, 80, 80],
+        "aspect_ratio": "1:1",
+        "operation": "add",
+    }
+    result = local_edit_prompt(
+        prompt, geometry, {"x": 0.25, "y": 0.25, "width": 0.5, "height": 0.5}, []
+    )
+    spec = json.loads(result.split("STRUCTURED_SPEC:\n")[1])
+    assert spec["task"]["footprint_shape"]["requested"] == "Г-образная"
 
 
 @pytest.mark.parametrize(

@@ -35,6 +35,11 @@ def test_provider_constraints_require_bath_chimney_and_remove_fence_cue_without_
     ]
     hedge = next(o for o in enriched["task"]["objects"] if o["object_key"] == "izgorod")
     assert not any("внутри забора" in str(c["answer"]) for c in hedge["questionnaire_constraints"])
+    assert not any(
+        "внутри забора" in str(c["answer"])
+        for c in enriched["site_layout"]["placement_constraints"]
+    )
+    assert enriched["visual_acceptance_contract"]["unrequested_gates_forbidden"] is True
     house = next(o for o in enriched["site_plan"]["objects"] if o["object_key"] == "eskez-doma")
     assert house["rect"]["width"] * house["rect"]["height"] * 0.75 == pytest.approx(0.1)
     assert len(house["footprint_polygon"]) == 6
@@ -127,3 +132,69 @@ def test_bath_edit_does_not_request_main_house_chimney_inside_bath_mask():
         )
     )
     assert result["visual_acceptance_contract"]["required_roof_chimneys_on_objects"] == ["banya"]
+
+
+def test_optional_bath_extras_none_does_not_negate_explicit_wood_stove_chimney():
+    canonical = "AUROOM_RENDER_SPEC_V1\nSTRUCTURED_SPEC:\n" + json.dumps(
+        {
+            "task": {"object_key": "banya"},
+            "questionnaire_constraints": [
+                {"question": "Какая печь?", "answer": "Дровяная, с трубой"},
+                {"question": "Что ещё видно снаружи?", "answer": "ничего"},
+            ],
+        }
+    )
+    result = spec(build_visual_fidelity_prompt(canonical))
+    optional = result["questionnaire_constraints"][1]
+    assert "обязательную трубу" in optional["answer"].lower()
+    assert result["visual_acceptance_contract"]["required_roof_chimneys_on_objects"] == ["banya"]
+
+
+def test_requested_gates_are_retained_and_photo_boundaries_are_not_removed():
+    catalog = build_catalog()
+    state = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["eskez-doma", "izgorod", "vorota"],
+        initial_concept_mode=True,
+        answers={"izgorod": {"1": "Цветущая", "3": "Весь периметр внутри забора"}},
+    )
+    result = spec(
+        build_visual_fidelity_prompt(
+            build_initial_concept_prompt(catalog, state, input_asset_present=True)
+        )
+    )
+    assert result["visual_acceptance_contract"]["unrequested_gates_forbidden"] is False
+    assert (
+        "existing source-photo boundary"
+        in result["visual_acceptance_contract"]["boundary_directive"]
+    )
+
+
+def test_electric_bath_keeps_no_extra_features_and_does_not_require_chimney():
+    catalog = build_catalog()
+    definition = next(d for d in catalog["questionnaires"] if d["key"] == "banya")
+    state = DesignSession(
+        catalog_version=catalog["version"],
+        selected_objects=["banya"],
+        current_object="banya",
+        answers={"banya": {"5": "Электрическая, без трубы", "11": "ничего"}},
+    )
+    result = spec(
+        build_visual_fidelity_prompt(
+            build_questionnaire_generation_prompt(
+                definition,
+                state,
+                accepted_before=[],
+                input_asset_present=True,
+            )
+        )
+    )
+    assert result["visual_acceptance_contract"]["required_roof_chimneys_on_objects"] == []
+    assert (
+        next(
+            item["answer"]
+            for item in result["questionnaire_constraints"]
+            if "ещё видно" in item["question"]
+        )
+        == "ничего"
+    )

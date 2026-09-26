@@ -164,7 +164,9 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
             provider_calls.append(kwargs)
             for guide_url in kwargs.get("reference_image_urls") or []:
                 parsed = urlsplit(guide_url)
-                guide_response = await client.get(f"{parsed.path}?{parsed.query}")
+                guide_response = await client.get(
+                    f"{parsed.path}?{parsed.query}"
+                )
                 assert guide_response.status_code == 200, guide_response.text
                 provider_guides.append(guide_response.content)
             return NexusImageResult(
@@ -191,9 +193,7 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
         provider_url = provider_calls[0]["image_url"]
         assert provider_url is not None
         assert urlsplit(provider_url).path == urlsplit(uploaded.json()["url"]).path
-        signed_media = await client.get(
-            f"{urlsplit(provider_url).path}?{urlsplit(provider_url).query}"
-        )
+        signed_media = await client.get(f"{urlsplit(provider_url).path}?{urlsplit(provider_url).query}")
         assert signed_media.status_code == 200, signed_media.text
         assert signed_media.content == base_data
         assert "Add a bathhouse only in the editable area" in provider_calls[0]["prompt"]
@@ -368,9 +368,7 @@ async def test_public_reserved_prompt_is_rejected_and_internal_questionnaire_ori
 
         async def fake_generate(self, **kwargs):  # noqa: ANN001, ARG001
             calls.append(kwargs)
-            return NexusImageResult(
-                task_id="structured-task", image_url="https://cdn.example.test/out.png"
-            )
+            return NexusImageResult(task_id="structured-task", image_url="https://cdn.example.test/out.png")
 
         async def fake_download(url, settings):  # noqa: ANN001, ARG001
             return _png((160, 90), (90, 100, 110))
@@ -472,7 +470,7 @@ async def _create_strict_masked_generation(
         generation = await session.get(Generation, generation_id)
         assert generation is not None
         generation.origin = GenerationOrigin.QUESTIONNAIRE.value
-        generation.prompt = 'AUROOM_RENDER_SPEC_V1\nSTRUCTURED_SPEC:{"task":"quality-test"}'
+        generation.prompt = "AUROOM_RENDER_SPEC_V1\nSTRUCTURED_SPEC:{\"task\":\"quality-test\"}"
         generation.edit_policy = {
             "version": "exterior-edit-policy.v1",
             "domain": "exterior",
@@ -617,42 +615,31 @@ async def test_questionnaire_masked_quality_rejection_refunds_once(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("acknowledged", [True, False])
-async def test_worker_restart_never_reposts_an_existing_or_ambiguous_request(
-    monkeypatch, acknowledged
-):
+@pytest.mark.parametrize('acknowledged', [True, False])
+async def test_worker_restart_never_reposts_an_existing_or_ambiguous_request(monkeypatch, acknowledged):
     import asyncio
-
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url='http://test') as client:
         _, admin_headers = await _register_admin(client)
         tokens, headers = await _register_user(client)
-        user_id = tokens["user"]["id"]
+        user_id = tokens['user']['id']
         generation_id, base_data, _ = await _create_strict_masked_generation(
-            client,
-            admin_headers=admin_headers,
-            headers=headers,
-            user_id=user_id,
+            client, admin_headers=admin_headers, headers=headers, user_id=user_id,
         )
         calls = []
-
         async def generate(self, **kwargs):
             calls.append(kwargs)
             if len(calls) == 1:
-                assert kwargs["task_id"] is None
+                assert kwargs['task_id'] is None
                 if acknowledged:
-                    await kwargs["on_task_created"]("durable-task")
+                    await kwargs['on_task_created']('durable-task')
                 raise asyncio.CancelledError()
-            assert kwargs["task_id"] == "durable-task"
-            return NexusImageResult(
-                task_id="durable-task", image_url="https://cdn.example.test/recovered.png"
-            )
-
+            assert kwargs['task_id'] == 'durable-task'
+            return NexusImageResult(task_id='durable-task',image_url='https://cdn.example.test/recovered.png')
         async def download(url, settings):
             return base_data
-
-        monkeypatch.setattr(NexusImageProvider, "generate", generate)
-        monkeypatch.setattr(generation_worker, "_download_image", download)
+        monkeypatch.setattr(NexusImageProvider, 'generate', generate)
+        monkeypatch.setattr(generation_worker, '_download_image', download)
         with pytest.raises(asyncio.CancelledError):
             await generation_worker.process_generation(generation_id, get_settings())
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
@@ -660,20 +647,68 @@ async def test_worker_restart_never_reposts_an_existing_or_ambiguous_request(
         await generation_worker._recover_reserved_jobs()
         await generation_worker.process_generation(generation_id, get_settings())
         await generation_worker.process_generation(generation_id, get_settings())
-        result = (await client.get(f"/api/v1/generations/{generation_id}", headers=headers)).json()
-        assert result["status"] == ("completed" if acknowledged else "processing")
+        result = (await client.get(f'/api/v1/generations/{generation_id}', headers=headers)).json()
+        assert result['status'] == ('completed' if acknowledged else 'processing')
         assert len(calls) == (2 if acknowledged else 1)
-        assert sum(c["task_id"] is None for c in calls) == 1
+        assert sum(c['task_id'] is None for c in calls) == 1
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure_stage", ["poll", "download"])
-async def test_unknown_provider_status_keeps_charge_and_reconciles_same_task(
-    monkeypatch, failure_stage
-):
+@pytest.mark.parametrize('failure_stage', ['poll', 'download'])
+async def test_unknown_provider_status_keeps_charge_and_reconciles_same_task(monkeypatch, failure_stage):
     from datetime import UTC, datetime, timedelta
     from app.providers.nexus import NexusOutcomeUnknown
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url='http://test') as client:
+        _, admin_headers = await _register_admin(client)
+        tokens, headers = await _register_user(client)
+        generation_id, base_data, _ = await _create_strict_masked_generation(
+            client, admin_headers=admin_headers, headers=headers, user_id=tokens['user']['id'])
+        calls = []
+        async def generate(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                await kwargs['on_task_created']('slow-confirmed-task')
+                if failure_stage == 'poll':
+                    raise NexusOutcomeUnknown('Temporary polling outage')
+            else:
+                assert kwargs['task_id'] == 'slow-confirmed-task'
+            return NexusImageResult(task_id='slow-confirmed-task', image_url='https://cdn.example.test/result.png')
+        async def download(url, settings):
+            if len(calls) == 1 and failure_stage == 'download':
+                from httpx import ReadTimeout
+                raise ReadTimeout('transient media outage')
+            return base_data
+        monkeypatch.setattr(NexusImageProvider, 'generate', generate)
+        monkeypatch.setattr(generation_worker, '_download_image', download)
+        await generation_worker.process_generation(generation_id, get_settings())
+        pending = (await client.get(f'/api/v1/generations/{generation_id}', headers=headers)).json()
+        assert pending['status'] == 'processing'
+        assert pending['quality_report']['requires_reconciliation'] is True
+        assert (await client.get('/api/v1/me', headers=headers)).json()['credits_balance'] == 3
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+        async with get_session_factory()() as session:
+            row = await session.get(Generation, generation_id)
+            row.started_at = datetime.now(UTC) - timedelta(hours=1)
+            await session.commit()
+        await generation_worker._reconcile_database_jobs(get_settings())
+        await generation_worker.process_generation(generation_id, get_settings())
+        result = (await client.get(f'/api/v1/generations/{generation_id}', headers=headers)).json()
+        assert result['status'] == 'completed'
+        assert not result['quality_report'].get('requires_reconciliation')
+        assert len(calls) == 2
+        assert sum(call['task_id'] is None for call in calls) == 1
+        assert (await client.get('/api/v1/me', headers=headers)).json()['credits_balance'] == 3
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+
+
+@pytest.mark.asyncio
+async def test_temporary_media_dns_failure_resumes_download_without_another_purchase(monkeypatch):
+    import socket
+    from datetime import UTC, datetime, timedelta
+
+    import httpx
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -682,46 +717,71 @@ async def test_unknown_provider_status_keeps_charge_and_reconciles_same_task(
         generation_id, base_data, _ = await _create_strict_masked_generation(
             client, admin_headers=admin_headers, headers=headers, user_id=tokens["user"]["id"]
         )
-        calls = []
+        provider_calls = []
 
         async def generate(self, **kwargs):
-            calls.append(kwargs)
-            if len(calls) == 1:
-                await kwargs["on_task_created"]("slow-confirmed-task")
-                if failure_stage == "poll":
-                    raise NexusOutcomeUnknown("Temporary polling outage")
+            provider_calls.append(kwargs)
+            if kwargs["task_id"] is None:
+                await kwargs["on_task_created"]("completed-before-dns-outage")
             else:
-                assert kwargs["task_id"] == "slow-confirmed-task"
+                assert kwargs["task_id"] == "completed-before-dns-outage"
             return NexusImageResult(
-                task_id="slow-confirmed-task", image_url="https://cdn.example.test/result.png"
+                task_id="completed-before-dns-outage",
+                image_url="https://cdn.example.test/result.png",
             )
 
-        async def download(url, settings):
-            if len(calls) == 1 and failure_stage == "download":
-                from httpx import ReadTimeout
+        original_resolve = socket.getaddrinfo
+        dns_calls = 0
 
-                raise ReadTimeout("transient media outage")
-            return base_data
+        def resolve(host, *args, **kwargs):
+            nonlocal dns_calls
+            if host != "cdn.example.test":
+                return original_resolve(host, *args, **kwargs)
+            dns_calls += 1
+            if dns_calls == 1:
+                raise socket.gaierror(socket.EAI_AGAIN, "Temporary failure in name resolution")
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
 
+        class PublicPeer:
+            def get_extra_info(self, name):
+                return ("93.184.216.34", 443) if name == "server_addr" else None
+
+        media_requests = []
+
+        def serve_media(request):
+            media_requests.append(request)
+            assert request.method == "GET"
+            return httpx.Response(
+                200, content=base_data, extensions={"network_stream": PublicPeer()}
+            )
+
+        real_client = httpx.AsyncClient
         monkeypatch.setattr(NexusImageProvider, "generate", generate)
-        monkeypatch.setattr(generation_worker, "_download_image", download)
+        monkeypatch.setattr(socket, "getaddrinfo", resolve)
+        monkeypatch.setattr(
+            generation_worker.httpx, "AsyncClient",
+            lambda **kwargs: real_client(transport=httpx.MockTransport(serve_media), **kwargs),
+        )
         await generation_worker.process_generation(generation_id, get_settings())
         pending = (await client.get(f"/api/v1/generations/{generation_id}", headers=headers)).json()
         assert pending["status"] == "processing"
         assert pending["quality_report"]["requires_reconciliation"] is True
+        assert pending["quality_report"]["provider_request"]["task_id"] == "completed-before-dns-outage"
+        assert not media_requests
         assert (await client.get("/api/v1/me", headers=headers)).json()["credits_balance"] == 3
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
-        async with get_session_factory()() as session:
-            row = await session.get(Generation, generation_id)
+        async with get_session_factory()() as db:
+            row = await db.get(Generation, generation_id)
             row.started_at = datetime.now(UTC) - timedelta(hours=1)
-            await session.commit()
+            await db.commit()
         await generation_worker._reconcile_database_jobs(get_settings())
         await generation_worker.process_generation(generation_id, get_settings())
         result = (await client.get(f"/api/v1/generations/{generation_id}", headers=headers)).json()
-        assert result["status"] == "completed"
-        assert not result["quality_report"].get("requires_reconciliation")
-        assert len(calls) == 2
-        assert sum(call["task_id"] is None for call in calls) == 1
+        assert result["status"] == "completed", result
+        assert len(provider_calls) == 2
+        assert sum(call["task_id"] is None for call in provider_calls) == 1
+        assert dns_calls == 2
+        assert len(media_requests) == 1
         assert (await client.get("/api/v1/me", headers=headers)).json()["credits_balance"] == 3
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
 
@@ -729,43 +789,34 @@ async def test_unknown_provider_status_keeps_charge_and_reconciles_same_task(
 @pytest.mark.asyncio
 async def test_accepted_task_checkpoint_commit_failure_does_not_refund_or_repost(monkeypatch):
     from sqlalchemy.ext.asyncio import AsyncSession
-
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url='http://test') as client:
         _, admin_headers = await _register_admin(client)
         tokens, headers = await _register_user(client)
         generation_id, _, _ = await _create_strict_masked_generation(
-            client, admin_headers=admin_headers, headers=headers, user_id=tokens["user"]["id"]
-        )
+            client, admin_headers=admin_headers, headers=headers, user_id=tokens['user']['id'])
         original_commit = AsyncSession.commit
         injected = False
-
         async def commit(session):
             nonlocal injected
-            if not injected and any(
-                isinstance(row, Generation) and row.provider_task_id == "accepted-before-db-outage"
-                for row in session.dirty
-            ):
+            if not injected and any(isinstance(row, Generation) and row.provider_task_id == 'accepted-before-db-outage' for row in session.dirty):
                 injected = True
-                raise RuntimeError("database connection interrupted before checkpoint commit")
+                raise RuntimeError('database connection interrupted before checkpoint commit')
             return await original_commit(session)
-
         calls = []
-
         async def generate(self, **kwargs):
             calls.append(kwargs)
-            await kwargs["on_task_created"]("accepted-before-db-outage")
-            pytest.fail("checkpoint failure must stop polling without resubmission")
-
-        monkeypatch.setattr(AsyncSession, "commit", commit)
-        monkeypatch.setattr(NexusImageProvider, "generate", generate)
+            await kwargs['on_task_created']('accepted-before-db-outage')
+            pytest.fail('checkpoint failure must stop polling without resubmission')
+        monkeypatch.setattr(AsyncSession, 'commit', commit)
+        monkeypatch.setattr(NexusImageProvider, 'generate', generate)
         await generation_worker.process_generation(generation_id, get_settings())
-        result = (await client.get(f"/api/v1/generations/{generation_id}", headers=headers)).json()
+        result = (await client.get(f'/api/v1/generations/{generation_id}', headers=headers)).json()
         assert injected
-        assert result["status"] == "processing"
-        assert result["quality_report"]["requires_reconciliation"] is True
-        assert result["quality_report"]["provider_request"]["task_id"] is None
-        assert (await client.get("/api/v1/me", headers=headers)).json()["credits_balance"] == 3
+        assert result['status'] == 'processing'
+        assert result['quality_report']['requires_reconciliation'] is True
+        assert result['quality_report']['provider_request']['task_id'] is None
+        assert (await client.get('/api/v1/me', headers=headers)).json()['credits_balance'] == 3
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
         await generation_worker._reconcile_database_jobs(get_settings())
         await generation_worker.process_generation(generation_id, get_settings())
@@ -773,7 +824,10 @@ async def test_accepted_task_checkpoint_commit_failure_does_not_refund_or_repost
 
 
 @pytest.mark.asyncio
-async def test_local_crop_geometry_survives_restart_and_runtime_margin_change(monkeypatch):
+@pytest.mark.parametrize("scene_context", [True, False])
+async def test_local_crop_geometry_survives_restart_and_runtime_margin_change(
+    monkeypatch, scene_context
+):
     import asyncio
     import json
     from app.db.models.admin import GenerationRuntimeSettings
@@ -796,6 +850,17 @@ async def test_local_crop_geometry_survives_restart_and_runtime_margin_change(mo
                     ],
                 }
             )
+            if not scene_context:
+                # Geometry saved by a previous release before a second reference existed.
+                row.quality_report = {
+                    "provider_geometry": {
+                        "version": "local-tile.v1",
+                        "base_size": [120, 120],
+                        "box": [33, 33, 87, 87],
+                        "aspect_ratio": "1:1",
+                        "operation": "add",
+                    }
+                }
             await db.commit()
         tiles = []
         calls = []
@@ -809,7 +874,13 @@ async def test_local_crop_geometry_survives_restart_and_runtime_margin_change(mo
             )
             assert kwargs["model_params"]["aspect_ratio"] == "1:1"
             assert kwargs["prompt"].startswith("AUROOM_LOCALIZED_EDIT_V1")
-            assert kwargs["reference_image_urls"] is None
+            if scene_context:
+                assert len(kwargs["reference_image_urls"]) == 1
+                assert kwargs["reference_image_urls"][0] != kwargs["image_url"]
+                assert '"reference_image":2' in kwargs["prompt"]
+            else:
+                assert kwargs["reference_image_urls"] is None
+                assert '"reference_image":2' not in kwargs["prompt"]
             if len(calls) == 1:
                 await kwargs["on_task_created"]("local-durable-task")
                 raise asyncio.CancelledError()
@@ -844,6 +915,10 @@ async def test_local_crop_geometry_survives_restart_and_runtime_margin_change(mo
         assert not tile_path.exists(), "Terminal work releases temporary input"
         assert tiles[0] == tiles[1]
         assert result["quality_report"]["provider_geometry"]["box"] == [33, 33, 87, 87]
+        assert (
+            bool(result["quality_report"]["provider_geometry"].get("scene_context_reference"))
+            == scene_context
+        )
         assert len(calls) == 2
         assert sum(c["task_id"] is None for c in calls) == 1
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))

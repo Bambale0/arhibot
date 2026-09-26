@@ -314,14 +314,18 @@ class IdeaService:
                     continue
                 if not question_is_active(key, question, answers, house_accepted, selected_objects):
                     continue
-                rendered = _answer_text(answers.get(question["id"]))
-                if not rendered:
+                if question["id"] not in answers:
                     continue
+                # Explicit empty selections mean "none", not an unanswered step.
+                # Keep them in the typed template even when the feed has no row.
                 template_answers.append({
                     "object_key": key,
                     "question": user_question_title(question["text"]),
                     "value": answers[question["id"]],
                 })
+                rendered = _answer_text(answers[question["id"]])
+                if not rendered:
+                    continue
                 summary.append(
                     IdeaAnswerSummary(
                         question=user_question_title(question["text"]), answer=rendered

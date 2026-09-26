@@ -156,6 +156,16 @@ def local_edit_prompt(
         "kind": "local_tile_of_accepted_scene",
         "directive": "The ONLY reference image is a local crop, not the full site. Return exactly this local framing. Do not invent or reveal the rest of the plot. Match materials to any existing building fragment and house_style_reference when given.",
     }
+    if geometry.get("scene_context_reference"):
+        spec["source_scene"]["directive"] = (
+            "Reference image 1 is the ONLY output frame. Return that exact crop with the local edit, same camera and boundaries. Reference image 2 is the accepted full scene: use it ONLY to match the house roof color, roofing material, facade and real-world building scale. NEVER return the full scene from image 2."
+        )
+        spec["appearance_context"] = {
+            "reference_image": 2,
+            "tile_box_in_full_scene_pixels": geometry["box"],
+            "full_scene_pixels": geometry["base_size"],
+            "directive": "For objects matching the house, copy its visible roofing and facade appearance. Keep normal building height and requested floor area relative to the existing house. Work only in image 1 allowed_region.",
+        }
     spec["spatial_constraints"] = {
         "coordinate_frame": "reference_image_1_local_tile_normalized_0_to_1",
         "allowed_region": allowed,
@@ -164,13 +174,15 @@ def local_edit_prompt(
     }
     constraints = spec.get("questionnaire_constraints", [])
     location_answers = [
-        item for item in constraints if str(item.get("question", "")).lower().startswith("где")
+        item
+        for item in constraints
+        if str(item.get("question", "")).lower().startswith("где на участке относительно дома")
     ]
     spec["questionnaire_constraints"] = [
         item for item in constraints if item not in location_answers
     ]
     spec["resolved_global_placement"] = {
-        "answers": location_answers,
+        "resolved_by_selected_region": True,
         "directive": "Already resolved by the user's selected crop location. Do NOT shift the object to the right/left edge of this tile to satisfy a global placement answer.",
     }
     spec["house_style_reference"] = geometry.get("house_style_reference", {})
@@ -179,7 +191,21 @@ def local_edit_prompt(
         scale["ground_footprint_contract"]["directive"] = (
             "Global ground-area context only. Preserve existing scale in this local tile; never show the entire plot or shrink an existing building into the tile."
         )
-    if operation == "refine" or spec.get("edit_policy", {}).get("preserve_building_geometry"):
+    if operation == "add":
+        spec.setdefault("edit_policy", {}).update(
+            {
+                "geometry_preservation_scope": "existing_scene_not_new_target",
+                "new_target_creation_allowed": True,
+                "new_target_directive": (
+                    "Preserve the geometry and chimney positions of EXISTING scene objects. "
+                    "The target object does not exist yet: create its requested geometry and "
+                    "required exterior features inside the allowed region. A required new roof "
+                    "chimney belongs to the new target and is not relocation of an existing chimney. "
+                    "Do not interpret geometry preservation as a ban on adding the target."
+                ),
+            }
+        )
+    elif operation == "refine" or spec.get("edit_policy", {}).get("preserve_building_geometry"):
         spec["task"].pop("footprint_shape", None)
     spec["scene_policy"] = {
         "camera": "exact viewpoint and framing of reference image 1; do not zoom out or reframe"
@@ -201,7 +227,7 @@ def local_edit_prompt(
     placement = (
         "For boundary, path and landscape edits, follow the existing ground and perimeter alignment. Maintain continuity with unchanged segments beyond the rectangle; gates connect to their boundary. Do not move a boundary or path into the middle of the ground."
         if extended_surface
-        else "CENTER an ADDED object within that rectangle, using most of its available open ground while leaving a natural margin on all sides. Its ENTIRE roof, chimney and ground contact must be visible and inside the rectangle; do not put it against any image edge. Keep grass/ground visible around it."
+        else "CENTER an ADDED object within that rectangle. For a new building the selected rectangle is its intended exterior bounding box, not a search area: its roof and walls should occupy most of the selected width and height, with only a small natural margin. Do not create a tiny model, miniature shed or icon in a large empty selection. Maintain normal full-size building wall height. Its ENTIRE roof, chimney and ground contact must remain visible and inside the rectangle, never cut off at an image edge."
     )
     contract["mask_directive"] = (
         "There is NO white mask image. The allowed_region is a rectangle in reference image 1, measured from its top-left. "

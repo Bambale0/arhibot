@@ -18,6 +18,87 @@ def _answer(constraints: list[dict], marker: str) -> object:
     )
 
 
+def _hedge_boundary_answer(value: object) -> object:
+    if isinstance(value, str):
+        return value.replace("внутри забора", "по границе участка").replace(
+            "вдоль забора", "вдоль границы участка"
+        )
+    if isinstance(value, list):
+        return [_hedge_boundary_answer(item) for item in value]
+    return value
+
+
+def _reflow_secondary_zones(spec: dict, house_rect: dict) -> None:
+    from app.questionnaires.site_plan import (
+        _overlaps,
+        _place_rect,
+        _relation_ok,
+        _target_center,
+    )
+
+    plan = spec["site_plan"]
+    secondary = [item for item in plan["objects"] if item.get("object_key") != "eskez-doma"]
+    keys = {item["object_key"] for item in secondary}
+    warnings = [
+        warning
+        for warning in plan.get("warnings", [])
+        if not (
+            warning.get("object_key") in keys
+            and warning.get("code")
+            in {
+                "placement_overlap_unresolved",
+                "placement_relation_unresolved",
+            }
+        )
+    ]
+    occupied = [house_rect]
+    pending = []
+    # Reserve valid zones first, so fixing one conflict cannot displace a zone
+    # that already fits the final house. Never resize a secondary object.
+    for item in secondary:
+        rect, relations = item["rect"], item.get("relations", [])
+        if _relation_ok(rect, relations, house_rect) and not any(
+            _overlaps(rect, other) for other in occupied
+        ):
+            occupied.append(rect)
+        else:
+            pending.append(item)
+    for item in pending:
+        rect, relations = item["rect"], item.get("relations", [])
+        width, height = rect["width"], rect["height"]
+        tx, ty = _target_center(relations, house_rect=house_rect, width=width, height=height)
+        # The existing placer searches locally. Also try the plot edges when
+        # a larger footprint needs more than its local search radius.
+        targets = [(tx, ty)]
+        targets += [(tx, y) for y in (0.04 + height / 2, 0.96 - height / 2)]
+        targets += [(x, ty) for x in (0.04 + width / 2, 0.96 - width / 2)]
+        for x, y in targets:
+            candidate, overlap = _place_rect(
+                target_x=x,
+                target_y=y,
+                width=width,
+                height=height,
+                relations=relations,
+                house_rect=house_rect,
+                occupied=occupied,
+            )
+            # _place_rect's fallback may violate a relation without overlapping.
+            if not overlap and _relation_ok(candidate, relations, house_rect):
+                item["rect"] = rect = candidate
+                break
+        unresolved = []
+        if any(_overlaps(rect, other) for other in occupied):
+            unresolved.append("placement_overlap_unresolved")
+        if not _relation_ok(rect, relations, house_rect):
+            unresolved.append("placement_relation_unresolved")
+        for code in unresolved:
+            warnings.append({"object_key": item["object_key"], "code": code})
+        if unresolved:
+            spec["site_scale"]["ground_footprint_contract"]["layout_requires_review"] = True
+        occupied.append(rect)
+    plan["warnings"] = warnings
+
+
 def _house_footprint(spec: dict, objects: list[dict]) -> None:
     scale = spec.get("site_scale", {})
     house = next((obj for obj in objects if obj.get("object_key") == "eskez-doma"), None)
@@ -86,6 +167,7 @@ def _house_footprint(spec: dict, objects: list[dict]) -> None:
             }
             item["footprint_polygon"] = polygon
             item["ground_footprint_share"] = share
+            _reflow_secondary_zones(spec, item["rect"])
 
 
 def build_visual_fidelity_prompt(prompt: str) -> str:
@@ -124,14 +206,22 @@ def build_visual_fidelity_prompt(prompt: str) -> str:
             ):
                 required_chimneys.append("banya")
                 obj["roof_chimney_required"] = True
+                for item in constraints:
+                    if (
+                        "что еще видно снаружи"
+                        in str(item.get("question", "")).lower().replace("ё", "е")
+                        and str(item.get("answer", "")).strip().lower() == "ничего"
+                    ):
+                        item["answer"] = (
+                            "Ничего дополнительного. Обязательную трубу выбранной дровяной печи показать на крыше самой бани."
+                        )
             if hedge_only and key == "izgorod":
                 for item in constraints:
-                    if isinstance(item.get("answer"), str):
-                        item["answer"] = (
-                            item["answer"]
-                            .replace("внутри забора", "по границе участка")
-                            .replace("вдоль забора", "вдоль границы участка")
-                        )
+                    item["answer"] = _hedge_boundary_answer(item.get("answer"))
+        if hedge_only:
+            for item in spec.get("site_layout", {}).get("placement_constraints", []):
+                if item.get("object_key") == "izgorod":
+                    item["answer"] = _hedge_boundary_answer(item.get("answer"))
         if any(obj.get("object_key") == "eskez-doma" for obj in objects) and spec.get(
             "house_exterior_features", {}
         ).get("roof_chimney_required"):
@@ -141,7 +231,10 @@ def build_visual_fidelity_prompt(prompt: str) -> str:
         "required_roof_chimneys_on_objects": required_chimneys,
         "chimney_directive": "Every listed object must have its OWN visible chimney physically emerging from ITS roof. Only NEWLY ADDED objects must fit entirely inside the edit mask. During a local refinement preserve existing chimneys outside the selected area; do not move or recreate the whole building. A chimney on the main house cannot substitute for a bath wood-stove chimney. Do not show an interior stove/fireplace.",
         "hedge_is_only_requested_boundary": bool(hedge_only),
-        "boundary_directive": "For a hedge-only synthetic site, the living hedge IS the boundary. Do not add mesh, solid panels, masonry walls, fence posts or duplicate hard fencing. In edits preserve existing pixels outside the allowed region.",
+        "unrequested_gates_forbidden": bool(
+            hedge_only and not any(obj.get("object_key") == "vorota" for obj in objects)
+        ),
+        "boundary_directive": "For a hedge-only synthetic site, the living hedge IS the boundary. Do not add mesh, solid panels, masonry walls, fence posts or duplicate hard fencing. When unrequested_gates_forbidden=true, leave entrances as open gaps: no gates, wickets, gate leaves or entrance posts. Preserve an existing source-photo boundary and existing pixels outside an edit region unless removal is requested; do not interpret this new-object restriction as permission to remove them.",
         "added_object_must_fit_inside_mask": not removing,
         "mask_directive": "For an ADDED object, fit its whole roof, overhangs, chimney and ground contact inside the white commit mask with space around it. For a LOCAL REFINEMENT of an existing building, change only the selected surface; preserve its unselected parts, scale and position. Never shrink or relocate the existing building to fit a local edit. Context outside the white mask is locked, never a placement area.",
         "verification": "provider_instruction_only_not_an_external_scene_measurement",

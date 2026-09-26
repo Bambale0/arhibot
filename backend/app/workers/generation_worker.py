@@ -95,10 +95,8 @@ MASKED_EDIT_GUIDE_PROMPT = (
 def _masked_edit_provider_prompt(prompt: str, context_region: dict | None = None) -> str:
     context = (
         "\nRead neighboring lighting, materials and edges from this normalized context rectangle: "
-        + dumps(context_region)
-        + ". This context is NOT permission to edit; only the white guide pixels may change."
-        if context_region is not None
-        else ""
+        + dumps(context_region) + ". This context is NOT permission to edit; only the white guide pixels may change."
+        if context_region is not None else ""
     )
     return f"{prompt}\n\n{MASKED_EDIT_GUIDE_PROMPT}{context}"
 
@@ -341,9 +339,7 @@ def _questionnaire_aspect_ratio(asset: Asset | None) -> str:
     if asset is None or not asset.width or not asset.height:
         return "16:9"
     ratio = asset.width / asset.height
-    return min(
-        QUESTIONNAIRE_ASPECT_RATIOS, key=lambda item: abs(QUESTIONNAIRE_ASPECT_RATIOS[item] - ratio)
-    )
+    return min(QUESTIONNAIRE_ASPECT_RATIOS, key=lambda item: abs(QUESTIONNAIRE_ASPECT_RATIOS[item] - ratio))
 
 
 def _address_is_public(address: str) -> bool:
@@ -383,6 +379,10 @@ async def _validate_remote_image_url(url: str) -> str:
                 type=socket.SOCK_STREAM,
             )
         except socket.gaierror as exc:
+            if exc.errno == socket.EAI_AGAIN:
+                raise NexusOutcomeUnknown(
+                    "Generated image DNS is temporarily unavailable; resume the existing task"
+                ) from exc
             raise RuntimeError("Generated image host could not be resolved") from exc
         addresses = {str(answer[4][0]).split("%", 1)[0] for answer in answers}
         if not addresses or any(not _address_is_public(address) for address in addresses):
@@ -486,7 +486,9 @@ async def _generate_orbit_frames(
             data = await _download_image(result.image_url, settings)
         return index, data, result.task_id
 
-    generated = await asyncio.gather(*(generate_frame(index) for index in range(1, frame_count)))
+    generated = await asyncio.gather(
+        *(generate_frame(index) for index in range(1, frame_count))
+    )
     generated.sort(key=lambda item: item[0])
     return [item[1] for item in generated], generated[-1][2] if generated else None
 
@@ -569,28 +571,16 @@ async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -
 
 
 async def _generate_checkpointed(
-    provider: NexusImageProvider,
-    generation_id: UUID,
-    *,
-    attempt: int,
-    phase: str,
-    model_name: str,
-    prompt: str,
-    source_url: str | None,
-    params: dict[str, object],
-    reference_image_urls: list[str] | None,
-    timeout_seconds: float | None,
+    provider: NexusImageProvider, generation_id: UUID, *, attempt: int, phase: str,
+    model_name: str, prompt: str, source_url: str | None, params: dict[str, object],
+    reference_image_urls: list[str] | None, timeout_seconds: float | None,
 ) -> NexusImageResult:
     """Persist submission intent before POST; persist accepted ID before polling.
 
     A lost create response cannot safely be retried (Nexus has no documented
     idempotency contract). A recovered accepted request resumes GET of its ID.
     """
-    key = (
-        f"auroom-{generation_id}-{phase}"
-        if attempt == 0
-        else f"auroom-{generation_id}-quality-{attempt}-{phase}"
-    )
+    key = f"auroom-{generation_id}-{phase}" if attempt == 0 else f"auroom-{generation_id}-quality-{attempt}-{phase}"
     resume_id = None
     async with get_session_factory()() as db:
         row = await GenerationRepository(db).get_for_update(generation_id)
@@ -600,22 +590,13 @@ async def _generate_checkpointed(
         if previous.get("key") == key:
             resume_id = previous.get("task_id")
             if not resume_id or resume_id == "sync":
-                raise NexusOutcomeUnknown(
-                    "Previous Nexus submission could not be reconciled; no duplicate was sent"
-                )
+                raise NexusOutcomeUnknown("Previous Nexus submission could not be reconciled; no duplicate was sent")
             model_name = previous["model"]
         else:
-            row.quality_report = {
-                **(row.quality_report or {}),
-                "provider_request": {
-                    "key": key,
-                    "attempt": attempt,
-                    "phase": phase,
-                    "model": model_name,
-                    "state": "submitting",
-                    "task_id": None,
-                },
-            }
+            row.quality_report = {**(row.quality_report or {}), "provider_request": {
+                "key": key, "attempt": attempt, "phase": phase, "model": model_name,
+                "state": "submitting", "task_id": None,
+            }}
             await db.commit()
 
     async def accepted(task_id: str) -> None:
@@ -623,38 +604,21 @@ async def _generate_checkpointed(
             async with get_session_factory()() as db:
                 row = await GenerationRepository(db).get_for_update(generation_id)
                 if row is None or row.status != GenerationStatus.PROCESSING:
-                    raise NexusProviderError(
-                        "Generation stopped after provider acceptance", retryable=False
-                    )
+                    raise NexusProviderError("Generation stopped after provider acceptance", retryable=False)
                 row.provider_task_id = task_id
                 row.model_name = model_name
-                row.quality_report = {
-                    **(row.quality_report or {}),
-                    "provider_request": {
-                        "key": key,
-                        "attempt": attempt,
-                        "phase": phase,
-                        "model": model_name,
-                        "state": "accepted",
-                        "task_id": task_id,
-                    },
-                }
+                row.quality_report = {**(row.quality_report or {}), "provider_request": {
+                    "key": key, "attempt": attempt, "phase": phase, "model": model_name,
+                    "state": "accepted", "task_id": task_id,
+                }}
                 await db.commit()
         except Exception as exc:
-            raise NexusOutcomeUnknown(
-                "Could not persist accepted provider task; do not resubmit"
-            ) from exc
+            raise NexusOutcomeUnknown("Could not persist accepted provider task; do not resubmit") from exc
 
     return await provider.generate(
-        model_name=model_name,
-        prompt=prompt,
-        image_url=source_url,
-        model_params=params,
-        idempotency_key=key,
-        reference_image_urls=reference_image_urls,
-        timeout_seconds=timeout_seconds,
-        task_id=resume_id,
-        on_task_created=accepted,
+        model_name=model_name, prompt=prompt, image_url=source_url, model_params=params,
+        idempotency_key=key, reference_image_urls=reference_image_urls,
+        timeout_seconds=timeout_seconds, task_id=resume_id, on_task_created=accepted,
     )
 
 
@@ -911,6 +875,9 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                                 if target.get("object_key") in accepted_objects
                                 else "add"
                             )
+                            # Freeze the input-image roles with the crop so recovery
+                            # never reinterprets an already accepted provider task.
+                            candidate_geometry["scene_context_reference"] = True
                 if candidate_geometry:
                     house_answers = (
                         ((project.context or {}).get("design_session") or {})
@@ -954,7 +921,19 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     max_pixels=settings.max_image_pixels,
                 )
                 await guide_storage.write(guide_relative_path, tile)
-                reference_image_urls = None
+                reference_image_urls = (
+                    [
+                        guide_storage.signed_url(
+                            input_storage_path,
+                            ttl_seconds=max(
+                                settings.media_url_ttl_seconds,
+                                settings.nexus_task_timeout_seconds + 120,
+                            ),
+                        )
+                    ]
+                    if provider_geometry.get("scene_context_reference")
+                    else None
+                )
                 source_url = guide_storage.signed_url(
                     guide_relative_path,
                     ttl_seconds=max(
