@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -19,7 +20,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-from backup_manifest import verify
+from backup_manifest import digest, verify
 
 CHUNK_SIZE = 19_000_000  # Below Telegram getFile's 20 MB download limit.
 API = 'https://api.telegram.org'
@@ -145,11 +146,98 @@ def prepare(snapshot: Path, recipient: str) -> tuple[Path, dict]:
     return state_dir, state
 
 
+def pack_component(snapshot: Path, recipient: str, directory: Path, kind: str, names: tuple[str, ...]) -> dict:
+    """Each component can be restored without any earlier local snapshot."""
+    parts = []
+    with tempfile.TemporaryDirectory(prefix='auroom-component-') as temp:
+        archive = Path(temp) / 'component.tar'
+        encrypted = Path(temp) / 'component.tar.age'
+        with tarfile.open(archive, 'w') as tar:
+            for name in names:
+                tar.add(snapshot / name, arcname=name, recursive=False)
+        subprocess.run(['age', '--encrypt', '--recipient', recipient, '--output', str(encrypted), str(archive)],
+            check=True, capture_output=True)
+        with encrypted.open('rb') as stream:
+            while block := stream.read(CHUNK_SIZE):
+                name = f'{snapshot.name}.{kind}.tar.age.part{len(parts):04d}'
+                local = directory / name
+                local.write_bytes(block)
+                local.chmod(0o600)
+                parts.append({'name': name, 'size': len(block), 'sha256': hashlib.sha256(block).hexdigest()})
+    return {'kind': kind, 'snapshot': snapshot.name, 'parts': parts}
+
+
+def reusable_media(snapshot: Path, recipient: str, admin_ids: list[int], media_hash: str) -> dict | None:
+    for previous in sorted(snapshot.parent.iterdir(), reverse=True):
+        if previous.name >= snapshot.name or previous.is_symlink() or not re.fullmatch(r'\d{8}T\d{6}Z', previous.name):
+            continue
+        state_file = previous / '.telegram/delivery.json'
+        if not (previous / 'OFFSITE_OK').is_file() or not state_file.is_file() or state_file.is_symlink():
+            continue
+        try:
+            state = json.loads(state_file.read_text())
+            if not isinstance(state, dict) or state.get('recipient') != recipient or state.get('version') not in (1, 2):
+                continue
+            verify(previous)
+            if digest(previous / 'media.tar.gz') != media_hash:
+                continue
+            if state['version'] == 1:
+                media = {'kind': 'legacy-v1-bundle', 'snapshot': state['snapshot'], 'parts': state['parts'], 'sha256': media_hash}
+            else:
+                media = state['media']
+                if media['sha256'] != media_hash:
+                    continue
+            validate_component(media)
+            if not all(p.get('file_id') and p.get('verified') and set(admin_ids).issubset(p.get('sent_to', [])) for p in media['parts']):
+                continue
+            result = copy.deepcopy(media)
+            # Every new snapshot proves that reused remote bytes still exist.
+            for part in result['parts']:
+                part['verified'] = False
+            return result
+        except (ValueError, KeyError, TypeError, OSError):
+            continue  # An incomplete/invalid cache entry is never a reuse source.
+    return None
+
+
+def prepare_v2(snapshot: Path, recipient: str, admin_ids: list[int]) -> tuple[Path, dict]:
+    verify(snapshot)
+    if not re.fullmatch(r'\d{8}T\d{6}Z', snapshot.name):
+        raise ValueError('Snapshot name must be a UTC timestamp')
+    directory = snapshot / '.telegram'
+    directory.mkdir(mode=0o700, exist_ok=True)
+    state_file = directory / 'delivery.json'
+    if state_file.exists():
+        # Preserve partially delivered v1 snapshots; never reinterpret their parts.
+        directory, state = prepare(snapshot, recipient)
+        if state.get('version') not in (1, 2):
+            raise ValueError('Unsupported backup delivery state')
+        if state['version'] == 2 and state.get('checksums_sha256') != digest(snapshot / 'SHA256SUMS'):
+            raise ValueError('Snapshot changed during an incomplete backup export')
+        return directory, state
+    media_hash = digest(snapshot / 'media.tar.gz')
+    media = reusable_media(snapshot, recipient, admin_ids, media_hash)
+    if media is None:
+        media = pack_component(snapshot, recipient, directory, 'media', ('media.tar.gz',))
+        media['sha256'] = media_hash
+    database = pack_component(snapshot, recipient, directory, 'database', ('postgres.dump', 'SHA256SUMS'))
+    state = {'version': 2, 'snapshot': snapshot.name, 'recipient': recipient,
+        'checksums_sha256': digest(snapshot / 'SHA256SUMS'), 'parts': database['parts'],
+        'media': media, 'deliveries': {}}
+    save_json(state_file, state)
+    return directory, state
+
+
+def public_parts(parts: list[dict]) -> list[dict]:
+    return [{key: part[key] for key in ('name', 'size', 'sha256', 'file_id')} for part in parts]
+
+
 def export(snapshot: Path, recipient: str, telegram: Telegram, admin_ids: list[int]) -> None:
     if not admin_ids or any(value <= 0 for value in admin_ids):
         raise ValueError('Backup delivery requires explicit private administrator chat IDs')
-    directory, state = prepare(snapshot, recipient)
-    for part in state['parts']:
+    directory, state = prepare_v2(snapshot, recipient, admin_ids)
+    parts = state['parts'] + (state['media']['parts'] if state['version'] == 2 else [])
+    for part in parts:
         local = directory / part['name']
         if not part.get('file_id'):
             response = telegram.call('sendDocument', {
@@ -171,13 +259,19 @@ def export(snapshot: Path, recipient: str, telegram: Telegram, admin_ids: list[i
                 part['sent_to'].append(chat_id)
                 save_json(directory / 'delivery.json', state)
     manifest = {key: state[key] for key in ('version', 'snapshot', 'recipient')}
-    manifest['parts'] = [{key: part[key] for key in ('name', 'size', 'sha256', 'file_id')} for part in state['parts']]
+    manifest['parts'] = public_parts(state['parts'])
+    if state['version'] == 2:
+        manifest['media'] = {key: state['media'][key] for key in ('kind', 'snapshot', 'sha256')}
+        manifest['media']['parts'] = public_parts(state['media']['parts'])
     manifest_path = directory / f'{snapshot.name}.manifest.json'
     save_json(manifest_path, manifest)
+    manifest_caption = f'AuRoom: копия {snapshot.name} полностью загружена и проверена. Сохраните manifest и все части; для восстановления нужен отдельный ключ age.'
+    if state['version'] == 2:
+        manifest_caption += ' Части медиа могут быть из предыдущих копий: они перечислены в manifest и нужны для восстановления.'
     for chat_id in admin_ids:
         if not isinstance(state['deliveries'].get(str(chat_id)), dict):
             response = telegram.call('sendDocument', {'chat_id': chat_id, 'disable_notification': 'true',
-                'caption': f'AuRoom: копия {snapshot.name} полностью загружена и проверена. Сохраните manifest и все части; для восстановления нужен отдельный ключ age.'}, manifest_path)
+                'caption': manifest_caption}, manifest_path)
             state['deliveries'][str(chat_id)] = {'message_id': response['message_id'], 'file_id': response['document']['file_id']}
             save_json(directory / 'delivery.json', state)
     manifest_bytes = manifest_path.read_bytes()
@@ -192,23 +286,34 @@ def export(snapshot: Path, recipient: str, telegram: Telegram, admin_ids: list[i
     print(f'AuRoom encrypted Telegram backup verified: {snapshot.name}; administrators={len(admin_ids)}')
 
 
-def recover(manifest_path: Path, target: Path, identity: Path, telegram: Telegram | None, parts_dir: Path | None) -> None:
-    manifest = json.loads(manifest_path.read_text())
-    if manifest.get('version') != 1 or not manifest.get('parts') or len(manifest['parts']) > 10000:
+def validate_component(component: dict) -> None:
+    if not isinstance(component, dict):
+        raise ValueError('Unsupported backup component')
+    kind = component.get('kind')
+    snapshot = component.get('snapshot', '')
+    parts = component.get('parts')
+    if kind not in ('legacy-v1-bundle', 'database', 'media') or not isinstance(snapshot, str) or not re.fullmatch(r'\d{8}T\d{6}Z', snapshot):
+        raise ValueError('Unsupported backup component')
+    if not isinstance(parts, list) or not parts or len(parts) > 10000:
         raise ValueError('Unsupported backup manifest')
-    if target.exists() and any(target.iterdir()):
-        raise ValueError('Recovery target must be empty')
-    target.mkdir(mode=0o700, parents=True, exist_ok=True)
+    prefix = snapshot if kind == 'legacy-v1-bundle' else f'{snapshot}.{kind}'
+    for index, part in enumerate(parts):
+        if not isinstance(part, dict) or part.get('name') != f'{prefix}.tar.age.part{index:04d}':
+            raise ValueError('Invalid backup part name/order')
+        size, checksum = part.get('size'), part.get('sha256')
+        if type(size) is not int or not 0 < size <= CHUNK_SIZE or not isinstance(checksum, str) or not re.fullmatch(r'[0-9a-f]{64}', checksum):
+            raise ValueError('Invalid backup part metadata')
+
+
+def recover_component(component: dict, target: Path, identity: Path, telegram: Telegram | None,
+                      parts_dir: Path | None, selected: set[str]) -> None:
+    validate_component(component)
     with tempfile.TemporaryDirectory(prefix='auroom-recover-') as temp:
         root = Path(temp)
         bundle = root / 'backup.tar.age'
         with bundle.open('wb') as output:
-            for index, part in enumerate(manifest['parts']):
+            for part in component['parts']:
                 name = part['name']
-                if not re.fullmatch(r'\d{8}T\d{6}Z.tar.age.part\d{4}', name) or name != f"{manifest['snapshot']}.tar.age.part{index:04d}":
-                    raise ValueError('Invalid backup part name/order')
-                if not 0 < part['size'] <= CHUNK_SIZE or not re.fullmatch(r'[0-9a-f]{64}', part['sha256']):
-                    raise ValueError('Invalid backup part metadata')
                 local = root / name
                 if parts_dir:
                     source = parts_dir / name
@@ -228,14 +333,39 @@ def recover(manifest_path: Path, target: Path, identity: Path, telegram: Telegra
         subprocess.run(['age', '--decrypt', '--identity', str(identity), '--output', str(archive), str(bundle)], check=True, capture_output=True)
         with tarfile.open(archive) as tar:
             entries = tar.getmembers()
-            expected = {'postgres.dump', 'media.tar.gz', 'SHA256SUMS'}
-            if len(entries) != 3 or {m.name for m in entries} != expected or not all(m.isfile() for m in entries):
+            expected = {
+                'legacy-v1-bundle': {'postgres.dump', 'media.tar.gz', 'SHA256SUMS'},
+                'database': {'postgres.dump', 'SHA256SUMS'},
+                'media': {'media.tar.gz'},
+            }[component['kind']]
+            if len(entries) != len(expected) or {m.name for m in entries} != expected or not all(m.isfile() for m in entries):
                 raise ValueError('Unsafe backup archive')
             for entry in entries:
+                if entry.name not in selected:
+                    continue
                 with tar.extractfile(entry) as source, (target / entry.name).open('wb') as dest:
                     shutil.copyfileobj(source, dest)
                 (target / entry.name).chmod(0o600)
-        verify(target)
+
+
+def recover(manifest_path: Path, target: Path, identity: Path, telegram: Telegram | None, parts_dir: Path | None) -> None:
+    manifest = json.loads(manifest_path.read_text())
+    if not isinstance(manifest, dict) or manifest.get('version') not in (1, 2):
+        raise ValueError('Unsupported backup manifest')
+    if target.exists() and any(target.iterdir()):
+        raise ValueError('Recovery target must be empty')
+    target.mkdir(mode=0o700, parents=True, exist_ok=True)
+    component = {'kind': 'legacy-v1-bundle' if manifest['version'] == 1 else 'database',
+        'snapshot': manifest.get('snapshot'), 'parts': manifest.get('parts')}
+    recover_component(component, target, identity, telegram, parts_dir, {'postgres.dump', 'SHA256SUMS', 'media.tar.gz'})
+    if manifest['version'] == 2:
+        media = manifest.get('media', {})
+        if not isinstance(media, dict) or media.get('kind') not in ('media', 'legacy-v1-bundle'):
+            raise ValueError('Unsupported backup media component')
+        recover_component(media, target, identity, telegram, parts_dir, {'media.tar.gz'})
+        if digest(target / 'media.tar.gz') != media.get('sha256'):
+            raise ValueError('Recovered media checksum mismatch')
+    verify(target)
     print('AuRoom encrypted Telegram backup recovered and verified')
 
 

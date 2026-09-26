@@ -13,6 +13,13 @@ import httpx
 from sqlalchemy import select
 
 from app.core.config import Settings, get_settings
+from app.core.metrics import (
+    record_generation_quality_retry_success,
+    record_masked_edit_boundary_failure,
+    record_masked_edit_quality_rejected,
+    record_masked_edit_retry,
+    record_masked_edit_started,
+)
 from app.core.redis import redis_client
 from app.db.models.assets import Asset
 from app.db.models.generations import Generation
@@ -20,7 +27,12 @@ from app.db.models.projects import Project
 from app.db.session import dispose_engine, get_session_factory
 from app.domain.assets.enums import AssetPurpose, AssetType
 from app.domain.generations.enums import GenerationOrigin, GenerationStatus
-from app.image_compositor import compose_masked_edit
+from app.image_compositor import (
+    build_edit_reference_guide,
+    compose_masked_edit,
+    expand_normalized_region,
+)
+from app.image_quality import analyze_masked_edit_quality
 from app.image_flyover import FlyoverGif, build_flyover_gif
 from app.image_orbit import build_orbit_animation
 from app.prompt_builders.generation import build_generation_prompt
@@ -48,6 +60,50 @@ QUESTIONNAIRE_PROMPT_PREFIXES = (
 QUESTIONNAIRE_ASPECT_RATIOS = {"1:1": 1.0, "4:3": 4 / 3, "3:4": 3 / 4, "16:9": 16 / 9, "9:16": 9 / 16}
 RESERVED_PROVIDER_PARAMS = {"model_name", "prompt", "image_url", "image_urls"}
 ADMIN_ORBIT_MAX_CONCURRENCY = 3
+MASKED_EDIT_GUIDE_PROMPT = (
+    "MASKED EDIT REFERENCE CONTRACT:\n"
+    "Reference image 1 is the canonical accepted scene. "
+    "Reference image 2 is a pixel-aligned binary edit guide for reference image 1: "
+    "white pixels are the only area allowed to change; black pixels are locked and "
+    "must remain visually unchanged. Make the requested edit only inside the white "
+    "area. At the white/black boundary, preserve continuous geometry, perspective, "
+    "materials, paving, rooflines, wall edges, vegetation and lighting so the edit "
+    "joins the locked scene naturally. The binary guide is an instruction map only: "
+    "never render its black/white colors, rectangle edges, or mask markings in the output."
+)
+
+
+def _masked_edit_provider_prompt(prompt: str) -> str:
+    return f"{prompt}\n\n{MASKED_EDIT_GUIDE_PROMPT}"
+
+
+class GenerationQualityRejected(RuntimeError):
+    def __init__(self, report: dict[str, object]) -> None:
+        super().__init__(
+            "Не удалось аккуратно выполнить эту доработку без нарушения исходной сцены. "
+            "Попробуйте выделить область немного шире или изменить запрос."
+        )
+        self.report = report
+
+
+def _quality_retry_prompt(prompt: str, report: dict[str, object]) -> str:
+    reasons: list[str] = []
+    if int(report.get("changed_outside_pixels", 0) or 0) > 0:
+        reasons.append("pixels outside the final commit region changed")
+    if float(report.get("boundary_luma_excess", 0.0) or 0.0) > 0:
+        reasons.append("the edit boundary has a luminance discontinuity")
+    if float(report.get("boundary_color_excess", 0.0) or 0.0) > 0:
+        reasons.append("the edit boundary has a color discontinuity")
+    if float(report.get("straight_edge_fraction", 0.0) or 0.0) > 0:
+        reasons.append("a straight rectangular edge is visible at the edit boundary")
+    reason_text = "; ".join(reasons) or "the candidate failed the masked-edit quality gate"
+    return (
+        f"{prompt}\n\nPREVIOUS CANDIDATE REJECTED: {reason_text}. "
+        "Maintain exact texture, illumination, material and geometry continuity at the edit "
+        "boundary. Preserve the accepted scene outside the requested exterior change. "
+        "If a fireplace and chimney are visible, preserve their existing architectural "
+        "relationship and do not move the chimney to an unrelated roof area."
+    )
 
 
 def _admin_sandbox_request(
@@ -469,6 +525,9 @@ async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -
             return
         generation.status = GenerationStatus.FAILED
         generation.error = str(error)[:1000] or "Generation failed"
+        if isinstance(error, GenerationQualityRejected):
+            generation.quality_status = "rejected"
+            generation.quality_report = error.report
         generation.completed_at = datetime.now(UTC)
         if generation.credits_charged > 0:
             await CreditService(session).apply(
@@ -653,14 +712,78 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         composition_mode = generation.composition_mode
         edit_region = dict(generation.edit_region) if generation.edit_region else None
         protected_regions = list(generation.protected_regions or [])
+        edit_policy = dict(generation.edit_policy or {})
+        quality_settings: dict[str, float | int] | None = None
+        if composition_mode == "masked_edit" and edit_policy and runtime is not None:
+            quality_settings = {
+                "provider_margin": runtime.masked_edit_provider_context_margin_fraction,
+                "feather_fraction": runtime.masked_edit_feather_fraction,
+                "feather_min_px": runtime.masked_edit_feather_min_px,
+                "feather_max_px": runtime.masked_edit_feather_max_px,
+                "recomposite_multiplier": runtime.masked_edit_recomposite_feather_multiplier,
+                "boundary_band_px": runtime.masked_edit_boundary_band_px,
+                "max_luma_excess": runtime.masked_edit_max_luma_excess,
+                "max_color_excess": runtime.masked_edit_max_color_excess,
+                "max_straight_edge_fraction": runtime.masked_edit_max_straight_edge_fraction,
+                "max_retries": runtime.generation_quality_max_retries,
+            }
         input_storage_path = input_asset.storage_path if input_asset is not None else None
 
     provider = NexusImageProvider(settings)
+    guide_storage = LocalMediaStorage(settings)
+    guide_relative_path: str | None = None
+    reference_image_urls: list[str] | None = None
+    masked_base_data: bytes | None = None
     model_name = primary_model
     fallback_used = False
     provider_task_id: str | None = None
     flyover_gif: FlyoverGif | None = None
+    quality_report: dict[str, object] | None = None
+    provider_work_region = edit_region
     try:
+        if composition_mode == "masked_edit":
+            record_masked_edit_started()
+            if source_url is None or input_storage_path is None or edit_region is None:
+                raise RuntimeError(
+                    "Masked questionnaire edit is missing its base scene or edit region"
+                )
+            base_path = guide_storage.absolute_path(input_storage_path)
+            masked_base_data = await asyncio.to_thread(base_path.read_bytes)
+            if quality_settings is not None:
+                provider_work_region = expand_normalized_region(
+                    edit_region,
+                    margin_fraction=float(quality_settings["provider_margin"]),
+                )
+            guide_data = await asyncio.to_thread(
+                build_edit_reference_guide,
+                base_data=masked_base_data,
+                edit_region=provider_work_region,
+                protected_regions=protected_regions,
+                max_pixels=settings.max_image_pixels,
+            )
+            guide_relative_path = f"internal/generation-guides/{generation_id}.png"
+            await guide_storage.write(guide_relative_path, guide_data)
+            reference_image_urls = [
+                guide_storage.signed_url(
+                    guide_relative_path,
+                    ttl_seconds=max(
+                        settings.media_url_ttl_seconds,
+                        settings.nexus_task_timeout_seconds + 120,
+                    ),
+                )
+            ]
+            prompt = _masked_edit_provider_prompt(prompt)
+            logger.info(
+                "Generation %s masked edit policy=%s intent=%s commit_region=%s "
+                "provider_work_region=%s protected_regions=%s quality_gate=%s",
+                generation_id,
+                edit_policy.get("version"),
+                edit_policy.get("intent"),
+                edit_region,
+                provider_work_region,
+                len(protected_regions),
+                quality_settings is not None,
+            )
         if flyover_request is not None:
             if source_url is None or input_storage_path is None:
                 raise RuntimeError("Flyover GIF generation requires a source image.")
@@ -715,50 +838,253 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 max_pixels=settings.max_image_pixels,
             )
         else:
-            try:
-                result = await provider.generate(
-                    model_name=model_name,
-                    prompt=prompt,
-                    image_url=source_url,
-                    model_params=primary_params,
-                    idempotency_key=f"auroom-{generation_id}-primary",
-                    timeout_seconds=primary_timeout_seconds,
-                )
-            except NexusProviderError as primary_error:
-                if not primary_error.retryable or not fallback_model:
-                    raise
-                logger.warning(
-                    "Primary Nexus model failed for %s; using admin-configured fallback: %s",
-                    generation_id,
-                    primary_error,
-                )
-                model_name = fallback_model
-                fallback_used = True
-                result = await provider.generate(
-                    model_name=model_name,
-                    prompt=prompt,
-                    image_url=source_url,
-                    model_params=fallback_params,
-                    idempotency_key=f"auroom-{generation_id}-fallback",
-                )
-            provider_task_id = result.task_id
-            data = await _download_image(result.image_url, settings)
-        if composition_mode == "masked_edit":
-            if input_storage_path is None or edit_region is None:
-                raise RuntimeError(
-                    "Masked questionnaire edit is missing its base scene or edit region"
-                )
-            base_path = LocalMediaStorage(settings).absolute_path(input_storage_path)
-            base_data = await asyncio.to_thread(base_path.read_bytes)
-            composite = await asyncio.to_thread(
-                compose_masked_edit,
-                base_data=base_data,
-                candidate_data=data,
-                edit_region=edit_region,
-                protected_regions=protected_regions,
-                max_pixels=settings.max_image_pixels,
+            max_quality_retries = (
+                int(quality_settings["max_retries"]) if quality_settings is not None else 0
             )
-            data = composite.data
+            quality_attempts: list[dict[str, object]] = []
+            previous_failure: dict[str, object] | None = None
+            base_provider_prompt = prompt
+            for quality_attempt in range(max_quality_retries + 1):
+                if quality_attempt > 0:
+                    record_masked_edit_retry()
+                attempt_prompt = (
+                    base_provider_prompt
+                    if quality_attempt == 0 or previous_failure is None
+                    else _quality_retry_prompt(base_provider_prompt, previous_failure)
+                )
+                attempt_suffix = (
+                    "primary"
+                    if quality_attempt == 0
+                    else f"quality-{quality_attempt}-primary"
+                )
+                attempt_fallback_suffix = (
+                    "fallback"
+                    if quality_attempt == 0
+                    else f"quality-{quality_attempt}-fallback"
+                )
+                model_name = primary_model
+                try:
+                    result = await provider.generate(
+                        model_name=model_name,
+                        prompt=attempt_prompt,
+                        image_url=source_url,
+                        model_params=primary_params,
+                        idempotency_key=f"auroom-{generation_id}-{attempt_suffix}",
+                        reference_image_urls=reference_image_urls,
+                        timeout_seconds=primary_timeout_seconds,
+                    )
+                except NexusProviderError as primary_error:
+                    if not primary_error.retryable or not fallback_model:
+                        raise
+                    logger.warning(
+                        "Primary Nexus model failed for %s attempt=%s; using admin-configured "
+                        "fallback: %s",
+                        generation_id,
+                        quality_attempt + 1,
+                        primary_error,
+                    )
+                    model_name = fallback_model
+                    fallback_used = True
+                    result = await provider.generate(
+                        model_name=model_name,
+                        prompt=attempt_prompt,
+                        image_url=source_url,
+                        model_params=fallback_params,
+                        idempotency_key=f"auroom-{generation_id}-{attempt_fallback_suffix}",
+                        reference_image_urls=reference_image_urls,
+                    )
+                provider_task_id = result.task_id
+                candidate_data = await _download_image(result.image_url, settings)
+
+                if composition_mode != "masked_edit":
+                    data = candidate_data
+                    break
+                if input_storage_path is None or edit_region is None:
+                    raise RuntimeError(
+                        "Masked questionnaire edit is missing its base scene or edit region"
+                    )
+                base_data = masked_base_data
+                if base_data is None:
+                    base_path = guide_storage.absolute_path(input_storage_path)
+                    base_data = await asyncio.to_thread(base_path.read_bytes)
+
+                if quality_settings is None:
+                    composite = await asyncio.to_thread(
+                        compose_masked_edit,
+                        base_data=base_data,
+                        candidate_data=candidate_data,
+                        edit_region=edit_region,
+                        protected_regions=protected_regions,
+                        max_pixels=settings.max_image_pixels,
+                    )
+                    data = composite.data
+                    break
+
+                composite = await asyncio.to_thread(
+                    compose_masked_edit,
+                    base_data=base_data,
+                    candidate_data=candidate_data,
+                    edit_region=edit_region,
+                    protected_regions=protected_regions,
+                    feather_fraction=float(quality_settings["feather_fraction"]),
+                    feather_min_px=int(quality_settings["feather_min_px"]),
+                    feather_max_px=int(quality_settings["feather_max_px"]),
+                    max_pixels=settings.max_image_pixels,
+                )
+                report = await asyncio.to_thread(
+                    analyze_masked_edit_quality,
+                    base_data=base_data,
+                    final_data=composite.data,
+                    edit_region=edit_region,
+                    boundary_band_px=int(quality_settings["boundary_band_px"]),
+                    max_luma_excess=float(quality_settings["max_luma_excess"]),
+                    max_color_excess=float(quality_settings["max_color_excess"]),
+                    max_straight_edge_fraction=float(
+                        quality_settings["max_straight_edge_fraction"]
+                    ),
+                )
+                initial_report = report.to_dict()
+                boundary_failed = (
+                    report.boundary_luma_excess
+                    > float(quality_settings["max_luma_excess"])
+                    or report.boundary_color_excess
+                    > float(quality_settings["max_color_excess"])
+                    or report.straight_edge_fraction
+                    > float(quality_settings["max_straight_edge_fraction"])
+                )
+                if boundary_failed:
+                    record_masked_edit_boundary_failure()
+                attempt_report: dict[str, object] = {
+                    "attempt": quality_attempt + 1,
+                    "model": model_name,
+                    "provider_task_id": provider_task_id,
+                    "initial": initial_report,
+                }
+
+                if not report.passed:
+                    shortest = min(composite.width, composite.height)
+                    configured_min = int(quality_settings["feather_min_px"])
+                    configured_max = int(quality_settings["feather_max_px"])
+                    primary_feather = max(
+                        configured_min,
+                        min(
+                            configured_max,
+                            round(
+                                shortest
+                                * float(quality_settings["feather_fraction"])
+                            ),
+                        ),
+                    )
+                    wider_feather = min(
+                        configured_max,
+                        max(
+                            primary_feather + 1,
+                            round(
+                                primary_feather
+                                * float(quality_settings["recomposite_multiplier"])
+                            ),
+                        ),
+                    )
+                    if wider_feather > primary_feather:
+                        wider = await asyncio.to_thread(
+                            compose_masked_edit,
+                            base_data=base_data,
+                            candidate_data=candidate_data,
+                            edit_region=edit_region,
+                            protected_regions=protected_regions,
+                            feather_px=wider_feather,
+                            feather_max_px=configured_max,
+                            max_pixels=settings.max_image_pixels,
+                        )
+                        wider_report = await asyncio.to_thread(
+                            analyze_masked_edit_quality,
+                            base_data=base_data,
+                            final_data=wider.data,
+                            edit_region=edit_region,
+                            boundary_band_px=int(quality_settings["boundary_band_px"]),
+                            max_luma_excess=float(quality_settings["max_luma_excess"]),
+                            max_color_excess=float(quality_settings["max_color_excess"]),
+                            max_straight_edge_fraction=float(
+                                quality_settings["max_straight_edge_fraction"]
+                            ),
+                        )
+                        attempt_report["recomposite"] = {
+                            "feather_px": wider_feather,
+                            **wider_report.to_dict(),
+                        }
+                        if wider_report.passed:
+                            report = wider_report
+                            composite = wider
+
+                quality_attempts.append(attempt_report)
+                if report.passed:
+                    data = composite.data
+                    quality_report = {
+                        "version": "edit-quality.v1",
+                        "attempts": quality_attempts,
+                        "provider_work_region": provider_work_region,
+                        "enforced_checks": list(
+                            edit_policy.get("enforced_quality_checks")
+                            or ("outside_region_integrity", "boundary_continuity")
+                        ),
+                        "deferred_checks": list(
+                            edit_policy.get("deferred_quality_checks", [])
+                        ),
+                        "scene_analysis": (
+                            "enforced"
+                            if edit_policy.get("scene_analysis_enforced")
+                            else "deferred"
+                            if edit_policy.get("scene_analysis_required")
+                            else "not_required"
+                        ),
+                        "final": "passed",
+                    }
+                    if quality_attempt > 0:
+                        record_generation_quality_retry_success()
+                    logger.info(
+                        "Generation %s masked quality passed attempt=%s "
+                        "outside_changed=%s boundary_luma=%.4f boundary_color=%.4f "
+                        "straight_edge=%.4f",
+                        generation_id,
+                        quality_attempt + 1,
+                        report.changed_outside_pixels,
+                        report.boundary_luma_excess,
+                        report.boundary_color_excess,
+                        report.straight_edge_fraction,
+                    )
+                    break
+
+                previous_failure = report.to_dict()
+                logger.warning(
+                    "Generation %s masked quality rejected attempt=%s/%s report=%s",
+                    generation_id,
+                    quality_attempt + 1,
+                    max_quality_retries + 1,
+                    previous_failure,
+                )
+                if quality_attempt >= max_quality_retries:
+                    quality_report = {
+                        "version": "edit-quality.v1",
+                        "attempts": quality_attempts,
+                        "provider_work_region": provider_work_region,
+                        "enforced_checks": list(
+                            edit_policy.get("enforced_quality_checks")
+                            or ("outside_region_integrity", "boundary_continuity")
+                        ),
+                        "deferred_checks": list(
+                            edit_policy.get("deferred_quality_checks", [])
+                        ),
+                        "scene_analysis": (
+                            "enforced"
+                            if edit_policy.get("scene_analysis_enforced")
+                            else "deferred"
+                            if edit_policy.get("scene_analysis_required")
+                            else "not_required"
+                        ),
+                        "final": "rejected",
+                    }
+                    record_masked_edit_quality_rejected()
+                    raise GenerationQualityRejected(quality_report)
 
         async with get_session_factory()() as session:
             generation = await GenerationRepository(session).get_for_update(generation_id)
@@ -819,6 +1145,9 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             generation.model_name = model_name
             generation.fallback_used = fallback_used
             generation.provider_task_id = provider_task_id
+            if quality_report is not None:
+                generation.quality_report = quality_report
+                generation.quality_status = "passed"
             generation.status = GenerationStatus.COMPLETED
             generation.error = None
             generation.completed_at = datetime.now(UTC)
@@ -839,6 +1168,18 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
     except Exception as exc:
         logger.exception("Generation %s failed", generation_id)
         await _mark_failed_and_refund(generation_id, exc)
+    finally:
+        if guide_relative_path is not None:
+            guide_path = guide_storage.absolute_path(guide_relative_path)
+            try:
+                if guide_path.exists():
+                    await asyncio.to_thread(guide_path.unlink)
+            except OSError:
+                logger.warning(
+                    "Could not remove temporary edit guide for generation %s",
+                    generation_id,
+                    exc_info=True,
+                )
 
 
 async def _reconcile_database_jobs(settings: Settings) -> None:

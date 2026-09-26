@@ -233,6 +233,16 @@ export type AdminGenerationSettings = {
   primary_params: Record<string, unknown>
   fallback_params: Record<string, unknown>
   mode_params: Record<string, Record<string, unknown>>
+  masked_edit_provider_context_margin_fraction: number
+  masked_edit_feather_fraction: number
+  masked_edit_feather_min_px: number
+  masked_edit_feather_max_px: number
+  masked_edit_recomposite_feather_multiplier: number
+  masked_edit_boundary_band_px: number
+  masked_edit_max_luma_excess: number
+  masked_edit_max_color_excess: number
+  masked_edit_max_straight_edge_fraction: number
+  generation_quality_max_retries: number
   updated_at: string | null
 }
 

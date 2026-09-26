@@ -10,6 +10,7 @@ const catalog = {
   version:'e2e-v1',
   sections:[
     {key:'house',title:'Дом',object_keys:['eskez-doma']},
+    {key:'outbuildings',title:'Гараж и навес',object_keys:['garazh']},
     {key:'furniture',title:'Мебель и площадки',object_keys:['lavochka']},
     {key:'landscape',title:'Участок',object_keys:['gazon','prud']},
   ],
@@ -27,14 +28,26 @@ const catalog = {
       {id:'1',text:'Что делаем?',kind:'single',options:['Пруд','Ручей'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
       {id:'2',text:'Эскиз воды вам подходит?',kind:'single',options:['Да, идём дальше','Нет, хочу уточнить и сделать заново'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'review',condition:null,option_rules:{},edit_targets:{}},
     ]},
-    {key:'eskez-doma',title:'Дом, фасад',source_file:'fixture',order:3,scene_policy:{},questions:[
+    {key:'garazh',title:'Гараж',source_file:'fixture',order:3,scene_policy:{},questions:[
+      {id:'1',text:'Какой гараж?',kind:'single',options:['На 1 автомобиль','На 2 автомобиля'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
+      {id:'2',text:'Эскиз гаража вам подходит?',kind:'single',options:['Да, идём дальше','Нет, хочу уточнить и сделать заново'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'review',condition:null,option_rules:{},edit_targets:{}},
+    ]},
+    {key:'eskez-doma',title:'Дом, фасад',source_file:'fixture',order:4,scene_policy:{},questions:[
       {id:'4',text:'Сколько этажей?',kind:'single',options:['1 этаж','2 этажа','2 этажа + мансарда','3 этажа'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
+      {id:'6',text:'Нужен гараж или навес?',kind:'single',options:['Да','Нет'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
       {id:'12',text:'Нужна терраса?',kind:'single',options:['Терраса','Нет'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
       {id:'12б',text:'На каких этажах терраса?',kind:'multi',options:['Первый этаж','Второй этаж','Третий этаж','Мансарда'],required:true,skip_default:null,help:null,field_hint:null,max_selections:4,phase:'pre_render',condition:{question_id:'12',operator:'neq',value:'Нет'},option_rules:{
         'Первый этаж':{question_id:'4',operator:'floor_option',value:'Первый этаж'},
         'Второй этаж':{question_id:'4',operator:'floor_option',value:'Второй этаж'},
         'Третий этаж':{question_id:'4',operator:'floor_option',value:'Третий этаж'},
         'Мансарда':{question_id:'4',operator:'floor_option',value:'Мансарда'},
+      },edit_targets:{}},
+      {id:'13',text:'Что еще добавить к дому?',kind:'multi',options:['Балкон','Терраса на плоской кровле'],required:false,skip_default:null,help:null,field_hint:null,max_selections:2,phase:'pre_render',condition:null,option_rules:{
+        'Балкон':{operator:'all',conditions:[
+          {question_id:'4',operator:'neq',value:'1 этаж'},
+          {question_id:'12б',operator:'not_contains_any',value:['Второй этаж','Третий этаж','Мансарда']},
+        ]},
+        'Терраса на плоской кровле':{question_id:'7',operator:'eq',value:'Плоская'},
       },edit_targets:{}},
       {id:'15',text:'Эскиз дома вам подходит?',kind:'single',options:['Да, идём дальше','Нет, хочу уточнить и сделать заново'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'review',condition:null,option_rules:{},edit_targets:{}},
     ]},
@@ -49,10 +62,29 @@ let hideIdeaFromFeed=false
 let homeProjects:any[]=[]
 function resetState(){
   generationCount=0; publication=null; savedIdea=false; hideIdeaFromFeed=false; homeProjects=[]
-  session={session_id:'77777777-7777-4777-8777-777777777777',catalog_version:catalog.version,selected_objects:['lavochka'],initial_concept_mode:false,survey_completed_objects:[],initial_generation_id:null,initial_concept_accepted:false,current_object:null,current_question_id:null,source_step_completed:false,source_asset_id:null,scene_asset_id:null,answers:{},accepted_objects:[],removed_objects:[],pending_removal_object:null,generation_ids:{},edit_question_ids:[],review_comments:{},edit_regions:{},lock_regions:{},region_mode:null,region_object:null,application_submitted:false}
-  project={id:projectId,name:'Лавочка',description:null,status:'active',context:{questionnaire_draft:false,design_session:session},created_at:now,updated_at:now}
+  session={session_id:'77777777-7777-4777-8777-777777777777',catalog_version:catalog.version,selected_objects:['lavochka'],plot_area_sotkas:8,site_plan:null,initial_concept_mode:false,survey_completed_objects:[],initial_generation_id:null,initial_concept_accepted:false,current_object:null,current_question_id:null,source_step_completed:false,source_asset_id:null,scene_asset_id:null,answers:{},accepted_objects:[],removed_objects:[],pending_removal_object:null,generation_ids:{},edit_question_ids:[],review_comments:{},edit_regions:{},lock_regions:{},region_mode:null,region_object:null,application_submitted:false}
+  project={id:projectId,name:'Лавочка',description:null,status:'active',context:{questionnaire_draft:false,plot_area_m2:800,design_session:session},created_at:now,updated_at:now}
 }
 function asset(i:number){return {id:assetIds[i],project_id:projectId,type:'image',purpose:'generation_output',original_filename:'result.png',mime_type:'image/png',size_bytes:1234,width:640,height:480,url:`data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"></svg>`,created_at:now}}
+function withMockSitePlan(next:any){
+  if(!next.initial_concept_mode||!next.plot_area_sotkas) return {...next,site_plan:null}
+  const objects=next.selected_objects.map((key:string,index:number)=>{
+    const definition=catalog.questionnaires.find((item:any)=>item.key===key)
+    const house=key==='eskez-doma'
+    const width=house?0.42:0.16
+    const height=house?0.26:0.11
+    return {
+      object_key:key,
+      object_name:definition?.title||key,
+      role:house?'house':'site_object',
+      zone:house?'center_front':'auto',
+      relations:[],
+      rect:{x:house?0.29:0.12+index*0.2,y:house?0.30:0.68,width,height},
+      placement_source:'derived',
+    }
+  })
+  return {...next,site_plan:{schema:'auroom.site_plan.v1',plot:{area_sotkas:next.plot_area_sotkas,area_m2:next.plot_area_sotkas*100,coordinate_system:'normalized',front_side:'y0',geometry_accuracy:'relative'},objects,warnings:[]}}
+}
 function generation(i:number,status='completed'){return {id:generationIds[i],project_id:projectId,input_asset_id:null,output_asset:status==='completed'?asset(i):null,type:'master_plan',status,credits_charged:1,model_name:'mock',fallback_used:false,composition_mode:'replace',edit_region:null,protected_regions:[],error:null,created_at:now,updated_at:now,started_at:now,completed_at:status==='completed'?now:null}}
 async function json(route:Route,data:unknown,status=200){await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)})}
 
@@ -69,7 +101,7 @@ test.beforeEach(async ({page})=>{
     if(path.endsWith('/questionnaire-generation-cost')&&method==='GET') return json(route,{generation_type:'master_plan',initial_credits:0,credits:1,initial_offer_available:true,is_available:true})
     if(path.endsWith('/questionnaire-projects')&&method==='POST') return json(route,project,201)
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='GET') return json(route,{session})
-    if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='PUT') {session=JSON.parse(req.postData()||'{}');project={...project,context:{...project.context,design_session:session}};return json(route,{session})}
+    if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='PUT') {session=withMockSitePlan(JSON.parse(req.postData()||'{}'));project={...project,context:{...project.context,design_session:session}};return json(route,{session})}
     if(path.endsWith(`/projects/${projectId}/questionnaire-generation`)&&method==='POST'){const i=generationCount++;return json(route,generation(i,'queued'),202)}
     if(path.endsWith(`/projects/${projectId}/questionnaire-initial-accept`)&&method==='POST'){
       const completed=generation(0)
@@ -143,6 +175,33 @@ test('home is a lightweight project dashboard with on-demand projects and three-
   await expect(page.getByText('Что проектируем?')).toBeVisible()
 })
 
+test('stale empty conditional house question is repaired instead of shown as a dead end',async({page})=>{
+  session={
+    ...session,
+    selected_objects:['eskez-doma','garazh'],
+    initial_concept_mode:true,
+    source_step_completed:true,
+    current_object:'eskez-doma',
+    current_question_id:'13',
+    survey_completed_objects:[],
+    answers:{
+      'eskez-doma':{
+        '4':'1 этаж',
+        '12':'Нет',
+      },
+    },
+  }
+  project={...project,name:'Дом + гараж',context:{...project.context,design_session:session}}
+
+  await page.goto(`/?project=${projectId}`)
+
+  await expect(page.getByText('Что еще добавить к дому?')).toHaveCount(0)
+  await expect(page.getByRole('heading',{name:'Заполните параметры всех объектов'})).toBeVisible()
+  await expect(page.getByRole('button',{name:/✓ Дом, фасад/})).toBeVisible()
+  await page.getByRole('button',{name:'Гараж',exact:true}).click()
+  await expect(page.getByText('Какой гараж?')).toBeVisible()
+})
+
 test('canonical create flow supports refinement and own unpublish without technical region UI',async({page})=>{
   const errors:string[]=[]; page.on('console',m=>{if(m.type()==='error')errors.push(m.text())})
   await page.goto('/')
@@ -191,10 +250,21 @@ test('initial concept collects all answers before one generation and supports pr
 
   await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
   expect(generationCount).toBe(0)
+  await expect(page.getByTestId('site-plan-preview')).toHaveCount(0)
+  await expect(page.getByText('Схема размещения')).toHaveCount(0)
   await expect(page.getByText('Одна общая генерация · Бесплатно')).toBeVisible()
   await page.getByRole('button',{name:'Создать общую концепцию'}).click()
   await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
   expect(generationCount).toBe(1)
+
+  await page.getByRole('button',{name:'Изменить ТЗ · новая генерация'}).click()
+  await expect(page.getByLabel('Размер участка, соток')).toHaveValue('8')
+  await page.getByLabel('Размер участка, соток').fill('12')
+  await page.getByRole('button',{name:'Создать общую концепцию'}).click()
+  await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
+  expect(generationCount).toBe(2)
+  expect(session.plot_area_sotkas).toBe(12)
+  expect(session.site_plan.plot.area_sotkas).toBe(12)
 
   await page.getByRole('button',{name:'Принять концепцию'}).click()
   await expect(page.getByText('Что делаем дальше?')).toBeVisible()
@@ -260,6 +330,7 @@ test('house terrace floor options follow selected storeys in the UI',async({page
   await page.getByRole('button',{name:'Дом, фасад',exact:true}).click()
 
   await page.getByText('1 этаж',{exact:true}).click()
+  await page.getByText('Нет',{exact:true}).click()
   await page.getByText('Терраса',{exact:true}).click()
   await expect(page.getByText('На каких этажах терраса?')).toBeVisible()
   await expect(page.getByText('Первый этаж',{exact:true})).toBeVisible()
@@ -269,13 +340,61 @@ test('house terrace floor options follow selected storeys in the UI',async({page
 
   await page.getByRole('button',{name:'Назад'}).click()
   await page.getByRole('button',{name:'Назад'}).click()
+  await page.getByRole('button',{name:'Назад'}).click()
   await page.getByText('2 этажа + мансарда',{exact:true}).click()
+  await page.getByText('Нет',{exact:true}).click()
   await page.getByText('Терраса',{exact:true}).click()
   await expect(page.getByText('Второй этаж',{exact:true})).toBeVisible()
   await expect(page.getByText('Мансарда',{exact:true})).toBeVisible()
   await expect(page.getByText('Третий этаж',{exact:true})).toHaveCount(0)
 })
 
+
+
+
+test('house skips embedded garage branch when a separate garage questionnaire is selected',async({page})=>{
+  session={
+    ...session,
+    selected_objects:['eskez-doma','garazh'],
+    plot_area_sotkas:8,
+    initial_concept_mode:true,
+    source_step_completed:true,
+    current_object:'eskez-doma',
+    current_question_id:'4',
+    answers:{},
+  }
+  project={...project,name:'Дом и гараж',context:{...project.context,plot_area_m2:800,design_session:session}}
+
+  await page.goto('/?project=' + projectId)
+  await expect(page.getByText('Сколько этажей?')).toBeVisible()
+  await page.getByText('2 этажа',{exact:true}).click()
+
+  await expect(page.getByText('Нужен гараж или навес?')).toHaveCount(0)
+  await expect(page.getByText('Нужна терраса?')).toBeVisible()
+})
+
+
+test('empty house follow-up is skipped after terrace is placed on the second floor',async({page})=>{
+  session={
+    ...session,
+    selected_objects:['eskez-doma'],
+    plot_area_sotkas:8,
+    initial_concept_mode:true,
+    source_step_completed:true,
+    current_object:'eskez-doma',
+    current_question_id:'12',
+    answers:{'eskez-doma':{'4':'2 этажа','6':'Нет','7':'Двускатная'}},
+  }
+  project={...project,name:'Дом',context:{...project.context,plot_area_m2:800,design_session:session}}
+
+  await page.goto('/?project=' + projectId)
+  await page.getByText('Терраса',{exact:true}).click()
+  await page.getByText('Второй этаж',{exact:true}).click()
+  await page.getByRole('button',{name:'Продолжить'}).click()
+
+  await expect(page.getByText('Что еще добавить к дому?')).toHaveCount(0)
+  await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
+})
 
 test('fullscreen control stays available in the mobile product flow',async({page})=>{
   await page.setViewportSize({width:390,height:844})
