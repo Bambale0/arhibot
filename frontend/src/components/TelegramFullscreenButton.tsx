@@ -27,7 +27,7 @@ function FullscreenIcon({ active }: { active: boolean }) {
   )
 }
 
-export function TelegramFullscreenButton() {
+export function TelegramFullscreenButton({ placement = 'floating' }: { placement?: 'floating' | 'header' }) {
   const webApp = window.Telegram?.WebApp
   const [isFullscreen, setIsFullscreen] = useState(() => Boolean(webApp?.isFullscreen))
   const fullscreenState = useRef(isFullscreen)
@@ -82,7 +82,7 @@ export function TelegramFullscreenButton() {
 
   return (
     <button
-      className="telegram-fullscreen-button"
+      className={`telegram-fullscreen-button${placement === 'header' ? ' telegram-fullscreen-button--header' : ''}`}
       type="button"
       title={label}
       aria-label={label}

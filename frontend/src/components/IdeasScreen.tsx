@@ -95,6 +95,20 @@ function WorkCard({
     setImageReady(false)
   }, [imageUrl])
 
+  useEffect(() => {
+    if (!shouldLoadImage || !imageUrl || imageReady || imageFailed) return
+    const timeout = window.setTimeout(() => {
+      if (idea.preview_url && !previewFailed && imageUrl === idea.preview_url) {
+        setPreviewFailed(true)
+        setImageReady(false)
+        return
+      }
+      setImageReady(false)
+      setImageFailed(true)
+    }, 1800)
+    return () => window.clearTimeout(timeout)
+  }, [idea.preview_url, imageFailed, imageReady, imageUrl, previewFailed, shouldLoadImage])
+
   const shouldRenderImage = Boolean(imageUrl) && shouldLoadImage && !imageFailed
   const shouldRenderUnavailable = !shouldRenderImage && imageFailed && hasMedia
   return <article id={`idea-${idea.id}`} className="idea-feed-card idea-work-card" data-idea-id={idea.id}>
