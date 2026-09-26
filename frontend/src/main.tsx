@@ -10,6 +10,7 @@ import './questionnaire.css'
 import './create-questionnaire.css'
 // Keep brand overrides last so questionnaire component styles cannot override the approved AuRoom palette.
 import './brand.css'
+import './telegram-safe-area.css'
 
 createRoot(document.getElementById('root')!).render(
   <AuthProvider><App /></AuthProvider>,

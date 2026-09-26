@@ -413,6 +413,16 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   const [primaryParams,setPrimaryParams]=useState(JSON.stringify(settings.primary_params,null,2))
   const [fallbackParams,setFallbackParams]=useState(JSON.stringify(settings.fallback_params,null,2))
   const [modeParams,setModeParams]=useState(JSON.stringify(settings.mode_params,null,2))
+  const [providerMargin,setProviderMargin]=useState(String(settings.masked_edit_provider_context_margin_fraction))
+  const [featherFraction,setFeatherFraction]=useState(String(settings.masked_edit_feather_fraction))
+  const [featherMin,setFeatherMin]=useState(String(settings.masked_edit_feather_min_px))
+  const [featherMax,setFeatherMax]=useState(String(settings.masked_edit_feather_max_px))
+  const [recompositeMultiplier,setRecompositeMultiplier]=useState(String(settings.masked_edit_recomposite_feather_multiplier))
+  const [boundaryBand,setBoundaryBand]=useState(String(settings.masked_edit_boundary_band_px))
+  const [maxLuma,setMaxLuma]=useState(String(settings.masked_edit_max_luma_excess))
+  const [maxColor,setMaxColor]=useState(String(settings.masked_edit_max_color_excess))
+  const [maxStraightEdge,setMaxStraightEdge]=useState(String(settings.masked_edit_max_straight_edge_fraction))
+  const [qualityRetries,setQualityRetries]=useState(String(settings.generation_quality_max_retries))
   const [busy,setBusy]=useState(false)
   const [sandboxModel,setSandboxModel]=useState('')
   const [sandboxPrompt,setSandboxPrompt]=useState('')
@@ -489,6 +499,23 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   async function saveSettings(){
     const timeout=Number(primaryTimeout)
     if(!Number.isInteger(timeout)||timeout<30||timeout>600){onError('Primary timeout должен быть целым числом от 30 до 600 секунд');return}
+    const margin=Number(providerMargin)
+    const featherFractionValue=Number(featherFraction)
+    const featherMinValue=Number(featherMin)
+    const featherMaxValue=Number(featherMax)
+    const recompositeMultiplierValue=Number(recompositeMultiplier)
+    const boundaryBandValue=Number(boundaryBand)
+    const maxLumaValue=Number(maxLuma)
+    const maxColorValue=Number(maxColor)
+    const maxStraightEdgeValue=Number(maxStraightEdge)
+    const qualityRetriesValue=Number(qualityRetries)
+    const invalidQuality = [
+      margin, featherFractionValue, featherMinValue, featherMaxValue,
+      recompositeMultiplierValue, boundaryBandValue, maxLumaValue, maxColorValue,
+      maxStraightEdgeValue, qualityRetriesValue,
+    ].some((value) => !Number.isFinite(value))
+    if(invalidQuality){onError('Проверьте числовые параметры masked edit');return}
+    if(featherMinValue>featherMaxValue){onError('Минимальный feather не может быть больше максимального');return}
     setBusy(true);onError(null)
     try{
       const saved=await api.adminUpdateGenerationSettings({
@@ -498,6 +525,16 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
         primary_params:JSON.parse(primaryParams||'{}') as Record<string,unknown>,
         fallback_params:JSON.parse(fallbackParams||'{}') as Record<string,unknown>,
         mode_params:JSON.parse(modeParams||'{}') as Record<string,Record<string,unknown>>,
+        masked_edit_provider_context_margin_fraction:margin,
+        masked_edit_feather_fraction:featherFractionValue,
+        masked_edit_feather_min_px:featherMinValue,
+        masked_edit_feather_max_px:featherMaxValue,
+        masked_edit_recomposite_feather_multiplier:recompositeMultiplierValue,
+        masked_edit_boundary_band_px:boundaryBandValue,
+        masked_edit_max_luma_excess:maxLumaValue,
+        masked_edit_max_color_excess:maxColorValue,
+        masked_edit_max_straight_edge_fraction:maxStraightEdgeValue,
+        generation_quality_max_retries:qualityRetriesValue,
       })
       onSettings(saved)
     }catch(err){onError(errorText(err))}
@@ -544,7 +581,19 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   }
   async function savePrice(mode: GenerationMode, value: number, active: boolean){try{const saved=await api.adminUpdateGenerationPrice(mode,value,active);onPrices([...prices.filter(x=>x.generation_type!==mode),saved])}catch(err){onError(errorText(err))}}
   return <section className="admin-panel"><div className="admin-panel-title"><div><h2>AI, стоимость и промпты</h2><p>Модели, параметры, стоимость кредитов и prompt templates управляются из БД.</p></div></div>
-    <div className="admin-form-grid"><label>Primary model<input value={primary} onChange={e=>setPrimary(e.target.value)}/></label><label>Fallback model<input value={fallback} onChange={e=>setFallback(e.target.value)}/></label><label>Primary timeout, сек<input type="number" min="30" max="600" value={primaryTimeout} onChange={e=>setPrimaryTimeout(e.target.value)}/><small>После этого времени production переключается на fallback. Sandbox и GIF-пролёт не затрагиваются.</small></label><label className="admin-span-2">Primary params<textarea className="admin-code" value={primaryParams} onChange={e=>setPrimaryParams(e.target.value)}/></label><label className="admin-span-2">Fallback params<textarea className="admin-code" value={fallbackParams} onChange={e=>setFallbackParams(e.target.value)}/></label><label className="admin-span-2">Параметры по сценариям<textarea className="admin-code" value={modeParams} onChange={e=>setModeParams(e.target.value)}/></label><div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={()=>void saveSettings()}>Сохранить AI</button></div></div>
+    <div className="admin-form-grid"><label>Primary model<input value={primary} onChange={e=>setPrimary(e.target.value)}/></label><label>Fallback model<input value={fallback} onChange={e=>setFallback(e.target.value)}/></label><label>Primary timeout, сек<input type="number" min="30" max="600" value={primaryTimeout} onChange={e=>setPrimaryTimeout(e.target.value)}/><small>После этого времени production переключается на fallback. Sandbox и GIF-пролёт не затрагиваются.</small></label><label className="admin-span-2">Primary params<textarea className="admin-code" value={primaryParams} onChange={e=>setPrimaryParams(e.target.value)}/></label><label className="admin-span-2">Fallback params<textarea className="admin-code" value={fallbackParams} onChange={e=>setFallbackParams(e.target.value)}/></label><label className="admin-span-2">Параметры по сценариям<textarea className="admin-code" value={modeParams} onChange={e=>setModeParams(e.target.value)}/></label>
+      <div className="admin-span-2"><h3>Masked edit quality</h3><small>Контекст provider шире final commit region; финальный compositor по-прежнему запрещает изменения снаружи пользовательской области.</small></div>
+      <label>Provider margin, доля<input type="number" min="0" max="0.25" step="0.005" value={providerMargin} onChange={e=>setProviderMargin(e.target.value)}/></label>
+      <label>Feather fraction<input type="number" min="0" max="0.1" step="0.001" value={featherFraction} onChange={e=>setFeatherFraction(e.target.value)}/></label>
+      <label>Feather min, px<input type="number" min="0" max="128" step="1" value={featherMin} onChange={e=>setFeatherMin(e.target.value)}/></label>
+      <label>Feather max, px<input type="number" min="1" max="256" step="1" value={featherMax} onChange={e=>setFeatherMax(e.target.value)}/></label>
+      <label>Re-composite multiplier<input type="number" min="1" max="4" step="0.05" value={recompositeMultiplier} onChange={e=>setRecompositeMultiplier(e.target.value)}/></label>
+      <label>Boundary band, px<input type="number" min="1" max="64" step="1" value={boundaryBand} onChange={e=>setBoundaryBand(e.target.value)}/></label>
+      <label>Max luma excess<input type="number" min="0" max="255" step="1" value={maxLuma} onChange={e=>setMaxLuma(e.target.value)}/></label>
+      <label>Max color excess<input type="number" min="0" max="442" step="1" value={maxColor} onChange={e=>setMaxColor(e.target.value)}/></label>
+      <label>Max straight edge<input type="number" min="0" max="1" step="0.01" value={maxStraightEdge} onChange={e=>setMaxStraightEdge(e.target.value)}/></label>
+      <label>Quality retries<input type="number" min="0" max="3" step="1" value={qualityRetries} onChange={e=>setQualityRetries(e.target.value)}/></label>
+      <div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={()=>void saveSettings()}>Сохранить AI</button></div></div>
     <div className="admin-subpanel">
       <div className="admin-panel-title"><div><h3>AI Sandbox</h3><p>Одноразовый админский тест Nexus. Model ID, prompt и params применяются только к этому запуску: primary/fallback клиентов не меняются, кредиты не списываются.</p></div></div>
       <div className="admin-form-grid">

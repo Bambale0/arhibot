@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from app.core.metrics import metrics_payload, observe_http_request
+from app.core.metrics import (
+    metrics_payload,
+    observe_http_request,
+    record_generation_quality_retry_success,
+    record_interior_request_blocked,
+    record_masked_edit_boundary_failure,
+    record_masked_edit_quality_rejected,
+    record_masked_edit_retry,
+    record_masked_edit_started,
+)
 
 
 def test_http_metrics_use_route_template_labels() -> None:
@@ -31,3 +40,25 @@ def test_json_formatter_includes_release_sha() -> None:
     payload = json.loads(JsonFormatter("abc123").format(record))
     assert payload["release_sha"] == "abc123"
     assert payload["message"] == "hello"
+
+
+def test_exterior_refinement_metrics_are_exported() -> None:
+    record_masked_edit_started()
+    record_masked_edit_boundary_failure()
+    record_masked_edit_retry()
+    record_generation_quality_retry_success()
+    record_masked_edit_quality_rejected()
+    record_interior_request_blocked()
+
+    payload, _ = metrics_payload()
+    rendered = payload.decode("utf-8")
+
+    for metric in (
+        "auroom_masked_edit_total",
+        "auroom_masked_edit_boundary_failure_total",
+        "auroom_masked_edit_retry_total",
+        "auroom_generation_quality_retry_success_total",
+        "auroom_masked_edit_quality_rejected_total",
+        "auroom_interior_request_blocked_total",
+    ):
+        assert metric in rendered

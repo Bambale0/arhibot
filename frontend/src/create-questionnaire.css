@@ -254,6 +254,8 @@
   outline-offset: 3px;
 }
 
+
+
 @media (max-width: 640px) {
   .questionnaire-create {
     width: calc(100% - 32px);

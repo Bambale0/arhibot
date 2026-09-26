@@ -278,30 +278,6 @@
   font-size: 15px;
 }
 
-.question-card {
-  padding-left: clamp(58px, 7vw, 78px);
-}
-.question-card::before {
-  content: "";
-  position: absolute;
-  left: clamp(30px, 3.5vw, 38px);
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--q-line);
-}
-.question-card::after {
-  content: "";
-  position: absolute;
-  left: calc(clamp(30px, 3.5vw, 38px) - 3px);
-  top: 43px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--q-accent);
-  box-shadow: 0 0 0 4px var(--q-sheet);
-}
-
 .questionnaire-question-head {
   display: flex;
   justify-content: space-between;
@@ -444,6 +420,7 @@
   border-radius: 2px;
   padding-inline: 20px;
 }
+.questionnaire-actions:empty { display: none; }
 .questionnaire-actions .primary-button {
   min-width: 150px;
   background: var(--q-accent);
@@ -699,14 +676,6 @@
     min-height: calc(100dvh - 99px);
     padding-bottom: calc(92px + env(safe-area-inset-bottom));
   }
-  .question-card {
-    padding-left: 50px;
-  }
-  .question-card::before { left: 31px; }
-  .question-card::after {
-    left: 28px;
-    top: 34px;
-  }
   .questionnaire-question-head {
     display: grid;
     gap: 7px;
@@ -782,9 +751,6 @@
   .questionnaire-topbar > strong { max-width: 55vw; }
   .questionnaire-card,
   .questionnaire-layout .questionnaire-card { padding-inline: 15px; }
-  .question-card { padding-left: 43px !important; }
-  .question-card::before { left: 26px; }
-  .question-card::after { left: 23px; }
   .questionnaire-actions {
     margin-inline: -15px;
     padding-inline: 15px;
