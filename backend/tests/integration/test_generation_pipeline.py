@@ -292,6 +292,7 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
             assert generation.telegram_delivery_attempts == 2
             assert generation.telegram_notified_at is not None
 
+
 @pytest.mark.asyncio
 async def test_public_reserved_prompt_is_rejected_and_internal_questionnaire_origin_bypasses_template(
     monkeypatch: pytest.MonkeyPatch,
@@ -380,7 +381,6 @@ async def test_public_reserved_prompt_is_rejected_and_internal_questionnaire_ori
         assert calls[0]["prompt"] == structured
         assert "LEGACY MASTER PLAN TEMPLATE" not in calls[0]["prompt"]
         assert calls[0]["model_params"]["aspect_ratio"] == "16:9"
-
 
 
 async def _configure_strict_masked_quality(
@@ -704,6 +704,89 @@ async def test_unknown_provider_status_keeps_charge_and_reconciles_same_task(mon
 
 
 @pytest.mark.asyncio
+async def test_temporary_media_dns_failure_resumes_download_without_another_purchase(monkeypatch):
+    import socket
+    from datetime import UTC, datetime, timedelta
+
+    import httpx
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _, admin_headers = await _register_admin(client)
+        tokens, headers = await _register_user(client)
+        generation_id, base_data, _ = await _create_strict_masked_generation(
+            client, admin_headers=admin_headers, headers=headers, user_id=tokens["user"]["id"]
+        )
+        provider_calls = []
+
+        async def generate(self, **kwargs):
+            provider_calls.append(kwargs)
+            if kwargs["task_id"] is None:
+                await kwargs["on_task_created"]("completed-before-dns-outage")
+            else:
+                assert kwargs["task_id"] == "completed-before-dns-outage"
+            return NexusImageResult(
+                task_id="completed-before-dns-outage",
+                image_url="https://cdn.example.test/result.png",
+            )
+
+        original_resolve = socket.getaddrinfo
+        dns_calls = 0
+
+        def resolve(host, *args, **kwargs):
+            nonlocal dns_calls
+            if host != "cdn.example.test":
+                return original_resolve(host, *args, **kwargs)
+            dns_calls += 1
+            if dns_calls == 1:
+                raise socket.gaierror(socket.EAI_AGAIN, "Temporary failure in name resolution")
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+
+        class PublicPeer:
+            def get_extra_info(self, name):
+                return ("93.184.216.34", 443) if name == "server_addr" else None
+
+        media_requests = []
+
+        def serve_media(request):
+            media_requests.append(request)
+            assert request.method == "GET"
+            return httpx.Response(
+                200, content=base_data, extensions={"network_stream": PublicPeer()}
+            )
+
+        real_client = httpx.AsyncClient
+        monkeypatch.setattr(NexusImageProvider, "generate", generate)
+        monkeypatch.setattr(socket, "getaddrinfo", resolve)
+        monkeypatch.setattr(
+            generation_worker.httpx, "AsyncClient",
+            lambda **kwargs: real_client(transport=httpx.MockTransport(serve_media), **kwargs),
+        )
+        await generation_worker.process_generation(generation_id, get_settings())
+        pending = (await client.get(f"/api/v1/generations/{generation_id}", headers=headers)).json()
+        assert pending["status"] == "processing"
+        assert pending["quality_report"]["requires_reconciliation"] is True
+        assert pending["quality_report"]["provider_request"]["task_id"] == "completed-before-dns-outage"
+        assert not media_requests
+        assert (await client.get("/api/v1/me", headers=headers)).json()["credits_balance"] == 3
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+        async with get_session_factory()() as db:
+            row = await db.get(Generation, generation_id)
+            row.started_at = datetime.now(UTC) - timedelta(hours=1)
+            await db.commit()
+        await generation_worker._reconcile_database_jobs(get_settings())
+        await generation_worker.process_generation(generation_id, get_settings())
+        result = (await client.get(f"/api/v1/generations/{generation_id}", headers=headers)).json()
+        assert result["status"] == "completed", result
+        assert len(provider_calls) == 2
+        assert sum(call["task_id"] is None for call in provider_calls) == 1
+        assert dns_calls == 2
+        assert len(media_requests) == 1
+        assert (await client.get("/api/v1/me", headers=headers)).json()["credits_balance"] == 3
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+
+
+@pytest.mark.asyncio
 async def test_accepted_task_checkpoint_commit_failure_does_not_refund_or_repost(monkeypatch):
     from sqlalchemy.ext.asyncio import AsyncSession
     transport = ASGITransport(app=app)
@@ -738,3 +821,104 @@ async def test_accepted_task_checkpoint_commit_failure_does_not_refund_or_repost
         await generation_worker._reconcile_database_jobs(get_settings())
         await generation_worker.process_generation(generation_id, get_settings())
         assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scene_context", [True, False])
+async def test_local_crop_geometry_survives_restart_and_runtime_margin_change(
+    monkeypatch, scene_context
+):
+    import asyncio
+    import json
+    from app.db.models.admin import GenerationRuntimeSettings
+    from app.services.asset_service import LocalMediaStorage
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _, admin_headers = await _register_admin(client)
+        tokens, headers = await _register_user(client)
+        generation_id, base_data, _ = await _create_strict_masked_generation(
+            client, admin_headers=admin_headers, headers=headers, user_id=tokens["user"]["id"]
+        )
+        async with get_session_factory()() as db:
+            row = await db.get(Generation, generation_id)
+            row.prompt = "AUROOM_RENDER_SPEC_V1\nSTRUCTURED_SPEC:\n" + json.dumps(
+                {
+                    "task": {"object_key": "banya", "operation": "render_or_refine"},
+                    "questionnaire_constraints": [
+                        {"question": "Печь", "answer": "Дровяная, с трубой"}
+                    ],
+                }
+            )
+            if not scene_context:
+                # Geometry saved by a previous release before a second reference existed.
+                row.quality_report = {
+                    "provider_geometry": {
+                        "version": "local-tile.v1",
+                        "base_size": [120, 120],
+                        "box": [33, 33, 87, 87],
+                        "aspect_ratio": "1:1",
+                        "operation": "add",
+                    }
+                }
+            await db.commit()
+        tiles = []
+        calls = []
+
+        async def generate(self, **kwargs):
+            calls.append(kwargs)
+            tiles.append(
+                LocalMediaStorage(get_settings())
+                .absolute_path(f"internal/generation-guides/{generation_id}.png")
+                .read_bytes()
+            )
+            assert kwargs["model_params"]["aspect_ratio"] == "1:1"
+            assert kwargs["prompt"].startswith("AUROOM_LOCALIZED_EDIT_V1")
+            if scene_context:
+                assert len(kwargs["reference_image_urls"]) == 1
+                assert kwargs["reference_image_urls"][0] != kwargs["image_url"]
+                assert '"reference_image":2' in kwargs["prompt"]
+            else:
+                assert kwargs["reference_image_urls"] is None
+                assert '"reference_image":2' not in kwargs["prompt"]
+            if len(calls) == 1:
+                await kwargs["on_task_created"]("local-durable-task")
+                raise asyncio.CancelledError()
+            assert kwargs["task_id"] == "local-durable-task"
+            return NexusImageResult(
+                task_id="local-durable-task", image_url="https://cdn.example.test/tile.png"
+            )
+
+        async def download(url, settings):
+            return tiles[-1]
+
+        monkeypatch.setattr(NexusImageProvider, "generate", generate)
+        monkeypatch.setattr(generation_worker, "_download_image", download)
+        with pytest.raises(asyncio.CancelledError):
+            await generation_worker.process_generation(generation_id, get_settings())
+        tile_path = LocalMediaStorage(get_settings()).absolute_path(
+            f"internal/generation-guides/{generation_id}.png"
+        )
+        assert tile_path.exists(), (
+            "A queued provider task may still need its source after worker cancellation"
+        )
+        async with get_session_factory()() as db:
+            runtime = await db.get(GenerationRuntimeSettings, 1)
+            runtime.masked_edit_provider_context_margin_fraction = 0.2
+            await db.commit()
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+        await redis_client.rpush(generation_worker.GENERATION_PROCESSING_KEY, str(generation_id))
+        await generation_worker._recover_reserved_jobs()
+        await generation_worker.process_generation(generation_id, get_settings())
+        result = (await client.get(f"/api/v1/generations/{generation_id}", headers=headers)).json()
+        assert result["status"] == "completed", result
+        assert not tile_path.exists(), "Terminal work releases temporary input"
+        assert tiles[0] == tiles[1]
+        assert result["quality_report"]["provider_geometry"]["box"] == [33, 33, 87, 87]
+        assert (
+            bool(result["quality_report"]["provider_geometry"].get("scene_context_reference"))
+            == scene_context
+        )
+        assert len(calls) == 2
+        assert sum(c["task_id"] is None for c in calls) == 1
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))

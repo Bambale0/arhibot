@@ -33,10 +33,21 @@ from app.image_compositor import (
     expand_normalized_region,
 )
 from app.image_quality import analyze_masked_edit_quality
+from app.localized_edit import (
+    choose_local_geometry,
+    local_source,
+    local_edit_prompt,
+    project_local_candidate,
+)
 from app.image_flyover import FlyoverGif, build_flyover_gif
 from app.image_orbit import build_orbit_animation
 from app.prompt_builders.generation import build_generation_prompt
-from app.providers.nexus import NexusImageProvider, NexusImageResult, NexusProviderError, NexusOutcomeUnknown
+from app.providers.nexus import (
+    NexusImageProvider,
+    NexusImageResult,
+    NexusProviderError,
+    NexusOutcomeUnknown,
+)
 from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
 from app.repositories.generations import GenerationRepository
@@ -57,7 +68,13 @@ QUESTIONNAIRE_PROMPT_PREFIXES = (
     QUESTIONNAIRE_PROMPT_PREFIX,
     INITIAL_CONCEPT_PROMPT_PREFIX,
 )
-QUESTIONNAIRE_ASPECT_RATIOS = {"1:1": 1.0, "4:3": 4 / 3, "3:4": 3 / 4, "16:9": 16 / 9, "9:16": 9 / 16}
+QUESTIONNAIRE_ASPECT_RATIOS = {
+    "1:1": 1.0,
+    "4:3": 4 / 3,
+    "3:4": 3 / 4,
+    "16:9": 16 / 9,
+    "9:16": 9 / 16,
+}
 RESERVED_PROVIDER_PARAMS = {"model_name", "prompt", "image_url", "image_urls"}
 ADMIN_ORBIT_MAX_CONCURRENCY = 3
 MASKED_EDIT_GUIDE_PROMPT = (
@@ -362,6 +379,10 @@ async def _validate_remote_image_url(url: str) -> str:
                 type=socket.SOCK_STREAM,
             )
         except socket.gaierror as exc:
+            if exc.errno == socket.EAI_AGAIN:
+                raise NexusOutcomeUnknown(
+                    "Generated image DNS is temporarily unavailable; resume the existing task"
+                ) from exc
             raise RuntimeError("Generated image host could not be resolved") from exc
         addresses = {str(answer[4][0]).split("%", 1)[0] for answer in answers}
         if not addresses or any(not _address_is_public(address) for address in addresses):
@@ -614,7 +635,9 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         )
         if project is None or project.deleted_at is not None:
             await session.rollback()
-            await _mark_failed_and_refund(generation_id, "Generation project is no longer available.")
+            await _mark_failed_and_refund(
+                generation_id, "Generation project is no longer available."
+            )
             return
         if generation.input_asset_id is not None and (
             input_asset is None or input_asset.deleted_at is not None
@@ -641,9 +664,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             return
 
         admin_internal_generation = (
-            sandbox_request is not None
-            or orbit_request is not None
-            or flyover_request is not None
+            sandbox_request is not None or orbit_request is not None or flyover_request is not None
         )
         admin_repository = AdminRepository(session)
         initial_concept_generation = (
@@ -673,9 +694,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             )
             return
         runtime = (
-            None
-            if admin_internal_generation
-            else await admin_repository.get_generation_settings()
+            None if admin_internal_generation else await admin_repository.get_generation_settings()
         )
         prompt_template = (
             None
@@ -710,7 +729,9 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         source_url = (
             asset_service.storage.signed_url(
                 input_asset.storage_path,
-                ttl_seconds=max(settings.media_url_ttl_seconds, settings.nexus_task_timeout_seconds + 120),
+                ttl_seconds=max(
+                    settings.media_url_ttl_seconds, settings.nexus_task_timeout_seconds + 120
+                ),
             )
             if input_asset is not None
             else None
@@ -769,6 +790,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             fallback_model = runtime.fallback_model
             primary_timeout_seconds = runtime.primary_timeout_seconds
         provider_checkpoint = (generation.quality_report or {}).get("provider_request", {})
+        provider_geometry = (generation.quality_report or {}).get("provider_geometry")
         composition_mode = generation.composition_mode
         edit_region = dict(generation.edit_region) if generation.edit_region else None
         protected_regions = list(generation.protected_regions or [])
@@ -814,25 +836,139 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     edit_region,
                     margin_fraction=float(quality_settings["provider_margin"]),
                 )
-            guide_data = await asyncio.to_thread(
-                build_edit_reference_guide,
-                base_data=masked_base_data,
-                edit_region=edit_region,
-                protected_regions=protected_regions,
-                max_pixels=settings.max_image_pixels,
-            )
+            # Freeze output coordinates before purchasing a provider task. Existing
+            # accepted full-frame tasks must retain their original interpretation.
+            if provider_geometry is None:
+                candidate_geometry = None
+                if questionnaire_generation and not provider_checkpoint:
+                    candidate_geometry = await asyncio.to_thread(
+                        choose_local_geometry,
+                        masked_base_data,
+                        expand_normalized_region(
+                            edit_region,
+                            margin_fraction=(
+                                float(quality_settings["provider_margin"])
+                                if quality_settings
+                                else 0
+                            )
+                            * min(edit_region["width"], edit_region["height"]),
+                        ),
+                        max_pixels=settings.max_image_pixels,
+                    )
+                    if candidate_geometry:
+                        localized_preview = local_edit_prompt(
+                            prompt, candidate_geometry, edit_region, protected_regions
+                        )
+                        if localized_preview is None:
+                            candidate_geometry = None
+                        else:
+                            target = loads(localized_preview.split("STRUCTURED_SPEC:\n", 1)[1])[
+                                "task"
+                            ]
+                            accepted_objects = (
+                                (project.context or {}).get("design_session") or {}
+                            ).get("accepted_objects", [])
+                            candidate_geometry["operation"] = (
+                                "remove"
+                                if target.get("operation") == "remove_object"
+                                else "refine"
+                                if target.get("object_key") in accepted_objects
+                                else "add"
+                            )
+                            # Freeze the input-image roles with the crop so recovery
+                            # never reinterprets an already accepted provider task.
+                            candidate_geometry["scene_context_reference"] = True
+                if candidate_geometry:
+                    house_answers = (
+                        ((project.context or {}).get("design_session") or {})
+                        .get("answers", {})
+                        .get("eskez-doma", {})
+                    )
+                    candidate_geometry["house_style_reference"] = {
+                        label: house_answers[key]
+                        for key, label in (("1", "style"), ("7", "roof"), ("8", "facade_material"))
+                        if key in house_answers
+                    }
+                provider_geometry = candidate_geometry or {"version": "full-frame.v1"}
+                async with get_session_factory()() as db:
+                    row = await GenerationRepository(db).get_for_update(generation_id)
+                    if row is None or row.status != GenerationStatus.PROCESSING:
+                        raise RuntimeError("Generation stopped before local framing")
+                    row.quality_report = {
+                        **(row.quality_report or {}),
+                        "provider_geometry": provider_geometry,
+                    }
+                    await db.commit()
             guide_relative_path = f"internal/generation-guides/{generation_id}.png"
-            await guide_storage.write(guide_relative_path, guide_data)
-            reference_image_urls = [
-                guide_storage.signed_url(
+            if provider_geometry.get("version") == "local-tile.v1":
+                x, y, right, bottom = provider_geometry["box"]
+                width, height = provider_geometry["base_size"]
+                provider_work_region = {
+                    "x": x / width,
+                    "y": y / height,
+                    "width": (right - x) / width,
+                    "height": (bottom - y) / height,
+                }
+                localized = local_edit_prompt(
+                    prompt, provider_geometry, edit_region, protected_regions
+                )
+                if localized is None:
+                    raise RuntimeError("Saved local edit geometry has no compatible brief")
+                tile = await asyncio.to_thread(
+                    local_source,
+                    masked_base_data,
+                    provider_geometry,
+                    max_pixels=settings.max_image_pixels,
+                )
+                await guide_storage.write(guide_relative_path, tile)
+                reference_image_urls = (
+                    [
+                        guide_storage.signed_url(
+                            input_storage_path,
+                            ttl_seconds=max(
+                                settings.media_url_ttl_seconds,
+                                settings.nexus_task_timeout_seconds + 120,
+                            ),
+                        )
+                    ]
+                    if provider_geometry.get("scene_context_reference")
+                    else None
+                )
+                source_url = guide_storage.signed_url(
                     guide_relative_path,
                     ttl_seconds=max(
-                        settings.media_url_ttl_seconds,
-                        settings.nexus_task_timeout_seconds + 120,
+                        settings.media_url_ttl_seconds, settings.nexus_task_timeout_seconds + 120
                     ),
                 )
-            ]
-            prompt = _masked_edit_provider_prompt(prompt, provider_work_region)
+                primary_params = {
+                    **primary_params,
+                    "aspect_ratio": provider_geometry["aspect_ratio"],
+                }
+                fallback_params = {
+                    **fallback_params,
+                    "aspect_ratio": provider_geometry["aspect_ratio"],
+                }
+                prompt = localized
+            else:
+                guide_data = await asyncio.to_thread(
+                    build_edit_reference_guide,
+                    base_data=masked_base_data,
+                    edit_region=edit_region,
+                    protected_regions=protected_regions,
+                    max_pixels=settings.max_image_pixels,
+                )
+                guide_relative_path = f"internal/generation-guides/{generation_id}.png"
+                await guide_storage.write(guide_relative_path, guide_data)
+                reference_image_urls = [
+                    guide_storage.signed_url(
+                        guide_relative_path,
+                        ttl_seconds=max(
+                            settings.media_url_ttl_seconds,
+                            settings.nexus_task_timeout_seconds + 120,
+                        ),
+                    )
+                ]
+                prompt = _masked_edit_provider_prompt(prompt, provider_work_region)
             logger.info(
                 "Generation %s masked edit policy=%s intent=%s commit_region=%s "
                 "provider_work_region=%s protected_regions=%s quality_gate=%s",
@@ -905,7 +1041,9 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             previous_failure: dict[str, object] | None = None
             base_provider_prompt = prompt
             resume_attempt = int(provider_checkpoint.get("attempt", 0))
-            for quality_attempt in range(resume_attempt, max(max_quality_retries, resume_attempt) + 1):
+            for quality_attempt in range(
+                resume_attempt, max(max_quality_retries, resume_attempt) + 1
+            ):
                 if quality_attempt > 0:
                     record_masked_edit_retry()
                 attempt_prompt = (
@@ -914,15 +1052,24 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     else _quality_retry_prompt(base_provider_prompt, previous_failure)
                 )
                 resume_fallback = (
-                    quality_attempt == resume_attempt and provider_checkpoint.get("phase") == "fallback"
+                    quality_attempt == resume_attempt
+                    and provider_checkpoint.get("phase") == "fallback"
                 )
-                model_name = str(provider_checkpoint.get("model") or primary_model) if quality_attempt == resume_attempt else primary_model
+                model_name = (
+                    str(provider_checkpoint.get("model") or primary_model)
+                    if quality_attempt == resume_attempt
+                    else primary_model
+                )
                 fallback_used = fallback_used or resume_fallback
                 try:
                     result = await _generate_checkpointed(
-                        provider, generation_id, attempt=quality_attempt,
+                        provider,
+                        generation_id,
+                        attempt=quality_attempt,
                         phase="fallback" if resume_fallback else "primary",
-                        model_name=model_name, prompt=attempt_prompt, source_url=source_url,
+                        model_name=model_name,
+                        prompt=attempt_prompt,
+                        source_url=source_url,
                         params=fallback_params if resume_fallback else primary_params,
                         reference_image_urls=reference_image_urls,
                         timeout_seconds=None if resume_fallback else primary_timeout_seconds,
@@ -932,22 +1079,55 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         raise
                     logger.warning(
                         "Primary Nexus task failed for %s attempt=%s; using configured fallback",
-                        generation_id, quality_attempt + 1,
+                        generation_id,
+                        quality_attempt + 1,
                     )
                     model_name = fallback_model
                     fallback_used = True
                     result = await _generate_checkpointed(
-                        provider, generation_id, attempt=quality_attempt, phase="fallback",
-                        model_name=model_name, prompt=attempt_prompt, source_url=source_url,
-                        params=fallback_params, reference_image_urls=reference_image_urls,
+                        provider,
+                        generation_id,
+                        attempt=quality_attempt,
+                        phase="fallback",
+                        model_name=model_name,
+                        prompt=attempt_prompt,
+                        source_url=source_url,
+                        params=fallback_params,
+                        reference_image_urls=reference_image_urls,
                         timeout_seconds=None,
                     )
                 provider_task_id = result.task_id
                 try:
                     candidate_data = await _download_image(result.image_url, settings)
                 except httpx.HTTPError as exc:
-                    raise NexusOutcomeUnknown("Provider output download interrupted; resume existing task") from exc
+                    raise NexusOutcomeUnknown(
+                        "Provider output download interrupted; resume existing task"
+                    ) from exc
 
+                if provider_geometry and provider_geometry.get("version") == "local-tile.v1":
+                    try:
+                        candidate_data = await asyncio.to_thread(
+                            project_local_candidate,
+                            masked_base_data,
+                            candidate_data,
+                            provider_geometry,
+                            max_pixels=settings.max_image_pixels,
+                            edit_region=edit_region,
+                            protected_regions=protected_regions,
+                            max_context_color_error=float(quality_settings["max_color_excess"])
+                            if quality_settings
+                            else None,
+                        )
+                    except ValueError as exc:
+                        raise GenerationQualityRejected(
+                            {
+                                "version": "edit-quality.v1",
+                                "final": "rejected",
+                                "provider_geometry": provider_geometry,
+                                "framing_error": str(exc),
+                                "semantic_verification": "not_performed",
+                            }
+                        ) from exc
                 if composition_mode != "masked_edit":
                     data = candidate_data
                     break
@@ -997,10 +1177,8 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 )
                 initial_report = report.to_dict()
                 boundary_failed = (
-                    report.boundary_luma_excess
-                    > float(quality_settings["max_luma_excess"])
-                    or report.boundary_color_excess
-                    > float(quality_settings["max_color_excess"])
+                    report.boundary_luma_excess > float(quality_settings["max_luma_excess"])
+                    or report.boundary_color_excess > float(quality_settings["max_color_excess"])
                     or report.straight_edge_fraction
                     > float(quality_settings["max_straight_edge_fraction"])
                 )
@@ -1021,10 +1199,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         configured_min,
                         min(
                             configured_max,
-                            round(
-                                shortest
-                                * float(quality_settings["feather_fraction"])
-                            ),
+                            round(shortest * float(quality_settings["feather_fraction"])),
                         ),
                     )
                     wider_feather = min(
@@ -1032,8 +1207,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         max(
                             primary_feather + 1,
                             round(
-                                primary_feather
-                                * float(quality_settings["recomposite_multiplier"])
+                                primary_feather * float(quality_settings["recomposite_multiplier"])
                             ),
                         ),
                     )
@@ -1076,15 +1250,14 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         "attempts": quality_attempts,
                         "provider_work_region": provider_work_region,
                         "provider_edit_region": edit_region,
+                        "provider_geometry": provider_geometry,
                         "semantic_verification": "not_performed",
                         "boundary_metric_scope": "worst_individual_edge",
                         "enforced_checks": list(
                             edit_policy.get("enforced_quality_checks")
                             or ("outside_region_integrity", "boundary_continuity")
                         ),
-                        "deferred_checks": list(
-                            edit_policy.get("deferred_quality_checks", [])
-                        ),
+                        "deferred_checks": list(edit_policy.get("deferred_quality_checks", [])),
                         "scene_analysis": (
                             "enforced"
                             if edit_policy.get("scene_analysis_enforced")
@@ -1123,15 +1296,14 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         "attempts": quality_attempts,
                         "provider_work_region": provider_work_region,
                         "provider_edit_region": edit_region,
+                        "provider_geometry": provider_geometry,
                         "semantic_verification": "not_performed",
                         "boundary_metric_scope": "worst_individual_edge",
                         "enforced_checks": list(
                             edit_policy.get("enforced_quality_checks")
                             or ("outside_region_integrity", "boundary_continuity")
                         ),
-                        "deferred_checks": list(
-                            edit_policy.get("deferred_quality_checks", [])
-                        ),
+                        "deferred_checks": list(edit_policy.get("deferred_quality_checks", [])),
                         "scene_analysis": (
                             "enforced"
                             if edit_policy.get("scene_analysis_enforced")
@@ -1208,7 +1380,8 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 generation.quality_status = "passed"
             if generation.quality_report:
                 generation.quality_report = {
-                    key: value for key, value in generation.quality_report.items()
+                    key: value
+                    for key, value in generation.quality_report.items()
                     if key != "requires_reconciliation"
                 }
             generation.status = GenerationStatus.COMPLETED
@@ -1229,12 +1402,15 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 " (bird flyover GIF)" if flyover_request is not None else "",
             )
     except NexusOutcomeUnknown:
-        logger.warning("Generation %s awaits provider reconciliation; no resubmission or refund", generation_id)
+        logger.warning(
+            "Generation %s awaits provider reconciliation; no resubmission or refund", generation_id
+        )
         async with get_session_factory()() as session:
             generation = await GenerationRepository(session).get_for_update(generation_id)
             if generation is not None and generation.status == GenerationStatus.PROCESSING:
                 generation.quality_report = {
-                    **(generation.quality_report or {}), "requires_reconciliation": True,
+                    **(generation.quality_report or {}),
+                    "requires_reconciliation": True,
                 }
                 generation.error = (
                     "Ожидаем подтверждение результата от сервиса генерации. "
@@ -1248,9 +1424,15 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         if guide_relative_path is not None:
             guide_path = guide_storage.absolute_path(guide_relative_path)
             try:
-                if guide_path.exists():
+                async with get_session_factory()() as db:
+                    current = await db.get(Generation, generation_id)
+                    terminal = current is not None and current.status in {
+                        GenerationStatus.COMPLETED,
+                        GenerationStatus.FAILED,
+                    }
+                if terminal and guide_path.exists():
                     await asyncio.to_thread(guide_path.unlink)
-            except OSError:
+            except Exception:
                 logger.warning(
                     "Could not remove temporary edit guide for generation %s",
                     generation_id,

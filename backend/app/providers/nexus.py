@@ -94,8 +94,9 @@ class NexusImageProvider:
                             json={"params": params},
                         ),
                         dependency="nexus", operation="create_generation", breaker=self.breaker,
-                        # Nexus does not document deduplication of POST /generate.
-                        # An ambiguous response is not permission to purchase another image.
+                        # Nexus documents a 24h response cache, but concurrent
+                        # requests before the first cached response can still duplicate.
+                        # An ambiguous outcome is not permission to purchase another image.
                         policy=RetryPolicy(max_attempts=1),
                         deadline_monotonic=started + create_timeout,
                     )
