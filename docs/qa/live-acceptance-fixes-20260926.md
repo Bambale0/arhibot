@@ -33,3 +33,15 @@ No migrations, new provider, new secrets, or changes to operator-controlled mode
 ## Guidance applied
 
 Repository AGENTS discovery: claw release-hardening; wondelai clean-code; dev-agents-pack review checklist; anthropics webapp-testing; ksu and vendored systematic-debugging, test-driven-development, requesting-code-review and verification-before-completion. agentskills provides format guidance, no task-specific implementation recipe. Local bot-tester, devops and tma-codegen used within the existing architecture. Independent review drove unknown-outcome recovery and initial-binding protection.
+
+## Follow-up: local provider framing
+
+PR #129 passed CI, dev deployment and server smoke (`6726532`). Its live bath recheck still produced a clipped building without a visible chimney: exact full-frame mask instructions were insufficient. That result was declined, and this follow-up must not be represented as validated solely by the pixel gate.
+
+- New structured questionnaire edits send one local photographic tile instead of a full scene plus white mask. A single EXIF-normalized integer box controls crop, provider aspect ratio, normalized edit/protection coordinates and inverse placement. The existing compositor still preserves every unselected pixel.
+- Crop margin uses the existing configured fraction relative to the selected region. Global location answers are retained as resolved context, not directions to push the object toward the local image edge. Existing house style/material/roof hints remain available as text.
+- New discrete objects must fit completely within the region, including their roof/chimney. Boundary, gate, path and landscape edits instead preserve alignment and continuity. Refinements preserve the existing building geometry; removal keeps its explicit operation.
+- Wrong output aspect and changes in each locked context side or protected hole are checked before the compositor hides them. This uses the existing operator-controlled color threshold. Raw locked-pixel differences avoid blur leaking permitted edits into protected regions. The saved second local probe, which previously passed despite clipping, is now rejected at the unchanged threshold of 32.
+- Geometry, operation and style are persisted before any provider purchase. Recovery keeps that exact geometry even after administrator configuration changes. Accepted legacy tasks retain full-frame interpretation. Source tiles remain accessible while a task is unresolved and are removed only after a terminal app state.
+
+Live evidence after #129: an L-shaped two-storey house with a roof chimney and flowering hedge without a second full perimeter fence completed in 153 seconds with one paid POST and no fallback. Ground-plane footprint estimate is approximately 10%, not a certified measurement. Repeating a published Idea restored 19 house answers through the deployed API. Local bath placement needs separate visual acceptance; an unresolved provider task is resumed only by ID and is counted in the original 50 RUB budget.
