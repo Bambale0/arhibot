@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Response, status
 from app.api.dependencies.auth import CurrentUser, DbSession
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
+from app.domain.generations.enums import GenerationOrigin
 from app.schemas.generations import QuestionnaireGenerationResponse
 from app.schemas.projects import ProjectResponse
 from app.schemas.questionnaires import (
@@ -12,6 +13,8 @@ from app.schemas.questionnaires import (
     DesignSessionResponse,
     QuestionnaireApplicationSubmitResponse,
     QuestionnaireCatalogResponse,
+    QuestionnaireGenerationCostResponse,
+    QuestionnaireObjectAddRequest,
     QuestionnaireProjectStartRequest,
 )
 from app.services.generation_service import build_generation_service
@@ -86,6 +89,91 @@ async def save_questionnaire_session(
     return DesignSessionResponse(session=saved)
 
 
+@router.get(
+    "/questionnaire-generation-cost",
+    operation_id="getQuestionnaireGenerationCost",
+    response_model=QuestionnaireGenerationCostResponse,
+)
+async def get_questionnaire_generation_cost(
+    user: CurrentUser,
+    session: DbSession,
+    project_id: UUID | None = None,
+) -> QuestionnaireGenerationCostResponse:
+    # credits is the live paid master-plan price used by refinements and repeat concepts.
+    # initial_credits is the separately configurable one-time first-concept offer.
+    return await QuestionnaireService(session).generation_cost(user, project_id)
+
+
+@router.post(
+    "/projects/{project_id}/questionnaire-objects",
+    operation_id="addProjectQuestionnaireObject",
+    response_model=DesignSessionResponse,
+)
+async def add_questionnaire_object(
+    project_id: UUID,
+    payload: QuestionnaireObjectAddRequest,
+    user: CurrentUser,
+    session: DbSession,
+) -> DesignSessionResponse:
+    return DesignSessionResponse(
+        session=await QuestionnaireService(session).add_refinement_object(
+            user, project_id, payload.object_key
+        )
+    )
+
+
+@router.post(
+    "/projects/{project_id}/questionnaire-object-removal",
+    operation_id="startProjectQuestionnaireObjectRemoval",
+    response_model=DesignSessionResponse,
+)
+async def start_questionnaire_object_removal(
+    project_id: UUID,
+    payload: QuestionnaireObjectAddRequest,
+    user: CurrentUser,
+    session: DbSession,
+) -> DesignSessionResponse:
+    return DesignSessionResponse(
+        session=await QuestionnaireService(session).start_object_removal(
+            user, project_id, payload.object_key
+        )
+    )
+
+
+@router.delete(
+    "/projects/{project_id}/questionnaire-object-removal",
+    operation_id="cancelProjectQuestionnaireObjectRemoval",
+    response_model=DesignSessionResponse,
+)
+async def cancel_questionnaire_object_removal(
+    project_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+) -> DesignSessionResponse:
+    return DesignSessionResponse(
+        session=await QuestionnaireService(session).cancel_object_removal(
+            user, project_id
+        )
+    )
+
+
+@router.post(
+    "/projects/{project_id}/questionnaire-object-removal/accept",
+    operation_id="acceptProjectQuestionnaireObjectRemoval",
+    response_model=DesignSessionResponse,
+)
+async def accept_questionnaire_object_removal(
+    project_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+) -> DesignSessionResponse:
+    return DesignSessionResponse(
+        session=await QuestionnaireService(session).accept_object_removal(
+            user, project_id
+        )
+    )
+
+
 @router.post(
     "/projects/{project_id}/questionnaire-generation",
     operation_id="createProjectQuestionnaireGeneration",
@@ -111,10 +199,39 @@ async def create_questionnaire_generation(
             generation_id=generation.id,
         )
 
+    credits_override = await questionnaire.generation_credits_override(
+        user,
+        project_id,
+        object_key,
+    )
+    origin = (
+        GenerationOrigin.QUESTIONNAIRE_INITIAL
+        if object_key == "__initial__"
+        else GenerationOrigin.QUESTIONNAIRE
+    )
     created = await build_generation_service(session, settings).create(
-        user, payload, before_commit=bind_generation
+        user,
+        payload,
+        before_commit=bind_generation,
+        credits_override=credits_override,
+        origin=origin,
     )
     return QuestionnaireGenerationResponse.model_validate(created)
+
+
+@router.post(
+    "/projects/{project_id}/questionnaire-initial-accept",
+    operation_id="acceptProjectQuestionnaireInitialConcept",
+    response_model=DesignSessionResponse,
+)
+async def accept_questionnaire_initial_concept(
+    project_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+) -> DesignSessionResponse:
+    return DesignSessionResponse(
+        session=await QuestionnaireService(session).accept_initial_concept(user, project_id)
+    )
 
 
 @router.get(

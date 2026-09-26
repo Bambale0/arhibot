@@ -6,10 +6,14 @@ type AuthContextValue = {
   user: User | null
   loading: boolean
   error: string | null
+  canRetrySession: boolean
   loginWithEmail: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
+  retrySession: () => void
   clearError: () => void
 }
+
+const EXPLICIT_LOGOUT_KEY = 'auroom.explicit_logout'
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
@@ -30,25 +34,67 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [canRetrySession, setCanRetrySession] = useState(false)
+  const [bootstrapVersion, setBootstrapVersion] = useState(0)
 
   useEffect(() => {
     const telegram = window.Telegram?.WebApp
-    try { telegram?.ready?.() } catch { /* old Telegram clients may reject bridge calls */ }
+    try {
+      telegram?.ready?.()
+      telegram?.expand?.()
+    } catch { /* old Telegram clients may reject bridge calls */ }
 
     let cancelled = false
     async function bootstrap() {
       let lastError: unknown = null
       try {
+        if (sessionStorage.getItem(EXPLICIT_LOGOUT_KEY) === '1') {
+          if (!cancelled) {
+            setError('Вы вышли из аккаунта. Можно безопасно войти снова.')
+            setCanRetrySession(true)
+          }
+          return
+        }
         if (api.hasStoredSession()) {
           try {
             const current = await api.getMe()
             if (!cancelled) {
               setUser(current)
               setError(null)
+              setCanRetrySession(false)
             }
             return
           } catch (sessionError) {
             lastError = sessionError
+            if (shouldRetryTelegramAuth(sessionError)) {
+              if (!cancelled) {
+                setError(messageOf(sessionError))
+                setCanRetrySession(true)
+              }
+              return
+            }
+            api.clearTokens()
+          }
+        } else {
+          try {
+            const restored = await api.restoreSession()
+            if (restored) {
+              if (!cancelled) {
+                  setUser(restored)
+                  setError(null)
+                  setCanRetrySession(false)
+              }
+              return
+            }
+          } catch (sessionError) {
+            lastError = sessionError
+            if (shouldRetryTelegramAuth(sessionError)) {
+              if (!cancelled) {
+                setError(messageOf(sessionError))
+                setCanRetrySession(true)
+              }
+              return
+            }
             api.clearTokens()
           }
         }
@@ -65,6 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (!cancelled) {
               setUser(pair.user)
               setError(null)
+              setCanRetrySession(false)
             }
             return
           } catch (telegramError) {
@@ -86,12 +133,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [bootstrapVersion])
 
   const loginWithEmail = useCallback(async (email: string, password: string) => {
     setError(null)
+    setCanRetrySession(false)
     try {
       const pair = await api.login(email, password)
+      sessionStorage.removeItem(EXPLICIT_LOGOUT_KEY)
       setUser(pair.user)
     } catch (loginError) {
       setError(messageOf(loginError))
@@ -100,13 +149,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signOut = useCallback(async () => {
-    await api.logout()
+    sessionStorage.setItem(EXPLICIT_LOGOUT_KEY, '1')
     setUser(null)
+    setError('Вы вышли из аккаунта. Можно безопасно войти снова.')
+    setCanRetrySession(true)
+    try {
+      await api.logout()
+    } catch {
+      // The server-side refresh cookie expires independently. Local logout must still complete.
+    }
+  }, [])
+
+  const retrySession = useCallback(() => {
+    sessionStorage.removeItem(EXPLICIT_LOGOUT_KEY)
+    setError(null)
+    setCanRetrySession(false)
+    setLoading(true)
+    setBootstrapVersion((value) => value + 1)
   }, [])
 
   const value = useMemo(
-    () => ({ user, loading, error, loginWithEmail, signOut, clearError: () => setError(null) }),
-    [user, loading, error, loginWithEmail, signOut],
+    () => ({ user, loading, error, canRetrySession, loginWithEmail, signOut, retrySession, clearError: () => setError(null) }),
+    [user, loading, error, canRetrySession, loginWithEmail, signOut, retrySession],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -1,0 +1,87 @@
+/* The Telegram bridge updates these variables for fullscreen/native controls.
+   Device insets and Telegram content insets describe separate reserved areas. */
+:root {
+  --app-safe-top: calc(max(env(safe-area-inset-top, 0px), var(--tg-safe-area-inset-top, 0px)) + var(--tg-content-safe-area-inset-top, 0px));
+  --app-safe-right: calc(max(env(safe-area-inset-right, 0px), var(--tg-safe-area-inset-right, 0px)) + var(--tg-content-safe-area-inset-right, 0px));
+  --app-safe-left: calc(max(env(safe-area-inset-left, 0px), var(--tg-safe-area-inset-left, 0px)) + var(--tg-content-safe-area-inset-left, 0px));
+  --app-safe-bottom: calc(max(env(safe-area-inset-bottom, 0px), var(--tg-safe-area-inset-bottom, 0px)) + var(--tg-content-safe-area-inset-bottom, 0px));
+  --app-viewport-height: calc(100dvh - var(--app-safe-top) - var(--app-safe-bottom));
+}
+
+#root {
+  padding-top: var(--app-safe-top);
+  padding-right: var(--app-safe-right);
+  padding-left: var(--app-safe-left);
+  padding-bottom: var(--app-safe-bottom);
+}
+#root::before,
+#root::after {
+  content: "";
+  position: fixed;
+  left: 0;
+  right: 0;
+  background: var(--brand-black);
+  z-index: 121;
+  pointer-events: none;
+}
+#root::before { top: 0; height: var(--app-safe-top); }
+#root::after { bottom: 0; height: var(--app-safe-bottom); }
+.app-shell,
+.questionnaire-shell,
+.admin-shell { min-height: var(--app-viewport-height); }
+.topbar,
+.questionnaire-topbar { top: var(--app-safe-top); }
+.questionnaire-progress { top: calc(92px + var(--app-safe-top)); }
+.ideas-shell { height: var(--app-viewport-height); }
+.ideas-page-concept {
+  max-width: 100%;
+  height: calc(var(--app-viewport-height) - 70px);
+}
+
+.telegram-fullscreen-button {
+  top: calc(var(--app-safe-top) + 12px);
+  right: calc(var(--app-safe-right) + 14px);
+}
+.idea-work-viewer-close {
+  top: calc(var(--app-safe-top) + 12px);
+  right: calc(var(--app-safe-right) + 12px);
+}
+.idea-work-viewer {
+  padding: calc(var(--app-safe-top) + 12px) calc(var(--app-safe-right) + 12px) calc(var(--app-safe-bottom) + 12px) calc(var(--app-safe-left) + 12px);
+}
+.bottom-nav {
+  left: var(--app-safe-left);
+  right: var(--app-safe-right);
+  width: min(760px, calc(100% - var(--app-safe-left) - var(--app-safe-right)));
+  margin-inline: auto;
+  transform: none;
+  bottom: var(--app-safe-bottom);
+  padding-bottom: 7px;
+}
+.ideas-shell .bottom-nav {
+  width: min(760px, calc(100% - var(--app-safe-left) - var(--app-safe-right)));
+  padding-bottom: 6px;
+}
+
+@media (max-width: 1023px) {
+  .telegram-fullscreen-button {
+    top: auto;
+    right: calc(var(--app-safe-right) + 10px);
+    bottom: calc(var(--app-safe-bottom) + 82px);
+  }
+}
+.telegram-fullscreen-button--header {
+  top: calc(var(--app-safe-top) + 10px);
+  right: calc(var(--app-safe-right) + 12px);
+  bottom: auto;
+}
+@media (max-width: 760px) {
+  .questionnaire-progress { top: calc(56px + var(--app-safe-top)); }
+  .questionnaire-layout .questionnaire-card {
+    min-height: calc(var(--app-viewport-height) - 99px);
+  }
+  .questionnaire-actions { bottom: var(--app-safe-bottom); }
+}
+@media (max-width: 520px) {
+  .ideas-page-concept { height: calc(var(--app-viewport-height) - 66px); }
+}

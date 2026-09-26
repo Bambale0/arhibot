@@ -7,8 +7,13 @@ from app.api.dependencies.auth import AdminUser, DbSession
 from app.core.config import Settings, get_settings
 from app.domain.generations.enums import GenerationType
 from app.schemas.admin import (
+    AdminAiFlyoverGifCreate,
+    AdminAiHistoryItem,
+    AdminAiOrbitCreate,
+    AdminAiSandboxCreate,
     AdminOverviewResponse,
     AdminPaymentResponse,
+    AdminPaymentReconcile,
     AdminUserResponse,
     AuditLogResponse,
     BillingPlanCreate,
@@ -32,6 +37,7 @@ from app.schemas.admin import (
     PromptTemplateUpdate,
     UserStateUpdate,
 )
+from app.schemas.generations import GenerationResponse
 from app.schemas.telegram import TelegramContentResponse, TelegramContentUpdate
 from app.services.admin_billing_service import AdminBillingService
 from app.services.admin_credit_service import AdminCreditService
@@ -124,6 +130,61 @@ async def update_generation_settings(payload: GenerationRuntimeUpdate, admin: Ad
     return await service(session, settings).update_generation_settings(admin, payload)
 
 
+@router.get(
+    "/generation/sandbox/history",
+    response_model=list[AdminAiHistoryItem],
+)
+async def list_generation_sandbox_history(
+    admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+    limit: Annotated[int, Query(ge=1, le=100)] = 30,
+) -> list[AdminAiHistoryItem]:
+    return await service(session, settings).list_ai_sandbox_history(admin, limit=limit)
+
+
+@router.post(
+    "/generation/sandbox",
+    response_model=GenerationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_generation_sandbox(
+    payload: AdminAiSandboxCreate,
+    admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> GenerationResponse:
+    return await service(session, settings).create_ai_sandbox_generation(admin, payload)
+
+
+@router.post(
+    "/generation/flyover-gif",
+    response_model=GenerationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_generation_flyover_gif(
+    payload: AdminAiFlyoverGifCreate,
+    admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> GenerationResponse:
+    return await service(session, settings).create_ai_flyover_gif_generation(admin, payload)
+
+
+@router.post(
+    "/generation/orbit",
+    response_model=GenerationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_generation_orbit(
+    payload: AdminAiOrbitCreate,
+    admin: AdminUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> GenerationResponse:
+    return await service(session, settings).create_ai_orbit_generation(admin, payload)
+
+
 @router.get("/generation-prices", response_model=list[GenerationPriceResponse])
 async def list_generation_prices(_admin: AdminUser, session: DbSession) -> list[GenerationPriceResponse]:
     return await AdminCreditService(session).list_prices()
@@ -170,8 +231,10 @@ async def list_payments(_admin: AdminUser, session: DbSession, settings: Setting
 
 
 @router.post("/payments/{payment_id}/reconcile", response_model=AdminPaymentResponse)
-async def reconcile_payment(payment_id: UUID, admin: AdminUser, session: DbSession, settings: Settings = Depends(get_settings)) -> AdminPaymentResponse:
-    return await AdminBillingService(session, settings).reconcile_payment(admin, payment_id)
+async def reconcile_payment(payment_id: UUID, admin: AdminUser, session: DbSession, payload: AdminPaymentReconcile | None = None, settings: Settings = Depends(get_settings)) -> AdminPaymentResponse:
+    return await AdminBillingService(session, settings).reconcile_payment(
+        admin, payment_id, provider_payment_id=payload.provider_payment_id if payload else None,
+    )
 
 
 @router.post("/payments/{payment_id}/refund", response_model=AdminPaymentResponse)

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.architecture.schemas import ArchitecturePackage
 from app.domain.generations.enums import GenerationType
 from app.domain.users.enums import UserRole, UserStatus
+from app.schemas.generations import GenerationResponse
 
 
 class AdminOverviewResponse(BaseModel):
@@ -202,24 +203,143 @@ class PublicIdeaPublicationResponse(BaseModel):
     category: str
     generation_type: GenerationType
     image_url: str | None
+    preview_url: str | None = None
     objects: list[IdeaObjectSummary]
     selected_objects: list[str]
     published_at: datetime
+    is_saved: bool = False
 
 
 class IdeaPublicationResponse(PublicIdeaPublicationResponse):
     generation_id: UUID
+    owner_published: bool
     is_active: bool
     sort_order: int
     updated_at: datetime
 
 
+class IdeaSaveResponse(BaseModel):
+    idea_id: UUID
+    is_saved: bool
+
+
+class AdminAiSandboxCreate(BaseModel):
+    model_name: str = Field(min_length=1, max_length=120)
+    prompt: str = Field(min_length=1, max_length=8000)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("model_name", "prompt")
+    @classmethod
+    def strip_sandbox_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def protect_provider_fields(self) -> "AdminAiSandboxCreate":
+        reserved = {"model_name", "prompt", "image_url", "image_urls"}
+        conflict = reserved.intersection(self.params)
+        if conflict:
+            raise ValueError(
+                f"Sandbox params cannot override provider fields: {', '.join(sorted(conflict))}"
+            )
+        return self
+
+
+class AdminAiOrbitCreate(BaseModel):
+    source_generation_id: UUID
+    model_name: str = Field(min_length=1, max_length=120)
+    prompt: str = Field(default="", max_length=2000)
+    params: dict[str, Any] = Field(default_factory=dict)
+    frame_count: int = Field(default=8, ge=6, le=12)
+    frame_duration_ms: int = Field(default=180, ge=80, le=1000)
+
+    @field_validator("model_name")
+    @classmethod
+    def strip_orbit_model(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
+
+    @field_validator("prompt")
+    @classmethod
+    def strip_orbit_prompt(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def protect_provider_fields(self) -> "AdminAiOrbitCreate":
+        reserved = {"model_name", "prompt", "image_url", "image_urls"}
+        conflict = reserved.intersection(self.params)
+        if conflict:
+            raise ValueError(
+                f"Orbit params cannot override provider fields: {', '.join(sorted(conflict))}"
+            )
+        return self
+
+
+class AdminAiFlyoverGifCreate(BaseModel):
+    source_generation_id: UUID
+    model_name: str = Field(min_length=1, max_length=120)
+    prompt: str = Field(default="", max_length=2000)
+    params: dict[str, Any] = Field(default_factory=dict)
+    keyframe_count: int = Field(default=6, ge=4, le=8)
+    inbetween_frames: int = Field(default=3, ge=0, le=5)
+    frame_duration_ms: int = Field(default=120, ge=60, le=500)
+
+    @field_validator("model_name")
+    @classmethod
+    def strip_flyover_model(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
+
+    @field_validator("prompt")
+    @classmethod
+    def strip_flyover_prompt(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def protect_provider_fields(self) -> "AdminAiFlyoverGifCreate":
+        reserved = {"model_name", "prompt", "image_url", "image_urls"}
+        conflict = reserved.intersection(self.params)
+        if conflict:
+            raise ValueError(
+                f"Flyover params cannot override provider fields: {', '.join(sorted(conflict))}"
+            )
+        return self
+
+
+class AdminAiHistoryItem(BaseModel):
+    kind: Literal["sandbox", "orbit", "flyover_gif"]
+    generation: GenerationResponse
+    prompt: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    frame_count: int | None = None
+    frame_duration_ms: int | None = None
+    keyframe_count: int | None = None
+    inbetween_frames: int | None = None
+
+
 class GenerationRuntimeUpdate(BaseModel):
     primary_model: str = Field(min_length=1, max_length=120)
     fallback_model: str | None = Field(default=None, max_length=120)
+    primary_timeout_seconds: int = Field(default=90, ge=30, le=600)
     primary_params: dict[str, Any] = Field(default_factory=dict)
     fallback_params: dict[str, Any] = Field(default_factory=dict)
     mode_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    masked_edit_provider_context_margin_fraction: float | None = Field(default=None, ge=0, le=0.25)
+    masked_edit_feather_fraction: float | None = Field(default=None, ge=0, le=0.1)
+    masked_edit_feather_min_px: int | None = Field(default=None, ge=0, le=128)
+    masked_edit_feather_max_px: int | None = Field(default=None, ge=1, le=256)
+    masked_edit_recomposite_feather_multiplier: float | None = Field(default=None, ge=1, le=4)
+    masked_edit_boundary_band_px: int | None = Field(default=None, ge=1, le=64)
+    masked_edit_max_luma_excess: float | None = Field(default=None, ge=0, le=255)
+    masked_edit_max_color_excess: float | None = Field(default=None, ge=0, le=442)
+    masked_edit_max_straight_edge_fraction: float | None = Field(default=None, ge=0, le=1)
+    generation_quality_max_retries: int | None = Field(default=None, ge=0, le=3)
 
     @field_validator("primary_model")
     @classmethod
@@ -255,15 +375,32 @@ class GenerationRuntimeUpdate(BaseModel):
                 raise ValueError(
                     f"{label} cannot override provider fields: {', '.join(sorted(conflict))}"
                 )
+        if (
+            self.masked_edit_feather_min_px is not None
+            and self.masked_edit_feather_max_px is not None
+            and self.masked_edit_feather_min_px > self.masked_edit_feather_max_px
+        ):
+            raise ValueError("masked edit feather min cannot exceed max")
         return self
 
 
 class GenerationRuntimeResponse(BaseModel):
     primary_model: str | None = None
     fallback_model: str | None = None
+    primary_timeout_seconds: int = 90
     primary_params: dict[str, Any] = Field(default_factory=dict)
     fallback_params: dict[str, Any] = Field(default_factory=dict)
     mode_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    masked_edit_provider_context_margin_fraction: float
+    masked_edit_feather_fraction: float
+    masked_edit_feather_min_px: int
+    masked_edit_feather_max_px: int
+    masked_edit_recomposite_feather_multiplier: float
+    masked_edit_boundary_band_px: int
+    masked_edit_max_luma_excess: float
+    masked_edit_max_color_excess: float
+    masked_edit_max_straight_edge_fraction: float
+    generation_quality_max_retries: int
     updated_at: datetime | None = None
 
 
@@ -337,6 +474,10 @@ class UserStateUpdate(BaseModel):
     role: UserRole | None = None
 
 
+class AdminPaymentReconcile(BaseModel):
+    provider_payment_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+
+
 class AdminPaymentResponse(BaseModel):
     id: UUID
     user_id: UUID
@@ -381,13 +522,30 @@ class BroadcastResponse(BaseModel):
 
 
 class OperationalSettingsUpdate(BaseModel):
-    auth_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
-    generation_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
-    payment_rate_limit_per_minute: int | None = Field(default=None, ge=1, le=100_000)
+    auth_rate_limit_per_minute: int = Field(default=30, ge=1, le=100_000)
+    generation_rate_limit_per_minute: int = Field(default=10, ge=1, le=100_000)
+    payment_rate_limit_per_minute: int = Field(default=10, ge=1, le=100_000)
+    registration_rate_limit_per_day: int = Field(default=20, ge=1, le=100_000)
+    yookassa_webhook_rate_limit_per_minute: int = Field(default=120, ge=1, le=100_000)
+    asset_upload_rate_limit_per_minute: int = Field(default=12, ge=1, le=100_000)
+    asset_max_retained_count_per_user: int = Field(default=200, ge=1, le=100_000)
+    asset_max_retained_bytes_per_user: int = Field(
+        default=512 * 1024 * 1024,
+        ge=1,
+        le=10_000_000_000_000,
+    )
+    generation_max_inflight_per_user: int = Field(default=2, ge=1, le=1000)
+    initial_concept_offer_limit_per_day: int = Field(default=3, ge=1, le=1000)
     starter_credits: int = Field(default=0, ge=0, le=1_000_000)
-    media_retention_days: int | None = Field(default=None, ge=1, le=3650)
-    backup_interval_hours: int | None = Field(default=None, ge=1, le=8760)
-    backup_retention_days: int | None = Field(default=None, ge=1, le=3650)
+    initial_concept_credits: int = Field(default=0, ge=0, le=1_000_000)
+    media_retention_days: int = Field(default=30, ge=1, le=3650)
+    backup_interval_hours: int = Field(default=24, ge=1, le=8760)
+    backup_retention_days: int = Field(default=14, ge=1, le=3650)
+    media_min_free_bytes: int = Field(
+        default=2 * 1024 * 1024 * 1024,
+        ge=64 * 1024 * 1024,
+        le=10_000_000_000_000,
+    )
 
 
 class OperationalSettingsResponse(OperationalSettingsUpdate):

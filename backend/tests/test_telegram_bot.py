@@ -1,13 +1,20 @@
 import pytest
 
+from app.services.telegram_user_summary_service import available_generation_count
+from app.telegram_bot import main as telegram_main
 from app.telegram_bot.main import (
+    TelegramBotApi,
     TelegramBotContent,
+    TelegramUserSummary,
     canonicalize_webapp_url,
     configure_bot,
     menu_button,
     mini_app_keyboard,
     normalize_command,
     parse_bot_content,
+    parse_user_summary,
+    send_start,
+    webapp_section_url,
 )
 
 
@@ -21,6 +28,63 @@ def content() -> TelegramBotContent:
         start_command_description="Open",
         app_command_description="Launch",
     )
+
+
+def test_send_document_file_uploads_original_bytes_as_multipart(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    source = tmp_path / "generation.png"
+    original = b"original-generation-bytes"
+    source.write_bytes(original)
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"ok": True, "result": {"message_id": 42}}
+
+    class FakeClient:
+        def __init__(self, *, timeout: int) -> None:
+            captured["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, *, data: dict, files: dict):
+            captured["url"] = url
+            captured["data"] = data
+            filename, document, media_type = files["document"]
+            captured["filename"] = filename
+            captured["media_type"] = media_type
+            captured["bytes"] = document.read()
+            return FakeResponse()
+
+    monkeypatch.setattr(telegram_main.httpx, "Client", FakeClient)
+
+    api = TelegramBotApi("test-token")
+    result = api.send_document_file(
+        chat_id=123,
+        path=source,
+        caption="Generation ready",
+        reply_markup={"inline_keyboard": []},
+    )
+
+    assert result == {"message_id": 42}
+    assert captured["url"] == "https://api.telegram.org/bottest-token/sendDocument"
+    assert captured["bytes"] == original
+    assert captured["filename"] == "generation.png"
+    assert captured["media_type"] == "image/png"
+    assert captured["data"] == {
+        "chat_id": "123",
+        "caption": "Generation ready",
+        "reply_markup": '{"inline_keyboard": []}',
+    }
 
 
 def test_canonicalize_webapp_url_idna_encodes_unicode_hostname() -> None:
@@ -162,3 +226,91 @@ def test_configure_bot_updates_only_changed_branding_field() -> None:
 
     setter_calls = [(method, payload) for method, payload in calls if method.startswith("set")]
     assert setter_calls == [("setMyName", {"name": expected.bot_name})]
+
+
+def test_personalized_start_keyboard_routes_to_product_sections() -> None:
+    summary = TelegramUserSummary(
+        display_name="Игорь",
+        credits_balance=7,
+        available_generations=7,
+        active_projects=2,
+        active_generations=1,
+    )
+    keyboard = mini_app_keyboard("https://archi.example.com", content(), summary)
+
+    assert keyboard["inline_keyboard"][0][0]["text"] == "Создать проект"
+    assert keyboard["inline_keyboard"][0][0]["web_app"]["url"].endswith("?section=create")
+    assert keyboard["inline_keyboard"][0][1]["web_app"]["url"].endswith("?section=home")
+    assert keyboard["inline_keyboard"][1][0]["web_app"]["url"].endswith("?section=history")
+    assert keyboard["inline_keyboard"][1][1]["web_app"]["url"].endswith("?section=profile")
+
+
+def test_send_start_includes_safe_personal_summary_when_available() -> None:
+    sent: list[tuple[str, object]] = []
+
+    class FakeApi:
+        def call(self, method: str, payload=None, *, timeout: int = 15):
+            sent.append((method, payload))
+            return True
+
+    summary = TelegramUserSummary(
+        display_name="Игорь",
+        credits_balance=9,
+        available_generations=4,
+        active_projects=3,
+        active_generations=2,
+    )
+    send_start(
+        FakeApi(), 123, "https://archi.example.com", content(), summary  # type: ignore[arg-type]
+    )
+
+    method, payload = sent[0]
+    assert method == "sendMessage"
+    assert "Генераций доступно: 4" in payload["text"]
+    assert "Кредиты: 9" in payload["text"]
+    assert "Проектов: 3" in payload["text"]
+    assert "Генераций в работе: 2" in payload["text"]
+
+
+def test_available_generation_count_uses_live_master_plan_price() -> None:
+    assert available_generation_count(9, price_credits=2, price_active=True) == 4
+    assert available_generation_count(1, price_credits=2, price_active=True) == 0
+    assert available_generation_count(9, price_credits=None, price_active=True) is None
+    assert available_generation_count(9, price_credits=2, price_active=False) is None
+
+
+def test_user_summary_parser_rejects_incomplete_payloads() -> None:
+    parsed = parse_user_summary(
+        {
+            "display_name": "Игорь",
+            "credits_balance": 5,
+            "available_generations": 2,
+            "active_projects": 1,
+            "active_generations": 0,
+        }
+    )
+    assert parsed is not None
+    assert parsed.credits_balance == 5
+    assert parsed.available_generations == 2
+
+    legacy = parse_user_summary(
+        {
+            "display_name": "Игорь",
+            "credits_balance": 5,
+            "active_projects": 1,
+            "active_generations": 0,
+        }
+    )
+    assert legacy is not None
+    assert legacy.available_generations is None
+    assert parse_user_summary({"display_name": "Игорь"}) is None
+
+
+def test_webapp_section_url_replaces_stale_navigation() -> None:
+    url = webapp_section_url(
+        "https://archi.example.com/app?generation=old&section=history&keep=1",
+        "create",
+    )
+    assert "generation=" not in url
+    assert "section=create" in url
+    assert "keep=1" in url

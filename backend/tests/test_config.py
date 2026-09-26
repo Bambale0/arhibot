@@ -13,6 +13,25 @@ def test_default_secrets_are_rejected_in_production() -> None:
         Settings(app_env="production")
 
 
+def test_production_bot_does_not_require_unrelated_api_secrets() -> None:
+    settings = Settings(
+        app_env="production",
+        runtime_role="bot",
+        telegram_bot_token="123456:telegram-bot-token",
+        telegram_webapp_url="https://app.example.test",
+    )
+    assert settings.runtime_role == "bot"
+
+
+def test_production_bot_requires_telegram_runtime_configuration() -> None:
+    with pytest.raises(ValueError, match="TELEGRAM_BOT_TOKEN"):
+        Settings(
+            app_env="production",
+            runtime_role="bot",
+            telegram_webapp_url="https://app.example.test",
+        )
+
+
 def test_production_auth_secrets_must_be_distinct() -> None:
     secret = "same-production-secret-that-is-at-least-32-characters"
     with pytest.raises(ValueError, match="must be different"):

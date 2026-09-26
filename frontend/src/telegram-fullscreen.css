@@ -1,0 +1,87 @@
+.telegram-fullscreen-button {
+  position: fixed;
+  top: max(12px, calc(env(safe-area-inset-top) + 4px));
+  right: max(14px, calc(env(safe-area-inset-right) + 14px));
+  z-index: 120;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  background: rgba(37, 39, 36, .88);
+  color: #f7f3eb;
+  box-shadow: 0 8px 24px rgba(20, 22, 20, .18);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  cursor: pointer;
+  transition: transform .16s ease, background-color .16s ease, border-color .16s ease, box-shadow .16s ease;
+}
+
+.telegram-fullscreen-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.telegram-fullscreen-button:hover {
+  transform: translateY(-1px);
+  background: rgba(17, 19, 16, .94);
+  border-color: rgba(255, 255, 255, .26);
+  box-shadow: 0 10px 28px rgba(20, 22, 20, .24);
+}
+
+.telegram-fullscreen-button:active {
+  transform: scale(.96);
+}
+
+.telegram-fullscreen-button:focus-visible {
+  outline: 2px solid rgba(201, 105, 59, .7);
+  outline-offset: 3px;
+}
+
+@media (max-width: 1023px) {
+  .telegram-fullscreen-button {
+    top: auto;
+    right: max(10px, calc(env(safe-area-inset-right) + 10px));
+    bottom: max(82px, calc(env(safe-area-inset-bottom) + 78px));
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    min-height: 34px;
+    border-radius: 10px;
+  }
+
+  .telegram-fullscreen-button svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .telegram-fullscreen-button {
+    transition: none;
+  }
+}
+
+/* Standalone screens have their own headers, outside AppFrame. */
+.telegram-fullscreen-button--header {
+  top: max(10px, calc(env(safe-area-inset-top) + 4px));
+  bottom: auto;
+  right: max(12px, calc(env(safe-area-inset-right) + 12px));
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+}
+.telegram-fullscreen-button--header ~ .questionnaire-shell .questionnaire-topbar {
+  padding-right: max(64px, calc(env(safe-area-inset-right) + 64px));
+}
+
+@media (min-width:1024px) {
+  .telegram-fullscreen-button ~ .admin-shell .admin-header {
+    padding-right:48px;
+  }
+}

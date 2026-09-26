@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getQuestionnaireCatalog, startQuestionnaireProject as startQuestionnaireProjectApi } from '../questionnaireApi'
 import type { QuestionnaireCatalog } from '../questionnaireTypes'
 import type { Project } from '../types'
@@ -10,21 +10,27 @@ export function CreateScreen({ onOpenQuestionnaire }: {
   const [catalog, setCatalog] = useState<QuestionnaireCatalog | null>(null)
   const [activeSection, setActiveSection] = useState<string | null>(null)
   const [selectedObjects, setSelectedObjects] = useState<string[]>([])
+  const [plotAreaSotkas, setPlotAreaSotkas] = useState('')
   const [catalogLoading, setCatalogLoading] = useState(true)
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
+  const catalogRequest = useRef(0)
 
-  useEffect(() => {
-    let cancelled = false
+  const loadCatalog = useCallback(async () => {
+    const request = ++catalogRequest.current
     setCatalogLoading(true)
     setCatalogError(null)
-    void getQuestionnaireCatalog()
-      .then((loadedCatalog) => { if (!cancelled) setCatalog(loadedCatalog) })
-      .catch((err) => { if (!cancelled) setCatalogError(err instanceof Error ? err.message : 'Не удалось загрузить опросники') })
-      .finally(() => { if (!cancelled) setCatalogLoading(false) })
-    return () => { cancelled = true }
+    await getQuestionnaireCatalog()
+      .then((loadedCatalog) => { if (request === catalogRequest.current) setCatalog(loadedCatalog) })
+      .catch((err) => { if (request === catalogRequest.current) setCatalogError(err instanceof Error ? err.message : 'Не удалось загрузить опросники') })
+      .finally(() => { if (request === catalogRequest.current) setCatalogLoading(false) })
   }, [])
+
+  useEffect(() => {
+    void loadCatalog()
+    return () => { catalogRequest.current += 1 }
+  }, [loadCatalog])
 
   const definitions = useMemo(() => new Map((catalog?.questionnaires || []).map((item) => [item.key, item])), [catalog])
   const section = catalog?.sections.find((item) => item.key === activeSection) || null
@@ -35,13 +41,18 @@ export function CreateScreen({ onOpenQuestionnaire }: {
   }
 
   async function startQuestionnaireProject() {
+    const parsedPlotArea = Number(plotAreaSotkas)
     if (!catalog || selectedObjects.length === 0 || starting) return
+    if (!Number.isInteger(parsedPlotArea) || parsedPlotArea < 4 || parsedPlotArea > 15) {
+      setStartError('Укажите размер участка от 4 до 15 соток.')
+      return
+    }
     setStarting(true)
     setStartError(null)
     try {
       const catalogOrder = catalog.sections.flatMap((item) => item.object_keys)
       const orderedObjects = catalogOrder.filter((key) => selectedObjects.includes(key))
-      const project = await startQuestionnaireProjectApi(orderedObjects)
+      const project = await startQuestionnaireProjectApi(orderedObjects, parsedPlotArea)
       onOpenQuestionnaire(project, orderedObjects)
     } catch (err) {
       setStartError(err instanceof Error ? err.message : 'Не удалось создать проект')
@@ -51,7 +62,7 @@ export function CreateScreen({ onOpenQuestionnaire }: {
   }
 
   return <section className="page-content create-page questionnaire-create">
-    {catalogError && <div className="banner-error">{catalogError}</div>}
+    {catalogError && <div className="banner-error" role="alert"><span>{catalogError}</span><button type="button" onClick={() => void loadCatalog()}>Повторить</button></div>}
     {catalogLoading ? <div className="create-loading">Загружаем варианты…</div> : !catalog ? <div className="create-loading">Варианты проектирования сейчас недоступны.</div> : activeSection && section ? <>
       <button className="create-back" type="button" onClick={() => setActiveSection(null)}><BackIcon />Все разделы</button>
       <div className="page-heading-row create-step-heading"><div><h1>{section.title}</h1><p>Выберите один или несколько объектов. Выбор можно дополнить из других разделов.</p></div></div>
@@ -69,8 +80,10 @@ export function CreateScreen({ onOpenQuestionnaire }: {
 
       <CreateSelectionDock
         selectedTitles={selectedTitles}
+        plotAreaSotkas={plotAreaSotkas}
         starting={starting}
         error={startError}
+        onPlotAreaChange={(value) => { setPlotAreaSotkas(value); setStartError(null) }}
         onAddSection={() => setActiveSection(null)}
         onStart={() => void startQuestionnaireProject()}
       />
@@ -89,28 +102,38 @@ export function CreateScreen({ onOpenQuestionnaire }: {
 
       {selectedObjects.length > 0 && <CreateSelectionDock
         selectedTitles={selectedTitles}
+        plotAreaSotkas={plotAreaSotkas}
         starting={starting}
         error={startError}
+        onPlotAreaChange={(value) => { setPlotAreaSotkas(value); setStartError(null) }}
         onStart={() => void startQuestionnaireProject()}
       />}
     </>}
   </section>
 }
 
-function CreateSelectionDock({ selectedTitles, starting, error, onAddSection, onStart }: {
+function CreateSelectionDock({ selectedTitles, plotAreaSotkas, starting, error, onPlotAreaChange, onAddSection, onStart }: {
   selectedTitles: string[]
+  plotAreaSotkas: string
   starting: boolean
   error: string | null
+  onPlotAreaChange: (value:string) => void
   onAddSection?: () => void
   onStart: () => void
 }) {
   if (!selectedTitles.length) return null
+  const parsedPlotArea = Number(plotAreaSotkas)
+  const plotAreaValid = Number.isInteger(parsedPlotArea) && parsedPlotArea >= 4 && parsedPlotArea <= 15
   return <div className="create-selection-dock" aria-live="polite">
     <div className="create-selection-copy"><strong>Выбрано: {selectedTitles.length}</strong><span>{selectedTitles.join(' · ')}</span></div>
+    <label className="create-plot-size">
+      <span><strong>Размер участка</strong><small>4–15 соток · 1 сотка = 100 м²</small></span>
+      <span className="create-plot-input"><input aria-label="Размер участка, соток" type="number" min={4} max={15} step={1} inputMode="numeric" placeholder="Например, 8" value={plotAreaSotkas} disabled={starting} onChange={(event) => onPlotAreaChange(event.target.value)} /><b>сот.</b></span>
+    </label>
     {error && <div className="banner-error">{error}</div>}
     <div className="create-selection-actions">
       {onAddSection && <button type="button" className="secondary-button" disabled={starting} onClick={onAddSection}>Добавить из другого раздела</button>}
-      <button type="button" className="primary-button" disabled={starting} onClick={onStart}>{starting ? 'Создаём проект…' : 'Начать проект'}</button>
+      <button type="button" className="primary-button" disabled={starting || !plotAreaValid} onClick={onStart}>{starting ? 'Создаём проект…' : 'Начать проект'}</button>
     </div>
   </div>
 }

@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.domain.generations.enums import GenerationStatus, GenerationType
+from app.domain.generations.enums import GenerationOrigin, GenerationStatus, GenerationType
 
 
 class Generation(Base):
@@ -17,7 +17,9 @@ class Generation(Base):
     __table_args__ = (
         Index("ix_generations_user_created", "user_id", "created_at"),
         Index("ix_generations_project_created", "project_id", "created_at"),
+        Index("ix_generations_project_origin_created", "project_id", "origin", "created_at"),
         Index("ix_generations_status_created", "status", "created_at"),
+        Index("ix_generations_telegram_delivery", "telegram_delivery_status", "completed_at"),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -51,9 +53,12 @@ class Generation(Base):
         default=GenerationStatus.QUEUED,
         server_default=GenerationStatus.QUEUED.value,
     )
+    origin: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=GenerationOrigin.GENERIC.value, server_default=GenerationOrigin.GENERIC.value
+    )
     prompt: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     credits_charged: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
-    model_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     fallback_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     composition_mode: Mapped[str] = mapped_column(
         String(32), nullable=False, default="replace", server_default="replace"
@@ -62,8 +67,21 @@ class Generation(Base):
     protected_regions: Mapped[list] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"
     )
+    edit_policy: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    quality_report: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    quality_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     provider_task_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    telegram_delivery_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default="pending"
+    )
+    telegram_delivery_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    telegram_delivery_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    telegram_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

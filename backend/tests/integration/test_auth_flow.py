@@ -64,3 +64,38 @@ async def test_email_register_me_refresh_login_flow() -> None:
             "/api/v1/auth/login", json={"email": email, "password": password}
         )
         assert login.status_code == 200, login.text
+        assert "auroom_refresh_token=" in login.headers.get("set-cookie", "")
+        assert "httponly" in login.headers.get("set-cookie", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_browser_refresh_cookie_rotates_without_javascript_token_access() -> None:
+    email = f"cookie-auth-{uuid4()}@example.com"
+    password = "correct-horse-battery-staple"
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        register = await client.post(
+            "/api/v1/auth/register",
+            json={"email": email, "password": password, "display_name": "Cookie User"},
+        )
+        assert register.status_code == 201, register.text
+        original_cookie = client.cookies.get("auroom_refresh_token")
+        assert original_cookie
+        set_cookie = register.headers.get("set-cookie", "").lower()
+        assert "httponly" in set_cookie
+        assert "samesite=lax" in set_cookie
+
+        refresh = await client.post("/api/v1/auth/refresh")
+        assert refresh.status_code == 200, refresh.text
+        rotated_cookie = client.cookies.get("auroom_refresh_token")
+        assert rotated_cookie
+        assert rotated_cookie != original_cookie
+
+        logout = await client.post("/api/v1/auth/logout")
+        assert logout.status_code == 200, logout.text
+        assert client.cookies.get("auroom_refresh_token") is None
+
+        missing = await client.post("/api/v1/auth/refresh")
+        assert missing.status_code == 401, missing.text
+        assert missing.json()["type"] == "invalid_refresh_token"

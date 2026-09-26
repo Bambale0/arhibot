@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -89,6 +89,19 @@ class GenerationCreate(BaseModel):
         return self
 
 
+class AdminSandboxGenerationCreate(GenerationCreate):
+    """Server-built admin sandbox prompt envelope; never accepted by public generation API."""
+
+    prompt: str = Field(default="", max_length=12000)
+
+
+class QuestionnaireGenerationCreate(GenerationCreate):
+    """Server-built questionnaire prompt; never accepted from the public generation API."""
+
+    prompt: str = Field(default="", max_length=16000)
+    edit_policy: dict[str, Any] = Field(default_factory=dict)
+
+
 class GenerationResultResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -104,6 +117,9 @@ class GenerationResultResponse(BaseModel):
     composition_mode: str = "replace"
     edit_region: NormalizedRect | None = None
     protected_regions: list[NormalizedRect] = Field(default_factory=list)
+    edit_policy: dict[str, Any] = Field(default_factory=dict)
+    quality_report: dict[str, Any] | None = None
+    quality_status: str | None = None
     error: str | None = None
     created_at: datetime
     updated_at: datetime

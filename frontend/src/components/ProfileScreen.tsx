@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import * as api from '../api'
 import { useAuth } from '../auth'
 import type { BillingSummary } from '../types'
@@ -20,30 +20,36 @@ function paymentLabel(status: string, refundStatus?: string | null) {
 export function ProfileScreen({ onOpenAdmin }: { onOpenAdmin?: () => void }) {
   const { user, signOut } = useAuth()
   const [billing, setBilling] = useState<BillingSummary | null>(null)
+  const [billingLoading, setBillingLoading] = useState(true)
   const [receiptEmail, setReceiptEmail] = useState('')
   const [billingError, setBillingError] = useState<string | null>(null)
   const [busyPackage, setBusyPackage] = useState<string | null>(null)
   const [paymentNotice, setPaymentNotice] = useState<string | null>(null)
+  const bootstrapRequest = useRef(0)
   const isAdmin = user?.role === 'admin' || user?.role === 'superadmin'
 
   async function loadBilling() {
+    setBillingLoading(true)
     try {
       setBilling(await api.getBillingSummary())
       setBillingError(null)
     } catch (error) {
       setBillingError(error instanceof Error ? error.message : 'Не удалось загрузить оплату')
+    } finally {
+      setBillingLoading(false)
     }
   }
 
-  useEffect(() => {
-    let cancelled = false
-    async function bootstrapBilling() {
+  const bootstrapBilling = useCallback(async () => {
+      const request = ++bootstrapRequest.current
+      setBillingLoading(true)
+      setBillingError(null)
       const params = new URLSearchParams(window.location.search)
       const paymentId = params.get('payment_id')
       try {
         if (paymentId) {
           const payment = await api.getBillingPayment(paymentId)
-          if (!cancelled) {
+          if (request === bootstrapRequest.current) {
             setPaymentNotice(
               payment.refund_status === 'succeeded'
                 ? 'Платёж возвращён. Кредиты списаны с баланса.'
@@ -54,20 +60,25 @@ export function ProfileScreen({ onOpenAdmin }: { onOpenAdmin?: () => void }) {
                     : 'Платёж обрабатывается. Баланс обновится после подтверждения YooKassa.',
             )
           }
+          if (request !== bootstrapRequest.current) return
           params.delete('billing')
           params.delete('payment_id')
           const query = params.toString()
           window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}`)
         }
         const summary = await api.getBillingSummary()
-        if (!cancelled) setBilling(summary)
+        if (request === bootstrapRequest.current) setBilling(summary)
       } catch (error) {
-        if (!cancelled) setBillingError(error instanceof Error ? error.message : 'Не удалось проверить платёж')
+        if (request === bootstrapRequest.current) setBillingError(error instanceof Error ? error.message : 'Не удалось проверить платёж')
+      } finally {
+        if (request === bootstrapRequest.current) setBillingLoading(false)
       }
-    }
-    void bootstrapBilling()
-    return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    void bootstrapBilling()
+    return () => { bootstrapRequest.current += 1 }
+  }, [bootstrapBilling])
 
   async function buy(packageCode: string) {
     if (billing?.receipt_required && !/^\S+@\S+\.\S+$/.test(receiptEmail.trim())) {
@@ -91,7 +102,7 @@ export function ProfileScreen({ onOpenAdmin }: { onOpenAdmin?: () => void }) {
       <div className="page-heading-row"><div><span className="eyebrow">АККАУНТ AUROOM</span><h1>Профиль</h1><p>Аккаунт, баланс и оплата генераций.</p></div>{isAdmin && onOpenAdmin && <button className="primary-button" onClick={onOpenAdmin}>Веб-админка</button>}</div>
 
       {paymentNotice && <div className="billing-notice">{paymentNotice}</div>}
-      {billingError && <div className="banner-error">{billingError}<button onClick={() => setBillingError(null)}>Закрыть</button></div>}
+      {billingError && <div className="banner-error" role="alert"><span>{billingError}</span><span className="banner-actions"><button onClick={() => void bootstrapBilling()}>Повторить</button><button onClick={() => setBillingError(null)}>Закрыть</button></span></div>}
 
       <div className="profile-card">
         <div className="profile-avatar"><UserIcon /></div>
@@ -107,8 +118,10 @@ export function ProfileScreen({ onOpenAdmin }: { onOpenAdmin?: () => void }) {
 
       <section className="billing-section">
         <div className="section-title-row"><div><span className="eyebrow">ОПЛАТА ЧЕРЕЗ ЮKASSA</span><h2>Пополнить баланс</h2></div><span>Безопасная оплата на стороне YooKassa</span></div>
-        {!billing ? (
+        {billingLoading && !billing ? (
           <div className="empty-inline">Загружаем тарифы…</div>
+        ) : !billing ? (
+          <div className="empty-inline">Не удалось загрузить тарифы. Повторите запрос.</div>
         ) : !billing.enabled ? (
           <div className="empty-inline">Оплата временно недоступна. Доступные способы пополнения появятся здесь позже.</div>
         ) : (

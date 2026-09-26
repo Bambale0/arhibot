@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from json import dumps
 from math import floor
 from typing import Any
 
+from app.questionnaires.site_plan import build_site_plan
 from app.schemas.questionnaires import DesignSession
 
 
@@ -12,6 +13,7 @@ def condition_ok(
     condition: dict[str, Any] | None,
     answers: dict[str, object],
     house_accepted: bool,
+    selected_objects: Sequence[str] | None = None,
 ) -> bool:
     if not condition:
         return True
@@ -20,16 +22,23 @@ def condition_ok(
         return house_accepted
     if operator == "all":
         return all(
-            condition_ok(item, answers, house_accepted)
+            condition_ok(item, answers, house_accepted, selected_objects)
             for item in condition.get("conditions", [])
         )
     if operator == "any":
         return any(
-            condition_ok(item, answers, house_accepted)
+            condition_ok(item, answers, house_accepted, selected_objects)
             for item in condition.get("conditions", [])
         )
-    answer = answers.get(condition.get("question_id"))
     value = condition.get("value")
+    if operator == "object_not_selected":
+        selected = set(selected_objects or ())
+        if isinstance(value, str):
+            return value not in selected
+        if isinstance(value, list):
+            return not any(str(item) in selected for item in value)
+        return True
+    answer = answers.get(condition.get("question_id"))
     if operator == "eq":
         return answer == value
     if operator == "neq":
@@ -46,6 +55,65 @@ def condition_ok(
             or not isinstance(value, list)
             or not any(item in answer for item in value)
         )
+    if operator == "floor_option":
+        if not isinstance(answer, str) or not isinstance(value, str):
+            return False
+        floor_answer = answer.lower()
+        if value == "Первый этаж":
+            return True
+        if value == "Второй этаж":
+            return not floor_answer.startswith("1 ")
+        if value == "Третий этаж":
+            return "3" in floor_answer
+        if value == "Мансарда":
+            return "мансард" in floor_answer
+        return False
+    return True
+
+
+def question_enabled_for_selection(
+    object_key: str,
+    question: dict[str, Any],
+    selected_objects: Sequence[str],
+) -> bool:
+    """Apply cross-questionnaire invariants that are not operator-editable catalog copy."""
+
+    # A separately selected garage owns its own complete questionnaire. Asking the
+    # house questionnaire for an additional garage/canopy/attachment would duplicate
+    # requirements and can produce conflicting prompt constraints.
+    if (
+        object_key == "eskez-doma"
+        and any(key in selected_objects for key in ("garazh", "naves"))
+        and str(question.get("id")) in {"6", "6а", "6б", "6в"}
+    ):
+        return False
+    return True
+
+
+def question_is_active(
+    object_key: str,
+    question: dict[str, Any],
+    answers: dict[str, object],
+    house_accepted: bool,
+    selected_objects: Sequence[str],
+) -> bool:
+    if not question_enabled_for_selection(object_key, question, selected_objects):
+        return False
+    if not condition_ok(
+        question.get("condition"), answers, house_accepted, selected_objects
+    ):
+        return False
+    options = question.get("options") or []
+    if question.get("kind") in {"single", "multi"} and options:
+        return any(
+            condition_ok(
+                (question.get("option_rules") or {}).get(option),
+                answers,
+                house_accepted,
+                selected_objects,
+            )
+            for option in options
+        )
     return True
 
 
@@ -59,6 +127,47 @@ def _answer_value(value: object) -> object:
     if isinstance(value, float) and value.is_integer():
         return int(value)
     return value
+
+
+_SPATIAL_QUESTION_MARKERS = ("где", "располож", "относительно", "сторон", "место")
+_SPATIAL_ANSWER_MARKERS = (
+    "слева", "справа", "сзади", "перед дом", "во дворе", "двор",
+    "въезд", "улиц", "за дом", "перед фасад", "у фасад", "центр участка",
+)
+
+
+def _initial_placement_constraints(objects: Sequence[dict[str, object]]) -> list[dict[str, object]]:
+    placements: list[dict[str, object]] = []
+    for item in objects:
+        constraints = item.get("questionnaire_constraints")
+        if not isinstance(constraints, list):
+            continue
+        for constraint in constraints:
+            if not isinstance(constraint, dict):
+                continue
+            question = str(constraint.get("question", "")).strip()
+            answer = constraint.get("answer")
+            answer_text = (
+                " ".join(str(part) for part in answer)
+                if isinstance(answer, list)
+                else str(answer or "")
+            )
+            question_lower = question.lower()
+            answer_lower = answer_text.lower()
+            if not (
+                any(marker in question_lower for marker in _SPATIAL_QUESTION_MARKERS)
+                or any(marker in answer_lower for marker in _SPATIAL_ANSWER_MARKERS)
+            ):
+                continue
+            placements.append(
+                {
+                    "object_key": item.get("object_key"),
+                    "object_name": item.get("object_name"),
+                    "question": question,
+                    "answer": answer,
+                }
+            )
+    return placements
 
 
 def _js_percent(value: float) -> int:
@@ -77,12 +186,342 @@ def _region_percent(region: object | None) -> dict[str, int] | None:
     }
 
 
+
+def _initial_concept_camera(selected_count: int) -> dict[str, object]:
+    if selected_count <= 1:
+        return {
+            "mode": "single_object_hero",
+            "view": "architectural three-quarter hero view, slightly elevated",
+            "altitude_m": {"min": 8, "max": 20},
+            "entire_plot_visible": False,
+            "property_boundaries_readable": False,
+            "all_selected_objects_visible": True,
+            "source_photo_camera_lock": False,
+            "directive": (
+                "Один выбранный объект показывай крупно и выразительно, как премиальную "
+                "архитектурную визуализацию. Объект целиком в кадре, с достаточным "
+                "контекстом участка, но без обязательного показа всей территории."
+            ),
+        }
+    if selected_count == 2:
+        return {
+            "mode": "paired_object_context",
+            "view": "elevated oblique architectural site view",
+            "altitude_m": {"min": 20, "max": 35},
+            "entire_plot_visible": False,
+            "property_boundaries_readable": False,
+            "all_selected_objects_visible": True,
+            "source_photo_camera_lock": False,
+            "directive": (
+                "Два выбранных объекта должны одновременно и крупно читаться в одном "
+                "эстетичном кадре. Подними камеру только настолько, насколько нужно, "
+                "чтобы оба объекта и их взаимное расположение были понятны."
+            ),
+        }
+    return {
+        "mode": "whole_site_aerial",
+        "view": "high-angle oblique aerial drone view",
+        "altitude_m": {"min": 50, "max": 70},
+        "entire_plot_visible": True,
+        "property_boundaries_readable": True,
+        "all_selected_objects_visible": True,
+        "source_photo_camera_lock": False,
+        "directive": (
+            "При трёх и более объектах покажи весь участок с высоты 50–70 м под "
+            "углом сверху. Границы участка и все выбранные объекты должны читаться "
+            "одновременно."
+        ),
+    }
+
+
+def _house_floor_count_reference(answer: object) -> float | None:
+    if not isinstance(answer, str):
+        return None
+    normalized = answer.lower()
+    if normalized.startswith("1 "):
+        count = 1.0
+    elif normalized.startswith("2 "):
+        count = 2.0
+    elif normalized.startswith("3 "):
+        count = 3.0
+    else:
+        return None
+    if "мансард" in normalized:
+        count += 0.5
+    return count
+
+
+def _initial_site_scale(session: DesignSession) -> dict[str, object]:
+    plot_sotkas = session.plot_area_sotkas
+    plot_m2 = plot_sotkas * 100 if plot_sotkas is not None else None
+    house_answers = session.answers.get("eskez-doma", {})
+    raw_house_area = house_answers.get("3")
+    house_area_m2 = (
+        float(raw_house_area)
+        if isinstance(raw_house_area, (int, float)) and not isinstance(raw_house_area, bool)
+        else None
+    )
+    floor_count = _house_floor_count_reference(house_answers.get("4"))
+    estimated_footprint_m2 = (
+        round(house_area_m2 / floor_count, 1)
+        if house_area_m2 is not None and floor_count
+        else None
+    )
+    estimated_footprint_share = (
+        round(estimated_footprint_m2 / plot_m2, 4)
+        if estimated_footprint_m2 is not None and plot_m2
+        else None
+    )
+    scale_known = plot_sotkas is not None
+    directive = (
+        "Соблюдай правдоподобный относительный масштаб. Размер участка является "
+        "жёстким ориентиром композиции: 1 сотка = 100 м². Площадь дома — общая "
+        "площадь по этажам; estimated_house_footprint_m2 используется только как "
+        "ориентир пятна застройки. Не увеличивай дом так, чтобы он визуально занимал "
+        "несоразмерную долю участка. Не растягивай и не сжимай границы участка ради "
+        "удобства композиции: сначала зафиксируй масштаб участка, затем вписывай в него объекты."
+        if scale_known
+        else (
+            "Точный размер участка отсутствует у исторического/внутреннего проекта. "
+            "Не придумывай числовую площадь; сохраняй только правдоподобный визуальный "
+            "масштаб объектов относительно доступной сцены."
+        )
+    )
+    return {
+        "plot_area_known": scale_known,
+        "plot_area_sotkas": plot_sotkas,
+        "plot_area_m2": plot_m2,
+        "house_total_area_m2": house_area_m2,
+        "house_floor_count_reference": floor_count,
+        "estimated_house_footprint_m2": estimated_footprint_m2,
+        "estimated_house_footprint_share_of_plot": estimated_footprint_share,
+        "directive": directive,
+    }
+
+
+def _requires_detached_from_house(
+    object_name: str,
+    constraints: list[dict[str, object]],
+) -> bool:
+    fragments = [object_name]
+    for item in constraints:
+        answer = item.get("answer")
+        if isinstance(answer, list):
+            fragments.extend(str(value) for value in answer)
+        elif answer is not None:
+            fragments.append(str(answer))
+    return "отдельн" in " ".join(fragments).casefold()
+
+
+def _initial_concept_objects(
+    catalog: dict[str, Any],
+    session: DesignSession,
+) -> list[dict[str, object]]:
+    definitions = {
+        str(item["key"]): item
+        for item in catalog["questionnaires"]
+        if item["key"] != catalog.get("application_key")
+    }
+    objects: list[dict[str, object]] = []
+    house_reference_available = "eskez-doma" in session.selected_objects
+    for object_key in session.selected_objects:
+        definition = definitions[object_key]
+        answers = session.answers.get(object_key, {})
+        constraints: list[dict[str, object]] = []
+        for question in definition["questions"]:
+            if question.get("phase") != "pre_render":
+                continue
+            if not question_is_active(
+                object_key,
+                question,
+                answers,
+                house_reference_available,
+                session.selected_objects,
+            ):
+                continue
+            if question["id"] not in answers:
+                continue
+            value = _answer_value(answers[question["id"]])
+            if value in (None, "", []):
+                continue
+            constraints.append(
+                {
+                    "question": str(question["text"]).strip(),
+                    "answer": value,
+                }
+            )
+        object_name = str(definition["title"]).strip()
+        objects.append(
+            {
+                "object_key": object_key,
+                "object_name": object_name,
+                "visual_identity": {
+                    "must_be_recognizable_as": object_name,
+                    "substitution_forbidden": True,
+                },
+                "structural_constraints": (
+                    ["detached_from_house"]
+                    if _requires_detached_from_house(object_name, constraints)
+                    else []
+                ),
+                "questionnaire_constraints": constraints,
+            }
+        )
+    return objects
+
+
+def build_initial_site_plan(
+    catalog: dict[str, Any],
+    session: DesignSession,
+) -> dict[str, object]:
+    """Build the canonical server-side spatial snapshot for an initial concept."""
+
+    objects = _initial_concept_objects(catalog, session)
+    site_scale = _initial_site_scale(session)
+    return build_site_plan(objects=objects, session=session, site_scale=site_scale)
+
+
+def build_initial_concept_prompt(
+    catalog: dict[str, Any],
+    session: DesignSession,
+    *,
+    input_asset_present: bool,
+) -> str:
+    """Build one generation spec for every object selected before project launch."""
+
+    objects = _initial_concept_objects(catalog, session)
+
+    camera = _initial_concept_camera(len(objects))
+    site_scale = _initial_site_scale(session)
+    placement_constraints = _initial_placement_constraints(objects)
+    site_plan = build_site_plan(objects=objects, session=session, site_scale=site_scale)
+    source = (
+        {
+            "kind": "site_photo",
+            "directive": (
+                "Используй фото только как источник геометрии, границ, окружения и "
+                "контекста участка. Исходный ракурс не фиксирован: перестрой камеру "
+                "строго по camera.mode и camera.directive."
+            ),
+        }
+        if input_asset_present
+        else {
+            "kind": "synthetic_site",
+            "directive": (
+                "Сформируй цельную сцену участка, достаточную для размещения всех "
+                "выбранных объектов одновременно."
+            ),
+        }
+    )
+    spec = {
+        "schema": "auroom.initial_concept.v1",
+        "task": {
+            "goal": (
+                "Создать одну общую фотореалистичную архитектурную концепцию участка "
+                "со всеми объектами, выбранными пользователем до начала проекта."
+            ),
+            "selected_objects_count": len(objects),
+            "objects": objects,
+        },
+        "source_scene": source,
+        "structural_consistency": {
+            "fireplace_chimney": (
+                "If a visible fireplace is created, its chimney stack must be spatially "
+                "and architecturally plausible as the exterior continuation of the same flue system."
+            ),
+        },
+        "composition": {
+            "rule": (
+                "Сначала спланируй участок как единую композицию и соблюдай реальный "
+                "относительный масштаб, затем размести каждый выбранный объект. Ни один "
+                "объект не должен вытеснять остальные."
+            ),
+            "all_selected_objects_must_be_visible": True,
+            "preserve_realistic_scale_and_access": True,
+            "reserve_space_for_every_selected_object": True,
+        },
+        "object_fidelity": {
+            "strength": "hard_constraints",
+            "identity_rule": (
+                "Каждый selected object должен визуально однозначно распознаваться именно "
+                "как object_name. Нельзя заменять выбранный тип похожим объектом, мебелью "
+                "или декором: лавочка должна оставаться лавочкой, бассейн — бассейном, "
+                "гараж — гаражом."
+            ),
+            "detached_structure_rule": (
+                "Если structural_constraints содержит detached_from_house, объект должен "
+                "быть физически отделён от основного дома заметным проходом/воздушным "
+                "промежутком. Запрещены общая стена, общая кровля и визуальное сращивание "
+                "объёмов."
+            ),
+        },
+        "site_scale": site_scale,
+        "site_plan": site_plan,
+        "site_layout": {
+            "placement_constraints": placement_constraints,
+            "strength": "hard_constraints",
+            "directive": (
+                "Сначала зафиксируй ориентацию дома, двора и въезда/улицы, если они заданы. "
+                "Затем размести каждый объект строго по placement_constraints. Ответы «сзади», "
+                "«во дворе», «слева», «справа», «у въезда» и аналогичные нельзя заменять "
+                "визуально удобным местом. Перед финалом отдельно перепроверь расположение "
+                "каждого объекта относительно дома и въезда."
+            ),
+            "conflict_policy": (
+                "Явное местоположение из опросника важнее декоративной композиции. "
+                "Если места мало, меняй кадрирование и плотность композиции, а не сторону размещения."
+            ),
+        },
+        "camera": camera,
+        "questionnaire_semantics": {
+            "strength": "hard_constraints",
+            "explicit_answers_override_model_assumptions": True,
+            "multi_select": "Использовать выбранный набор без добавления невыбранных вариантов.",
+            "number": "Считать число целевым параметром.",
+        },
+        "prohibitions": [
+            "Не создавать отдельные изображения для отдельных объектов.",
+            "Не кадрировать сцену так, чтобы выбранные объекты выпадали из кадра.",
+            "Не занимать домом весь участок, если выбраны другие объекты.",
+            "Не заменять выбранный объект визуально похожим объектом, мебелью или декором.",
+            "Не присоединять к дому объект с structural_constraints=detached_from_house.",
+            "Не показывать текст, подписи, размеры, UI или технические аннотации.",
+        ],
+        "output": {
+            "type": "single_photorealistic_image",
+            "priority": "whole_site_composition_and_questionnaire_fidelity",
+        },
+    }
+    return (
+        "AUROOM_INITIAL_CONCEPT_V1\n"
+        "Это одна общая генерация проекта, а не последовательность отдельных объектов.\n"
+        "ПРИОРИТЕТЫ:\n"
+        "1. Все selected objects одновременно присутствуют в одной сцене.\n"
+        f"2. {camera['directive']}\n"
+        "3. Соблюдай site_scale: размер участка и относительный масштаб объектов.\n"
+        "4. Соблюдай site_plan: normalized rect каждого объекта задаёт его разрешённую семантическую зону участка.\n"
+        "5. Соблюдай site_layout: расположение объектов относительно дома/двора/въезда — жёсткое ограничение.\n"
+        "6. Сохраняй visual_identity каждого selected object: тип объекта нельзя подменять похожим.\n"
+        "7. Соблюдай structural_constraints: detached_from_house означает физически отдельный объём с видимым промежутком.\n"
+        "8. Каждый ответ questionnaire_constraints является обязательным.\n"
+        "9. Фотореализм и эстетика только после выполнения пунктов 1–8.\n"
+        "STRUCTURED_SPEC:\n"
+        f"{dumps(spec, ensure_ascii=False, separators=(',', ':'))}\n"
+        "FINAL_CHECK: проверь, что каждый выбранный объект полностью виден, однозначно "
+        "распознаётся как свой object_name, находится в своей site_plan semantic zone, "
+        "detached_from_house объекты не касаются дома, ракурс соответствует camera.mode, "
+        "а относительный масштаб соответствует site_scale. If both fireplace and chimney are visible, "
+        "verify their architectural relationship before output."
+    )
+
+
 def build_questionnaire_generation_prompt(
     definition: dict[str, Any],
     session: DesignSession,
     *,
     accepted_before: Sequence[str],
     input_asset_present: bool,
+    edit_policy: Mapping[str, object] | None = None,
 ) -> str:
     """Build a deterministic, model-facing render specification.
 
@@ -93,31 +532,49 @@ def build_questionnaire_generation_prompt(
     object_key = str(definition["key"])
     answers = session.answers.get(object_key, {})
     house_accepted = "eskez-doma" in accepted_before
+    removing_object = session.pending_removal_object == object_key
 
     questionnaire_constraints: list[dict[str, object]] = []
     for question in definition["questions"]:
         if question.get("phase") != "pre_render":
             continue
-        if not condition_ok(question.get("condition"), answers, house_accepted):
+        if not question_is_active(
+            object_key,
+            question,
+            answers,
+            house_accepted,
+            session.selected_objects,
+        ):
             continue
         if question["id"] not in answers:
             continue
         value = _answer_value(answers[question["id"]])
         if value in (None, "", []):
             continue
-        questionnaire_constraints.append(
-            {
-                "question": str(question["text"]).strip(),
-                "answer": value,
-            }
-        )
+        if not removing_object:
+            questionnaire_constraints.append(
+                {
+                    "question": str(question["text"]).strip(),
+                    "answer": value,
+                }
+            )
 
-    if accepted_before:
+    if accepted_before or (
+        session.initial_concept_mode
+        and session.initial_concept_accepted
+        and input_asset_present
+    ):
         source_kind = "accepted_scene"
         source_directive = (
             "Используй входное изображение как уже принятую сцену. Сохрани без изменений "
             "существующий дом, ранее принятые объекты, их геометрию и пропорции, участок, "
-            "перспективу, ракурс и свет. Создавай или изменяй только текущий объект."
+            "перспективу, ракурс и свет. "
+            + (
+                "Полностью удали только текущий объект внутри edit_region и естественно "
+                "восстанови фон/ландшафт на его месте."
+                if removing_object
+                else "Создавай или изменяй только текущий объект."
+            )
         )
     elif input_asset_present:
         source_kind = "site_photo"
@@ -136,34 +593,79 @@ def build_questionnaire_generation_prompt(
     locked_objects = [
         key for key in accepted_before if session.lock_regions.get(key) is not None
     ]
-    refinement = session.review_comments.get(object_key, "").strip() or None
+    if removing_object:
+        refinement = (
+            "Полностью удалить текущий объект из выделенной области. Не оставлять его "
+            "фрагменты, фундамент, крышу, тени или артефакты; естественно продолжить "
+            "ландшафт и фон принятой сцены."
+        )
+    elif edit_policy is not None:
+        sanitized = edit_policy.get("sanitized_comment")
+        refinement = str(sanitized).strip() if sanitized else None
+    else:
+        refinement = session.review_comments.get(object_key, "").strip() or None
+    full_rerender = (
+        object_key == "eskez-doma"
+        and isinstance(answers.get("15а"), str)
+        and str(answers["15а"]).startswith("Всё")
+    )
+    if full_rerender and not removing_object:
+        refinement = None
 
     prohibitions = [
         "Не показывать на изображении текст, подписи, размеры, UI или технические аннотации.",
         "Не заменять явно выбранные параметры собственными предположениями.",
         "Не менять ранее принятую сцену вне разрешённой области изменения.",
     ]
-    if object_key == "eskez-doma":
+    if object_key == "eskez-doma" and not removing_object:
         prohibitions.append(
             "Визуализировать только внешний вид дома. Планировок, комнат и "
             "внутренних помещений не придумывать."
         )
 
-    inheritance_rule = (
-        "Не применяется к основному дому."
-        if object_key == "eskez-doma"
-        else (
-            "Если в ответах выбрано «Как у дома», точно наследовать стиль, "
-            "материалы и кровлю принятого дома."
+    style_inherited = answers.get("1") == "Как у дома"
+    if removing_object:
+        inheritance_rule = "Не применяется при удалении объекта."
+    elif object_key == "eskez-doma":
+        inheritance_rule = "Не применяется к основному дому."
+    elif not style_inherited:
+        inheritance_rule = (
+            "Вариант «Как у дома» не выбран; наследование от принятого дома не применять."
         )
-    )
+    elif house_accepted:
+        inheritance_rule = (
+            "Наследовать визуальный стиль принятого дома. Материалы, кровлю и другие "
+            "свойства наследовать только когда они не заданы отдельным активным ответом "
+            "текущего объекта. Любой явный questionnaire_constraint текущего объекта "
+            "имеет безусловный приоритет над наследованием."
+        )
+    else:
+        inheritance_rule = (
+            "Основной дом больше не присутствует в принятой сцене. Ответ «Как у дома» "
+            "является историческим параметром уже принятого объекта: сохраняй его текущий "
+            "визуальный стиль по входной принятой сцене и не придумывай новый дом-референс."
+        )
+
+    if removing_object:
+        prohibitions.extend(
+            [
+                "Не оставлять видимые части удаляемого объекта.",
+                "Не добавлять вместо удаляемого объекта новое строение или предмет.",
+                "Не менять другие принятые объекты и не сдвигать ракурс.",
+            ]
+        )
 
     spec = {
         "schema": "auroom.questionnaire_render.v1",
         "task": {
             "object_key": object_key,
             "object_name": str(definition["title"]).strip(),
-            "goal": "Создать одну точную фотореалистичную внешнюю архитектурную визуализацию.",
+            "operation": "remove_object" if removing_object else "render_or_refine",
+            "goal": (
+                "Полностью удалить текущий объект из принятой сцены внутри edit_region."
+                if removing_object
+                else "Создать одну точную фотореалистичную внешнюю архитектурную визуализацию."
+            ),
         },
         "source_scene": {
             "kind": source_kind,
@@ -177,6 +679,33 @@ def build_questionnaire_generation_prompt(
             "locked_regions_enforced_by_compositor": bool(locked_objects),
             "outside_edit_region": "preserve_exactly" if edit_region else "not_applicable",
         },
+        "edit_policy": dict(edit_policy or {}),
+        "visible_interior_policy": (
+            {
+                "interior_is_context_only": True,
+                "redesign_forbidden": True,
+                "furniture_relocation_forbidden": True,
+                "fireplace_relocation_forbidden": True,
+                "staircase_relocation_forbidden": True,
+                "room_geometry_change_forbidden": True,
+                "preserve_through_glazing": True,
+            }
+            if object_key == "eskez-doma" and edit_policy is not None
+            else {}
+        ),
+        "structural_consistency": (
+            {
+                "enabled": True,
+                "relations": [
+                    {
+                        "type": "fireplace_chimney",
+                        "rule": "preserve_existing_relation",
+                    }
+                ],
+            }
+            if object_key == "eskez-doma" and edit_policy is not None
+            else {"enabled": False, "relations": []}
+        ),
         "scene_policy": definition.get("scene_policy") or {},
         "questionnaire_semantics": {
             "strength": "hard_constraints",
@@ -185,8 +714,14 @@ def build_questionnaire_generation_prompt(
             "number": "Считать указанное число целевым параметром, а не приблизительной подсказкой.",
             "multi_select": "Использовать выбранный набор без самовольного добавления невыбранных вариантов.",
             "custom_text": "Следовать пользовательской формулировке буквально, если она не конфликтует с более высоким приоритетом.",
+            "explicit_selection_overrides_inheritance": True,
         },
         "questionnaire_constraints": questionnaire_constraints,
+        "removal": {
+            "enabled": removing_object,
+            "restore_background_naturally": removing_object,
+            "preserve_everything_outside_edit_region": removing_object,
+        },
         "inheritance": inheritance_rule,
         "refinement_comment": refinement,
         "prohibitions": prohibitions,
@@ -196,22 +731,57 @@ def build_questionnaire_generation_prompt(
         },
     }
 
-    priorities = (
-        "ПРИОРИТЕТЫ ВЫПОЛНЕНИЯ:\n"
-        "1. Сохранение исходной/принятой сцены и пространственных блокировок.\n"
-        "2. Точное выполнение каждого активного ответа опросника как обязательного ограничения.\n"
-        "3. Правила камеры, света и размещения из scene_policy, если они не "
-        "конфликтуют с сохранением исходного кадра.\n"
-        "4. Фотореализм и эстетика только после выполнения пунктов 1–3."
+    second_priority = (
+        "Полное удаление текущего объекта и естественное восстановление его области."
+        if removing_object
+        else "Точное выполнение каждого активного ответа опросника как обязательного ограничения."
+    )
+    if object_key == "eskez-doma" and edit_policy is not None and not removing_object:
+        priorities = (
+            "ПРИОРИТЕТЫ ВЫПОЛНЕНИЯ:\n"
+            "1. Pixel/spatial locks: не менять пиксели и области вне разрешённого edit.\n"
+            "2. Сохранить принятую архитектурную геометрию, которая не является целью edit.\n"
+            "3. Сохранить structural relationships, включая fireplace_chimney.\n"
+            "4. Сохранить visible interior как locked context.\n"
+            "5. Выполнить только запрошенную наружную модификацию.\n"
+            "6. Сохранить непрерывность материала, света и текстуры на границе edit.\n"
+            "7. Фотореализм.\n"
+            "8. Эстетика только после выполнения пунктов 1–7."
+        )
+    else:
+        priorities = (
+            "ПРИОРИТЕТЫ ВЫПОЛНЕНИЯ:\n"
+            "1. Сохранение исходной/принятой сцены и пространственных блокировок.\n"
+            f"2. {second_priority}\n"
+            "3. Правила камеры, света и размещения из scene_policy, если они не "
+            "конфликтуют с сохранением исходного кадра.\n"
+            "4. Фотореализм и эстетика только после выполнения пунктов 1–3."
+        )
+    final_check = (
+        "FINAL_CHECK: удаляемый объект полностью отсутствует внутри edit_region, фон "
+        "восстановлен естественно, а всё за пределами edit_region сохранено без изменений."
+        if removing_object
+        else (
+            "FINAL_CHECK: перед выдачей изображения мысленно сверь объект, геометрию, этажность, "
+            "габариты, материалы, цвета, кровлю, остекление, расположение и свет со всеми "
+            "questionnaire_constraints и не нарушай spatial_constraints."
+        )
+    )
+    visible_interior_directive = (
+        "VISIBLE INTERIOR IS LOCKED CONTEXT. Any interior visible through windows or glazing "
+        "is context only. Do not redesign, relocate, improve, restyle or regenerate furniture, "
+        "fireplace/firebox, interior walls, stairs, interior lamps, room layout or decor. "
+        "Preserve their apparent positions and geometry from the accepted source scene.\n"
+        if object_key == "eskez-doma" and edit_policy is not None and not removing_object
+        else ""
     )
     return (
         "AUROOM_RENDER_SPEC_V1\n"
         "СЧИТАЙ STRUCTURED_SPEC единственным источником параметров проектирования. "
         "Не додумывай параметры, которые противоречат данным спецификации.\n"
         f"{priorities}\n"
+        f"{visible_interior_directive}"
         "STRUCTURED_SPEC:\n"
         f"{dumps(spec, ensure_ascii=False, separators=(',', ':'))}\n"
-        "FINAL_CHECK: перед выдачей изображения мысленно сверь объект, геометрию, этажность, "
-        "габариты, материалы, цвета, кровлю, остекление, расположение и свет со всеми "
-        "questionnaire_constraints и не нарушай spatial_constraints."
+        f"{final_check}"
     )

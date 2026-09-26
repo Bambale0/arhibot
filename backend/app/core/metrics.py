@@ -47,6 +47,55 @@ BUILD_INFO = Gauge(
     'AuRoom API build identity.',
     ['release_sha'],
 )
+MASKED_EDIT_TOTAL = Counter(
+    'auroom_masked_edit_total',
+    'Masked edit generations started by the worker.',
+)
+MASKED_EDIT_QUALITY_REJECTED_TOTAL = Counter(
+    'auroom_masked_edit_quality_rejected_total',
+    'Masked edit generations rejected after exhausting deterministic quality attempts.',
+)
+MASKED_EDIT_RETRY_TOTAL = Counter(
+    'auroom_masked_edit_retry_total',
+    'Additional provider attempts caused by masked-edit quality rejection.',
+)
+MASKED_EDIT_BOUNDARY_FAILURE_TOTAL = Counter(
+    'auroom_masked_edit_boundary_failure_total',
+    'Masked edit candidates whose initial composite failed boundary continuity checks.',
+)
+INTERIOR_REQUEST_BLOCKED_TOTAL = Counter(
+    'auroom_interior_request_blocked_total',
+    'Unsupported exterior-refinement requests blocked for containing interior-only edits.',
+)
+GENERATION_QUALITY_RETRY_SUCCESS_TOTAL = Counter(
+    'auroom_generation_quality_retry_success_total',
+    'Masked edit generations that passed after an internal quality retry.',
+)
+
+
+def record_masked_edit_started() -> None:
+    MASKED_EDIT_TOTAL.inc()
+
+
+def record_masked_edit_quality_rejected() -> None:
+    MASKED_EDIT_QUALITY_REJECTED_TOTAL.inc()
+
+
+def record_masked_edit_retry() -> None:
+    MASKED_EDIT_RETRY_TOTAL.inc()
+
+
+def record_masked_edit_boundary_failure() -> None:
+    MASKED_EDIT_BOUNDARY_FAILURE_TOTAL.inc()
+
+
+def record_interior_request_blocked() -> None:
+    INTERIOR_REQUEST_BLOCKED_TOTAL.inc()
+
+
+def record_generation_quality_retry_success() -> None:
+    GENERATION_QUALITY_RETRY_SUCCESS_TOTAL.inc()
+
 
 def observe_http_request(*, method: str, route: str, status_code: int, duration_seconds: float) -> None:
     safe_method = method.upper()[:12]

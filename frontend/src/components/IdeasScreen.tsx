@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type SVGProps } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type SVGProps } from 'react'
 import * as api from '../api'
 import type { Idea, Project } from '../types'
 
@@ -8,13 +8,30 @@ const SearchIcon = (props: IconProps) => <svg {...iconProps} {...props}><circle 
 const BookmarkIcon = ({ filled, ...props }: IconProps & { filled?: boolean }) => <svg {...iconProps} {...props} fill={filled ? 'currentColor' : 'none'}><path d="M6 4.8A1.8 1.8 0 0 1 7.8 3h8.4A1.8 1.8 0 0 1 18 4.8V21l-6-3.8L6 21V4.8Z"/></svg>
 const ShareIcon = (props: IconProps) => <svg {...iconProps} {...props}><path d="M12 4v11M8 8l4-4 4 4"/><path d="M5 12v7h14v-7"/></svg>
 
-const SAVED_KEY = 'auroom.saved_ideas'
-function readSaved() {
+const LEGACY_SAVED_KEY = 'auroom.saved_ideas'
+const IDEAS_PAGE_SIZE = 12
+const IDEAS_SEARCH_LIMIT = 100
+
+function appendUniqueIdeas(current: Idea[], incoming: Idea[]) {
+  if (!incoming.length) return current
+  const seen = new Set(current.map((item) => item.id))
+  const next = [...current]
+  for (const item of incoming) {
+    if (seen.has(item.id)) continue
+    seen.add(item.id)
+    next.push(item)
+  }
+  return next
+}
+
+function legacySavedIds(): string[] {
   try {
-    const value = JSON.parse(localStorage.getItem(SAVED_KEY) || '[]')
-    return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [])
+    const value = JSON.parse(localStorage.getItem(LEGACY_SAVED_KEY) || '[]')
+    return Array.isArray(value)
+      ? [...new Set(value.filter((item): item is string => typeof item === 'string' && Boolean(item)))]
+      : []
   } catch {
-    return new Set<string>()
+    return []
   }
 }
 
@@ -26,46 +43,100 @@ function searchableText(idea: Idea) {
   ].join(' ').toLowerCase()
 }
 
+function ideaShareUrl(ideaId:string) {
+  const url = new URL(window.location.href)
+  url.searchParams.delete('billing')
+  url.searchParams.delete('admin')
+  url.searchParams.set('idea', ideaId)
+  return url.toString()
+}
+
 function WorkCard({
   idea,
   index,
   total,
-  saved,
+  saving,
   starting,
   onSave,
   onShare,
   onStart,
+  onOpen,
+  active,
+  shouldLoadImage,
 }: {
   idea: Idea
   index: number
   total: number
-  saved: boolean
+  saving: boolean
   starting: boolean
   onSave: () => void
   onShare: () => void
   onStart: () => void
+  onOpen: () => void
+  active: boolean
+  shouldLoadImage: boolean
 }) {
   const summary = idea.objects.flatMap((object) => object.answers.map((item) => ({ ...item, objectTitle: object.title })))
-  return <article className="idea-feed-card idea-work-card">
+  const [previewFailed, setPreviewFailed] = useState(false)
+  const [imageReady, setImageReady] = useState(false)
+  const [imageFailed, setImageFailed] = useState(false)
+  const imageUrl = idea.preview_url
+    ? (previewFailed ? (active ? idea.image_url : null) : idea.preview_url)
+    : (active ? idea.image_url : null)
+  const hasMedia = Boolean(idea.preview_url || idea.image_url)
+
+  useEffect(() => {
+    setPreviewFailed(false)
+    setImageReady(false)
+    setImageFailed(false)
+  }, [idea.id, idea.image_url, idea.preview_url])
+
+  useEffect(() => {
+    setImageReady(false)
+  }, [imageUrl])
+
+  const shouldRenderImage = Boolean(imageUrl) && shouldLoadImage && !imageFailed
+  const shouldRenderUnavailable = !shouldRenderImage && imageFailed && hasMedia
+  return <article id={`idea-${idea.id}`} className="idea-feed-card idea-work-card" data-idea-id={idea.id}>
     <div className="idea-feed-copy">
-      <div className="idea-feed-kicker"><span>РАБОТЫ AUROOM</span><b>{index + 1} / {total}</b></div>
+      <div className="idea-feed-kicker"><span>Идеи AuRoom</span><b>{index + 1} / {total}</b></div>
       <h1>{idea.title}</h1>
       <p>{idea.category}</p>
     </div>
 
-    <div className="idea-work-stage">
-      {idea.image_url ? <img src={idea.image_url} alt={idea.title} loading={index === 0 ? 'eager' : 'lazy'} /> : <div className="idea-work-empty">Работа временно недоступна</div>}
+    <div className={`idea-work-stage ${imageReady ? 'media-ready' : 'media-pending'}`}>
+      <button type="button" className="idea-work-open" aria-label="Открыть работу на весь экран" onClick={onOpen} />
+      {shouldRenderImage ? (
+        <img
+          src={imageUrl ?? undefined}
+          alt={idea.title}
+          loading="eager"
+          decoding="async"
+          fetchPriority={active ? 'high' : 'low'}
+          draggable={false}
+          onLoad={() => setImageReady(true)}
+          onError={() => {
+            if (idea.preview_url && !previewFailed) {
+              setPreviewFailed(true)
+              setImageReady(false)
+              return
+            }
+            setImageReady(false)
+            setImageFailed(true)
+          }}
+        />
+      ) : shouldRenderUnavailable ? <div className="idea-work-empty">Изображение временно недоступно</div> : hasMedia ? <div className="idea-work-image-placeholder" aria-hidden="true" /> : <div className="idea-work-empty">Работа временно недоступна</div>}
       <div className="idea-work-actions">
-        <button type="button" className={saved ? 'active' : ''} aria-label={saved ? 'Убрать из сохранённых' : 'Сохранить'} onClick={onSave}><BookmarkIcon filled={saved}/></button>
+        <button type="button" disabled={saving} className={idea.is_saved ? 'active' : ''} aria-label={idea.is_saved ? 'Убрать из сохранённых' : 'Сохранить'} onClick={onSave}><BookmarkIcon filled={idea.is_saved}/></button>
         <button type="button" aria-label="Поделиться" onClick={onShare}><ShareIcon /></button>
       </div>
     </div>
 
     <div className="idea-feed-meta idea-work-meta">
       <div className="idea-author-row">
-        <span className="idea-author-avatar">A</span>
+        <span className="idea-author-avatar" aria-hidden="true" />
         <strong>AuRoom</strong>
-        <button type="button" className="idea-use-button" disabled={starting} onClick={onStart}>{starting ? 'Создаём проект…' : 'Создать с такими объектами'}</button>
+        <button type="button" className="idea-use-button" disabled={starting} onClick={onStart}>{starting ? 'Создаём проект…' : 'Создать по этой работе'}</button>
       </div>
       {summary.length > 0 && <details className="idea-work-summary">
         <summary>Параметры работы · {summary.length}</summary>
@@ -80,44 +151,244 @@ function WorkCard({
   </article>
 }
 
+function FullscreenWorkViewer({ idea, onClose }: { idea: Idea; onClose: () => void }) {
+  const [usePreview, setUsePreview] = useState(false)
+  const imageUrl = usePreview ? idea.preview_url : (idea.image_url || idea.preview_url)
+
+  useEffect(() => {
+    setUsePreview(false)
+  }, [idea.id])
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      document.body.style.overflow = previousOverflow
+    }
+  }, [onClose])
+
+  return <div
+    className="idea-work-viewer"
+    role="dialog"
+    aria-modal="true"
+    aria-label={idea.title}
+    onClick={(event) => { if (event.target === event.currentTarget) onClose() }}
+  >
+    <button type="button" className="idea-work-viewer-close" aria-label="Закрыть полноэкранный просмотр" onClick={onClose}>×</button>
+    {imageUrl ? <img
+      src={imageUrl}
+      alt={idea.title}
+      decoding="async"
+      onError={() => {
+        if (!usePreview && idea.preview_url && idea.preview_url !== imageUrl) setUsePreview(true)
+      }}
+    /> : <div className="idea-work-viewer-empty">Работа временно недоступна</div>}
+  </div>
+}
+
 export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (project: Project, selectedObjects: string[]) => void }) {
   const [ideas, setIdeas] = useState<Idea[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
-  const [saved, setSaved] = useState<Set<string>>(() => readSaved())
+  const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set())
   const [startingId, setStartingId] = useState<string | null>(null)
+  const [openIdea, setOpenIdea] = useState<Idea | null>(null)
+  const [activeIndex, setActiveIndex] = useState(0)
+  const [nextOffset, setNextOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [initialLoadFailed, setInitialLoadFailed] = useState(false)
+  const [reloadVersion, setReloadVersion] = useState(0)
+  const [shareNotice, setShareNotice] = useState<string | null>(null)
+  const feedRef = useRef<HTMLDivElement>(null)
+  const pageRequestInFlight = useRef(false)
+  const searchHydrated = useRef(false)
+  const sharedIdeaId = new URLSearchParams(window.location.search).get('idea')
+  const sharedScrollDone = useRef(false)
 
   useEffect(() => {
     let cancelled = false
-    api.listIdeas()
-      .then((items) => { if (!cancelled) setIdeas(items) })
-      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Не удалось загрузить работы') })
-      .finally(() => { if (!cancelled) setLoading(false) })
+    searchHydrated.current = false
+    sharedScrollDone.current = false
+    setLoading(true)
+    setError(null)
+    setInitialLoadFailed(false)
+    setActiveIndex(0)
+    setNextOffset(0)
+    setHasMore(false)
+
+    void (async () => {
+      try {
+        const [items, shared] = await Promise.all([
+          api.listIdeas(IDEAS_PAGE_SIZE, 0),
+          sharedIdeaId
+            ? api.getIdea(sharedIdeaId).catch((err) => {
+                if (err instanceof api.ApiError && err.status === 404) return null
+                throw err
+              })
+            : Promise.resolve(null),
+        ])
+        if (cancelled) return
+        const nextItems = shared && !items.some((item) => item.id === shared.id) ? [shared, ...items] : items
+        setIdeas(nextItems)
+        setNextOffset(items.length)
+        setHasMore(items.length === IDEAS_PAGE_SIZE)
+        if (sharedIdeaId && !shared) setError('Эта работа больше не опубликована в Идеях.')
+
+        const legacyIds = legacySavedIds()
+        if (legacyIds.length) {
+          void (async () => {
+            const migrated = await Promise.allSettled(legacyIds.map((ideaId) => api.saveIdea(ideaId)))
+            if (cancelled) return
+            const savedIds = new Set(
+              migrated.flatMap((result, index) => result.status === 'fulfilled' ? [legacyIds[index]] : []),
+            )
+            setIdeas((current) => current.map((item) => savedIds.has(item.id) ? { ...item, is_saved:true } : item))
+            const remaining = legacyIds.filter((ideaId) => !savedIds.has(ideaId))
+            if (remaining.length) localStorage.setItem(LEGACY_SAVED_KEY, JSON.stringify(remaining))
+            else localStorage.removeItem(LEGACY_SAVED_KEY)
+          })()
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setInitialLoadFailed(true)
+          setError(err instanceof Error ? err.message : 'Не удалось загрузить работы')
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
     return () => { cancelled = true }
-  }, [])
+  }, [reloadVersion, sharedIdeaId])
+
+  useEffect(() => {
+    if (loading || !sharedIdeaId || sharedScrollDone.current) return
+    const target = document.getElementById(`idea-${sharedIdeaId}`)
+    if (!target) return
+    target.scrollIntoView({ block:'start' })
+    sharedScrollDone.current = true
+  }, [loading, sharedIdeaId])
+
+  const loadMore = useCallback(async () => {
+    if (loading || !hasMore || pageRequestInFlight.current) return
+    pageRequestInFlight.current = true
+    setLoadingMore(true)
+    try {
+      const page = await api.listIdeas(IDEAS_PAGE_SIZE, nextOffset)
+      setIdeas((current) => appendUniqueIdeas(current, page))
+      setNextOffset((current) => current + page.length)
+      setHasMore(page.length === IDEAS_PAGE_SIZE)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось загрузить следующие работы')
+    } finally {
+      pageRequestInFlight.current = false
+      setLoadingMore(false)
+    }
+  }, [hasMore, loading, nextOffset])
 
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     if (!normalized) return ideas
     return ideas.filter((idea) => searchableText(idea).includes(normalized))
   }, [ideas, query])
+  const searchActive = Boolean(query.trim())
 
-  const toggleSaved = useCallback((ideaId: string) => {
-    setSaved((current) => {
-      const next = new Set(current)
-      if (next.has(ideaId)) next.delete(ideaId); else next.add(ideaId)
-      localStorage.setItem(SAVED_KEY, JSON.stringify([...next]))
-      return next
-    })
-  }, [])
+  useEffect(() => {
+    if (loading || !searchActive || searchHydrated.current || pageRequestInFlight.current || !hasMore) return
+    let cancelled = false
+    pageRequestInFlight.current = true
+    setLoadingMore(true)
+    void (async () => {
+      try {
+        const page = await api.listIdeas(IDEAS_SEARCH_LIMIT, 0)
+        if (cancelled) return
+        setIdeas((current) => {
+          const shared = sharedIdeaId ? current.find((item) => item.id === sharedIdeaId) : null
+          return shared && !page.some((item) => item.id === shared.id) ? [shared, ...page] : page
+        })
+        setNextOffset(page.length)
+        setHasMore(page.length === IDEAS_SEARCH_LIMIT)
+        searchHydrated.current = true
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Не удалось загрузить работы для поиска')
+      } finally {
+        pageRequestInFlight.current = false
+        setLoadingMore(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [hasMore, loading, searchActive, sharedIdeaId])
+
+  useEffect(() => {
+    if (loading || searchActive || !hasMore || !filtered.length) return
+    if (activeIndex < Math.max(filtered.length - 4, 0)) return
+    void loadMore()
+  }, [activeIndex, filtered.length, hasMore, loadMore, loading, searchActive])
+
+  useEffect(() => {
+    setActiveIndex((current) => Math.min(current, Math.max(filtered.length - 1, 0)))
+  }, [filtered.length])
+
+  useEffect(() => {
+    const root = feedRef.current
+    if (!root || !filtered.length) return
+    const nodes = Array.from(root.querySelectorAll<HTMLElement>('[data-feed-index]'))
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((left, right) => right.intersectionRect.height - left.intersectionRect.height)[0]
+        if (!visible) return
+        // Long titles/parameters can make a card taller than the feed. Compare
+        // visibility with the viewport, so these cards can still become active.
+        const visibleHeight = Math.min(visible.boundingClientRect.height, root.clientHeight)
+        if (visible.intersectionRect.height < visibleHeight * 0.45) return
+        const nextIndex = Number((visible.target as HTMLElement).dataset.feedIndex)
+        if (Number.isInteger(nextIndex)) setActiveIndex(nextIndex)
+      },
+      { root, threshold: Array.from({ length: 21 }, (_, index) => index / 20) },
+    )
+    nodes.forEach((node) => observer.observe(node))
+    return () => observer.disconnect()
+  }, [filtered])
+
+  const toggleSaved = useCallback(async (idea: Idea) => {
+    if (savingIds.has(idea.id)) return
+    setSavingIds((current) => new Set(current).add(idea.id))
+    setError(null)
+    try {
+      const result = idea.is_saved ? await api.unsaveIdea(idea.id) : await api.saveIdea(idea.id)
+      setIdeas((current) => current.map((item) => item.id === idea.id ? { ...item, is_saved:result.is_saved } : item))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось изменить сохранённые работы')
+    } finally {
+      setSavingIds((current) => {
+        const next = new Set(current)
+        next.delete(idea.id)
+        return next
+      })
+    }
+  }, [savingIds])
 
   const shareIdea = useCallback(async (idea: Idea) => {
-    const shareData = { title: idea.title, text: `${idea.title} · ${idea.category}`, url: window.location.href }
+    const url = ideaShareUrl(idea.id)
+    const shareData = { title: idea.title, text: `${idea.title} · ${idea.category}`, url }
+    setShareNotice(null)
     try {
       if (navigator.share) await navigator.share(shareData)
-      else if (navigator.clipboard) await navigator.clipboard.writeText(`${shareData.text}\n${window.location.href}`)
+      else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(`${shareData.text}\n${url}`)
+        setShareNotice('Ссылка скопирована.')
+      } else {
+        setError('Браузер не поддерживает отправку ссылки.')
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return
       setError('Не удалось поделиться работой.')
@@ -139,7 +410,7 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
   }
 
   return <section className="ideas-page-concept">
-    <header className="ideas-concept-topbar">
+    <header className={`ideas-concept-topbar ${searchOpen ? 'search-open' : ''}`}>
       <span className="wordmark"><span className="wordmark-dot" />AuRoom</span>
       <div className={`ideas-search ${searchOpen ? 'open' : ''}`}>
         {searchOpen && <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Поиск работ" aria-label="Поиск работ" />}
@@ -147,22 +418,27 @@ export function IdeasScreen({ onOpenQuestionnaire }: { onOpenQuestionnaire: (pro
       </div>
     </header>
 
-    {error && <div className="ideas-floating-error banner-error">{error}<button type="button" onClick={() => setError(null)}>Закрыть</button></div>}
+    {error && <div className="ideas-floating-error banner-error" role="alert"><span>{error}</span>{initialLoadFailed ? <button type="button" onClick={() => setReloadVersion((value) => value + 1)}>Повторить</button> : <button type="button" onClick={() => setError(null)}>Закрыть</button>}</div>}
+    {shareNotice && <div className="ideas-floating-notice" role="status"><span>{shareNotice}</span><button type="button" onClick={() => setShareNotice(null)}>Закрыть</button></div>}
     {loading ? <div className="ideas-feed-status"><div className="idea-feed-skeleton" /></div> : filtered.length ? (
-      <div className="ideas-feed">
-        {filtered.map((idea, index) => <div className="idea-feed-snap" key={idea.id}>
+      <div className="ideas-feed" ref={feedRef} aria-busy={loadingMore}>
+        {filtered.map((idea, index) => <div className="idea-feed-snap" key={idea.id} data-feed-index={index}>
           <WorkCard
             idea={idea}
             index={index}
             total={filtered.length}
-            saved={saved.has(idea.id)}
+            saving={savingIds.has(idea.id)}
             starting={startingId === idea.id}
-            onSave={() => toggleSaved(idea.id)}
+            active={index === activeIndex}
+            shouldLoadImage={Math.abs(index - activeIndex) <= 1}
+            onSave={() => void toggleSaved(idea)}
             onShare={() => void shareIdea(idea)}
             onStart={() => void startFromIdea(idea)}
+            onOpen={() => setOpenIdea(idea)}
           />
         </div>)}
       </div>
     ) : <div className="ideas-feed-status"><div className="empty-inline"><p>{query ? 'По этому запросу ничего не найдено.' : 'Пока нет опубликованных работ.'}</p></div></div>}
+    {openIdea && <FullscreenWorkViewer idea={openIdea} onClose={() => setOpenIdea(null)} />}
   </section>
 }

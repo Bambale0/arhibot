@@ -36,7 +36,10 @@ jobs:
             backend/requirements-build.lock
 
       - name: Install backend
-        run: python -m pip install -e '.[dev]'
+        run: |
+          python -m pip install -e '.[dev]'
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip check
 
       - name: Verify Python dependency locks are current
         run: ./scripts/dependency_locks.sh CHECK
@@ -52,8 +55,8 @@ jobs:
       - name: Validate operations scripts
         working-directory: .
         run: |
-          bash -n ops/deploy_docker.sh ops/backup_runtime.sh ops/restore_runtime.sh ops/runtime_housekeeping.sh ops/install_host_nginx.sh backend/scripts/dependency_locks.sh
-          python -m py_compile ops/runtime_preflight.py
+          bash -n ops/deploy_docker.sh ops/backup_runtime.sh ops/export_offsite_backup.sh ops/fetch_offsite_backup.sh ops/restore_runtime.sh ops/verify_restore_isolated.sh ops/runtime_housekeeping.sh ops/install_host_nginx.sh backend/scripts/dependency_locks.sh
+          python -m py_compile ops/backup_readiness.py ops/backup_manifest.py ops/telegram_backup.py ops/runtime_preflight.py backend/scripts/redis_failure_probe.py backend/scripts/postgres_failure_probe.py backend/scripts/http_load_probe.py backend/scripts/worker_crash_probe.py
 
       - name: Validate Docker Compose
         working-directory: .
@@ -62,6 +65,13 @@ jobs:
           trap 'rm -f backend/.env' EXIT
           docker compose --project-directory backend -f backend/docker-compose.yml config --quiet
           docker compose --project-directory backend -f backend/docker-compose.yml build api frontend
+          docker compose --project-directory backend -f backend/docker-compose.yml run --rm --no-deps api python -c 'import os,pathlib; assert os.getuid()==10001; p=pathlib.Path("/data/media/ci-write-probe"); p.write_bytes(b"ok"); p.unlink()'
+
+      - name: Install backup encryption tool for recovery tests
+        run: sudo apt-get update -qq && sudo apt-get install -y age
+
+      - name: Lint correctness
+        run: ruff check app tests --select E9,F63,F7,F82
 
       - name: Unit and contract tests
         run: pytest -q -m 'not integration'
@@ -126,7 +136,10 @@ jobs:
             backend/requirements-build.lock
 
       - name: Install backend
-        run: python -m pip install -e '.[dev]'
+        run: |
+          python -m pip install -e '.[dev]'
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip check
 
       - name: Apply migrations
         run: alembic upgrade head
@@ -137,19 +150,63 @@ jobs:
       - name: Integration tests
         run: pytest -q -m integration
 
+      - name: Bounded authenticated HTTP load probe
+        run: |
+          set -Eeuo pipefail
+          python -m uvicorn app.main:app --host 127.0.0.1 --port 18001 > /tmp/auroom-load-api.log 2>&1 &
+          api_pid=$!
+          trap 'kill "${api_pid}" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 40); do
+            if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:18001/health/ready >/dev/null 2>&1; then
+              break
+            fi
+            if ! kill -0 "${api_pid}" >/dev/null 2>&1; then
+              cat /tmp/auroom-load-api.log >&2
+              exit 1
+            fi
+            sleep 0.25
+          done
+          curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:18001/health/ready >/dev/null
+
+          load_email="load-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.com"
+          auth_payload=$(LOAD_EMAIL="${load_email}" python -c 'import json,os; print(json.dumps({"email": os.environ["LOAD_EMAIL"], "password": "load-probe-password-2026", "display_name": "CI Load Probe"}))')
+          auth_response=$(curl -fsS --connect-timeout 2 --max-time 10 \
+            -H 'Content-Type: application/json' \
+            -d "${auth_payload}" \
+            http://127.0.0.1:18001/api/v1/auth/register)
+          export AUROOM_LOAD_TOKEN=$(printf '%s' "${auth_response}" | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+          [[ -n "${AUROOM_LOAD_TOKEN}" ]] || { echo "Could not obtain load-probe access token" >&2; exit 1; }
+
+          python scripts/http_load_probe.py \
+            --base-url http://127.0.0.1:18001/api/v1 \
+            --mode read \
+            --requests 60 \
+            --concurrency 12 \
+            --max-error-rate 0 \
+            --max-p95-seconds 2
+
+          python scripts/http_load_probe.py \
+            --base-url http://127.0.0.1:18001/api/v1 \
+            --mode project-write \
+            --requests 24 \
+            --concurrency 6 \
+            --max-error-rate 0 \
+            --max-p95-seconds 3
+
       - name: Controlled Redis pause/recovery probe
         working-directory: .
         run: |
           set -Eeuo pipefail
-          docker run -d --name auroom-chaos-redis -p 127.0.0.1::6379 redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576 >/dev/null
+          chaos_password='ci-chaos-redis-password-change-me'
+          docker run -d --name auroom-chaos-redis -p 127.0.0.1::6379 redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576 redis-server --requirepass "${chaos_password}" >/dev/null
           trap 'docker rm -f auroom-chaos-redis >/dev/null 2>&1 || true' EXIT
           for attempt in $(seq 1 20); do
-            docker exec auroom-chaos-redis redis-cli ping >/dev/null 2>&1 && break
+            docker exec -e REDISCLI_AUTH="${chaos_password}" auroom-chaos-redis redis-cli ping >/dev/null 2>&1 && break
             sleep 0.25
           done
           chaos_port=$(docker port auroom-chaos-redis 6379/tcp | sed -E 's/.*:([0-9]+)$/\1/' | head -n1)
           [[ "${chaos_port}" =~ ^[0-9]+$ ]] || { echo "Could not resolve chaos Redis port" >&2; exit 1; }
-          export REDIS_URL="redis://127.0.0.1:${chaos_port}/0"
+          export REDIS_URL="redis://:${chaos_password}@127.0.0.1:${chaos_port}/0"
           export REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS=1
           export REDIS_SOCKET_TIMEOUT_SECONDS=1
           python backend/scripts/redis_failure_probe.py expect-up 2
@@ -164,6 +221,135 @@ jobs:
           done
           echo "Redis did not recover after controlled pause" >&2
           exit 1
+
+
+      - name: Controlled PostgreSQL pause/recovery probe
+        working-directory: .
+        run: |
+          set -Eeuo pipefail
+          chaos_password='ci-chaos-postgres-password-change-me'
+          docker run -d --name auroom-chaos-postgres \
+            -e POSTGRES_DB=app \
+            -e POSTGRES_USER=app \
+            -e POSTGRES_PASSWORD="${chaos_password}" \
+            -p 127.0.0.1::5432 \
+            postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685 >/dev/null
+          trap 'docker rm -f auroom-chaos-postgres >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if docker exec auroom-chaos-postgres pg_isready -U app -d app >/dev/null 2>&1; then
+              break
+            fi
+            sleep 0.25
+          done
+          chaos_port=$(docker port auroom-chaos-postgres 5432/tcp | sed -E 's/.*:([0-9]+)$/\1/' | head -n1)
+          [[ "${chaos_port}" =~ ^[0-9]+$ ]] || { echo "Could not resolve chaos PostgreSQL port" >&2; exit 1; }
+          export DATABASE_URL="postgresql+asyncpg://app:${chaos_password}@127.0.0.1:${chaos_port}/app"
+          postgres_ready=0
+          for attempt in $(seq 1 20); do
+            if python backend/scripts/postgres_failure_probe.py expect-up 2; then
+              postgres_ready=1
+              break
+            fi
+            sleep 0.25
+          done
+          (( postgres_ready == 1 )) || { echo "Chaos PostgreSQL TCP endpoint never became usable" >&2; exit 1; }
+          docker pause auroom-chaos-postgres >/dev/null
+          python backend/scripts/postgres_failure_probe.py expect-down 3
+          docker unpause auroom-chaos-postgres >/dev/null
+          for attempt in $(seq 1 20); do
+            if python backend/scripts/postgres_failure_probe.py expect-up 2; then
+              exit 0
+            fi
+            sleep 0.25
+          done
+          echo "PostgreSQL did not recover after controlled pause" >&2
+          exit 1
+
+
+      - name: Controlled worker SIGKILL recovery probe
+        working-directory: .
+        run: |
+          set -Eeuo pipefail
+          worker_name='crash-probe'
+          first_log=/tmp/auroom-worker-crash-first.log
+          replacement_log=/tmp/auroom-worker-crash-replacement.log
+          cleanup() {
+            [[ -n "${first_pid:-}" ]] && kill "${first_pid}" >/dev/null 2>&1 || true
+            [[ -n "${replacement_pid:-}" ]] && kill "${replacement_pid}" >/dev/null 2>&1 || true
+            python - <<'PY'
+          import asyncio
+          from app.core.redis import redis_client
+          from app.workers.heartbeat import heartbeat_key, worker_lease_key
+
+          async def main() -> None:
+              await redis_client.delete(heartbeat_key("crash-probe"), worker_lease_key("crash-probe"))
+              await redis_client.aclose()
+
+          asyncio.run(main())
+          PY
+          }
+          trap cleanup EXIT
+
+          python backend/scripts/worker_crash_probe.py "${worker_name}" >"${first_log}" 2>&1 &
+          first_pid=$!
+          for attempt in $(seq 1 40); do
+            if grep -q 'state=ready' "${first_log}" && python -m app.workers.heartbeat check "${worker_name}" 5 >/dev/null 2>&1; then
+              break
+            fi
+            kill -0 "${first_pid}" >/dev/null 2>&1 || { cat "${first_log}" >&2; exit 1; }
+            sleep 0.25
+          done
+          grep -q 'state=ready' "${first_log}"
+          python -m app.workers.heartbeat check "${worker_name}" 5
+
+          kill -9 "${first_pid}"
+          wait "${first_pid}" >/dev/null 2>&1 || true
+          first_pid=''
+          python - <<'PY'
+          import asyncio
+          from app.core.redis import redis_client
+          from app.workers.heartbeat import heartbeat_key
+
+          async def main() -> None:
+              await redis_client.delete(heartbeat_key("crash-probe"))
+              await redis_client.aclose()
+
+          asyncio.run(main())
+          PY
+
+          # Start the replacement immediately. It must stay alive while the
+          # stale owner lease exists, then acquire it by itself after TTL expiry.
+          python backend/scripts/worker_crash_probe.py "${worker_name}" >"${replacement_log}" 2>&1 &
+          replacement_pid=$!
+          sleep 3
+          kill -0 "${replacement_pid}" >/dev/null 2>&1 || {
+            cat "${replacement_log}" >&2
+            echo "Replacement worker exited instead of waiting for the stale singleton lease" >&2
+            exit 1
+          }
+          if grep -q 'state=ready' "${replacement_log}"; then
+            cat "${replacement_log}" >&2
+            echo "Replacement worker acquired the singleton lease before stale-owner expiry" >&2
+            exit 1
+          fi
+
+          recovered=0
+          for attempt in $(seq 1 220); do
+            if grep -q 'state=ready' "${replacement_log}" && python -m app.workers.heartbeat check "${worker_name}" 5 >/dev/null 2>&1; then
+              recovered=1
+              break
+            fi
+            kill -0 "${replacement_pid}" >/dev/null 2>&1 || { cat "${replacement_log}" >&2; exit 1; }
+            sleep 0.25
+          done
+          (( recovered == 1 )) || {
+            cat "${replacement_log}" >&2
+            echo "Replacement worker did not acquire the lease after stale-owner expiry" >&2
+            exit 1
+          }
+          ! grep -q 'already owns the singleton lease' "${replacement_log}"
+          python -m app.workers.heartbeat check "${worker_name}" 5
+          echo "Worker SIGKILL recovery probe passed without restart loop"
 
   frontend:
     name: Frontend build
@@ -183,8 +369,8 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Audit frontend production dependencies
-        run: npm audit --omit=dev --audit-level=high
+      - name: Audit frontend and build dependencies
+        run: npm audit --audit-level=high
 
       - name: Typecheck
         run: npm run typecheck
@@ -192,8 +378,8 @@ jobs:
       - name: Production build
         run: npm run build
 
-      - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
 
-      - name: Critical mobile E2E
+      - name: Critical browser E2E
         run: npm run test:e2e

@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.domain.generations.enums import GenerationType
-from app.schemas.generations import GenerationCreate
+from app.schemas.generations import GenerationCreate, QuestionnaireGenerationCreate
 
 
 def test_masked_generation_requires_input_and_edit_region() -> None:
@@ -88,3 +88,17 @@ def test_masked_generation_allows_partially_overlapping_protected_area() -> None
         protected_regions=[{"x": 0.1, "y": 0.1, "width": 0.4, "height": 0.8}],
     )
     assert payload.edit_region is not None
+
+
+
+def test_questionnaire_server_prompt_can_exceed_public_prompt_limit() -> None:
+    payload = {
+        "project_id": "00000000-0000-0000-0000-000000000001",
+        "type": "master_plan",
+        "prompt": "x" * 8000,
+    }
+    with pytest.raises(ValidationError, match="at most 4000"):
+        GenerationCreate(**payload)
+
+    questionnaire = QuestionnaireGenerationCreate(**payload)
+    assert len(questionnaire.prompt) == 8000

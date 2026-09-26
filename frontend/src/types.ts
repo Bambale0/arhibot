@@ -32,6 +32,8 @@ export type ProjectContext = {
   questionnaire_draft?: boolean | null
 }
 
+export type ProjectContextWrite = Omit<ProjectContext, 'architecture' | 'design_session' | 'questionnaire_draft'>
+
 export type Project = {
   id: string
   name: string
@@ -59,6 +61,7 @@ export type Asset = {
   width: number
   height: number
   url: string
+  preview_url?: string | null
   created_at: string
 }
 
@@ -168,9 +171,11 @@ export type Idea = {
   category: string
   generation_type: GenerationMode
   image_url: string | null
+  preview_url?: string | null
   objects: IdeaObjectSummary[]
   selected_objects: string[]
   published_at: string
+  is_saved: boolean
 }
 
 export type AdminOverview = {
@@ -203,18 +208,41 @@ export type AdminBillingSettings = {
 
 export type AdminIdea = Idea & {
   generation_id: string
+  owner_published: boolean
   is_active: boolean
   sort_order: number
   updated_at: string
 }
 
 
+export type AdminAiHistoryItem = {
+  kind: 'sandbox' | 'orbit' | 'flyover_gif'
+  generation: Generation
+  prompt: string
+  params: Record<string, unknown>
+  frame_count: number | null
+  frame_duration_ms: number | null
+  keyframe_count: number | null
+  inbetween_frames: number | null
+}
+
 export type AdminGenerationSettings = {
   primary_model: string | null
   fallback_model: string | null
+  primary_timeout_seconds: number
   primary_params: Record<string, unknown>
   fallback_params: Record<string, unknown>
   mode_params: Record<string, Record<string, unknown>>
+  masked_edit_provider_context_margin_fraction: number
+  masked_edit_feather_fraction: number
+  masked_edit_feather_min_px: number
+  masked_edit_feather_max_px: number
+  masked_edit_recomposite_feather_multiplier: number
+  masked_edit_boundary_band_px: number
+  masked_edit_max_luma_excess: number
+  masked_edit_max_color_excess: number
+  masked_edit_max_straight_edge_fraction: number
+  generation_quality_max_retries: number
   updated_at: string | null
 }
 
@@ -303,13 +331,22 @@ export type AdminTelegramContent = {
 }
 
 export type AdminOperationalSettings = {
-  auth_rate_limit_per_minute: number | null
-  generation_rate_limit_per_minute: number | null
-  payment_rate_limit_per_minute: number | null
+  auth_rate_limit_per_minute: number
+  generation_rate_limit_per_minute: number
+  payment_rate_limit_per_minute: number
+  registration_rate_limit_per_day: number
+  yookassa_webhook_rate_limit_per_minute: number
+  asset_upload_rate_limit_per_minute: number
+  asset_max_retained_count_per_user: number
+  asset_max_retained_bytes_per_user: number
+  generation_max_inflight_per_user: number
+  initial_concept_offer_limit_per_day: number
   starter_credits: number
-  media_retention_days: number | null
-  backup_interval_hours: number | null
-  backup_retention_days: number | null
+  initial_concept_credits: number
+  media_retention_days: number
+  backup_interval_hours: number
+  backup_retention_days: number
+  media_min_free_bytes: number
   updated_at: string | null
 }
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -141,77 +142,165 @@ class BillingService:
                 status=503,
                 detail="YooKassa credentials are not configured.",
             )
-        package = await self.repository.get_active_plan_by_code(package_code)
-        if package is None:
-            raise AppError(
-                type="billing_package_not_found",
-                title="Billing package not found",
-                status=404,
-                detail="The selected billing package is not available.",
-            )
-        billing_settings = await self._billing_settings()
-        receipt = (
-            self._receipt_payload(
-                billing_settings=billing_settings,
-                package=package,
-                email=receipt_email,
-            )
-            if billing_settings is not None
-            else None
+        # Serialize one user's payment-create admission so parallel retries cannot
+        # create separate local rows before either receives a YooKassa id.
+        await self.session.execute(
+            select(User.id).where(User.id == user.id).with_for_update()
         )
-
-        local_id = uuid4()
-        idempotence_key = str(uuid4())
-        payment = BillingPayment(
-            id=local_id,
+        payment = await self.repository.get_recent_unresolved_create_for_update(
             user_id=user.id,
-            package_code=package.code,
-            credits=package.credits,
-            amount_value=Decimal(package.amount_value).quantize(Decimal("0.01")),
-            currency=package.currency,
-            status="creating",
-            idempotence_key=idempotence_key,
-            receipt_email=receipt_email if receipt is not None else None,
+            package_code=package_code,
         )
-        self.repository.add(payment)
-        await self.session.commit()
 
-        return_url = (
-            (self.settings.yookassa_return_url or "").strip()
-            or (self.settings.telegram_webapp_url or "").strip()
-        )
-        if not return_url:
-            payment.status = "failed"
-            payment.provider_error = "YooKassa return URL is not configured"
+        if payment is not None:
+            if payment.created_at < datetime.now(UTC) - timedelta(hours=23):
+                payment.status = "uncertain"
+                payment.provider_error = (
+                    "Unresolved provider create exceeded the safe idempotency replay window"
+                )
+                await self.session.commit()
+                raise AppError(
+                    type="payment_reconciliation_required",
+                    title="Payment requires reconciliation",
+                    status=503,
+                    detail=(
+                        "An earlier payment attempt is outside the safe automatic retry window. "
+                        "Contact support before starting another payment for this package."
+                    ),
+                )
+            snapshot = payment.create_request_snapshot
+            if not isinstance(snapshot, dict):
+                payment.status = "uncertain"
+                payment.provider_error = (
+                    "Legacy unresolved payment has no immutable provider request snapshot"
+                )
+                await self.session.commit()
+                raise AppError(
+                    type="payment_reconciliation_required",
+                    title="Payment requires reconciliation",
+                    status=503,
+                    detail=(
+                        "An earlier payment attempt cannot be retried automatically. "
+                        "Wait for provider reconciliation or contact support."
+                    ),
+                )
+            description = snapshot.get("description")
+            return_url = snapshot.get("return_url")
+            metadata = snapshot.get("metadata")
+            receipt = snapshot.get("receipt")
+            if (
+                not isinstance(description, str)
+                or not description
+                or not isinstance(return_url, str)
+                or not return_url
+                or not isinstance(metadata, dict)
+                or (receipt is not None and not isinstance(receipt, dict))
+            ):
+                payment.status = "uncertain"
+                payment.provider_error = "Stored provider request snapshot is invalid"
+                await self.session.commit()
+                raise AppError(
+                    type="payment_reconciliation_required",
+                    title="Payment requires reconciliation",
+                    status=503,
+                    detail="The stored provider payment request is invalid and must be reconciled.",
+                )
+            payment.status = "creating"
+            payment.provider_error = None
             await self.session.commit()
-            raise AppError(
-                type="billing_not_configured",
-                title="Billing is not configured",
-                status=503,
-                detail="YooKassa return URL is not configured.",
+        else:
+            package = await self.repository.get_active_plan_by_code(package_code)
+            if package is None:
+                raise AppError(
+                    type="billing_package_not_found",
+                    title="Billing package not found",
+                    status=404,
+                    detail="The selected billing package is not available.",
+                )
+            billing_settings = await self._billing_settings()
+            receipt = (
+                self._receipt_payload(
+                    billing_settings=billing_settings,
+                    package=package,
+                    email=receipt_email,
+                )
+                if billing_settings is not None
+                else None
             )
+            normalized_receipt_email = receipt_email if receipt is not None else None
+            local_id = uuid4()
+            return_base = (
+                (self.settings.yookassa_return_url or "").strip()
+                or (self.settings.telegram_webapp_url or "").strip()
+            )
+            if not return_base:
+                raise AppError(
+                    type="billing_not_configured",
+                    title="Billing is not configured",
+                    status=503,
+                    detail="YooKassa return URL is not configured.",
+                )
+            separator = "&" if "?" in return_base else "?"
+            return_url = (
+                f"{return_base}{separator}billing=return&payment_id={local_id}"
+            )
+            description = f"AuRoom: {package.name}"
+            metadata = {
+                "billing_payment_id": str(local_id),
+                "user_id": str(user.id),
+                "package_code": package.code,
+            }
+            snapshot = {
+                "description": description,
+                "return_url": return_url,
+                "metadata": metadata,
+                "receipt": receipt,
+            }
+            payment = BillingPayment(
+                id=local_id,
+                user_id=user.id,
+                package_code=package.code,
+                credits=package.credits,
+                amount_value=Decimal(package.amount_value).quantize(Decimal("0.01")),
+                currency=package.currency,
+                status="creating",
+                idempotence_key=str(uuid4()),
+                receipt_email=normalized_receipt_email,
+                create_request_snapshot=snapshot,
+            )
+            self.repository.add(payment)
+            await self.session.commit()
 
-        separator = "&" if "?" in return_url else "?"
-        return_url = f"{return_url}{separator}billing=return&payment_id={payment.id}"
         provider = YooKassaProvider(self.settings)
         try:
             remote = await provider.create_payment(
                 amount=payment.amount_value,
                 currency=payment.currency,
-                description=f"AuRoom: {package.name}",
+                description=description,
                 return_url=return_url,
-                metadata={
-                    "billing_payment_id": str(payment.id),
-                    "user_id": str(user.id),
-                    "package_code": package.code,
-                },
-                idempotence_key=idempotence_key,
+                metadata={str(key): str(value) for key, value in metadata.items()},
+                idempotence_key=payment.idempotence_key,
                 receipt=receipt,
             )
         except YooKassaError as exc:
-            payment.status = "failed"
+            # A verified webhook may have settled the payment while create was in flight.
+            payment = await self.repository.get_by_id_for_update(payment.id) or payment
+            if payment.yookassa_payment_id:
+                await self.session.commit()
+                return self._payment_response(payment)
+            payment.status = "uncertain" if exc.ambiguous else "failed"
             payment.provider_error = str(exc)[:1000]
             await self.session.commit()
+            if exc.ambiguous:
+                raise AppError(
+                    type="payment_provider_uncertain",
+                    title="Payment creation is being reconciled",
+                    status=503,
+                    detail=(
+                        "YooKassa did not confirm whether the payment was created. "
+                        "Retry the same purchase to safely resume this payment attempt."
+                    ),
+                ) from exc
             raise AppError(
                 type="payment_provider_unavailable",
                 title="Payment provider unavailable",
@@ -219,11 +308,7 @@ class BillingService:
                 detail="YooKassa could not create the payment. Please try again.",
             ) from exc
 
-        payment.yookassa_payment_id = remote.id
-        payment.status = remote.status
-        payment.confirmation_url = remote.confirmation_url
-        payment.provider_error = None
-        await self.session.commit()
+        await self.apply_remote(remote, expected_local_id=payment.id)
         await self.session.refresh(payment)
         return self._payment_response(payment)
 
@@ -270,6 +355,10 @@ class BillingService:
         if payment is None:
             return
 
+        if expected_local_id is not None and payment.id != expected_local_id:
+            raise YooKassaError("YooKassa payment is linked to another local payment")
+        if remote.metadata.get("billing_payment_id") != str(payment.id):
+            raise YooKassaError("YooKassa local payment metadata does not match")
         if payment.yookassa_payment_id and payment.yookassa_payment_id != remote.id:
             raise YooKassaError("YooKassa payment id does not match local payment")
         if remote.amount != payment.amount_value or remote.currency != payment.currency:
@@ -280,7 +369,12 @@ class BillingService:
             raise YooKassaError("YooKassa payment package metadata does not match")
 
         payment.yookassa_payment_id = remote.id
+        if remote.confirmation_url:
+            payment.confirmation_url = remote.confirmation_url
         payment.provider_error = None
+        if payment.status in {"succeeded", "refunded"} and remote.status != "succeeded":
+            await self.session.commit()
+            return
         if remote.status == "succeeded":
             if payment.status not in {"succeeded", "refunded"}:
                 await self.credit_service.apply(
@@ -457,17 +551,55 @@ class BillingService:
 
     async def handle_webhook(self, payload: dict) -> None:
         event = str(payload.get("event") or "")
-        obj = payload.get("object") or {}
+        obj = payload.get("object")
+        if not isinstance(obj, dict):
+            return
         provider_id = str(obj.get("id") or "").strip()
-        if not provider_id:
+        if not provider_id or len(provider_id) > 128:
             return
         if not self.provider_configured:
             raise YooKassaError("YooKassa webhook received while billing is not configured")
         provider = YooKassaProvider(self.settings)
         if event in {"payment.succeeded", "payment.canceled", "payment.waiting_for_capture"}:
+            expected_local_id: UUID | None = None
+            if not await self.repository.has_provider_payment(provider_id):
+                metadata = obj.get("metadata")
+                local_id_raw = (
+                    str(metadata.get("billing_payment_id") or "").strip()
+                    if isinstance(metadata, dict)
+                    else ""
+                )
+                try:
+                    candidate_id = UUID(local_id_raw)
+                except (TypeError, ValueError):
+                    candidate_id = None
+                candidate = (
+                    await self.repository.get_payment(candidate_id)
+                    if candidate_id is not None
+                    else None
+                )
+                if (
+                    candidate is None
+                    or candidate.yookassa_payment_id is not None
+                    or candidate.status not in {"creating", "failed", "uncertain"}
+                ):
+                    raise AppError(
+                        type="billing_webhook_object_not_ready",
+                        title="Billing webhook object not ready",
+                        status=503,
+                        detail="The referenced payment is not available locally yet.",
+                    )
+                expected_local_id = candidate.id
             remote = await provider.get_payment(provider_id)
-            await self.apply_remote(remote)
+            await self.apply_remote(remote, expected_local_id=expected_local_id)
         elif event == "refund.succeeded":
+            if not await self.repository.has_provider_refund(provider_id):
+                raise AppError(
+                    type="billing_webhook_object_not_ready",
+                    title="Billing webhook object not ready",
+                    status=503,
+                    detail="The referenced refund is not available locally yet.",
+                )
             remote_refund = await provider.get_refund(provider_id)
             await self.apply_refund_remote(remote_refund)
 

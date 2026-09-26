@@ -18,7 +18,7 @@ const statusLabels: Record<Generation['status'], string> = {
 }
 
 type Props = {
-  onOpenGeneration: (generation: Generation) => void
+  onOpenGeneration: (generation: Generation) => void | Promise<void>
 }
 
 export function HistoryScreen({ onOpenGeneration }: Props) {
@@ -29,10 +29,15 @@ export function HistoryScreen({ onOpenGeneration }: Props) {
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [reloadVersion, setReloadVersion] = useState(0)
+  const [brokenImages, setBrokenImages] = useState<Set<string>>(() => new Set())
+  const [openingId, setOpeningId] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     async function load() {
+      setLoading(true)
+      setError(null)
       try {
         const [history, projects] = await Promise.all([
           api.listGenerations(undefined, 24),
@@ -51,7 +56,7 @@ export function HistoryScreen({ onOpenGeneration }: Props) {
     }
     void load()
     return () => { cancelled = true }
-  }, [])
+  }, [reloadVersion])
 
   async function loadMore() {
     if (!cursor || loadingMore) return
@@ -69,10 +74,23 @@ export function HistoryScreen({ onOpenGeneration }: Props) {
     }
   }
 
+  async function openGeneration(item: Generation) {
+    if (openingId) return
+    setOpeningId(item.id)
+    setError(null)
+    try {
+      await onOpenGeneration(item)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось открыть работу')
+    } finally {
+      setOpeningId(null)
+    }
+  }
+
   return (
     <section className="page-content history-page">
       <div className="page-heading-row"><div><span className="eyebrow">ВАШИ РЕЗУЛЬТАТЫ</span><h1>История</h1><p>Сгенерированные работы AuRoom, сохранённые в ваших проектах.</p></div></div>
-      {error && <div className="banner-error">{error}<button onClick={() => setError(null)}>Закрыть</button></div>}
+      {error && <div className="banner-error" role="alert"><span>{error}</span>{items.length === 0 ? <button type="button" onClick={() => setReloadVersion((value) => value + 1)}>Повторить</button> : <button type="button" onClick={() => setError(null)}>Закрыть</button>}</div>}
       {loading ? (
         <div className="empty-state"><p>Загружаем историю…</p></div>
       ) : items.length ? (
@@ -80,14 +98,14 @@ export function HistoryScreen({ onOpenGeneration }: Props) {
           <div className="history-grid">
             {items.map((item) => (
               <article className="history-card" key={item.id}>
-                {item.output_asset ? <img src={item.output_asset.url} alt="Результат генерации"/> : <div className="history-placeholder"><SparkIcon/><span>{statusLabels[item.status]}</span></div>}
+                {item.output_asset && !brokenImages.has(item.id) ? <img src={item.output_asset.url} alt="Результат генерации" onError={() => setBrokenImages((current) => new Set(current).add(item.id))}/> : <div className="history-placeholder"><SparkIcon/><span>{item.output_asset ? 'Изображение временно недоступно' : statusLabels[item.status]}</span></div>}
                 <div>
                   <span className="history-mode">{labels[item.type]} · {statusLabels[item.status]} · {item.credits_charged} кр.</span>
                   <h3>{projectNames[item.project_id] || 'Проект AuRoom'}</h3>
                   <p>{item.status === 'failed' ? 'Работу не удалось завершить. Откройте проект и попробуйте снова.' : item.status === 'completed' ? 'Готовая работа сохранена в проекте.' : 'Работа выполняется и появится здесь после завершения.'}</p>
                   <small>{new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.created_at))}{item.fallback_used ? ' · резервная модель' : ''}</small>
                   <div className="history-actions">
-                    <button className="secondary-button" onClick={() => onOpenGeneration(item)}>Открыть работу</button>
+                    <button className="secondary-button" disabled={openingId !== null} onClick={() => void openGeneration(item)}>{openingId === item.id ? 'Открываем…' : 'Открыть работу'}</button>
                   </div>
                 </div>
               </article>
