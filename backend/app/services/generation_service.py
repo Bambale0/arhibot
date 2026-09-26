@@ -292,6 +292,19 @@ class GenerationService:
             asset = await self.assets.get_owned(generation.output_asset_id, generation.user_id)
             if asset is not None:
                 output_asset = self.asset_service.to_response(asset)
+        quality_report = generation.quality_report
+        if quality_report and isinstance(quality_report.get("initial_layout_guide"), dict):
+            # Recovery snapshots contain operator parameters and the full provider
+            # request. Public diagnostics expose only the non-sensitive identity.
+            snapshot = quality_report["initial_layout_guide"]
+            quality_report = {
+                **quality_report,
+                "initial_layout_guide": {
+                    key: snapshot[key]
+                    for key in ("version", "sha256", "reference_role")
+                    if key in snapshot
+                },
+            }
         return GenerationResponse(
             id=generation.id,
             project_id=generation.project_id,
@@ -311,7 +324,7 @@ class GenerationService:
             edit_region=generation.edit_region,
             protected_regions=generation.protected_regions or [],
             edit_policy=generation.edit_policy or {},
-            quality_report=generation.quality_report,
+            quality_report=quality_report,
             quality_status=generation.quality_status,
             error=generation.error,
             created_at=generation.created_at,
