@@ -178,6 +178,33 @@ def _initial_selected_details(spec: dict, objects: list[dict]) -> None:
         return
     for obj in objects:
         constraints = obj.get("questionnaire_constraints", [])
+        if obj.get("object_key") == "eskez-doma":
+            floors = {"1 этаж": 1, "2 этажа": 2, "3 этажа": 3}.get(
+                str(_answer(constraints, "сколько этажей"))
+            )
+            shape = str(_answer(constraints, "форм"))
+            regular_footprint = shape in {
+                "Квадрат", "Прямоугольник", "Г-образная"
+            } or shape.startswith("П-образная")
+            if floors is not None and regular_footprint:
+                obj["storey_directive"] = (
+                    f"The main house has exactly {floors} full above-ground storeys in every main wing. "
+                    "Keep the same main footprint on every storey, including both L-wings or all "
+                    "three U-wings. No main wing may have fewer full storeys than this count; pitched "
+                    "roof space must not replace a full storey. Small entrance porches and explicitly "
+                    "selected ancillary garages/verandas are separate features, not substitutes for "
+                    "a main wing. Preserve the specified total floor area and ground footprint; "
+                    "do not enlarge the building to compensate for a missing upper floor."
+                )
+        if obj.get("object_key") == "zabor" and _answer(
+            constraints, "какой забор"
+        ) == "Решётка / штакетик, видно двор":
+            obj["fence_openness_directive"] = (
+                "The selected fence is see-through: spaced bars or narrow pickets with visible gaps "
+                "showing the lawn through the infill; no solid infill panels or continuous sheet-metal "
+                "walls. Preserve the selected posts, material and height. Fence openness takes "
+                "priority over architectural style and material variants."
+            )
         if obj.get("object_key") == "eskez-doma" and _answer(
             constraints, "какое остекление"
         ) == "Стандартные окна":
@@ -229,7 +256,10 @@ def _initial_scene_priority(spec: dict) -> str:
                 "or entrance posts. Do not invent an entrance structure."
             )
     for obj in spec.get("task", {}).get("objects", []):
-        for key in ("glazing_directive", "planting_directive"):
+        for key in (
+            "storey_directive", "glazing_directive",
+            "planting_directive", "fence_openness_directive",
+        ):
             if obj.get(key):
                 requirements.append(obj[key])
     if not requirements:
