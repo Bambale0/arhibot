@@ -202,7 +202,8 @@ def _initial_selected_details(spec: dict, objects: list[dict]) -> None:
             )
             obj["planting_directive"] = (
                 "The selected interior planting is LAWN ONLY: inside this plot add no decorative "
-                "trees, conifers, ornamental shrubs, flower beds or vegetable beds. "
+                "trees, conifers, ornamental shrubs, flower beds, vegetable beds, potted plants "
+                "or planters, including beside the house entrance. "
                 "Do not invent a garden to fill unused ground. "
                 + hedge_directive
                 + "Trees and landscape outside the plot are unaffected. Gravel allowed by the "

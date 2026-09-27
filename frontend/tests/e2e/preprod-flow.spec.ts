@@ -692,3 +692,46 @@ for (const [errorType,message] of [
     await expect(page.locator('.region-selection')).toBeVisible()
   })
 }
+
+test('accepted scene actions have readable touch targets and stay clear of the application CTA',async({page})=>{
+  stagedSceneEdit(true)
+  session={...session,current_object:null,current_question_id:null,region_mode:null,region_object:null,pending_removal_object:null}
+  project={...project,context:{...project.context,design_session:session}}
+  await page.route(`**/api/v1/assets/${assetIds[0]}`,route=>json(route,asset(0)))
+  await page.route(`**/api/v1/projects/${projectId}/questionnaire-objects`,route=>{
+    expect(route.request().method()).toBe('POST')
+    expect(route.request().postDataJSON()).toEqual({object_key:'garazh'})
+    session={...session,selected_objects:[...session.selected_objects,'garazh'],current_object:'garazh',current_question_id:'1'}
+    return json(route,{session})
+  })
+  await page.goto(`/?project=${projectId}`)
+  await expect(page.getByRole('heading',{name:'Что делаем дальше?'})).toBeVisible()
+  const remove=page.locator('summary').filter({hasText:'Удалить объект'})
+  const add=page.locator('summary').filter({hasText:'Добавить новый объект'})
+  for(const heading of [remove,add]){
+    const metrics=await heading.evaluate(element=>{
+      const rect=element.getBoundingClientRect(), style=getComputedStyle(element)
+      const range=document.createRange();range.selectNodeContents(element)
+      const text=range.getBoundingClientRect()
+      return {height:rect.height,font:parseFloat(style.fontSize),textTop:text.top-rect.top,textBottom:rect.bottom-text.bottom}
+    })
+    expect(metrics.height).toBeGreaterThanOrEqual(44)
+    expect(metrics.font).toBeGreaterThanOrEqual(15)
+    expect(metrics.textTop).toBeGreaterThanOrEqual(8)
+    expect(metrics.textBottom).toBeGreaterThanOrEqual(8)
+  }
+  await add.scrollIntoViewIfNeeded()
+  const headingBox=await add.boundingBox()
+  const ctaBox=await page.getByRole('button',{name:'Перейти к заявке'}).boundingBox()
+  expect(ctaBox!.y).toBeGreaterThanOrEqual(headingBox!.y+headingBox!.height)
+  await remove.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('button',{name:'Удалить: Пруд или ручей',exact:true})).toBeVisible()
+  await add.click()
+  const garage=page.getByRole('button',{name:'Гараж',exact:true})
+  await garage.scrollIntoViewIfNeeded()
+  await expect(garage).toBeVisible()
+  await garage.click()
+  await expect(page.getByRole('heading',{name:'Какой гараж?'})).toBeVisible()
+  expect(generationCount).toBe(0)
+})
