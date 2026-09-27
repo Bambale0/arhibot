@@ -56,6 +56,8 @@ def test_actual_minimalist_lawn_only_preserves_selected_hedge_and_outside_trees(
     planting = object_spec(provider, "gazon")["planting_directive"]
     assert "inside this plot" in planting and "no decorative trees" in planting
     assert "flower beds" in planting and "selected living hedge" in planting
+    assert "potted plants" in planting and "planters" in planting
+    assert "including beside the house entrance" in planting
     assert "outside the plot" in planting
     assert planting in provider.split("AUROOM_INITIAL_CONCEPT_V1")[0]
     assert (
