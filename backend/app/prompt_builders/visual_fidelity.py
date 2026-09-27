@@ -28,6 +28,50 @@ def _hedge_boundary_answer(value: object) -> object:
     return value
 
 
+def _initial_surface_layout(spec: dict, objects: list[dict]) -> None:
+    """Do not give whole boundaries/continuous lawn a second, interior footprint."""
+    if spec.get("schema") != "auroom.initial_concept.v1" or spec.get("source_scene", {}).get(
+        "kind"
+    ) != "synthetic_site":
+        return
+    plan = spec.get("site_plan")
+    if not isinstance(plan, dict):
+        return
+    surfaces = set()
+    for obj in objects:
+        key = obj.get("object_key")
+        constraints = obj.get("questionnaire_constraints", [])
+        if key in {"izgorod", "zabor"} and _answer(constraints, "где") in (
+            "Весь периметр", "Весь периметр внутри забора",
+            "Весь периметр по границе участка",
+        ):
+            surfaces.add(key)
+        if (
+            key == "gazon"
+            and _answer(constraints, "какой характер двора") == "Минимализм, газон и гравий"
+            and _answer(constraints, "что видно из посадок") in (["Газон"], "Газон")
+        ):
+            surfaces.add(key)
+    removed = {
+        item["object_key"] for item in plan.get("objects", [])
+        if item.get("object_key") in surfaces and item.get("placement_source") == "derived"
+    }
+    # Their selected placement remains in task.objects / boundary_policy. Keep
+    # explicit zones and unsupported/partial selections under the existing policy.
+    plan["objects"] = [
+        item for item in plan.get("objects", []) if item.get("object_key") not in removed
+    ]
+    plan["warnings"] = [
+        warning for warning in plan.get("warnings", [])
+        if not (
+            warning.get("object_key") in removed
+            and warning.get("code") in {
+                "placement_overlap_unresolved", "placement_relation_unresolved"
+            }
+        )
+    ]
+
+
 def _reflow_secondary_zones(spec: dict, house_rect: dict) -> None:
     from app.questionnaires.site_plan import (
         _overlaps,
@@ -326,6 +370,7 @@ def build_visual_fidelity_prompt(prompt: str) -> str:
             "house_exterior_features", {}
         ).get("roof_chimney_required"):
             required_chimneys.append("eskez-doma")
+        _initial_surface_layout(spec, objects)
         _house_footprint(spec, objects)
     spec["visual_acceptance_contract"] = {
         "required_roof_chimneys_on_objects": required_chimneys,
