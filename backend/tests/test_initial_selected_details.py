@@ -183,3 +183,14 @@ def test_other_fence_choices_do_not_gain_open_fence_restriction(fence):
 
 def test_no_fence_directive_is_invented_without_a_selected_fence():
     assert "fence_openness_directive" not in build_visual_fidelity_prompt(canonical())
+
+
+def test_open_fence_does_not_invent_landscaping_when_lawn_is_unselected():
+    spec = parsed(canonical(fence="Решётка / штакетик, видно двор", hedge=False))
+    spec["task"]["objects"] = [
+        obj for obj in spec["task"]["objects"] if obj["object_key"] != "gazon"
+    ]
+    original = "AUROOM_INITIAL_CONCEPT_V1\nSTRUCTURED_SPEC:\n" + json.dumps(spec, ensure_ascii=False)
+    detail = object_spec(build_visual_fidelity_prompt(original), "zabor")["fence_openness_directive"]
+    assert "existing plot/background" in detail
+    assert "lawn" not in detail and "grass" not in detail

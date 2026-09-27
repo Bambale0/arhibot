@@ -201,7 +201,7 @@ def _initial_selected_details(spec: dict, objects: list[dict]) -> None:
         ) == "Решётка / штакетик, видно двор":
             obj["fence_openness_directive"] = (
                 "The selected fence is see-through: spaced bars or narrow pickets with visible gaps "
-                "showing the lawn through the infill; no solid infill panels or continuous sheet-metal "
+                "showing the existing plot/background through the infill; no solid infill panels or continuous sheet-metal "
                 "walls. Preserve the selected posts, material and height. Fence openness takes "
                 "priority over architectural style and material variants."
             )
