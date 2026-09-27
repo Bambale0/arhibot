@@ -5,7 +5,9 @@ import ipaddress
 import logging
 import socket
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from json import JSONDecodeError, dumps, loads
+from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 from uuid import UUID, uuid4
 
@@ -33,6 +35,7 @@ from app.image_compositor import (
     expand_normalized_region,
 )
 from app.image_quality import analyze_masked_edit_quality
+from app.initial_layout_guide import build_initial_layout_guide
 from app.localized_edit import (
     LocalCandidateFramingError,
     choose_local_geometry,
@@ -584,11 +587,12 @@ async def _generate_checkpointed(
     provider: NexusImageProvider, generation_id: UUID, *, attempt: int, phase: str,
     model_name: str, prompt: str, source_url: str | None, params: dict[str, object],
     reference_image_urls: list[str] | None, timeout_seconds: float | None,
+    required_input: tuple[Path, str] | None = None,
 ) -> NexusImageResult:
     """Persist submission intent before POST; persist accepted ID before polling.
 
-    A lost create response cannot safely be retried (Nexus has no documented
-    idempotency contract). A recovered accepted request resumes GET of its ID.
+    Local metadata alone cannot establish that replaying a lost create response
+    is safe. A recovered accepted request resumes GET of its saved ID.
     """
     key = f"auroom-{generation_id}-{phase}" if attempt == 0 else f"auroom-{generation_id}-quality-{attempt}-{phase}"
     resume_id = None
@@ -603,6 +607,18 @@ async def _generate_checkpointed(
                 raise NexusOutcomeUnknown("Previous Nexus submission could not be reconciled; no duplicate was sent")
             model_name = previous["model"]
         else:
+            # Inputs are needed only for a NEW purchase. GET of an accepted task
+            # must still recover its completed output if a temporary guide is lost.
+            if required_input is not None:
+                input_path, expected_digest = required_input
+                try:
+                    input_data = await asyncio.to_thread(input_path.read_bytes)
+                except OSError as exc:
+                    raise NexusProviderError(
+                        "Frozen layout reference is unavailable", retryable=False
+                    ) from exc
+                if sha256(input_data).hexdigest() != expected_digest:
+                    raise NexusProviderError("Frozen layout reference changed", retryable=False)
             row.quality_report = {**(row.quality_report or {}), "provider_request": {
                 "key": key, "attempt": attempt, "phase": phase, "model": model_name,
                 "state": "submitting", "task_id": None,
@@ -703,6 +719,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 "Questionnaire generation has an invalid server prompt.",
             )
             return
+        initial_layout_guide = (generation.quality_report or {}).get("initial_layout_guide")
         runtime = (
             None if admin_internal_generation else await admin_repository.get_generation_settings()
         )
@@ -711,7 +728,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             if questionnaire_generation or admin_internal_generation
             else await admin_repository.get_prompt_template(generation.type.value)
         )
-        if not admin_internal_generation and (
+        if not admin_internal_generation and not (initial_concept_generation and initial_layout_guide) and (
             runtime is None
             or not runtime.primary_model.strip()
             or (
@@ -774,6 +791,13 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             fallback_model = None
             fallback_params = {}
             primary_timeout_seconds = None
+        elif initial_concept_generation and initial_layout_guide:
+            primary_model = initial_layout_guide["primary_model"]
+            fallback_model = initial_layout_guide["fallback_model"]
+            primary_params = initial_layout_guide["primary_params"]
+            fallback_params = initial_layout_guide["fallback_params"]
+            primary_timeout_seconds = initial_layout_guide["primary_timeout_seconds"]
+            prompt = initial_layout_guide["prompt"]
         else:
             assert runtime is not None
             prompt = (
@@ -832,7 +856,54 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
     flyover_gif: FlyoverGif | None = None
     quality_report: dict[str, object] | None = None
     provider_work_region = edit_region
+    required_input: tuple[Path, str] | None = None
     try:
+        if initial_concept_generation and source_url is None and composition_mode != "masked_edit":
+            # Never retrofit a guide to an already submitted legacy task. Freeze
+            # the file, provider-only prompt and runtime input contract before POST.
+            if initial_layout_guide is None and not provider_checkpoint:
+                initial_guide = await asyncio.to_thread(build_initial_layout_guide, prompt)
+                if initial_guide is not None:
+                    guide_relative_path = f"internal/generation-guides/{generation_id}-initial.png"
+                    await guide_storage.write(guide_relative_path, initial_guide.data)
+                    initial_layout_guide = {
+                        "version": "initial-layout-guide.v1",
+                        "path": guide_relative_path,
+                        "sha256": sha256(initial_guide.data).hexdigest(),
+                        "reference_role": "ground_plane_layout",
+                        "prompt": initial_guide.prompt,
+                        "primary_model": primary_model,
+                        "fallback_model": fallback_model,
+                        "primary_params": primary_params,
+                        "fallback_params": fallback_params,
+                        "primary_timeout_seconds": primary_timeout_seconds,
+                    }
+                    async with get_session_factory()() as db:
+                        row = await GenerationRepository(db).get_for_update(generation_id)
+                        if row is None or row.status != GenerationStatus.PROCESSING:
+                            raise RuntimeError("Generation stopped before initial layout reference")
+                        row.quality_report = {
+                            **(row.quality_report or {}),
+                            "initial_layout_guide": initial_layout_guide,
+                        }
+                        await db.commit()
+            if initial_layout_guide is not None:
+                if initial_layout_guide.get("version") != "initial-layout-guide.v1":
+                    raise NexusOutcomeUnknown(
+                        "Unrecognized saved layout reference; do not resubmit"
+                    )
+                guide_relative_path = initial_layout_guide["path"]
+                required_input = (
+                    guide_storage.absolute_path(guide_relative_path),
+                    initial_layout_guide["sha256"],
+                )
+                source_url = guide_storage.signed_url(
+                    guide_relative_path,
+                    ttl_seconds=max(
+                        settings.media_url_ttl_seconds, settings.nexus_task_timeout_seconds + 120
+                    ),
+                )
+                prompt = initial_layout_guide["prompt"]
         if composition_mode == "masked_edit":
             record_masked_edit_started()
             if source_url is None or input_storage_path is None or edit_region is None:
@@ -1103,6 +1174,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         params=fallback_params if use_fallback else primary_params,
                         reference_image_urls=reference_image_urls,
                         timeout_seconds=None if use_fallback else primary_timeout_seconds,
+                        required_input=required_input,
                     )
                 except NexusProviderError as primary_error:
                     if not primary_error.retryable or not fallback_model or use_fallback:
@@ -1125,6 +1197,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         params=fallback_params,
                         reference_image_urls=reference_image_urls,
                         timeout_seconds=None,
+                        required_input=required_input,
                     )
                 provider_task_id = result.task_id
                 try:
