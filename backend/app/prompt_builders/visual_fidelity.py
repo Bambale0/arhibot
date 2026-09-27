@@ -170,6 +170,46 @@ def _house_footprint(spec: dict, objects: list[dict]) -> None:
             _reflow_secondary_zones(spec, item["rect"])
 
 
+def _initial_selected_details(spec: dict, objects: list[dict]) -> None:
+    # New synthetic concepts only: never reinterpret an accepted scene or local edit.
+    if spec.get("schema") != "auroom.initial_concept.v1" or spec.get("source_scene", {}).get(
+        "kind"
+    ) != "synthetic_site":
+        return
+    for obj in objects:
+        constraints = obj.get("questionnaire_constraints", [])
+        if obj.get("object_key") == "eskez-doma" and _answer(
+            constraints, "какое остекление"
+        ) == "Стандартные окна":
+            obj["glazing_directive"] = (
+                "The main house has STANDARD WINDOWS: separate ordinary window openings with "
+                "an opaque wall below each window and wall piers between windows; "
+                "no floor-to-ceiling glazing, panoramic glass walls or continuous glass facades. "
+                "Architectural style must not upgrade the selected glazing. Keep entrance doors "
+                "and any explicitly selected winter garden, double-height room or glazed veranda "
+                "as separate features; do not spread their glazing to ordinary house windows."
+            )
+        if (
+            obj.get("object_key") == "gazon"
+            and _answer(constraints, "какой характер двора") == "Минимализм, газон и гравий"
+            and _answer(constraints, "что видно из посадок") in (["Газон"], "Газон")
+        ):
+            hedge_directive = (
+                "Keep the selected living hedge at its requested boundary placement, including "
+                "its flowers; this is separate from interior planting. "
+                if any(item.get("object_key") == "izgorod" for item in objects)
+                else ""
+            )
+            obj["planting_directive"] = (
+                "The selected interior planting is LAWN ONLY: inside this plot add no decorative "
+                "trees, conifers, ornamental shrubs, flower beds or vegetable beds. "
+                "Do not invent a garden to fill unused ground. "
+                + hedge_directive
+                + "Trees and landscape outside the plot are unaffected. Gravel allowed by the "
+                "selected minimalist style and other explicitly selected site objects remain allowed."
+            )
+
+
 def _initial_scene_priority(spec: dict) -> str:
     if spec.get("schema") != "auroom.initial_concept.v1" or spec.get("source_scene", {}).get(
         "kind"
@@ -187,6 +227,10 @@ def _initial_scene_priority(spec: dict) -> str:
                 "Every entrance is an OPEN GAP in the hedge: no gate, wicket, gate leaves "
                 "or entrance posts. Do not invent an entrance structure."
             )
+    for obj in spec.get("task", {}).get("objects", []):
+        for key in ("glazing_directive", "planting_directive"):
+            if obj.get(key):
+                requirements.append(obj[key])
     if not requirements:
         return ""
     return "MANDATORY COMPOSITION BEFORE STYLING:\n" + "\n".join(requirements) + (
@@ -264,6 +308,8 @@ def build_visual_fidelity_prompt(prompt: str) -> str:
         "mask_directive": "For an ADDED object, fit its whole roof, overhangs, chimney and ground contact inside the white commit mask with space around it. For a LOCAL REFINEMENT of an existing building, change only the selected surface; preserve its unselected parts, scale and position. Never shrink or relocate the existing building to fit a local edit. Context outside the white mask is locked, never a placement area.",
         "verification": "provider_instruction_only_not_an_external_scene_measurement",
     }
+    if not removing:
+        _initial_selected_details(spec, objects)
     return (
         _initial_scene_priority(spec)
         + prompt[:start]
