@@ -813,7 +813,17 @@ async def test_workers_rehydrate_accepted_jobs_when_redis_transport_is_lost() ->
             generation = await session.get(Generation, generation_id)
             assert generation is not None
             generation.status = GenerationStatus.PROCESSING
-            generation.started_at = datetime.now(UTC) - timedelta(minutes=10)
+            generation.started_at = datetime.now(UTC)
+            await session.commit()
+
+        # A fresh orphan without an explicit released-provider state may still
+        # be running during worker overlap; do not steal it.
+        await _reconcile_database_jobs(get_settings())
+        assert str(generation_id) not in await redis_client.lrange(GENERATION_QUEUE_KEY, 0, -1)
+        original_start = datetime.now(UTC) - timedelta(minutes=10)
+        async with get_session_factory()() as session:
+            generation = await session.get(Generation, generation_id)
+            generation.started_at = original_start
             await session.commit()
 
         await _reconcile_database_jobs(get_settings())
@@ -823,7 +833,7 @@ async def test_workers_rehydrate_accepted_jobs_when_redis_transport_is_lost() ->
             generation = await session.get(Generation, generation_id)
             assert generation is not None
             assert generation.status == GenerationStatus.QUEUED
-            assert generation.started_at is None
+            assert generation.started_at == original_start
 
         campaign_id = uuid4()
         async with get_session_factory()() as session:

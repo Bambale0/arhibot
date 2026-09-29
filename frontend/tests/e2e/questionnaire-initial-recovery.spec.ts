@@ -2,7 +2,8 @@ import { expect, test } from '@playwright/test'
 import { createDesignSession, type QuestionnaireCatalog } from '../../src/questionnaireTypes'
 import type { Asset, Generation, Project } from '../../src/types'
 
-test('initial concept can resume after polling timeout without another paid request', async ({ page }) => {
+for (const pausedByProvider of [false, true]) {
+test(`initial concept resumes ${pausedByProvider ? 'paused provider task' : 'polling timeout'} without another paid request`, async ({ page }) => {
   const now = '2026-09-27T10:00:00Z'
   const projectId = '33333333-3333-4333-8333-333333333333'
   const generationId = '44444444-4444-4444-8444-444444444441'
@@ -36,7 +37,7 @@ test('initial concept can resume after polling timeout without another paid requ
     id:generationId, project_id:projectId, input_asset_id:null, output_asset:null,
     type:'master_plan', status:'processing', credits_charged:1, model_name:'mock',
     fallback_used:false, composition_mode:'replace', edit_region:null, protected_regions:[],
-    error:null, created_at:now, updated_at:now, started_at:now, completed_at:null,
+    error:pausedByProvider ? 'Проверяем ранее созданную задачу. Повторная оплата не нужна.' : null, created_at:now, updated_at:now, started_at:now, completed_at:null,
   }
   const mutations:string[] = []
   const requestedGenerationIds:string[] = []
@@ -79,12 +80,17 @@ test('initial concept can resume after polling timeout without another paid requ
   })
 
   await page.goto(`/?project=${projectId}`)
-  await expect(page.getByText('Создаём весь участок одной генерацией…')).toBeVisible()
-  await page.clock.setFixedTime(new Date(Date.parse(now) + 7 * 60 * 1000))
-  await expect(page.getByText('Генерация ещё выполняется. Задача сохранена — проверьте результат чуть позже.')).toBeVisible()
+  if (pausedByProvider) {
+    await expect(page.getByText(generation.error!)).toBeVisible()
+  } else {
+    await expect(page.getByText('Создаём весь участок одной генерацией…')).toBeVisible()
+    await page.clock.setFixedTime(new Date(Date.parse(now) + 7 * 60 * 1000))
+    await expect(page.getByText('Генерация ещё выполняется. Задача сохранена — проверьте результат чуть позже.')).toBeVisible()
+  }
 
   const check = page.getByRole('button', {name:'Проверить генерацию', exact:true})
   await expect(check).toBeEnabled()
+  generation.error = null
   await check.click()
   await expect(check).toBeDisabled()
   generation.status = 'completed'
@@ -103,3 +109,5 @@ test('initial concept can resume after polling timeout without another paid requ
   expect(session.initial_generation_id).toBe(generationId)
   expect(mutations).toEqual([`POST /api/v1/projects/${projectId}/questionnaire-initial-accept`])
 })
+
+}

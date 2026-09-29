@@ -98,3 +98,31 @@ def test_quality_gate_rejects_one_clipped_side_hidden_by_other_three() -> None:
         max_color_excess=80, max_straight_edge_fraction=.65,
     )
     assert not report.passed, 'One cropped wall must not be averaged away by three good sides'
+
+
+def test_short_clipped_shadow_cannot_be_diluted_by_rest_of_same_edge() -> None:
+    base = Image.new('RGB', (400, 400), (100, 100, 100))
+    final = base.copy()
+    ImageDraw.Draw(final).rectangle((100, 180, 145, 229), fill=(45, 45, 45))
+    report = analyze_masked_edit_quality(
+        base_data=_png(base), final_data=_png(final),
+        edit_region={'x': .25, 'y': .25, 'width': .5, 'height': .5},
+        boundary_band_px=4, max_luma_excess=20,
+        max_color_excess=32, max_straight_edge_fraction=.65,
+    )
+    assert report.changed_outside_pixels == 0
+    assert not report.passed
+
+
+def test_isolated_boundary_noise_and_existing_shadow_are_not_new_seams() -> None:
+    base = Image.new('RGB', (400, 400), (100, 100, 100))
+    ImageDraw.Draw(base).rectangle((100, 180, 145, 229), fill=(45, 45, 45))
+    final = base.copy()
+    final.putpixel((103, 150), (0, 0, 0))
+    report = analyze_masked_edit_quality(
+        base_data=_png(base), final_data=_png(final),
+        edit_region={'x': .25, 'y': .25, 'width': .5, 'height': .5},
+        boundary_band_px=4, max_luma_excess=20,
+        max_color_excess=32, max_straight_edge_fraction=.65,
+    )
+    assert report.passed

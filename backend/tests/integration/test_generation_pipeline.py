@@ -657,7 +657,6 @@ async def test_worker_restart_never_reposts_an_existing_or_ambiguous_request(mon
 @pytest.mark.asyncio
 @pytest.mark.parametrize('failure_stage', ['poll', 'download'])
 async def test_unknown_provider_status_keeps_charge_and_reconciles_same_task(monkeypatch, failure_stage):
-    from datetime import UTC, datetime, timedelta
     from app.providers.nexus import NexusOutcomeUnknown
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url='http://test') as client:
@@ -688,14 +687,14 @@ async def test_unknown_provider_status_keeps_charge_and_reconciles_same_task(mon
         assert pending['quality_report']['requires_reconciliation'] is True
         assert (await client.get('/api/v1/me', headers=headers)).json()['credits_balance'] == 3
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
-        async with get_session_factory()() as session:
-            row = await session.get(Generation, generation_id)
-            row.started_at = datetime.now(UTC) - timedelta(hours=1)
-            await session.commit()
         await generation_worker._reconcile_database_jobs(get_settings())
+        queued = (await client.get(f'/api/v1/generations/{generation_id}', headers=headers)).json()
+        assert queued['status'] == 'queued', 'Released known task must not wait for orphan timeout'
+        assert queued['started_at'] == pending['started_at']
         await generation_worker.process_generation(generation_id, get_settings())
         result = (await client.get(f'/api/v1/generations/{generation_id}', headers=headers)).json()
         assert result['status'] == 'completed'
+        assert result['started_at'] == pending['started_at']
         assert not result['quality_report'].get('requires_reconciliation')
         assert len(calls) == 2
         assert sum(call['task_id'] is None for call in calls) == 1

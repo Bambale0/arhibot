@@ -314,6 +314,38 @@ def _initial_scene_priority(spec: dict) -> str:
     )
 
 
+def _initial_photo_priority(spec: dict) -> str:
+    """A new concept uses the photo as site context, not an accepted building."""
+    source = spec.get("source_scene", {})
+    if spec.get("schema") != "auroom.initial_concept.v1" or source.get("kind") != "site_photo":
+        return ""
+    source["selected_objects_override_existing_geometry"] = True
+    source["directive"] = (
+        "Use the source photograph for the plot boundary, terrain and surrounding context. "
+        "For every selected object, the NEW questionnaire brief takes priority over its old "
+        "appearance in the photograph, including footprint shape, floor count, roof and materials. "
+        "Replace the existing counterpart with the requested design; do not add a second house "
+        "or preserve old building geometry when it conflicts with the brief. Keep unrelated "
+        "site context. Follow camera.mode and camera.directive for the requested viewpoint."
+    )
+    return (
+        "NEW BRIEF TAKES PRIORITY OVER EXISTING BUILDINGS IN THE SOURCE PHOTO:\n"
+        + source["directive"]
+        + "\nSelected object requirements: "
+        + dumps(
+            [
+                {
+                    "object_key": obj.get("object_key"),
+                    "questionnaire_constraints": obj.get("questionnaire_constraints", []),
+                }
+                for obj in spec.get("task", {}).get("objects", [])
+            ],
+            ensure_ascii=False,
+        )
+        + "\nRender no text, labels, digits, dimension lines or measuring grid.\n\n"
+    )
+
+
 def build_visual_fidelity_prompt(prompt: str) -> str:
     if not prompt.startswith(("AUROOM_INITIAL_CONCEPT_V1\n", "AUROOM_RENDER_SPEC_V1\n")):
         return prompt
@@ -386,8 +418,10 @@ def build_visual_fidelity_prompt(prompt: str) -> str:
     }
     if not removing:
         _initial_selected_details(spec, objects)
+    photo_priority = _initial_photo_priority(spec)
     return (
-        _initial_scene_priority(spec)
+        photo_priority
+        + _initial_scene_priority(spec)
         + prompt[:start]
         + dumps(spec, ensure_ascii=False, separators=(",", ":"))
         + prompt[start + end :]

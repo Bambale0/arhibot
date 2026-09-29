@@ -744,7 +744,8 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             return
 
         generation.status = GenerationStatus.PROCESSING
-        generation.started_at = datetime.now(UTC)
+        if generation.started_at is None:
+            generation.started_at = datetime.now(UTC)
         generation.error = None
         await session.commit()
 
@@ -1386,7 +1387,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         "provider_edit_region": edit_region,
                         "provider_geometry": provider_geometry,
                         "semantic_verification": "not_performed",
-                        "boundary_metric_scope": "worst_individual_edge",
+                        "boundary_metric_scope": "peak_quarter_edge_window",
                         "enforced_checks": list(
                             edit_policy.get("enforced_quality_checks")
                             or ("outside_region_integrity", "boundary_continuity")
@@ -1432,7 +1433,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         "provider_edit_region": edit_region,
                         "provider_geometry": provider_geometry,
                         "semantic_verification": "not_performed",
-                        "boundary_metric_scope": "worst_individual_edge",
+                        "boundary_metric_scope": "peak_quarter_edge_window",
                         "enforced_checks": list(
                             edit_policy.get("enforced_quality_checks")
                             or ("outside_region_integrity", "boundary_continuity")
@@ -1578,8 +1579,8 @@ async def _reconcile_database_jobs(settings: Settings) -> None:
     """Rehydrate Redis from PostgreSQL after Redis/AOF loss.
 
     QUEUED rows are always safe to enqueue when they are absent from both Redis lists.
-    PROCESSING rows are recovered only after the provider timeout window, which avoids
-    stealing genuinely active work during a short worker overlap.
+    Released tasks with a durable provider ID can resume GET polling immediately.
+    Other PROCESSING rows retain the orphan timeout to avoid stealing active work.
     """
     queued_raw = await redis_client.lrange(GENERATION_QUEUE_KEY, 0, -1)
     processing_raw = await redis_client.lrange(GENERATION_PROCESSING_KEY, 0, -1)
@@ -1602,16 +1603,20 @@ async def _reconcile_database_jobs(settings: Settings) -> None:
                 continue
             if generation.status == GenerationStatus.PROCESSING:
                 checkpoint = (generation.quality_report or {}).get("provider_request", {})
-                if (generation.quality_report or {}).get("requires_reconciliation") and (
+                requires_reconciliation = (generation.quality_report or {}).get("requires_reconciliation")
+                if requires_reconciliation and (
                     not checkpoint.get("task_id") or checkpoint.get("task_id") == "sync"
                 ):
                     # No documented lookup-by-idempotency-key API. Operator must
                     # confirm provider outcome; never turn ambiguity into another POST.
                     continue
-                if generation.started_at is not None and generation.started_at > stale_before:
+                if (
+                    not requires_reconciliation
+                    and generation.started_at is not None
+                    and generation.started_at > stale_before
+                ):
                     continue
                 generation.status = GenerationStatus.QUEUED
-                generation.started_at = None
                 generation.error = None
             recovered.append(raw_id)
         if recovered:
@@ -1642,7 +1647,6 @@ async def _recover_reserved_jobs() -> None:
                 GenerationStatus.PROCESSING,
             }:
                 generation.status = GenerationStatus.QUEUED
-                generation.started_at = None
                 generation.error = None
                 await session.commit()
                 should_requeue = True
