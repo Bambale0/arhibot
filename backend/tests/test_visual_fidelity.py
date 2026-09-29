@@ -198,3 +198,33 @@ def test_electric_bath_keeps_no_extra_features_and_does_not_require_chimney():
         )
         == "ничего"
     )
+
+
+def test_initial_photo_is_plot_context_not_a_veto_on_new_house_geometry():
+    catalog = build_catalog()
+    state = DesignSession(
+        catalog_version=catalog['version'], selected_objects=['eskez-doma'],
+        initial_concept_mode=True, plot_area_sotkas=10,
+        answers={'eskez-doma': {'1': 'Барнхаус', '2': 'Прямоугольник', '3': 100,
+                                '4': '1 этаж', '7': 'Двускатная'}},
+    )
+    canonical = build_initial_concept_prompt(catalog, state, input_asset_present=True)
+    result = build_visual_fidelity_prompt(canonical)
+    source = spec(result)['source_scene']
+    assert source['kind'] == 'site_photo'
+    assert source['selected_objects_override_existing_geometry'] is True
+    assert 'plot boundary' in source['directive']
+    assert 'Replace the existing counterpart' in source['directive']
+    assert 'do not add a second house' in source['directive']
+    assert result.index('NEW BRIEF TAKES PRIORITY') < result.index('STRUCTURED_SPEC:')
+    house = spec(result)['task']['objects'][0]
+    assert house['questionnaire_constraints'] == spec(canonical)['task']['objects'][0]['questionnaire_constraints']
+    assert canonical == build_initial_concept_prompt(catalog, state, input_asset_present=True)
+
+
+def test_synthetic_source_does_not_receive_photo_replacement_rules():
+    catalog = build_catalog()
+    state = DesignSession(catalog_version=catalog['version'], selected_objects=['eskez-doma'])
+    result = build_visual_fidelity_prompt(build_initial_concept_prompt(catalog, state, input_asset_present=False))
+    assert 'NEW BRIEF TAKES PRIORITY' not in result
+    assert 'selected_objects_override_existing_geometry' not in spec(result)['source_scene']

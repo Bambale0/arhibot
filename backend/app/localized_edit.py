@@ -253,7 +253,7 @@ def local_edit_prompt(
     placement = (
         "For boundary, path and landscape edits, follow the existing ground and perimeter alignment. Maintain continuity with unchanged segments beyond the rectangle; gates connect to their boundary. Do not move a boundary or path into the middle of the ground."
         if extended_surface
-        else "CENTER an ADDED object within that rectangle. For a new building the selected rectangle is its intended exterior bounding box, not a search area: its roof and walls should occupy most of the selected width and height, with only a small natural margin. Do not create a tiny model, miniature shed or icon in a large empty selection. Maintain normal full-size building wall height. Its ENTIRE roof, chimney and ground contact must remain visible and inside the rectangle, never cut off at an image edge."
+        else "CENTER an ADDED object within that rectangle. For a new building the selected rectangle contains the entire exterior AND its complete cast shadow: leave natural ground clearance on every side, especially in the shadow direction. Do not stretch walls to fill the rectangle or crop a shadow at its edge. Preserve requested floor area and normal full-size building wall height, not a miniature model. Its ENTIRE roof, overhangs, chimney, ground contact and shadow must remain inside the rectangle."
     )
     contract["mask_directive"] = (
         "There is NO white mask image. The allowed_region is a rectangle in reference image 1, measured from its top-left. "
@@ -274,7 +274,8 @@ def local_edit_prompt(
             "to an eye-level hero view. Replace vegetation only in the allowed, unprotected "
             f"building footprint to add the requested full-size {label}. Keep the surrounding "
             "photograph and existing buildings exactly fixed. The entire new building, roof "
-            "and any explicitly required chimney must fit inside the selected rectangle. "
+            "and any explicitly required chimney, with its complete cast shadow, must fit inside "
+            "the selected rectangle with continuous surrounding ground. "
             "No text, labels or dimensions. Do not add unrequested decorative planting. "
             "Requested features: "
             + dumps(spec.get("questionnaire_constraints", []), ensure_ascii=False)
@@ -282,6 +283,15 @@ def local_edit_prompt(
             + dumps(spec["house_style_reference"], ensure_ascii=False)
             + ".\n"
         )
+        if spec["task"].get("object_key") == "banya":
+            priority += (
+                "BATH EXTERIOR: show a recognizable exterior entrance and appropriate "
+                "window openings on visible facades, consistent with the selected architecture "
+                "and camera. Use ordinary small windows by default; preserve explicitly selected "
+                "panoramic rest-room glazing or a glazed terrace when requested. Do not render "
+                "a blank sealed box or expose interior rooms. Never substitute the house chimney "
+                "for the bath chimney.\n"
+            )
     return (
         "AUROOM_LOCALIZED_EDIT_V1\n"
         + priority

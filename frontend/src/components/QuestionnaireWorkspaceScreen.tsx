@@ -849,6 +849,9 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     const deadline = Date.now() + 6 * 60 * 1000
     let transientErrors = 0
     while (['queued','processing'].includes(currentGeneration.status) && Date.now() < deadline) {
+      // The worker saved an unresolved provider task. Surface GET-only recovery
+      // now instead of starting another full polling window on every reopening.
+      if (currentGeneration.error) throw new Error(currentGeneration.error)
       await delay(2000)
       try {
         currentGeneration = await getQuestionnaireGeneration(project.id, currentGeneration.id)
@@ -1431,7 +1434,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     </main>
   }
 
-  if ((busy || generationInFlight) && !active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card generating-card"><SparkIcon/><h1>{session.pending_removal_object === current.key ? 'Удаляем' : session.initial_concept_accepted && session.accepted_objects.includes(current.key) ? 'Изменяем' : 'Создаём'}: {current.title}</h1><p>Сохраняем текущую сцену, ракурс и уже принятые объекты.</p>{error && <div className="banner-error">{error}</div>}</section></main>
+  if ((busy || generationInFlight) && !active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card generating-card"><SparkIcon/><h1>{session.pending_removal_object === current.key ? 'Удаляем' : session.initial_concept_accepted && session.accepted_objects.includes(current.key) ? 'Изменяем' : 'Создаём'}: {current.title}</h1><p>Сохраняем текущую сцену, ракурс и уже принятые объекты. Можно выйти и вернуться позже — задача продолжит выполняться.</p>{error && <div className="banner-error">{error}</div>}</section></main>
 
   if (!active) return <main className="questionnaire-shell"><section className="questionnaire-card">
     <h1>{current.title}</h1>

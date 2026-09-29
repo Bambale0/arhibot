@@ -406,3 +406,18 @@ def test_unchanged_protected_hole_and_context_pass_despite_adjacent_edit():
         max_context_color_error=32,
     )
     assert Image.open(BytesIO(result)).getpixel((59, 59)) == (20, 30, 40)
+
+
+@pytest.mark.parametrize('operation', ['add', 'refine', 'remove'])
+def test_new_bath_has_exterior_identity_and_room_for_shadow_without_altering_refinements(operation):
+    prompt = 'AUROOM_RENDER_SPEC_V1\nSTRUCTURED_SPEC:\n{"task":{"object_key":"banya"}}'
+    geometry = {'version':'local-tile.v1', 'base_size':[120,100], 'box':[20,20,80,80],
+                'aspect_ratio':'1:1', 'operation':operation}
+    result = local_edit_prompt(prompt, geometry, {'x':.25,'y':.25,'width':.3,'height':.4}, [])
+    if operation == 'add':
+        assert 'complete cast shadow' in result
+        assert 'recognizable exterior entrance' in result
+        assert 'blank sealed box' in result
+        assert 'occupy most of the selected width and height' not in result
+    else:
+        assert 'recognizable exterior entrance' not in result

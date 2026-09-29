@@ -148,8 +148,22 @@ def _edge_metrics(
         if excess > straight_threshold:
             straight_hits += 1
 
-    mean_excess = sum(excesses) / len(excesses)
-    mean_color_excess = sum(color_excesses) / len(color_excesses)
+    # Overlapping quarter-edge windows catch a short cropped wall/shadow which
+    # the whole-side mean dilutes. Require support wider than the sampling band
+    # to avoid treating isolated texture pixels as a straight seam. These are
+    # spatial kernels; rejection thresholds remain the admin runtime settings.
+    window = min(len(excesses), max(2 * band_px + 1, ceil(len(excesses) / 4)))
+
+    def peak_mean(values: list[float]) -> float:
+        total = sum(values[:window])
+        peak = total
+        for index in range(window, len(values)):
+            total += values[index] - values[index - window]
+            peak = max(peak, total)
+        return peak / window
+
+    mean_excess = peak_mean(excesses)
+    mean_color_excess = peak_mean(color_excesses)
     straight_fraction = straight_hits / len(excesses)
     return mean_excess, mean_color_excess, straight_fraction
 
