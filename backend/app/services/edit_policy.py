@@ -409,8 +409,14 @@ def hedge_requests_roof_edit(comment: str) -> bool:
     This is a narrow domain guard, not an automatic object/intent router.
     """
     for clause in re.split(r"[.!?;,\n]|\s+и\s+", comment.casefold()):
+        # Preservation wording contains the noun "изменений", not an edit verb.
+        clause = re.sub(r"\bбез\s+изменени[йя]\b", "", clause)
         roof = re.search(r"\b(?:крыш|кровл)\w*", clause)
-        action = re.search(r"\b(?:замен|помен|измен|сдела|перекрас|покрас|затемн|осветл)\w*", clause)
+        action = re.search(
+            r"\b(?:замен|помен|измен(?!ени)|сдела|перекрас|покрас|затемн|осветл|"
+            r"удал|убер|убра|добав|подни|подня|опуст|перенес|передвин|перемест|"
+            r"смест|увелич|уменьш|разверн|поверн)\w*", clause,
+        )
         if roof is None or action is None:
             continue
         if re.search(r"\bне\s+$", clause[:action.start()]):

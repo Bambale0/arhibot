@@ -1199,7 +1199,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   async function previousQuestion() {
     if (!session || !current || !active || busy) return
-    if (session.initial_concept_accepted && session.accepted_objects.includes(current.key) && !session.pending_removal_object) {
+    if (active.phase === 'pre_render' && session.initial_concept_accepted && session.accepted_objects.includes(current.key) && !session.pending_removal_object) {
       return cancelRefinement()
     }
     const phaseQuestions = current.questions.filter((question) =>

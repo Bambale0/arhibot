@@ -13,19 +13,23 @@ const catalog:QuestionnaireCatalog = {
       id:'1',text:`Параметры: ${title}`,kind:'single',options:['Принятый ответ'],required:true,
       skip_default:null,skip_condition:null,help:null,field_hint:null,placeholder:null,max_selections:null,
       phase:'pre_render',condition:null,option_rules:{},edit_targets:{},
+    },{
+      id:'2',text:`Оцените правку: ${title}`,kind:'single',options:['Да, подходит','Нет, уточнить'],required:true,
+      skip_default:null,skip_condition:null,help:null,field_hint:null,placeholder:null,max_selections:null,
+      phase:'review',condition:null,option_rules:{},edit_targets:{},
     }],
   })),
 }
-async function setup(page:Page, stuck = false) {
+async function setup(page:Page, stuck = false, reviewing = false) {
   let session:DesignSession = {...createDesignSession(catalog.version, ['eskez-doma','izgorod']),
     initial_concept_accepted:true, initial_generation_id:generationId, plot_area_sotkas:10,
     source_step_completed:true, accepted_objects:['eskez-doma','izgorod'],
     survey_completed_objects:['eskez-doma','izgorod'],
     scene_asset_id:sceneId,scene_generation_id:generationId,
-    generation_ids:{'eskez-doma':generationId,izgorod:generationId},
+    generation_ids:{'eskez-doma':generationId,izgorod:reviewing ? '44444444-4444-4444-8444-444444444442' : generationId},
     edit_regions:{'eskez-doma':{x:0.2,y:0.2,width:0.5,height:0.5}},
     answers:{'eskez-doma':{'1':'Принятый ответ'},izgorod:{'1':'Принятый ответ'}},
-    current_object:stuck ? 'izgorod' : null,current_question_id:stuck ? '1' : null,
+    current_object:stuck || reviewing ? 'izgorod' : null,current_question_id:reviewing ? '2' : stuck ? '1' : null,
   }
   const original = structuredClone(session)
   let rejectSave = false
@@ -47,7 +51,7 @@ async function setup(page:Page, stuck = false) {
       if (method === 'PUT' && rejectSave) {status=503;body={type:'unavailable',detail:'Не удалось сохранить'}}
       else {if(method === 'PUT') session=request.postDataJSON();body={session}}
     }
-    else if (path.includes('/questionnaire-generation/')) body={id:generationId,project_id:projectId,status:'completed',output_asset:image}
+    else if (path.includes('/questionnaire-generation/')) body={id:path.split('/').at(-1),project_id:projectId,status:'completed',input_asset_id:reviewing ? sceneId : null,output_asset:reviewing ? {...image,id:'55555555-5555-4555-8555-555555555552'} : image}
     else if (path.endsWith(`/assets/${sceneId}`)) body=image
     else if (path.includes('/ideas/mine/')) body=null
     else if (path.endsWith('/ideas')) body=[]
@@ -135,4 +139,20 @@ test('server target mismatch stays on edit form and can be corrected without los
   await expect(page.getByRole('button',{name:/Подтвердить область/})).toBeDisabled()
   await expect(page.locator('.region-selection')).toHaveCount(0)
   expect(rejectedRequests).toBe(1)
+})
+
+
+test('Back from a paid refinement review preserves the result for reopening',async({page})=>{
+  const state=await setup(page,false,true)
+  await expect(page.getByRole('heading',{name:'Оцените правку: Живая изгородь'})).toBeVisible()
+  await expect(page.getByAltText('Эскиз Живая изгородь')).toBeVisible()
+  await page.getByRole('button',{name:'Назад',exact:true}).click()
+  await expect(page.getByRole('heading',{name:'Оцените правку: Живая изгородь'})).toHaveCount(0)
+  expect(state.read().current_object).toBe('izgorod')
+  expect(state.read().current_question_id).toBe('2')
+  await page.goto(`/?project=${projectId}`)
+  await expect(page.getByRole('heading',{name:'Оцените правку: Живая изгородь'})).toBeVisible()
+  await expect(page.getByAltText('Эскиз Живая изгородь')).toBeVisible()
+  expect(state.read().generation_ids).toEqual(state.original.generation_ids)
+  expect(state.mutations).toEqual([])
 })

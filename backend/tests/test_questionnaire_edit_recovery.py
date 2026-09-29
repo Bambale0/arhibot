@@ -234,6 +234,8 @@ async def test_full_catalog_fits_internal_generation_request_budget(longest):
     'Замени цвет крыши на темный',
     'Сделай кровлю темнее',
     'Поменяй крышу и сделай изгородь ниже',
+    'Удали крышу', 'Убери крышу', 'Добавь крышу', 'Подними крышу',
+    'Опусти кровлю', 'Уменьши крышу', 'Перемести крышу левее',
 ])
 async def test_hedge_refinement_rejects_roof_instruction_before_request_creation(comment):
     service = QuestionnaireService(AsyncMock())
