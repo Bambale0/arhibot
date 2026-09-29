@@ -227,3 +227,33 @@ async def test_full_catalog_fits_internal_generation_request_budget(longest):
     assert key == "__initial__"
     assert len(keys) == 26
     assert 16_000 < len(payload.prompt) < QUESTIONNAIRE_PROMPT_MAX_LENGTH
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('comment', [
+    'Замени цвет крыши на темный',
+    'Сделай кровлю темнее',
+    'Поменяй крышу и сделай изгородь ниже',
+    'Удали крышу', 'Убери крышу', 'Добавь крышу', 'Подними крышу',
+    'Опусти кровлю', 'Уменьши крышу', 'Перемести крышу левее',
+])
+async def test_hedge_refinement_rejects_roof_instruction_before_request_creation(comment):
+    service = QuestionnaireService(AsyncMock())
+    state = DesignSession(
+        catalog_version='test', selected_objects=['izgorod'], initial_generation_id=uuid4(),
+        initial_concept_mode=True, initial_concept_accepted=True,
+        source_step_completed=True, scene_asset_id=uuid4(),
+        current_object='izgorod', accepted_objects=['izgorod'],
+        region_mode='edit', region_object='izgorod',
+        review_comments={'izgorod':comment},
+        edit_regions={'izgorod':{'x':0.1,'y':0.1,'width':0.4,'height':0.4}},
+    )
+    project = SimpleNamespace(context={'design_session':state.model_dump(mode='json')})
+    service.catalog_for_version = AsyncMock(return_value={
+        'questionnaires':[{'key':'izgorod','title':'Живая изгородь','questions':[]}],
+    })
+    with patch('app.services.questionnaire_service.ProjectService.get_owned_model', AsyncMock(return_value=project)):
+        with pytest.raises(AppError) as caught:
+            await service.build_generation_request(SimpleNamespace(id=uuid4()), uuid4())
+    assert caught.value.status == 422
+    assert caught.value.type == 'questionnaire_edit_target_mismatch'

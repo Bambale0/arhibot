@@ -375,7 +375,7 @@
 .questionnaire-option.selected i::after { border-color: #fff; }
 .questionnaire-option:focus-visible,
 .questionnaire-card button:focus-visible,
-.questionnaire-field input:focus-visible {
+.questionnaire-field :is(input, select):focus-visible {
   outline: 2px solid rgba(49, 93, 99, .42);
   outline-offset: 3px;
 }
@@ -388,7 +388,7 @@
   font-size: 12px;
   font-weight: 650;
 }
-.questionnaire-field input {
+.questionnaire-field :is(input, select) {
   width: 100%;
   min-height: 56px;
   box-sizing: border-box;
@@ -401,7 +401,7 @@
   font-size: 16px;
   transition: border-color .12s ease, box-shadow .12s ease;
 }
-.questionnaire-field input:focus {
+.questionnaire-field :is(input, select):focus {
   border-color: var(--q-accent);
   box-shadow: inset 3px 0 0 var(--q-accent);
 }
@@ -736,7 +736,7 @@
     height: 24px;
   }
 
-  .questionnaire-field input {
+  .questionnaire-field :is(input, select) {
     min-height: 57px;
     border-radius: 2px;
   }
@@ -781,6 +781,7 @@
   .region-picker-card {
     padding: 18px !important;
   }
+  .region-picker-card .questionnaire-actions { position: static; }
   .region-canvas { border-radius: 2px; }
   .region-selection { border-width: 2px; }
   .region-selection span { font-size: 8px; }

@@ -53,7 +53,7 @@ from app.schemas.questionnaires import (
     QuestionnaireGenerationCostResponse,
 )
 from app.services.asset_service import LocalMediaStorage
-from app.services.edit_policy import build_edit_policy, build_object_removal_policy
+from app.services.edit_policy import build_edit_policy, build_object_removal_policy, hedge_requests_roof_edit
 from app.services.project_service import ProjectService
 
 
@@ -621,6 +621,22 @@ class QuestionnaireService:
                 title="Область перекрыта защищёнными объектами",
                 status=422,
                 detail="Выделите свободную область, не перекрытую защищёнными объектами.",
+            )
+
+        if (
+            refinement
+            and object_key == "izgorod"
+            and session.pending_removal_object != object_key
+            and hedge_requests_roof_edit(session.review_comments.get(object_key, ""))
+        ):
+            raise AppError(
+                type="questionnaire_edit_target_mismatch",
+                title="Выбран другой объект",
+                status=422,
+                detail=(
+                    "Сейчас выбрана живая изгородь, а запрос относится к крыше. "
+                    "Выберите нужное строение и выделите его крышу. Генерация не запущена."
+                ),
             )
 
         edit_policy: dict[str, object] = {}

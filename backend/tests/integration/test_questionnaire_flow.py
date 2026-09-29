@@ -1,3 +1,4 @@
+from unittest.mock import patch
 import asyncio
 import os
 from json import loads
@@ -593,14 +594,15 @@ async def test_questionnaire_generation_is_atomic_under_concurrent_requests(
 
 
 @pytest.mark.asyncio
-async def test_initial_concept_refinement_updates_scene_generation_chain() -> None:
+@pytest.mark.parametrize("object_key", ["lavochka", "izgorod"])
+async def test_initial_concept_refinement_updates_scene_generation_chain(object_key: str) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         tokens, headers = await _register_admin(client)
         user_id = UUID(tokens["user"]["id"])
         catalog = (await client.get("/api/v1/questionnaires", headers=headers)).json()
         definition = next(
-            item for item in catalog["questionnaires"] if item["key"] == "lavochka"
+            item for item in catalog["questionnaires"] if item["key"] == object_key
         )
 
         price = await client.put(
@@ -613,7 +615,7 @@ async def test_initial_concept_refinement_updates_scene_generation_chain() -> No
         started = await client.post(
             "/api/v1/questionnaire-projects",
             headers=headers,
-            json={"selected_objects": ["lavochka"], "plot_area_sotkas": 8},
+            json={"selected_objects": [object_key], "plot_area_sotkas": 8},
         )
         assert started.status_code == 201, started.text
         project_id = started.json()["id"]
@@ -636,8 +638,8 @@ async def test_initial_concept_refinement_updates_scene_generation_chain() -> No
             and question["options"][0].startswith("Да")
         )
         answers.pop(review["id"])
-        session["answers"] = {"lavochka": answers}
-        session["survey_completed_objects"] = ["lavochka"]
+        session["answers"] = {object_key: answers}
+        session["survey_completed_objects"] = [object_key]
         session["current_object"] = None
         session["current_question_id"] = None
         saved = await client.put(
@@ -686,9 +688,9 @@ async def test_initial_concept_refinement_updates_scene_generation_chain() -> No
         assert session["scene_generation_id"] == str(initial_id)
         assert session["scene_asset_id"] == str(initial_asset.id)
 
-        session["current_object"] = "lavochka"
+        session["current_object"] = object_key
         session["region_mode"] = "edit"
-        session["region_object"] = "lavochka"
+        session["region_object"] = object_key
         started_refinement = await client.put(
             f"/api/v1/projects/{project_id}/questionnaire-session",
             headers=headers,
@@ -697,9 +699,47 @@ async def test_initial_concept_refinement_updates_scene_generation_chain() -> No
         assert started_refinement.status_code == 200, started_refinement.text
         session = started_refinement.json()["session"]
 
+        # Back/cancel clears only navigation and preserves the accepted image/brief.
+        cancelled = {**session, "current_object": None, "current_question_id": None,
+                     "region_mode": None, "region_object": None, "edit_question_ids": []}
+        cancel = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session", headers=headers, json=cancelled,
+        )
+        assert cancel.status_code == 200, cancel.text
+        for field in ("answers", "scene_asset_id", "scene_generation_id", "generation_ids"):
+            assert cancel.json()["session"][field] == session[field]
+        reopened = await client.put(
+            f"/api/v1/projects/{project_id}/questionnaire-session", headers=headers, json=session,
+        )
+        assert reopened.status_code == 200, reopened.text
+
+        if object_key == "izgorod":
+            session["edit_regions"][object_key] = {"x": 0.12, "y": 0.18, "width": 0.35, "height": 0.42}
+            session["review_comments"][object_key] = "Замени цвет крыши на темный"
+            saved = await client.put(
+                f"/api/v1/projects/{project_id}/questionnaire-session", headers=headers, json=session,
+            )
+            assert saved.status_code == 200, saved.text
+            before = (await client.get("/api/v1/me", headers=headers)).json()["credits_balance"]
+            queue_before = await redis_client.lrange(GENERATION_QUEUE_KEY, 0, -1)
+            with patch("app.api.v1.questionnaires.build_generation_service") as build_service:
+                rejected = await client.post(
+                    f"/api/v1/projects/{project_id}/questionnaire-generation", headers=headers,
+                )
+            assert rejected.status_code == 422, rejected.text
+            assert rejected.json()["type"] == "questionnaire_edit_target_mismatch"
+            build_service.assert_not_called()
+            assert (await client.get("/api/v1/me", headers=headers)).json()["credits_balance"] == before
+            assert await redis_client.lrange(GENERATION_QUEUE_KEY, 0, -1) == queue_before
+            fresh = (await client.get(
+                f"/api/v1/projects/{project_id}/questionnaire-session", headers=headers,
+            )).json()["session"]
+            assert fresh["generation_ids"] == session["generation_ids"]
+            assert fresh["region_mode"] == "edit"
+
         region = {"x": 0.12, "y": 0.18, "width": 0.35, "height": 0.42}
-        session["edit_regions"]["lavochka"] = region
-        session["review_comments"]["lavochka"] = "Перенести лавочку левее."
+        session["edit_regions"][object_key] = region
+        session["review_comments"][object_key] = "Сделай изгородь ниже." if object_key == "izgorod" else "Перенести лавочку левее."
         session["region_mode"] = None
         session["region_object"] = None
         region_saved = await client.put(
@@ -746,7 +786,7 @@ async def test_initial_concept_refinement_updates_scene_generation_chain() -> No
             headers=headers,
         )
         session = current.json()["session"]
-        session["answers"]["lavochka"][review["id"]] = review["options"][0]
+        session["answers"][object_key][review["id"]] = review["options"][0]
         session["current_question_id"] = review["id"]
         reviewed = await client.put(
             f"/api/v1/projects/{project_id}/questionnaire-session",
@@ -758,7 +798,7 @@ async def test_initial_concept_refinement_updates_scene_generation_chain() -> No
 
         session["scene_asset_id"] = str(refined_asset.id)
         session["scene_generation_id"] = str(refinement_id)
-        session["lock_regions"]["lavochka"] = region
+        session["lock_regions"][object_key] = region
         session["current_object"] = None
         session["current_question_id"] = None
         finalized = await client.put(

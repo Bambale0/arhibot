@@ -1,3 +1,5 @@
+import pytest
+
 from app.services.edit_policy import EditDomain, EditIntent, build_edit_policy
 
 
@@ -157,3 +159,18 @@ def test_negative_fireplace_lock_instruction_is_not_blocked() -> None:
     assert policy.intent == EditIntent.ROOF_FINISH
     assert "не изменяй камин" in policy.sanitized_comment.casefold()
     assert policy.allow_fireplace_relocation is False
+
+
+@pytest.mark.parametrize('comment', [
+    'Сделай изгородь ниже',
+    'Сделай изгородь в цвет крыши',
+    'Не меняй крышу, сделай изгородь гуще',
+    'Оставь крышу без изменений, сделай изгородь ниже',
+    'Сохрани крышу без изменения формы',
+    'Изгородь слева от дома с тёмной крышей',
+    'Замени цветы на белые под крышей навеса',
+])
+def test_hedge_roof_reference_is_not_a_roof_edit(comment):
+    from app.services.edit_policy import hedge_requests_roof_edit
+
+    assert hedge_requests_roof_edit(comment) is False

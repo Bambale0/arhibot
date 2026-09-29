@@ -287,6 +287,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const [draft, setDraft] = useState<string>('')
   const [multi, setMulti] = useState<string[]>([])
   const [reviewComment, setReviewComment] = useState<string>('')
+  const resetRegionOnEntry = useRef(false)
   const [regionDraft, setRegionDraft] = useState<NormalizedRect|null>(null)
   const regionStartRef = useRef<{x:number;y:number}|null>(null)
   const [customOption, setCustomOption] = useState(false)
@@ -485,7 +486,8 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   useEffect(() => {
     regionStartRef.current = null
     if (session?.region_mode === 'edit' && session.region_object) {
-      setRegionDraft(session.edit_regions[session.region_object] || null)
+      setRegionDraft(resetRegionOnEntry.current ? null : session.edit_regions[session.region_object] || null)
+      resetRegionOnEntry.current = false
       return
     }
     setRegionDraft(null)
@@ -618,16 +620,36 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     }
   }
 
-  async function startRefinement(key:string) {
-    if (!session?.initial_concept_accepted || !session.accepted_objects.includes(key)) return
-    setReviewComment('')
-    await persist({
+  async function startRefinement(key:string, keepComment = false) {
+    if (!session?.initial_concept_accepted || !session.accepted_objects.includes(key) || busy || generationInFlight || uncertainCreation) return
+    resetRegionOnEntry.current = true
+    const saved = await persist({
       ...session,
       current_object:key,
       current_question_id:null,
       region_mode:'edit',
       region_object:key,
+      edit_question_ids:[],
     })
+    if (!saved) resetRegionOnEntry.current = false
+    if (saved) {
+      if (!keepComment) setReviewComment('')
+      setRegionDraft(null)
+      setRenderOutput(null)
+    }
+  }
+
+  async function cancelRefinement() {
+    if (!session?.initial_concept_accepted || busy || generationInFlight || uncertainCreation) return
+    const saved = await persist({
+      ...session, current_object:null, current_question_id:null,
+      region_mode:null, region_object:null, edit_question_ids:[],
+    })
+    if (saved) {
+      setReviewComment('')
+      setRegionDraft(null)
+      setRenderOutput(null)
+    }
   }
 
   async function chooseApplication() {
@@ -792,7 +814,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }
 
   async function cancelEditRegion() {
-    if (!session || session.region_mode !== 'edit' || !session.region_object) return
+    if (!session || session.region_mode !== 'edit' || !session.region_object || busy || generationInFlight || uncertainCreation) return
     if (session.pending_removal_object === session.region_object) {
       setBusy(true)
       setError(null)
@@ -807,6 +829,9 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         setBusy(false)
       }
       return
+    }
+    if (session.initial_concept_accepted && session.accepted_objects.includes(session.region_object)) {
+      return cancelRefinement()
     }
     const definition = definitions.get(session.region_object)
     if (!definition) return
@@ -918,6 +943,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       if (err.errorType === 'insufficient_credits') return 'Недостаточно кредитов. Пополните баланс в Профиле.'
       if (err.errorType === 'questionnaire_prompt_too_long') return 'Описание проекта слишком большое. Сократите комментарии или число объектов.'
       if (err.errorType === 'questionnaire_edit_region_blocked') return 'Выделенная область перекрыта защищёнными объектами. Выберите свободное место.'
+      if (err.errorType === 'questionnaire_edit_target_mismatch') return 'Сейчас выбрана живая изгородь, а запрос относится к крыше. Выберите нужное строение в поле «Редактируемый объект» и выделите его крышу. Генерация не запущена.'
       if (err.errorType === 'exterior_refinement_interior_not_supported') return 'Можно менять внешний вид дома и трубу на крыше. Изменение комнат, мебели и внутреннего камина не поддерживается.'
     }
     return err instanceof Error ? err.message : 'Не удалось создать эскиз'
@@ -1173,6 +1199,9 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   async function previousQuestion() {
     if (!session || !current || !active || busy) return
+    if (active.phase === 'pre_render' && session.initial_concept_accepted && session.accepted_objects.includes(current.key) && !session.pending_removal_object) {
+      return cancelRefinement()
+    }
     const phaseQuestions = current.questions.filter((question) =>
       question.phase === active.phase
       && questionIsVisible(current.key, question, objectAnswers, houseAccepted, session.selected_objects)
@@ -1339,26 +1368,31 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   if (session.region_mode === 'edit' && session.region_object) {
     const placementDefinition = definitions.get(session.region_object)
     const addingObject = !session.accepted_objects.includes(session.region_object)
+    const refiningObject = !addingObject && session.pending_removal_object !== session.region_object
     const protectedRegions = session.accepted_objects
       .filter((key) => key !== session.region_object)
       .map((key) => ({ key, region:session.initial_concept_mode ? (session.lock_regions[key] ? session.edit_regions[key] : undefined) : session.lock_regions[key] }))
       .filter((item):item is { key:string; region:NormalizedRect } => Boolean(item.region))
     return <main className="questionnaire-shell">
-      <header className="questionnaire-topbar"><button className="back-button" disabled={busy || Boolean(uncertainCreation)} onClick={() => void cancelEditRegion()}><BackIcon/> Назад</button><strong>{project.name}</strong><span>Размещение</span></header>
+      <header className="questionnaire-topbar"><button className="back-button" disabled={busy || Boolean(uncertainCreation)} onClick={() => void cancelEditRegion()}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{refiningObject ? 'Редактирование' : 'Размещение'}</span></header>
       <section className="questionnaire-card region-picker-card">
-        <span className="eyebrow">{session.pending_removal_object === session.region_object ? 'УДАЛЕНИЕ ОБЪЕКТА' : 'ТОЧНОЕ МЕСТО НА СЦЕНЕ'}</span>
-        <h1>{session.pending_removal_object === session.region_object ? `Что удалить: ${placementDefinition?.title || session.region_object}` : `Где разместить: ${placementDefinition?.title || session.region_object}?`}</h1>
+        <span className="eyebrow">{session.pending_removal_object === session.region_object ? 'УДАЛЕНИЕ ОБЪЕКТА' : refiningObject ? 'ИЗМЕНЕНИЕ ПРИНЯТОГО ОБЪЕКТА' : 'ТОЧНОЕ МЕСТО НА СЦЕНЕ'}</span>
+        <h1>{session.pending_removal_object === session.region_object ? `Что удалить: ${placementDefinition?.title || session.region_object}` : refiningObject ? `Изменить: ${placementDefinition?.title || session.region_object}` : `Где разместить: ${placementDefinition?.title || session.region_object}?`}</h1>
         <p>{session.pending_removal_object === session.region_object
           ? 'Точно обведите объект, который нужно убрать. Объект будет удалён внутри выделения. Всё за его пределами останется без изменений.'
           : addingObject
             ? 'Проведите пальцем или мышью по последнему принятому кадру. Размер выделения задаёт примерный размер нового объекта. Выделите место для него целиком, включая крышу и трубу, если они предусмотрены, и оставьте небольшой запас окружения. Всё за пределами выделения останется без изменений.'
-            : 'Проведите пальцем или мышью по последнему принятому кадру и выделите прямоугольник, внутри которого можно менять или добавлять объект. Выделите область немного шире изменяемого объекта, оставив вокруг него часть исходного окружения. Всё за пределами выделения останется без изменений.'}</p>
+            : 'Выделите область изменения на принятом эскизе. Оставьте вокруг объекта небольшой запас. Всё за пределами выделения останется без изменений.'}</p>
         <p className="region-hint">Новая итерация · {generationCostLabel()}</p>
-        {session.initial_concept_accepted && session.accepted_objects.includes(session.region_object) && session.pending_removal_object !== session.region_object && <div className="questionnaire-field"><label>Что изменить?<input value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="Например: сделать крышу тёмной, фасад светлее"/></label></div>}
+        {refiningObject && <>
+          <div className="questionnaire-field"><label>Редактируемый объект<select value={session.region_object} disabled={busy || Boolean(uncertainCreation)} onChange={(event) => void startRefinement(event.target.value, true)}>{session.accepted_objects.map((key) => <option key={key} value={key}>{definitions.get(key)?.title || key}</option>)}</select></label></div>
+          <p className="region-hint">Меняется только выбранный объект. Для правки крыши дома выберите «Дом, фасад», затем выделите крышу. При смене объекта область нужно выбрать заново.</p>
+          <div className="questionnaire-field"><label>Что изменить?<input value={reviewComment} disabled={busy || Boolean(uncertainCreation)} onChange={(event) => setReviewComment(event.target.value)} placeholder={session.region_object === 'eskez-doma' ? 'Например: сделать крышу тёмной, фасад светлее' : 'Опишите изменение выбранного объекта'}/></label></div>
+        </>}
         {sceneAsset ? <div
           className="region-canvas"
           role="img"
-          aria-label="Выбор области для нового объекта"
+          aria-label={refiningObject ? "Выбор области изменения объекта" : "Выбор области для нового объекта"}
           onPointerDown={beginRegionSelection}
           onPointerMove={moveRegionSelection}
           onPointerUp={endRegionSelection}
@@ -1390,13 +1424,14 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         {uncertainCreation && <button className="primary-button" disabled={busy} onClick={() => void checkUncertainCreation()}>Проверить запуск</button>}
         <div className="questionnaire-actions">
           <button className="secondary-button" disabled={busy || Boolean(uncertainCreation)} onClick={() => setRegionDraft(null)}>Очистить</button>
+          {refiningObject && <button className="secondary-button" disabled={busy || Boolean(uncertainCreation)} onClick={() => void cancelRefinement()}>Отменить изменение</button>}
           <button className="primary-button" disabled={busy || Boolean(uncertainCreation) || !sceneAsset || !regionDraft || regionDraft.width < 0.03 || regionDraft.height < 0.03 || (session.initial_concept_accepted && session.accepted_objects.includes(session.region_object) && session.pending_removal_object !== session.region_object && !reviewComment.trim())} onClick={() => void confirmEditRegion()}>{session.pending_removal_object === session.region_object ? 'Удалить в новой итерации' : 'Подтвердить область и создать новую итерацию'}</button>
         </div>
       </section>
     </main>
   }
 
-  if ((busy || generationInFlight) && !active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card generating-card"><SparkIcon/><h1>{session.pending_removal_object === current.key ? 'Удаляем' : 'Создаём'}: {current.title}</h1><p>Сохраняем текущую сцену, ракурс и уже принятые объекты.</p>{error && <div className="banner-error">{error}</div>}</section></main>
+  if ((busy || generationInFlight) && !active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card generating-card"><SparkIcon/><h1>{session.pending_removal_object === current.key ? 'Удаляем' : session.initial_concept_accepted && session.accepted_objects.includes(current.key) ? 'Изменяем' : 'Создаём'}: {current.title}</h1><p>Сохраняем текущую сцену, ракурс и уже принятые объекты.</p>{error && <div className="banner-error">{error}</div>}</section></main>
 
   if (!active) return <main className="questionnaire-shell"><section className="questionnaire-card">
     <h1>{current.title}</h1>
