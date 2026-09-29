@@ -50,12 +50,18 @@ def test_partial_or_unknown_boundary_placement_is_not_discarded(placement):
 
 
 @pytest.mark.parametrize("scope", ["photo", "local", "remove"])
-def test_source_and_local_scenes_keep_their_existing_placement_objects(scope):
+def test_photo_keeps_lawn_zone_and_local_scenes_keep_all_placement_objects(scope):
     spec = parsed(canonical(photo=scope == "photo"))
     if scope != "photo":
         spec["schema"] = "auroom.render_spec.v1"
         spec["task"]["operation"] = "remove_object" if scope == "remove" else "add_object"
-    assert plan_keys(provider(spec)) == plan_keys(spec)
+    expected = plan_keys(spec)
+    if scope == "photo":
+        # Only the invented full-perimeter proxy disappears; photo landscaping
+        # must not receive the synthetic lawn-only normalization.
+        expected -= {"izgorod"}
+        assert "gazon" in expected
+    assert plan_keys(provider(spec)) == expected
 
 
 def test_mixed_planting_keeps_its_discrete_placement_zone():

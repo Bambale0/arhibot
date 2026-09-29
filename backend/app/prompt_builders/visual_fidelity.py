@@ -30,9 +30,10 @@ def _hedge_boundary_answer(value: object) -> object:
 
 def _initial_surface_layout(spec: dict, objects: list[dict]) -> None:
     """Do not give whole boundaries/continuous lawn a second, interior footprint."""
-    if spec.get("schema") != "auroom.initial_concept.v1" or spec.get("source_scene", {}).get(
-        "kind"
-    ) != "synthetic_site":
+    source_kind = spec.get("source_scene", {}).get("kind")
+    if spec.get("schema") != "auroom.initial_concept.v1" or source_kind not in {
+        "synthetic_site", "site_photo"
+    }:
         return
     plan = spec.get("site_plan")
     if not isinstance(plan, dict):
@@ -47,7 +48,8 @@ def _initial_surface_layout(spec: dict, objects: list[dict]) -> None:
         ):
             surfaces.add(key)
         if (
-            key == "gazon"
+            source_kind == "synthetic_site"
+            and key == "gazon"
             and _answer(constraints, "какой характер двора") == "Минимализм, газон и гравий"
             and _answer(constraints, "что видно из посадок") in (["Газон"], "Газон")
         ):
@@ -326,7 +328,11 @@ def _initial_photo_priority(spec: dict) -> str:
         "appearance in the photograph, including footprint shape, floor count, roof and materials. "
         "Replace the existing counterpart with the requested design; do not add a second house "
         "or preserve old building geometry when it conflicts with the brief. Keep unrelated "
-        "site context. Follow camera.mode and camera.directive for the requested viewpoint."
+        "site context, including existing planting and boundaries unless explicitly changed. "
+        "Do not invent extra interior planting, isolated hedge fragments, furniture or decorations "
+        "absent from both the source and selected brief. A requested whole-perimeter hedge or "
+        "fence follows the property edge only, not a second isolated interior footprint. "
+        "Follow camera.mode and camera.directive for the requested viewpoint."
     )
     return (
         "NEW BRIEF TAKES PRIORITY OVER EXISTING BUILDINGS IN THE SOURCE PHOTO:\n"
