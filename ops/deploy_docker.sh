@@ -155,9 +155,13 @@ if find "${app_dir}" -mindepth 1 -maxdepth 1 \
   echo "Creating runtime DB/media backup before migrations"
   backup_output=$("${candidate}/ops/backup_runtime.sh" "${app_dir}" "${app_dir}/backups/runtime" force)
   echo "${backup_output}"
-  runtime_backup=$(printf '%s\n' "${backup_output}" | sed -n 's/^AuRoom runtime backup: //p' | tail -n1)
-  [[ -n "${runtime_backup}" ]] || { echo "Could not determine pre-migration runtime backup path" >&2; exit 1; }
-  python3 "${candidate}/ops/backup_readiness.py" "${app_dir}" "${runtime_backup}"
+  if [[ "${backup_output}" == "AuRoom backup skipped: runtime backups disabled by operator" ]]; then
+    echo "Runtime DB/media snapshot disabled by operator policy"
+  else
+    runtime_backup=$(printf '%s\n' "${backup_output}" | sed -n 's/^AuRoom runtime backup: //p' | tail -n1)
+    [[ -n "${runtime_backup}" ]] || { echo "Could not determine pre-migration runtime backup path" >&2; exit 1; }
+    python3 "${candidate}/ops/backup_readiness.py" "${app_dir}" "${runtime_backup}"
+  fi
 fi
 
 mutation_started=1

@@ -367,3 +367,33 @@ test('late refresh cannot restore credentials after logout', async ({ page }) =>
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Вход', exact: true })).toBeVisible()
 })
+
+test('admin can disable runtime backups with zero and retain the setting after reload', async ({ page }) => {
+  await authenticate(page, true)
+  await routeNavigationData(page)
+  let settings = adminResponse('/admin/operations') as Record<string, unknown>
+  let saves = 0
+  await page.route('**/api/v1/admin/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/admin/operations')) {
+      if (route.request().method() === 'PUT') {
+        settings = {...settings, ...route.request().postDataJSON()}
+        saves++
+      }
+      return json(route, settings)
+    }
+    return json(route, adminResponse(path))
+  })
+  await page.goto('/?admin=1')
+  await page.getByRole('button', {name:'Система', exact:true}).click()
+  const interval = page.getByRole('spinbutton', {name:/Backup каждые/})
+  await expect(interval).toHaveAttribute('min', '0')
+  await interval.fill('0')
+  await page.getByRole('button', {name:'Сохранить систему', exact:true}).click()
+  await expect.poll(() => saves).toBe(1)
+  expect(settings.backup_interval_hours).toBe(0)
+  await page.reload()
+  await page.getByRole('button', {name:'Система', exact:true}).click()
+  await expect(interval).toHaveValue('0')
+  await expect(page.getByText(/0 — отключить копии БД/)).toBeVisible()
+})
