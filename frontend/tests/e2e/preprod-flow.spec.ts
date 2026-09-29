@@ -542,6 +542,38 @@ test('uncertain creation blocks another paid request until server state can be c
   expect(creates).toBe(1)
 })
 
+for (const removal of [false,true]) {
+  test(`failed ${removal?'removal':'addition'} can exit and reopen without changing the task or purchasing a retry`,async({page})=>{
+    stagedSceneEdit(removal)
+    session={...session,region_mode:null,region_object:null,generation_ids:{...session.generation_ids,prud:generationIds[1]}}
+    project={...project,context:{...project.context,design_session:session}}
+    const original=structuredClone(session)
+    let writes=0
+    let creates=0
+    await page.route(`**/api/v1/assets/${assetIds[0]}`,route=>json(route,asset(0)))
+    await page.route(`**/api/v1/projects/${projectId}/questionnaire-session`,route=>{
+      if(route.request().method()==='PUT') writes++
+      return route.fallback()
+    })
+    await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation/${generationIds[1]}`,route=>json(route,generation(1,'failed')))
+    await page.route(`**/api/v1/projects/${projectId}/questionnaire-generation`,route=>{
+      creates++
+      return json(route,generation(1,'completed'),202)
+    })
+    await page.goto(`/?project=${projectId}`)
+    await page.getByRole('button',{name:'Проверить генерацию',exact:true}).click()
+    await expect(page.getByRole('button',{name:'Повторить генерацию · 1 кр.',exact:true})).toBeVisible()
+    await page.getByRole('button',{name:'Назад',exact:true}).click()
+    await expect(page).toHaveURL(/section=home/)
+    await page.goto(`/?project=${projectId}`)
+    await page.getByRole('button',{name:'Проверить генерацию',exact:true}).click()
+    await expect(page.getByRole('button',{name:'Повторить генерацию · 1 кр.',exact:true})).toBeVisible()
+    expect(session).toEqual(original)
+    expect(writes).toBe(0)
+    expect(creates).toBe(0)
+  })
+}
+
 test('checking a failed removal is free and only an explicit priced retry creates a generation',async({page})=>{
   stagedSceneEdit(true)
   session={...session,region_mode:null,region_object:null,generation_ids:{...session.generation_ids,prud:generationIds[1]}}
