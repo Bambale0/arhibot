@@ -1436,7 +1436,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   if ((busy || generationInFlight) && !active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card generating-card"><SparkIcon/><h1>{session.pending_removal_object === current.key ? 'Удаляем' : session.initial_concept_accepted && session.accepted_objects.includes(current.key) ? 'Изменяем' : 'Создаём'}: {current.title}</h1><p>Сохраняем текущую сцену, ракурс и уже принятые объекты. Можно выйти и вернуться позже — задача продолжит выполняться.</p>{error && <div className="banner-error">{error}</div>}</section></main>
 
-  if (!active) return <main className="questionnaire-shell"><section className="questionnaire-card">
+  if (!active) return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><section className="questionnaire-card">
     <h1>{current.title}</h1>
     <p>Проверка статуса бесплатна и не запускает новую генерацию. После подтверждённой ошибки можно отдельно повторить генерацию за указанную стоимость.</p>
     {error && <div className="banner-error">{error}</div>}
