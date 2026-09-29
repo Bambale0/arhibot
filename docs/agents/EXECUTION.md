@@ -601,3 +601,5 @@ Review follow-up: reproduced the paid-review Back regression before fixing it (o
 - No further paid calls fit the remaining2.60RUB worst-case reserve under current runtime policy. User budget question remains unanswered; live repeat of this last adjustment and the new bath remain pending additional authorization.
 
 - Regression evidence:2 failures on photo whole-perimeter hedge/fence before repair;122 focused checks pass after repair. Full83 integration checks with Alembic/schema verification pass; full unit/contract run and exact-head CI are recorded in release evidence. Canonical briefs and synthetic guide behavior remain stable; partial/explicit placement and all local-edit scopes retained. Live result remains unaccepted because an extra hedge/planting was visible, despite corrected house geometry.
+
+- Full unit run identified one deliberately changed old contract: photo whole-perimeter proxy preservation. Updated that regression to require removal of only the invalid perimeter proxy while retaining the source-photo lawn zone; local/remove placement remains unchanged. No implementation weakened to satisfy the old expectation.
