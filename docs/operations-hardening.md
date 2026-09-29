@@ -26,6 +26,12 @@ Raw `/uploads/...` access is disabled. API responses expose short-lived HMAC-sig
 
 A previously issued media link can remain usable until its short expiry even if the asset is soft-deleted. After expiry it cannot be refreshed without going through an authorized application endpoint or a new public Ideas response.
 
+## Test-server backup switch
+
+Admin → System → **Backup interval, hours** uses `backup_interval_hours` in the existing operations API. `0` explicitly disables scheduled and pre-deploy database/media snapshots and their off-site export. The monitor reports `backup=disabled_by_operator` and keeps all other health checks active. A positive interval re-enables backups and the mandatory verified off-site pre-deploy snapshot gate. Unreadable or invalid policy fails closed. Changes use the existing authenticated admin API and audit log; no migration or new environment setting is needed.
+
+This opt-out is for the operator-authorized disposable test server. Before production promotion, restore a positive interval, verify encrypted delivery and perform a restore drill. Local code rollback archives and previously created snapshots are not deleted by the switch. With runtime snapshots disabled, a release records an empty `PRE_MIGRATION_RUNTIME_BACKUP`; no new database recovery point is promised.
+
 ## Release identity and database recovery
 
 Every application container carries the `com.auroom.release` label. After a successful deploy, `.release/current.env` records the release SHA, Alembic version, deployment timestamp, code backup, and pre-migration runtime backup. Server smoke checks verify container/release parity.

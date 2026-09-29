@@ -73,11 +73,15 @@ fi
 }
 
 interval_hours=$(compose exec -T postgres psql -U app -d app -Atc "select backup_interval_hours from operational_settings where id=1" 2>/dev/null | tr -d '[:space:]' || true)
+if [[ "${interval_hours}" == "0" ]]; then
+  echo "AuRoom backup skipped: runtime backups disabled by operator"
+  exit 0
+fi
+if [[ ! "${interval_hours}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Cannot read valid backup policy; refusing runtime backup" >&2
+  exit 1
+fi
 if [[ "${mode}" != "force" ]]; then
-  if [[ ! "${interval_hours}" =~ ^[1-9][0-9]*$ ]]; then
-    echo "AuRoom backup skipped: automatic backup interval is disabled"
-    exit 0
-  fi
   latest_manifest=$(find "${backup_root}" -mindepth 2 -maxdepth 2 -type f -name SHA256SUMS ! -path "${backup_root}/.partial-*/*" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)
   latest_epoch=""
   [[ -z "${latest_manifest}" ]] || latest_epoch=$(stat -c %Y "${latest_manifest}")

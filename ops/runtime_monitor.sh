@@ -58,6 +58,7 @@ else
   fail "could not determine disk usage"
 fi
 
+check_backup_age() {
 latest_backup=$(find "${app_dir}/backups/runtime" -mindepth 2 -maxdepth 2 -type f -name SHA256SUMS ! -path "${app_dir}/backups/runtime/.partial-*/*" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)
 if [[ -z "${latest_backup}" ]]; then
   fail "no runtime backup checksum found"
@@ -103,6 +104,17 @@ if [[ "${offsite_configured}" == "1" ]]; then
     if (( offsite_age_hours >= backup_fail_hours )); then fail "off-site backup age ${offsite_age_hours}h >= ${backup_fail_hours}h";
     elif (( offsite_age_hours >= backup_warn_hours )); then warn "off-site backup age ${offsite_age_hours}h >= ${backup_warn_hours}h"; fi
   fi
+fi
+
+}
+
+backup_interval=$(compose exec -T postgres psql -U app -d app -Atc "select backup_interval_hours from operational_settings where id=1" 2>/dev/null | tr -d '[:space:]' || true)
+if [[ "${backup_interval}" == "0" ]]; then
+  metrics+=("backup=disabled_by_operator")
+elif [[ "${backup_interval}" =~ ^[1-9][0-9]*$ ]]; then
+  check_backup_age
+else
+  fail "could not read backup policy"
 fi
 
 expected_sha=$(awk -F= '$1 == "RELEASE_SHA" {print $2}' "${app_dir}/.release/current.env" 2>/dev/null || true)

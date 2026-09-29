@@ -1071,3 +1071,29 @@ async def test_credit_lock_refreshes_previously_authenticated_user():
         await first.commit()
     async with get_session_factory()() as check:
         assert (await check.get(User, user_id)).credits_balance == 4
+
+
+@pytest.mark.asyncio
+async def test_admin_can_disable_test_backups_and_reenable_with_audit():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        _, admin = await _register_admin(client)
+        _, user = await _register_user(client)
+        denied = await client.put('/api/v1/admin/operations', headers=user,
+                                  json={'backup_interval_hours': 0})
+        assert denied.status_code == 403
+        for interval in (0, 24):
+            saved = await client.put('/api/v1/admin/operations', headers=admin,
+                                     json={'backup_interval_hours': interval})
+            assert saved.status_code == 200, saved.text
+            assert saved.json()['backup_interval_hours'] == interval
+            reread = await client.get('/api/v1/admin/operations', headers=admin)
+            assert reread.json()['backup_interval_hours'] == interval
+        rejected = await client.put('/api/v1/admin/operations', headers=admin,
+                                    json={'backup_interval_hours': -1})
+        assert rejected.status_code == 422
+        audit = await client.get('/api/v1/admin/audit', headers=admin)
+        assert audit.status_code == 200, audit.text
+        assert any(row['action'] == 'operations.settings.update'
+                   and 'backup_interval_hours' in row['details']['fields']
+                   for row in audit.json())
