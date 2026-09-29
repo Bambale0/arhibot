@@ -401,3 +401,22 @@ def build_object_removal_policy(object_key: str) -> EditPolicySnapshot:
         quality_checks=("outside_region_integrity", "boundary_continuity"),
         deferred_quality_checks=(),
     )
+
+
+def hedge_requests_roof_edit(comment: str) -> bool:
+    """Reject explicit roof edits on a hedge; references to an unchanged roof are valid.
+
+    This is a narrow domain guard, not an automatic object/intent router.
+    """
+    for clause in re.split(r"[.!?;,\n]|\s+и\s+", comment.casefold()):
+        roof = re.search(r"\b(?:крыш|кровл)\w*", clause)
+        action = re.search(r"\b(?:замен|помен|измен|сдела|перекрас|покрас|затемн|осветл)\w*", clause)
+        if roof is None or action is None:
+            continue
+        if re.search(r"\bне\s+$", clause[:action.start()]):
+            continue
+        # 'Сделай изгородь в цвет крыши' still edits the hedge.
+        if re.search(r"\b(?:изгород|цвет(?:ы|ов)|растени)\w*", clause[:roof.start()]):
+            continue
+        return True
+    return False

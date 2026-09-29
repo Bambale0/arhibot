@@ -368,7 +368,7 @@ textarea:focus-visible {
 .questionnaire-option.selected i::after { border-color: #090b09; }
 
 .questionnaire-field label { color: #bbb19d; }
-.questionnaire-field input {
+.questionnaire-field :is(input, select) {
   background: #0d1312;
   border-color: var(--q-line);
   color: var(--brand-ivory);
@@ -376,7 +376,7 @@ textarea:focus-visible {
 .questionnaire-field input::placeholder { color: #68665f; }
 .questionnaire-option:focus-visible,
 .questionnaire-card button:focus-visible,
-.questionnaire-field input:focus-visible {
+.questionnaire-field :is(input, select):focus-visible {
   outline-color: rgba(228, 198, 126, .52);
 }
 
