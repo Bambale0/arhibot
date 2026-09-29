@@ -228,3 +228,48 @@ def test_synthetic_source_does_not_receive_photo_replacement_rules():
     result = build_visual_fidelity_prompt(build_initial_concept_prompt(catalog, state, input_asset_present=False))
     assert 'NEW BRIEF TAKES PRIORITY' not in result
     assert 'selected_objects_override_existing_geometry' not in spec(result)['source_scene']
+
+
+@pytest.mark.parametrize('key,question,placement', [
+    ('izgorod', '3', 'Весь периметр внутри забора'),
+    ('zabor', '6', 'Весь периметр'),
+])
+@pytest.mark.parametrize('photo', [False, True])
+def test_initial_whole_boundary_has_no_second_interior_footprint(key, question, placement, photo):
+    catalog = build_catalog()
+    state = DesignSession(catalog_version=catalog['version'],
+        selected_objects=['eskez-doma', key], initial_concept_mode=True,
+        plot_area_sotkas=10, answers={key:{question:placement}})
+    canonical = build_initial_concept_prompt(catalog, state, input_asset_present=photo)
+    before = spec(canonical)
+    assert any(o['object_key']==key for o in before['site_plan']['objects'])
+    result = spec(build_visual_fidelity_prompt(canonical))
+    assert not any(o['object_key']==key for o in result['site_plan']['objects'])
+    assert any(o['object_key']==key for o in result['task']['objects'])
+    assert canonical == build_initial_concept_prompt(catalog, state, input_asset_present=photo)
+    if photo:
+        assert 'existing source-photo boundary' in result['visual_acceptance_contract']['boundary_directive']
+        assert 'Do not invent extra interior planting' in result['source_scene']['directive']
+
+
+def test_photo_partial_hedge_retains_its_requested_side():
+    catalog = build_catalog()
+    state = DesignSession(catalog_version=catalog['version'],
+        selected_objects=['eskez-doma','izgorod'], initial_concept_mode=True,
+        plot_area_sotkas=10, answers={'izgorod':{'3':'Справа'}})
+    canonical = build_initial_concept_prompt(catalog, state, input_asset_present=True)
+    before = next(o for o in spec(canonical)['site_plan']['objects'] if o['object_key']=='izgorod')
+    result = spec(build_visual_fidelity_prompt(canonical))
+    after = next(o for o in result['site_plan']['objects'] if o['object_key']=='izgorod')
+    assert after['relations']==before['relations']
+
+
+def test_explicit_photo_boundary_zone_is_not_removed_by_derived_zone_cleanup():
+    prompt='AUROOM_INITIAL_CONCEPT_V1\nSTRUCTURED_SPEC:\n'+json.dumps({
+        'schema':'auroom.initial_concept.v1','source_scene':{'kind':'site_photo'},
+        'task':{'objects':[{'object_key':'izgorod','questionnaire_constraints':[
+            {'question':'Где сажаем?', 'answer':'Весь периметр внутри забора'}]}]},
+        'site_plan':{'objects':[{'object_key':'izgorod','placement_source':'explicit',
+                                'rect':{'x':.1,'y':.1,'width':.8,'height':.8}}], 'warnings':[]}})
+    result=spec(build_visual_fidelity_prompt(prompt))
+    assert result['site_plan']['objects']==spec(prompt)['site_plan']['objects']
