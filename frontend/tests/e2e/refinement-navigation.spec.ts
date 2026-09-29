@@ -78,6 +78,10 @@ test('hedge edit identifies its target and permits explicit switch to house with
   await page.getByRole('button',{name:'Изменить: Живая изгородь',exact:true}).click()
   await expect(page.getByRole('heading',{name:'Изменить: Живая изгородь'})).toBeVisible()
   await expect(page.getByLabel('Что изменить?')).not.toHaveAttribute('placeholder',/крыш/)
+  const canvas = await page.locator('.region-canvas').boundingBox()
+  const actions = await page.locator('.questionnaire-actions').boundingBox()
+  expect(actions!.y).toBeGreaterThanOrEqual(canvas!.y + canvas!.height)
+
   await page.getByLabel('Что изменить?').fill('Замени цвет крыши на темный')
   await page.getByLabel('Редактируемый объект').selectOption('eskez-doma')
   await expect(page.getByRole('heading',{name:'Изменить: Дом, фасад'})).toBeVisible()

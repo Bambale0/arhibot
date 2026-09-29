@@ -781,6 +781,7 @@
   .region-picker-card {
     padding: 18px !important;
   }
+  .region-picker-card .questionnaire-actions { position: static; }
   .region-canvas { border-radius: 2px; }
   .region-selection { border-width: 2px; }
   .region-selection span { font-size: 8px; }
