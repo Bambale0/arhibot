@@ -712,6 +712,7 @@ test('an old completed survey stuck on its first question resumes placement and 
 
 for (const [errorType,message] of [
   ['questionnaire_edit_region_blocked','Выделенная область перекрыта защищёнными объектами. Выберите свободное место.'],
+  ['questionnaire_edit_region_too_small','Выделите область крупнее: она должна полностью покрывать объект или место изменения.'],
   ['questionnaire_prompt_too_long','Описание проекта слишком большое. Сократите комментарии или число объектов.'],
 ]) {
   test(`scene edit explains ${errorType} and keeps placement`,async({page})=>{
