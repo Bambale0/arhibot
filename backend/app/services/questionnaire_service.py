@@ -57,6 +57,9 @@ from app.services.edit_policy import build_edit_policy, build_object_removal_pol
 from app.services.project_service import ProjectService
 
 
+QUESTIONNAIRE_MIN_EDIT_REGION_FRACTION = 0.03
+
+
 class QuestionnaireService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -614,6 +617,24 @@ class QuestionnaireService:
                 raise self._invalid(
                     "Every previously accepted object must have a locked visual region."
                 )
+
+        if (
+            masked
+            and edit_region is not None
+            and (
+                edit_region.width < QUESTIONNAIRE_MIN_EDIT_REGION_FRACTION
+                or edit_region.height < QUESTIONNAIRE_MIN_EDIT_REGION_FRACTION
+            )
+        ):
+            raise AppError(
+                type="questionnaire_edit_region_too_small",
+                title="Область слишком мала",
+                status=422,
+                detail=(
+                    "Выделите область крупнее: она должна полностью покрывать объект "
+                    "или место изменения."
+                ),
+            )
 
         if masked and edit_region is not None and not has_editable_area(edit_region, protected_regions):
             raise AppError(
