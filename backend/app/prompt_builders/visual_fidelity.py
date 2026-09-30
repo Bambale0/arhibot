@@ -187,6 +187,33 @@ def _house_footprint(spec: dict, objects: list[dict]) -> None:
     }
     if not spec.get("task", {}).get("objects"):
         spec["task"]["footprint_shape"] = house["footprint_shape"]
+    floor_answer = _answer(house.get("questionnaire_constraints", []), "сколько этажей")
+    if isinstance(floor_answer, str) and "мансард" in floor_answer.casefold():
+        # The total area does not tell us how much of the attic is included, so a
+        # 2.5-floor divisor would manufacture a precise ground footprint. Keep only
+        # relative placement in the provider-only view; the canonical brief remains intact.
+        scale["house_footprint_estimate_status"] = "unmeasured_attic_area"
+        scale["estimated_house_footprint_m2"] = None
+        scale["estimated_house_footprint_share_of_plot"] = None
+        scale["plot_to_house_footprint_ratio"] = None
+        scale["remaining_ground_share"] = None
+        scale.pop("ground_footprint_contract", None)
+        scale["directive"] = (
+            "Plot area is known, but exact house ground footprint is NOT measurable from "
+            "total floor area because the selected attic-area share is unknown. Use the "
+            "site plan for relative placement only; do not infer or claim a numeric house "
+            "ground-area ratio from an assumed 2.5-floor divisor."
+        )
+        plan = spec.get("site_plan", {})
+        if isinstance(plan, dict):
+            plot = plan.get("plot")
+            if isinstance(plot, dict):
+                plot["geometry_accuracy"] = "relative_position_only"
+            for item in plan.get("objects", []):
+                if item.get("object_key") == "eskez-doma":
+                    item["estimated_footprint_m2"] = None
+                    item.pop("ground_footprint_share", None)
+        return
     share = scale.get("estimated_house_footprint_share_of_plot")
     if not isinstance(share, (int, float)) or isinstance(share, bool) or not 0 < share <= 1:
         return
