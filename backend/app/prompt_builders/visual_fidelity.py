@@ -316,6 +316,49 @@ def _initial_scene_priority(spec: dict) -> str:
     )
 
 
+def _initial_architecture_priority(spec: dict) -> str:
+    """Explicit building choices outrank the model's stylistic defaults."""
+    if spec.get("schema") != "auroom.initial_concept.v1" or spec.get("source_scene", {}).get(
+        "kind"
+    ) not in {"synthetic_site", "site_photo"}:
+        return ""
+    roof_geometry = {
+        "Плоская": "a flat roof, not a pitched roof",
+        "Односкатная": "one sloping plane, no ridge and no opposing second slope",
+        "Двускатная": "two opposing slopes meeting at a ridge",
+        "Четырёхскатная": "a four-sided hip roof",
+        "Ломаная мансардная": (
+            "two pitches on each roof side: a steep lower slope and a shallow upper slope; "
+            "a visible slope break, not an ordinary hip or gable roof"
+        ),
+    }
+    directives = []
+    for obj in spec.get("task", {}).get("objects", []):
+        constraints = obj.get("questionnaire_constraints", [])
+        roof = _answer(constraints, "какая кровля")
+        materials = _answer(constraints, "чем отделать фасад")
+        choices = []
+        if isinstance(roof, str) and roof in roof_geometry:
+            choices.append(f"Selected roof: {roof} — {roof_geometry[roof]}.")
+        if isinstance(materials, list) and materials:
+            choices.append(
+                "Selected facade finishes: " + dumps(materials, ensure_ascii=False)
+                + ". Show every selected finish visibly; do not substitute unselected cladding."
+            )
+        if not choices:
+            continue
+        directive = (
+            f"Object {obj.get('object_key')}: " + " ".join(choices)
+            + " These explicit choices take priority over architectural style and reference "
+            "building defaults. Style must adapt to these choices, not replace them."
+        )
+        obj["architecture_selection_directive"] = directive
+        directives.append(directive)
+    if not directives:
+        return ""
+    return "EXPLICIT ARCHITECTURE BEFORE STYLE:\n" + "\n".join(directives) + "\n\n"
+
+
 def _initial_photo_priority(spec: dict) -> str:
     """A new concept uses the photo as site context, not an accepted building."""
     source = spec.get("source_scene", {})
@@ -428,6 +471,7 @@ def build_visual_fidelity_prompt(prompt: str) -> str:
     return (
         photo_priority
         + _initial_scene_priority(spec)
+        + _initial_architecture_priority(spec)
         + prompt[:start]
         + dumps(spec, ensure_ascii=False, separators=(",", ":"))
         + prompt[start + end :]
