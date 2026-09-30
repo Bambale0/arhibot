@@ -768,7 +768,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   async function confirmEditRegion() {
     if (!session || session.region_mode !== 'edit' || !session.region_object || !regionDraft) return
     if (regionDraft.width < 0.03 || regionDraft.height < 0.03) {
-      setError('Выделите область крупнее: она должна точно покрывать место будущего объекта.')
+      setError('Выделите область крупнее: она должна полностью покрывать объект или место изменения.')
       return
     }
     const definition = definitions.get(session.region_object)
@@ -946,6 +946,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       if (err.errorType === 'insufficient_credits') return 'Недостаточно кредитов. Пополните баланс в Профиле.'
       if (err.errorType === 'questionnaire_prompt_too_long') return 'Описание проекта слишком большое. Сократите комментарии или число объектов.'
       if (err.errorType === 'questionnaire_edit_region_blocked') return 'Выделенная область перекрыта защищёнными объектами. Выберите свободное место.'
+      if (err.errorType === 'questionnaire_edit_region_too_small') return 'Выделите область крупнее: она должна полностью покрывать объект или место изменения.'
       if (err.errorType === 'questionnaire_edit_target_mismatch') return 'Сейчас выбрана живая изгородь, а запрос относится к крыше. Выберите нужное строение в поле «Редактируемый объект» и выделите его крышу. Генерация не запущена.'
       if (err.errorType === 'exterior_refinement_interior_not_supported') return 'Можно менять внешний вид дома и трубу на крыше. Изменение комнат, мебели и внутреннего камина не поддерживается.'
     }
