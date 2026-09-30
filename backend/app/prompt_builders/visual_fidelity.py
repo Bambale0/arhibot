@@ -293,11 +293,18 @@ def _initial_scene_priority(spec: dict) -> str:
         return ""
     requirements = []
     keys = {obj.get("object_key") for obj in spec.get("task", {}).get("objects", [])}
-    if not keys.intersection({"zabor", "vorota"}):
+    if "zabor" not in keys:
         requirements.append(
-            "No newly invented fence, gate, wicket or entrance posts on this property. "
+            "No newly invented fence or hard boundary wall, mesh or fence infill on this property. "
             "Readable plot boundaries do not require built structures; use the selected "
             "hedge or natural ground transitions. Surrounding properties remain background context."
+        )
+        if "vorota" in keys:
+            requirements.append("The explicitly selected gate and its supporting posts remain allowed.")
+    if "vorota" not in keys:
+        requirements.append(
+            "No newly invented gate, wicket, gate leaves or entrance posts on this property. "
+            "Leave entrances as open gaps. Posts belonging to an explicitly selected fence remain allowed."
         )
     contract = spec.get("visual_acceptance_contract", {})
     if contract.get("hedge_is_only_requested_boundary"):
@@ -384,7 +391,11 @@ def _selected_relationship_directives(object_key: str, constraints: list[dict]) 
     if selected.get("chimney") == "required":
         directives.append("Show this object's own visible chimney emerging from its roof.")
     elif selected.get("chimney") == "not_requested":
-        directives.append("Do not invent a fireplace chimney on this object. Other objects' selected chimneys remain required.")
+        directives.append(
+            "No chimney, stove pipe or flue on this electric bath. Other objects' selected chimneys remain required."
+            if object_key == "banya" else
+            "Do not invent a fireplace chimney on this object. Other objects' selected chimneys remain required."
+        )
     relation = selected.get("pool_cover_relation")
     if relation in {"above_water", "encloses_water"}:
         directives.append(

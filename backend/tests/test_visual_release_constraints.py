@@ -104,14 +104,14 @@ def test_local_pool_attachment_is_scoped_to_new_pool(operation):
 @pytest.mark.parametrize('photo', [False, True])
 def test_new_boundary_prohibition_does_not_erase_photo_context(photo):
     text, spec = initial({'eskez-doma': {'4': '2 этажа'}, 'basseyn': {}, 'lavochka': {}}, photo=photo)
-    assert ('No newly invented fence, gate, wicket or entrance posts' in text) is (not photo)
+    assert ('No newly invented gate, wicket, gate leaves or entrance posts' in text) is (not photo)
     if photo:
         assert 'Keep unrelated site context' in text
 
 
 def test_explicit_gate_selection_keeps_gate_allowed():
     text, _ = initial({'eskez-doma': {}, 'vorota': {}, 'izgorod': {}})
-    assert 'No newly invented fence, gate, wicket or entrance posts' not in text
+    assert 'No newly invented gate, wicket, gate leaves or entrance posts' not in text
 
 
 def test_missing_selections_do_not_acquire_invented_geometry():
@@ -126,3 +126,16 @@ def test_explicit_bath_log_accents_are_not_negated_by_primary_planken():
     text, _ = initial({'banya': {'9': ['Дерево, планкен', 'Бревно / брус']}})
     assert 'not exposed round logs' not in text
     assert 'Бревно / брус' in text
+
+
+@pytest.mark.parametrize('boundary_keys', [[], ['zabor'], ['vorota'], ['zabor', 'vorota']])
+def test_gate_and_fence_permissions_are_independent(boundary_keys):
+    text, _ = initial({key: {} for key in ['eskez-doma', *boundary_keys]})
+    assert ('No newly invented fence or hard boundary wall' in text) is ('zabor' not in boundary_keys)
+    assert ('No newly invented gate, wicket, gate leaves or entrance posts' in text) is ('vorota' not in boundary_keys)
+
+
+def test_electric_bath_excludes_any_flue_without_suppressing_house_chimney():
+    text, spec = initial({'eskez-doma': {'11б': 'Да'}, 'banya': {'5': 'Электрическая, без трубы'}})
+    assert 'No chimney, stove pipe or flue on this electric bath' in text
+    assert spec['visual_acceptance_contract']['required_roof_chimneys_on_objects'] == ['eskez-doma']
