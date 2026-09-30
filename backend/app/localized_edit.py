@@ -12,6 +12,7 @@ from app.image_compositor import _read_rgb, _rect_box, _region_mask
 from app.prompt_builders.visual_fidelity import (
     build_visual_fidelity_prompt,
     selected_architecture_directive,
+    selected_visual_constraints,
 )
 from app.questionnaires.catalog import SECTION_SPECS
 
@@ -286,11 +287,6 @@ def local_edit_prompt(
             + dumps(spec["house_style_reference"], ensure_ascii=False)
             + ".\n"
         )
-        architecture = selected_architecture_directive(
-            spec["task"]["object_key"], spec.get("questionnaire_constraints", [])
-        )
-        if architecture:
-            priority += architecture + "\n"
         if spec["task"].get("object_key") == "banya":
             priority += (
                 "BATH EXTERIOR: show a recognizable exterior entrance and appropriate "
@@ -300,6 +296,13 @@ def local_edit_prompt(
                 "a blank sealed box or expose interior rooms. Never substitute the house chimney "
                 "for the bath chimney.\n"
             )
+    if operation == "add":
+        object_key = spec["task"]["object_key"]
+        constraints = spec.get("questionnaire_constraints", [])
+        spec["task"]["selected_visual_constraints"] = selected_visual_constraints(object_key, constraints)
+        architecture = selected_architecture_directive(object_key, constraints)
+        if architecture:
+            priority += architecture + "\n"
     return (
         "AUROOM_LOCALIZED_EDIT_V1\n"
         + priority
