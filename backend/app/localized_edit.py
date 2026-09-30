@@ -9,7 +9,10 @@ from math import ceil, sqrt
 from PIL import Image, ImageChops, ImageDraw, ImageStat
 
 from app.image_compositor import _read_rgb, _rect_box, _region_mask
-from app.prompt_builders.visual_fidelity import build_visual_fidelity_prompt
+from app.prompt_builders.visual_fidelity import (
+    build_visual_fidelity_prompt,
+    selected_architecture_directive,
+)
 from app.questionnaires.catalog import SECTION_SPECS
 
 RATIOS = ((1, 1), (4, 3), (3, 4), (16, 9), (9, 16))
@@ -283,6 +286,11 @@ def local_edit_prompt(
             + dumps(spec["house_style_reference"], ensure_ascii=False)
             + ".\n"
         )
+        architecture = selected_architecture_directive(
+            spec["task"]["object_key"], spec.get("questionnaire_constraints", [])
+        )
+        if architecture:
+            priority += architecture + "\n"
         if spec["task"].get("object_key") == "banya":
             priority += (
                 "BATH EXTERIOR: show a recognizable exterior entrance and appropriate "
