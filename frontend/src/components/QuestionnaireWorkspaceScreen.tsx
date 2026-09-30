@@ -598,7 +598,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     if (session.accepted_objects.includes(key) && !(session.initial_concept_mode && !session.initial_concept_accepted)) return
     const definition = definitions.get(key)
     if (!definition) return
-    const next = { ...session, current_object:key, current_question_id:null, edit_question_ids:[] }
+    // Reopening the whole questionnaire restarts the survey of this object, so a full pass
+    // through its questions is never mistaken for a single-answer edit from the review list.
+    const surveyCompleted = session.survey_completed_objects.filter((item) => item !== key)
+    const next = { ...session, current_object:key, current_question_id:null, edit_question_ids:[], survey_completed_objects:surveyCompleted }
     const first = preQuestions(definition, next)[0]
     await persist({ ...next, current_question_id:first?.id || null })
   }
@@ -1152,6 +1155,18 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
     if (question.phase === 'pre_render') {
       const questions = preQuestions(current, next)
+      // The "Проверьте ТЗ" list opens a single answer. That survey is already complete, so the
+      // edit continues only with the questions whose answers it invalidated (sanitizeObjectAnswers
+      // dropped them) and then returns to the list instead of re-running the questionnaire.
+      const singleAnswerEdit = next.initial_concept_mode
+        && !next.initial_concept_accepted
+        && next.survey_completed_objects.includes(current.key)
+      if (singleAnswerEdit) {
+        const answers = nextAnswers[current.key] || {}
+        const followUp = questions.find((item) => answers[item.id] === undefined)
+        if (followUp) return persist({ ...next, current_question_id:followUp.id })
+        return persist({ ...next, current_object:null, current_question_id:null })
+      }
       const index = questions.findIndex((q) => q.id === question.id)
       if (index < questions.length - 1) return persist({ ...next, current_question_id:questions[index + 1].id })
       if (next.initial_concept_mode && !next.initial_concept_accepted) {
@@ -1205,6 +1220,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     if (!session || !current || !active || busy) return
     if (active.phase === 'pre_render' && session.initial_concept_accepted && session.accepted_objects.includes(current.key) && !session.pending_removal_object) {
       return cancelRefinement()
+    }
+    if (active.phase === 'pre_render' && session.initial_concept_mode && !session.initial_concept_accepted
+      && session.survey_completed_objects.includes(current.key)) {
+      // Leaving a single-answer edit returns to the "Проверьте ТЗ" list, not to a previous question.
+      await persist({ ...session, current_object:null, current_question_id:null })
+      return
     }
     const phaseQuestions = current.questions.filter((question) =>
       question.phase === active.phase

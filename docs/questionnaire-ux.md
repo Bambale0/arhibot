@@ -15,6 +15,7 @@ The questionnaire UI is a mobile-first conversational wizard for an architectura
 - Keep the primary action reachable near the bottom edge on mobile.
 - Show selected-object progress without competing with the active question.
 - Treat render review as a distinct visual state: image first, then Approve / Refine.
+- Editing a single answer from the pre-generation ТЗ review list returns to that list. Only questions whose answers the edit invalidated are asked again; the rest of the questionnaire is not replayed.
 - Respect safe areas, keyboard use, focus-visible, and reduced-motion preferences.
 - Do not preload heavy 3D/WebGL work as part of questionnaire interaction.
 
