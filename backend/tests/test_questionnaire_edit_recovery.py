@@ -83,6 +83,43 @@ async def test_real_protected_region_returns_actionable_error_before_creation():
     assert caught.value.type == "questionnaire_edit_region_blocked"
 
 
+@pytest.mark.asyncio
+async def test_too_small_edit_region_is_rejected_before_generation_creation():
+    service = QuestionnaireService(AsyncMock())
+    state = DesignSession(
+        catalog_version="test",
+        selected_objects=["eskez-doma", "banya"],
+        initial_concept_mode=True,
+        initial_concept_accepted=True,
+        initial_generation_id=uuid4(),
+        source_step_completed=True,
+        scene_asset_id=uuid4(),
+        current_object="banya",
+        accepted_objects=["eskez-doma"],
+        edit_regions={
+            "eskez-doma": {"x": 0.12, "y": 0.1, "width": 0.76, "height": 0.78},
+            "banya": {"x": 0.9, "y": 0.1, "width": 0.02, "height": 0.2},
+        },
+        lock_regions={
+            "eskez-doma": {"x": 0.12, "y": 0.1, "width": 0.76, "height": 0.78},
+        },
+    )
+    project = SimpleNamespace(context={"design_session": state.model_dump(mode="json")})
+    service.catalog_for_version = AsyncMock(
+        return_value={
+            "questionnaires": [{"key": "banya", "title": "Баня", "questions": []}],
+        }
+    )
+    with patch(
+        "app.services.questionnaire_service.ProjectService.get_owned_model",
+        AsyncMock(return_value=project),
+    ):
+        with pytest.raises(AppError) as caught:
+            await service.build_generation_request(SimpleNamespace(id=uuid4()), uuid4())
+    assert caught.value.status == 422
+    assert caught.value.type == "questionnaire_edit_region_too_small"
+
+
 def test_generation_binding_atomically_leaves_region_picker():
     state = DesignSession(
         catalog_version="test",
