@@ -133,6 +133,12 @@ else: raise SystemExit('Unhandled '+args)
     curl = tools / 'curl'
     curl.write_text('#!/bin/sh\nexit "${FAIL_READINESS:-0}"\n')
     curl.chmod(0o755)
+    disk_usage = tools / 'df'
+    disk_usage.write_text(
+        '#!/bin/sh\nprintf "Filesystem Blocks Used Available Capacity Mounted\\n'
+        'fixture 100 50 50 50%% /\\n"\n'
+    )
+    disk_usage.chmod(0o755)
     alerts = tmp_path / 'alerts'
     env = {**os.environ, 'PATH': str(tools)+os.pathsep+os.environ['PATH'],
            'ALERT_FILE':str(alerts), 'BACKUP_INTERVAL':'0',

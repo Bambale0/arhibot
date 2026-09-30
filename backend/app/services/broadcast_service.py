@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,6 +49,7 @@ class BroadcastService:
             scheduled_at = scheduled_at.replace(tzinfo=UTC)
         status = "scheduled" if scheduled_at and scheduled_at > datetime.now(UTC) else "draft"
         row = BroadcastCampaign(
+            id=uuid4(),
             created_by_user_id=actor.id,
             text=payload.text.strip(),
             segment=payload.segment,
