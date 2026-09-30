@@ -4,7 +4,7 @@ import asyncio
 from json import JSONDecodeError, dumps, loads
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -150,6 +150,7 @@ class AdminService:
                 detail="Choose another tariff code.",
             )
         plan = BillingPlan(
+            id=uuid4(),
             code=payload.code,
             name=payload.name.strip(),
             description=payload.description.strip() if payload.description else None,

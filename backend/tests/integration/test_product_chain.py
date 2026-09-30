@@ -58,6 +58,43 @@ async def _register_admin(
     return tokens, headers
 
 
+@pytest.mark.parametrize("entity", ["tariff", "broadcast"])
+@pytest.mark.asyncio
+async def test_admin_create_audit_references_persisted_entity(entity: str) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        tokens, headers = await _register_admin(client)
+        if entity == "tariff":
+            path = "/api/v1/admin/tariffs"
+            payload = {
+                "code": f"audit-{uuid4()}",
+                "name": "Audit regression",
+                "credits": 2,
+                "amount": "10.00",
+                "is_active": False,
+            }
+        else:
+            path = "/api/v1/admin/broadcasts"
+            payload = {"text": "Audit regression draft", "segment": "all"}
+
+        created = await client.post(path, headers=headers, json=payload)
+        assert created.status_code == 201, created.text
+        entity_id = created.json()["id"]
+        listed = await client.get(path, headers=headers)
+        assert listed.status_code == 200, listed.text
+        assert any(item["id"] == entity_id for item in listed.json())
+
+        audit = await client.get("/api/v1/admin/audit", headers=headers)
+        assert audit.status_code == 200, audit.text
+        entries = [
+            item for item in audit.json()
+            if item["action"] == f"{entity}.create"
+            and item["actor_user_id"] == tokens["user"]["id"]
+        ]
+        assert len(entries) == 1
+        assert entries[0]["entity_id"] == entity_id
+
+
 @pytest.mark.asyncio
 async def test_generation_reserves_credit_and_refunds_technical_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     transport = ASGITransport(app=app)
