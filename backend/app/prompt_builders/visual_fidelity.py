@@ -433,7 +433,10 @@ def selected_architecture_directive(object_key: str, constraints: list[dict]) ->
             "do not substitute unselected cladding. These are the visible outer surfaces; "
             "underlying wall construction does not replace explicitly selected cladding."
         )
-    if isinstance(materials, list) and "Дерево, планкен" in materials:
+    if (
+        isinstance(materials, list) and "Дерево, планкен" in materials
+        and "Бревно / брус" not in materials
+    ):
         choices.append("Wood finish means flat planken boards, not exposed round logs.")
     if not choices:
         return ""

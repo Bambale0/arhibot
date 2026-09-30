@@ -120,3 +120,9 @@ def test_missing_selections_do_not_acquire_invented_geometry():
     assert 'full_storeys' not in contract
     assert 'roof' not in contract
     assert 'facade_finishes' not in contract
+
+
+def test_explicit_bath_log_accents_are_not_negated_by_primary_planken():
+    text, _ = initial({'banya': {'9': ['Дерево, планкен', 'Бревно / брус']}})
+    assert 'not exposed round logs' not in text
+    assert 'Бревно / брус' in text
