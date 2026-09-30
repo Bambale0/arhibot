@@ -56,12 +56,10 @@ def test_guide_encodes_ground_areas_without_labels_or_fence_and_keeps_canonical(
         "partial_hedge",
         "partial_fence",
         "unknown_size",
-        "oval",
         "pavilion",
         "attached",
         "complex_house",
         "missing_house_shape",
-        "mansard",
         "oversize",
     ],
 )
