@@ -48,3 +48,12 @@ job is active.
 Do not mark these criteria satisfied merely because code/CI/deployment is green.
 No production promotion is part of this change. Acceptance spending remains inside
 the cumulative300RUB cap, with294.80RUB already settled at baseline.
+
+## Dependency gate discovered during delivery
+
+CI rejected PyJWT2.14.0 for [CVE-2026-101918](https://github.com/jpadilla/pyjwt/security/advisories/GHSA-42vr-xj54-vc7v).
+The minimum is now2.15, and the hash lock resolves to2.15.1. Other dependency pins
+and the build lock are unchanged. No audit exception was introduced. The application
+uses signature verification, not the advisory's unverified/JWKS path; this update
+removes a vulnerable dependency without claiming an observed authentication bypass.
+Existing login/token/role flows are rechecked after the upgrade.
