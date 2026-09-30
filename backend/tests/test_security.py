@@ -93,3 +93,21 @@ def test_invalid_telegram_signature_is_rejected() -> None:
     with pytest.raises(AppError) as exc_info:
         verify_telegram_init_data(init_data, settings)
     assert exc_info.value.type == "telegram_auth_invalid"
+
+
+@pytest.mark.parametrize('valid_signature', [False, True])
+def test_deeply_nested_token_payload_is_unauthorized_not_an_uncaught_exception(valid_signature):
+    from base64 import urlsafe_b64encode
+
+    settings = Settings(jwt_secret='a' * 40, refresh_token_secret='b' * 40)
+    header = urlsafe_b64encode(b'{"alg":"HS256","typ":"JWT"}').rstrip(b'=')
+    payload = urlsafe_b64encode(b'[' * 2000 + b']' * 2000).rstrip(b'=')
+    signing_input = header + b'.' + payload
+    signature = hmac.digest(settings.jwt_secret.encode(), signing_input, 'sha256')
+    if not valid_signature:
+        signature = b'invalid-signature'
+    token = (signing_input + b'.' + urlsafe_b64encode(signature).rstrip(b'=')).decode()
+    with pytest.raises(AppError) as exc_info:
+        decode_access_token(token, settings)
+    assert exc_info.value.status == 401
+    assert exc_info.value.type == 'invalid_access_token'

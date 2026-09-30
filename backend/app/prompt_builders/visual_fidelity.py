@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from copy import deepcopy
 from json import JSONDecoder, JSONDecodeError, dumps
 from math import sqrt
@@ -290,6 +292,20 @@ def _initial_scene_priority(spec: dict) -> str:
     ) != "synthetic_site":
         return ""
     requirements = []
+    keys = {obj.get("object_key") for obj in spec.get("task", {}).get("objects", [])}
+    if "zabor" not in keys:
+        requirements.append(
+            "No newly invented fence or hard boundary wall, mesh or fence infill on this property. "
+            "Readable plot boundaries do not require built structures; use the selected "
+            "hedge or natural ground transitions. Surrounding properties remain background context."
+        )
+        if "vorota" in keys:
+            requirements.append("The explicitly selected gate and its supporting posts remain allowed.")
+    if "vorota" not in keys:
+        requirements.append(
+            "No newly invented gate, wicket, gate leaves or entrance posts on this property. "
+            "Leave entrances as open gaps. Posts belonging to an explicitly selected fence remain allowed."
+        )
     contract = spec.get("visual_acceptance_contract", {})
     if contract.get("hedge_is_only_requested_boundary"):
         requirements.append(
@@ -316,12 +332,100 @@ def _initial_scene_priority(spec: dict) -> str:
     )
 
 
+def selected_visual_constraints(object_key: str, constraints: list[dict]) -> dict:
+    """Derive object-scoped visual relationships, not a claim about output pixels."""
+    result = {}
+    floor_answer = _answer(constraints, "сколько этажей")
+    if isinstance(floor_answer, str):
+        match = re.fullmatch(r"([1-3]) (?:этаж|этажа)( с мансардой)?", floor_answer)
+        if match:
+            result.update(full_storeys=int(match[1]), attic_above_full_storeys=bool(match[2]))
+    roof = _answer(constraints, "какая кровля")
+    if isinstance(roof, str):
+        result["roof"] = roof
+    materials = _answer(constraints, "чем отделать фасад")
+    if isinstance(materials, list) and materials:
+        result["facade_finishes"] = list(materials)
+    if object_key == "eskez-doma":
+        fireplace = _answer(constraints, "будет ли камин")
+        if fireplace in ("Да", "Нет"):
+            result["chimney"] = "required" if fireplace == "Да" else "not_requested"
+    if object_key == "banya":
+        stove = _answer(constraints, "печь")
+        if stove == "Дровяная, с трубой":
+            result["chimney"] = "required"
+        elif stove == "Электрическая, без трубы":
+            result["chimney"] = "not_requested"
+    if object_key == "basseyn":
+        cover = _answer(constraints, "чем накрыть")
+        relation = (
+            {"Навес": "above_water", "Павильон": "encloses_water", "Открытый": "none"}.get(cover)
+            if isinstance(cover, str) else None
+        )
+        if relation:
+            result["pool_cover_relation"] = relation
+        if _answer(constraints, "какой бассейн") == "Выкопанный":
+            result["pool_ground_relation"] = "in_ground"
+        shape = _answer(constraints, "форма чаши")
+        if isinstance(shape, str):
+            result["pool_shape"] = shape
+    return result
+
+
+def _selected_relationship_directives(object_key: str, constraints: list[dict]) -> list[str]:
+    selected = selected_visual_constraints(object_key, constraints)
+    directives = []
+    if "full_storeys" in selected:
+        directives.append(
+            f"This object has exactly {selected['full_storeys']} full above-ground storeys "
+            "below its roof: separate full-height wall/window levels. A basement does not replace "
+            "an above-ground storey. A double-height room is a void within these storeys, "
+            "not an additional storey and not permission to remove an upper floor."
+        )
+        directives.append(
+            "The selected attic is an ADDITIONAL roof-space level ABOVE all the full storeys; "
+            "its dormers do not count as a full storey."
+            if selected["attic_above_full_storeys"] else
+            "Do not add an extra occupied attic or another full storey."
+        )
+    if selected.get("chimney") == "required":
+        directives.append("Show this object's own visible chimney emerging from its roof.")
+    elif selected.get("chimney") == "not_requested":
+        directives.append(
+            "No chimney, stove pipe or flue on this electric bath. Other objects' selected chimneys remain required."
+            if object_key == "banya" else
+            "Do not invent a fireplace chimney on this object. Other objects' selected chimneys remain required."
+        )
+    relation = selected.get("pool_cover_relation")
+    if relation in {"above_water", "encloses_water"}:
+        directives.append(
+            "The pool cover belongs to the POOL WATER footprint, not an adjacent seating gazebo "
+            "or a roof above a dry deck. Its roof plan must cover the water; supports stand outside "
+            "the basin. Keep the basin and water visibly identifiable beneath the cover."
+        )
+        directives.append(
+            "Use an open-sided overhead canopy, without enclosing pavilion walls."
+            if relation == "above_water" else
+            "Use a pavilion enclosing the pool itself."
+        )
+    elif relation == "none":
+        directives.append("The pool is uncovered: no canopy or pavilion above the water.")
+    if selected.get("pool_ground_relation") == "in_ground":
+        directives.append(
+            "The pool is excavated into the ground, with its rim at the surrounding ground/deck level. "
+            "Do not turn it into an above-ground tank with tall exterior walls or external access stairs."
+        )
+    if selected.get("pool_shape") == "Овал":
+        directives.append("The water footprint is a continuous curved oval, not a rectangle with rounded corners.")
+    return directives
+
+
 def selected_architecture_directive(object_key: str, constraints: list[dict]) -> str:
     """Explicit building choices outrank the model's stylistic defaults."""
     roof_geometry = {
         "Плоская": "a flat roof, not a pitched roof",
         "Односкатная": "one sloping plane, no ridge and no opposing second slope",
-        "Двускатная": "two opposing slopes meeting at a ridge",
+        "Двускатная": "two opposing slopes meeting at a ridge with vertical gable end walls. No hipped ends",
         "Четырёхскатная": "a four-sided hip roof",
         "Ломаная мансардная": (
             "two pitches on each roof side: a steep lower slope and a shallow upper slope; "
@@ -330,14 +434,21 @@ def selected_architecture_directive(object_key: str, constraints: list[dict]) ->
     }
     roof = _answer(constraints, "какая кровля")
     materials = _answer(constraints, "чем отделать фасад")
-    choices = []
+    choices = _selected_relationship_directives(object_key, constraints)
     if isinstance(roof, str) and roof in roof_geometry:
         choices.append(f"Selected roof: {roof} — {roof_geometry[roof]}.")
     if isinstance(materials, list) and materials:
         choices.append(
             "Selected facade finishes: " + dumps(materials, ensure_ascii=False)
-            + ". Show every selected finish visibly; do not substitute unselected cladding."
+            + ". The first finish is primary, others are accents. Show every selected finish visibly; "
+            "do not substitute unselected cladding. These are the visible outer surfaces; "
+            "underlying wall construction does not replace explicitly selected cladding."
         )
+    if (
+        isinstance(materials, list) and "Дерево, планкен" in materials
+        and "Бревно / брус" not in materials
+    ):
+        choices.append("Wood finish means flat planken boards, not exposed round logs.")
     if not choices:
         return ""
     return (
@@ -354,6 +465,9 @@ def _initial_architecture_priority(spec: dict) -> str:
         return ""
     directives = []
     for obj in spec.get("task", {}).get("objects", []):
+        obj["selected_visual_constraints"] = selected_visual_constraints(
+            str(obj.get("object_key", "")), obj.get("questionnaire_constraints", [])
+        )
         directive = selected_architecture_directive(
             str(obj.get("object_key", "")), obj.get("questionnaire_constraints", [])
         )
