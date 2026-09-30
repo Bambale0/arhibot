@@ -78,6 +78,26 @@ def test_scenario160_keeps_relation_guide_for_oval_pool_with_canopy():
     assert "cover the blue water footprint" in instruction.lower()
 
     image = Image.open(BytesIO(guide.data)).convert("RGB")
-    colors = {color for _, color in image.getcolors(image.width * image.height)}
-    assert (57, 145, 186) in colors
-    assert (210, 154, 68) in colors
+    pixels = image.load()
+
+    def color_bbox(color):
+        points = [
+            (x, y)
+            for y in range(image.height)
+            for x in range(image.width)
+            if pixels[x, y] == color
+        ]
+        assert points
+        xs = [point[0] for point in points]
+        ys = [point[1] for point in points]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    pool = color_bbox((57, 145, 186))
+    canopy = color_bbox((210, 154, 68))
+    assert canopy[0] <= pool[0] <= pool[2] <= canopy[2]
+    assert canopy[1] <= pool[1] <= pool[3] <= canopy[3]
+    assert abs((canopy[0] + canopy[2]) - (pool[0] + pool[2])) <= 2
+    assert abs((canopy[1] + canopy[3]) - (pool[1] + pool[3])) <= 2
+    assert (125, 124, 114) not in {
+        color for _, color in image.getcolors(image.width * image.height)
+    }
