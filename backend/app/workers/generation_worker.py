@@ -470,6 +470,88 @@ async def _download_image(url: str, settings: Settings) -> bytes:
     raise RuntimeError("Generated image download did not produce a response")
 
 
+async def _read_admin_frame(storage: LocalMediaStorage, cached: dict) -> bytes:
+    try:
+        data = await asyncio.to_thread(storage.absolute_path(cached["path"]).read_bytes)
+    except (OSError, KeyError, ValueError) as exc:
+        raise NexusProviderError("Saved animation frame is unavailable", retryable=False) from exc
+    if sha256(data).hexdigest() != cached.get("sha256"):
+        raise NexusProviderError("Saved animation frame changed", retryable=False)
+    return data
+
+
+async def _check_admin_frame_cache(generation_id: UUID, settings: Settings) -> None:
+    async with get_session_factory()() as db:
+        row = await db.get(Generation, generation_id)
+        frames = (row.quality_report or {}).get("provider_frame_requests", {}) if row else {}
+    storage = LocalMediaStorage(settings)
+    for frame in frames.values():
+        if frame.get("state") == "completed":
+            await _read_admin_frame(storage, frame)
+
+
+async def _cleanup_admin_frames(generation_id: UUID, settings: Settings) -> None:
+    async with get_session_factory()() as db:
+        row = await db.get(Generation, generation_id)
+        if row is None or row.status not in {GenerationStatus.COMPLETED, GenerationStatus.FAILED}:
+            return
+    storage = LocalMediaStorage(settings)
+    folder = storage.absolute_path(f"internal/admin-frames/{generation_id}")
+    if folder.is_dir():
+        for path in folder.iterdir():
+            if path.is_file():
+                await asyncio.to_thread(path.unlink, missing_ok=True)
+        await asyncio.to_thread(folder.rmdir)
+
+
+async def _generate_admin_frame(
+    *, provider: NexusImageProvider, generation_id: UUID, phase: str,
+    model_name: str, prompt: str, params: dict[str, object], source_url: str,
+    settings: Settings,
+) -> tuple[bytes, str, str]:
+    storage = LocalMediaStorage(settings)
+    async with get_session_factory()() as db:
+        row = await GenerationRepository(db).get_for_update(generation_id)
+        if row is None or row.status != GenerationStatus.PROCESSING:
+            raise NexusProviderError("Animation is no longer processing", retryable=False)
+        cached = (row.quality_report or {}).get("provider_frame_requests", {}).get(phase, {})
+    if cached.get("state") == "completed":
+        data = await _read_admin_frame(storage, cached)
+        return data, cached["task_id"], storage.signed_url(
+            cached["path"],
+            ttl_seconds=max(settings.media_url_ttl_seconds, settings.nexus_task_timeout_seconds + 120),
+        )
+
+    result = await _generate_checkpointed(
+        provider, generation_id, attempt=0, phase=phase, model_name=model_name,
+        prompt=prompt, source_url=source_url, params=params,
+        reference_image_urls=None, timeout_seconds=None, frame_slot=phase,
+    )
+    try:
+        data = await _download_image(result.image_url, settings)
+    except (httpx.HTTPError, TimeoutError, OSError) as exc:
+        raise NexusOutcomeUnknown("Animation frame download must resume the accepted task") from exc
+    async with get_session_factory()() as db:
+        image = AssetService(AssetRepository(db), ProjectRepository(db), settings)._validate_image(data)
+    path = f"internal/admin-frames/{generation_id}/{phase}.{image.extension}"
+    try:
+        await storage.write(path, image.data)
+        async with get_session_factory()() as db:
+            row = await GenerationRepository(db).get_for_update(generation_id)
+            if row is None or row.status != GenerationStatus.PROCESSING:
+                raise NexusProviderError("Animation stopped before frame commit", retryable=False)
+            frames = dict((row.quality_report or {}).get("provider_frame_requests", {}))
+            frames[phase] = {
+                **frames.get(phase, {}), "state": "completed", "task_id": result.task_id,
+                "path": path, "sha256": sha256(image.data).hexdigest(),
+            }
+            row.quality_report = {**(row.quality_report or {}), "provider_frame_requests": frames}
+            await db.commit()
+    except Exception as exc:
+        raise NexusOutcomeUnknown("Could not persist completed animation frame; do not resubmit") from exc
+    return image.data, result.task_id, result.image_url
+
+
 async def _generate_orbit_frames(
     *,
     provider: NexusImageProvider,
@@ -481,29 +563,38 @@ async def _generate_orbit_frames(
     frame_count: int,
     settings: Settings,
 ) -> tuple[list[bytes], str | None]:
+    await _check_admin_frame_cache(generation_id, settings)
     semaphore = asyncio.Semaphore(ADMIN_ORBIT_MAX_CONCURRENCY)
 
     async def generate_frame(index: int) -> tuple[int, bytes, str]:
         async with semaphore:
-            result = await provider.generate(
+            data, task_id, _ = await _generate_admin_frame(
+                provider=provider, generation_id=generation_id, phase=f"orbit-{index}",
                 model_name=model_name,
                 prompt=_orbit_frame_prompt(
                     prompt,
                     index=index,
                     frame_count=frame_count,
                 ),
-                image_url=source_url,
-                model_params=params,
-                idempotency_key=f"auroom-{generation_id}-orbit-{index}",
+                source_url=source_url, params=params, settings=settings,
             )
-            data = await _download_image(result.image_url, settings)
-        return index, data, result.task_id
+        return index, data, task_id
 
     generated = await asyncio.gather(
-        *(generate_frame(index) for index in range(1, frame_count))
+        *(generate_frame(index) for index in range(1, frame_count)),
+        return_exceptions=True,
     )
-    generated.sort(key=lambda item: item[0])
-    return [item[1] for item in generated], generated[-1][2] if generated else None
+    # Finish/checkpoint sibling calls before releasing the job for reconciliation.
+    # Never leave parallel purchases running outside the worker's claimed job.
+    for result in generated:
+        if isinstance(result, NexusOutcomeUnknown):
+            raise result
+    for result in generated:
+        if isinstance(result, BaseException):
+            raise result
+    completed = [item for item in generated if not isinstance(item, BaseException)]
+    completed.sort(key=lambda item: item[0])
+    return [item[1] for item in completed], completed[-1][2] if completed else None
 
 
 async def _generate_flyover_frames(
@@ -517,24 +608,23 @@ async def _generate_flyover_frames(
     keyframe_count: int,
     settings: Settings,
 ) -> tuple[list[bytes], str | None]:
+    await _check_admin_frame_cache(generation_id, settings)
     reference_url = source_url
     generated_frames: list[bytes] = []
     last_task_id: str | None = None
     for index in range(1, keyframe_count):
-        result = await provider.generate(
+        data, task_id, reference_url = await _generate_admin_frame(
+            provider=provider, generation_id=generation_id, phase=f"flyover-{index}",
             model_name=model_name,
             prompt=_flyover_frame_prompt(
                 prompt,
                 index=index,
                 keyframe_count=keyframe_count,
             ),
-            image_url=reference_url,
-            model_params=params,
-            idempotency_key=f"auroom-{generation_id}-flyover-{index}",
+            source_url=reference_url, params=params, settings=settings,
         )
-        generated_frames.append(await _download_image(result.image_url, settings))
-        reference_url = result.image_url
-        last_task_id = result.task_id
+        generated_frames.append(data)
+        last_task_id = task_id
     return generated_frames, last_task_id
 
 
@@ -588,6 +678,7 @@ async def _generate_checkpointed(
     model_name: str, prompt: str, source_url: str | None, params: dict[str, object],
     reference_image_urls: list[str] | None, timeout_seconds: float | None,
     required_input: tuple[Path, str] | None = None,
+    frame_slot: str | None = None,
 ) -> NexusImageResult:
     """Persist submission intent before POST; persist accepted ID before polling.
 
@@ -596,11 +687,24 @@ async def _generate_checkpointed(
     """
     key = f"auroom-{generation_id}-{phase}" if attempt == 0 else f"auroom-{generation_id}-quality-{attempt}-{phase}"
     resume_id = None
+
+    def save_checkpoint(row: Generation, checkpoint: dict) -> None:
+        report = dict(row.quality_report or {})
+        if frame_slot is None:
+            report["provider_request"] = checkpoint
+        else:
+            report["provider_frame_requests"] = {
+                **report.get("provider_frame_requests", {}), frame_slot: checkpoint,
+            }
+        row.quality_report = report
+
     async with get_session_factory()() as db:
         row = await GenerationRepository(db).get_for_update(generation_id)
         if row is None or row.status != GenerationStatus.PROCESSING:
             raise NexusProviderError("Generation is no longer processing", retryable=False)
-        previous = (row.quality_report or {}).get("provider_request", {})
+        report = row.quality_report or {}
+        previous = (report.get("provider_request", {}) if frame_slot is None
+                    else report.get("provider_frame_requests", {}).get(frame_slot, {}))
         if previous.get("key") == key:
             resume_id = previous.get("task_id")
             if not resume_id or resume_id == "sync":
@@ -619,10 +723,10 @@ async def _generate_checkpointed(
                     ) from exc
                 if sha256(input_data).hexdigest() != expected_digest:
                     raise NexusProviderError("Frozen layout reference changed", retryable=False)
-            row.quality_report = {**(row.quality_report or {}), "provider_request": {
+            save_checkpoint(row, {
                 "key": key, "attempt": attempt, "phase": phase, "model": model_name,
                 "state": "submitting", "task_id": None,
-            }}
+            })
             await db.commit()
 
     async def accepted(task_id: str) -> None:
@@ -633,10 +737,10 @@ async def _generate_checkpointed(
                     raise NexusProviderError("Generation stopped after provider acceptance", retryable=False)
                 row.provider_task_id = task_id
                 row.model_name = model_name
-                row.quality_report = {**(row.quality_report or {}), "provider_request": {
+                save_checkpoint(row, {
                     "key": key, "attempt": attempt, "phase": phase, "model": model_name,
                     "state": "accepted", "task_id": task_id,
-                }}
+                })
                 await db.commit()
         except Exception as exc:
             raise NexusOutcomeUnknown("Could not persist accepted provider task; do not resubmit") from exc
@@ -1556,6 +1660,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         logger.exception("Generation %s failed", generation_id)
         await _mark_failed_and_refund(generation_id, exc)
     finally:
+        if admin_internal_generation:
+            try:
+                await _cleanup_admin_frames(generation_id, settings)
+            except Exception:
+                logger.warning("Could not clean animation frame cache for %s", generation_id, exc_info=True)
         if guide_relative_path is not None:
             guide_path = guide_storage.absolute_path(guide_relative_path)
             try:
@@ -1604,7 +1713,13 @@ async def _reconcile_database_jobs(settings: Settings) -> None:
             if generation.status == GenerationStatus.PROCESSING:
                 checkpoint = (generation.quality_report or {}).get("provider_request", {})
                 requires_reconciliation = (generation.quality_report or {}).get("requires_reconciliation")
-                if requires_reconciliation and (
+                frames = (generation.quality_report or {}).get("provider_frame_requests", {})
+                resumable_frames = bool(frames) and all(
+                    frame.get("state") == "completed"
+                    or (frame.get("task_id") and frame.get("task_id") != "sync")
+                    for frame in frames.values()
+                )
+                if requires_reconciliation and not resumable_frames and (
                     not checkpoint.get("task_id") or checkpoint.get("task_id") == "sync"
                 ):
                     # No documented lookup-by-idempotency-key API. Operator must
