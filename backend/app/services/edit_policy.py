@@ -105,6 +105,14 @@ _FIREPLACE_EDIT_ACTIONS = (
     "измен",
     "меня",
     "сдела",
+    # Keep repair verbs narrower than "исправ": "камин исправный" is not an edit.
+    "исправь",
+    "исправит",
+    "исправля",
+    "поправь",
+    "поправит",
+    "поправля",
+    "почини",
 )
 _FIREPLACE_CHIMNEY_PATTERNS = (
     re.compile(r"\bкаминн\w*\s+(?:труб\w*|дымоход\w*)\b", re.IGNORECASE),

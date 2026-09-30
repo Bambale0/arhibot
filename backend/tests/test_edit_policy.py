@@ -161,6 +161,41 @@ def test_negative_fireplace_lock_instruction_is_not_blocked() -> None:
     assert policy.allow_fireplace_relocation is False
 
 
+@pytest.mark.parametrize("comment", [
+    "Камин нужно исправить",
+    "Исправь камин",
+    "Исправлять нужно камин",
+    "Поправь камин",
+    "Камин надо поправить",
+    "Почини камин",
+    "Нужно починить камин",
+])
+def test_fireplace_repair_is_rejected_before_exterior_generation(comment: str) -> None:
+    policy = build_edit_policy(
+        object_key="eskez-doma", edit_question_ids=[], review_comment=comment,
+    )
+
+    assert policy.allow_generation is False
+    assert policy.intent == EditIntent.INTERIOR
+
+
+@pytest.mark.parametrize("comment", [
+    "Исправь каминную трубу",
+    "Нужно исправить трубу камина",
+    "Поправь дымоход камина",
+    "Сделай крышу темнее и не исправляй камин",
+    "Камин не нужно исправлять",
+    "Камин исправный",
+])
+def test_chimney_repairs_and_fireplace_preservation_remain_allowed(comment: str) -> None:
+    policy = build_edit_policy(
+        object_key="eskez-doma", edit_question_ids=[], review_comment=comment,
+    )
+
+    assert policy.allow_generation is True
+    assert policy.interior_request_detected is False
+
+
 @pytest.mark.parametrize('comment', [
     'Сделай изгородь ниже',
     'Сделай изгородь в цвет крыши',
