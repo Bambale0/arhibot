@@ -15,7 +15,8 @@ from app.prompt_builders.visual_fidelity import build_visual_fidelity_prompt
 GRASS = (112, 149, 79)
 OUTSIDE = (133, 158, 108)
 HOUSE = (193, 169, 135)
-POOL = (57, 145, 186)\nPOOL_COVER = (210, 154, 68)
+POOL = (57, 145, 186)
+POOL_COVER = (210, 154, 68)
 HEDGE = (48, 93, 49)
 FENCE = (125, 124, 114)
 
