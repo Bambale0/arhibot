@@ -161,6 +161,41 @@ def test_negative_fireplace_lock_instruction_is_not_blocked() -> None:
     assert policy.allow_fireplace_relocation is False
 
 
+@pytest.mark.parametrize("comment", [
+    "Камин нужно исправить",
+    "Исправь камин",
+    "Исправлять нужно камин",
+    "Поправь камин",
+    "Камин надо поправить",
+    "Почини камин",
+    "Нужно починить камин",
+])
+def test_fireplace_repair_is_rejected_before_exterior_generation(comment: str) -> None:
+    policy = build_edit_policy(
+        object_key="eskez-doma", edit_question_ids=[], review_comment=comment,
+    )
+
+    assert policy.allow_generation is False
+    assert policy.intent == EditIntent.INTERIOR
+
+
+@pytest.mark.parametrize("comment", [
+    "Исправь каминную трубу",
+    "Нужно исправить трубу камина",
+    "Поправь дымоход камина",
+    "Сделай крышу темнее и не исправляй камин",
+    "Камин не нужно исправлять",
+    "Камин исправный",
+])
+def test_chimney_repairs_and_fireplace_preservation_remain_allowed(comment: str) -> None:
+    policy = build_edit_policy(
+        object_key="eskez-doma", edit_question_ids=[], review_comment=comment,
+    )
+
+    assert policy.allow_generation is True
+    assert policy.interior_request_detected is False
+
+
 @pytest.mark.parametrize('comment', [
     'Сделай изгородь ниже',
     'Сделай изгородь в цвет крыши',
@@ -174,3 +209,33 @@ def test_hedge_roof_reference_is_not_a_roof_edit(comment):
     from app.services.edit_policy import hedge_requests_roof_edit
 
     assert hedge_requests_roof_edit(comment) is False
+
+
+@pytest.mark.parametrize("comment", [
+    "Почини крышу над камином",
+    "Исправь фасад рядом с камином",
+    "Исправь каминную кирпичную трубу",
+    "Поправь кирпичную трубу старого камина",
+    "Камин исправлять не нужно",
+    "Камин исправлять не будем",
+    "Камин починить не надо",
+    "Камин поправлять не следует",
+])
+def test_repair_target_and_postposed_negation_preserve_exterior_requests(comment: str) -> None:
+    policy = build_edit_policy(
+        object_key="eskez-doma", edit_question_ids=[], review_comment=comment,
+    )
+    assert policy.allow_generation is True
+    assert policy.interior_request_detected is False
+
+
+@pytest.mark.parametrize("comment", [
+    "Исправь камин под крышей",
+    "Камин над крышей нужно исправить",
+    "Камин исправлять не нужно, но потом почини камин",
+])
+def test_exterior_reference_does_not_hide_an_actual_fireplace_repair(comment: str) -> None:
+    policy = build_edit_policy(
+        object_key="eskez-doma", edit_question_ids=[], review_comment=comment,
+    )
+    assert policy.allow_generation is False

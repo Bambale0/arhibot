@@ -273,3 +273,47 @@ def test_explicit_photo_boundary_zone_is_not_removed_by_derived_zone_cleanup():
                                 'rect':{'x':.1,'y':.1,'width':.8,'height':.8}}], 'warnings':[]}})
     result=spec(build_visual_fidelity_prompt(prompt))
     assert result['site_plan']['objects']==spec(prompt)['site_plan']['objects']
+
+
+@pytest.mark.parametrize("source_photo", [False, True])
+@pytest.mark.parametrize("object_key,answers,roof_geometry", [
+    ("banya", {"1": "Барнхаус", "8": "Односкатная", "9": ["Бревно / брус"]}, "one sloping plane"),
+    ("eskez-doma", {"1": "Средиземноморский", "2": "Прямоугольник", "3": 200,
+                     "4": "2 этажа с мансардой", "7": "Ломаная мансардная",
+                     "8": ["Клинкер", "Дерево, планкен"]}, "two pitches on each roof side"),
+])
+def test_initial_selected_roof_and_cladding_override_style_defaults(
+    source_photo, object_key, answers, roof_geometry,
+):
+    catalog = build_catalog()
+    state = DesignSession(
+        catalog_version=catalog["version"], selected_objects=[object_key],
+        initial_concept_mode=True, plot_area_sotkas=15, answers={object_key: answers},
+    )
+    canonical = build_initial_concept_prompt(catalog, state, input_asset_present=source_photo)
+    provider = build_visual_fidelity_prompt(canonical)
+    prefix = provider.split("STRUCTURED_SPEC:\n", 1)[0]
+    enriched = spec(provider)
+    item = enriched["task"]["objects"][0]
+    assert roof_geometry in prefix
+    assert "take priority over architectural style" in prefix
+    assert item["architecture_selection_directive"] in prefix
+    assert json.dumps(answers["9" if object_key == "banya" else "8"], ensure_ascii=False) in prefix
+    assert canonical == build_initial_concept_prompt(catalog, state, input_asset_present=source_photo)
+    assert item["questionnaire_constraints"] == spec(canonical)["task"]["objects"][0]["questionnaire_constraints"]
+
+
+def test_local_roof_refinement_does_not_reapply_old_initial_roof_selection():
+    catalog = build_catalog()
+    definition = next(o for o in catalog["questionnaires"] if o["key"] == "eskez-doma")
+    state = DesignSession(
+        catalog_version=catalog["version"], selected_objects=["eskez-doma"],
+        accepted_objects=["eskez-doma"], current_object="eskez-doma",
+        answers={"eskez-doma": {"7": "Односкатная", "8": ["Кирпич"]}},
+        review_comments={"eskez-doma": "Сделай кровлю темнее"},
+    )
+    provider = build_visual_fidelity_prompt(build_questionnaire_generation_prompt(
+        definition, state, accepted_before=["eskez-doma"], input_asset_present=True,
+    ))
+    assert "EXPLICIT ARCHITECTURE BEFORE STYLE" not in provider
+    assert "architecture_selection_directive" not in provider

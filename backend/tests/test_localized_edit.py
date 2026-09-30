@@ -421,3 +421,26 @@ def test_new_bath_has_exterior_identity_and_room_for_shadow_without_altering_ref
         assert 'occupy most of the selected width and height' not in result
     else:
         assert 'recognizable exterior entrance' not in result
+
+
+@pytest.mark.parametrize("operation", ["add", "refine", "remove"])
+def test_only_new_building_prioritizes_its_selected_roof_over_style_reference(operation):
+    original = {
+        "task": {"object_key": "banya", "object_name": "Баня"},
+        "questionnaire_constraints": [
+            {"question": "Стиль как у дома или свой?", "answer": "Шале"},
+            {"question": "Какая кровля?", "answer": "Односкатная"},
+            {"question": "Чем отделать фасад?", "answer": ["Бревно / брус"]},
+        ],
+    }
+    prompt = "AUROOM_RENDER_SPEC_V1\nSTRUCTURED_SPEC:\n" + json.dumps(original)
+    geometry = {
+        "version": "local-tile.v1", "base_size": [100, 100],
+        "box": [20, 20, 80, 80], "aspect_ratio": "1:1", "operation": operation,
+        "house_style_reference": {"roof": "Ломаная мансардная", "style": "Средиземноморский"},
+    }
+    rendered = local_edit_prompt(prompt, geometry, {"x": .25, "y": .25, "width": .5, "height": .5}, [])
+    priority = rendered.split("STRUCTURED_SPEC:\n", 1)[0]
+    assert ("one sloping plane" in priority) is (operation == "add")
+    assert ("take priority over architectural style" in priority) is (operation == "add")
+    assert json.loads(prompt.split("STRUCTURED_SPEC:\n", 1)[1]) == original

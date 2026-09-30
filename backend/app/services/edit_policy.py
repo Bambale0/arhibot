@@ -105,10 +105,24 @@ _FIREPLACE_EDIT_ACTIONS = (
     "измен",
     "меня",
     "сдела",
+    # Keep repair verbs narrower than "исправ": "камин исправный" is not an edit.
+    "исправь",
+    "исправит",
+    "исправля",
+    "поправь",
+    "поправит",
+    "поправля",
+    "почини",
 )
+_ADJECTIVES_RE = r"(?:[а-яё-]+(?:ую|ой|ая|ое|ые|ых|ого|ому|ым|ый|ий|ей|ие)\s+){0,3}"
 _FIREPLACE_CHIMNEY_PATTERNS = (
-    re.compile(r"\bкаминн\w*\s+(?:труб\w*|дымоход\w*)\b", re.IGNORECASE),
-    re.compile(r"\b(?:труб\w*|дымоход\w*)\s+(?:от\s+)?камин\w*\b", re.IGNORECASE),
+    re.compile(r"\bкаминн\w*\s+" + _ADJECTIVES_RE + r"(?:труб\w*|дымоход\w*)\b", re.IGNORECASE),
+    re.compile(r"\b(?:труб\w*|дымоход\w*)\s+(?:от\s+)?" + _ADJECTIVES_RE + r"камин\w*\b", re.IGNORECASE),
+)
+_FIREPLACE_LOCATION_RE = re.compile(
+    r"\b(?:над|под|возле|около|рядом\s+с|перед|за|у)\s+"
+    + _ADJECTIVES_RE + r"камин(?:ом|а|ами|ов)\b",
+    re.IGNORECASE,
 )
 _COMMENT_CLAUSE_SPLIT_RE = re.compile(
     r"(?<=[.!?;])\s+|,\s*|\s+(?:а\s+ещ[её]|и)\s+",
@@ -202,7 +216,13 @@ def _strip_chimney_fireplace_phrases(text: str) -> str:
 
 def _action_is_negated(text: str, action_start: int) -> bool:
     prefix = text[max(0, action_start - 24) : action_start]
-    return re.search(r"(?:^|\s)не(?:\s+(?:надо|нужно))?\s*$", prefix) is not None
+    if re.search(r"(?:^|\s)не(?:\s+(?:надо|нужно))?\s*$", prefix):
+        return True
+    verb = re.match(r"\w+", text[action_start:])
+    suffix = text[action_start + len(verb.group()) :] if verb else ""
+    return re.match(
+        r"\s+не\s+(?:нужно|надо|следует|стоит|будем|буду|будет|будут)\b", suffix
+    ) is not None
 
 
 def _has_non_negated_action(text: str, markers: tuple[str, ...]) -> bool:
@@ -223,7 +243,7 @@ def _has_non_negated_action(text: str, markers: tuple[str, ...]) -> bool:
 
 def _fireplace_edit_requested(text: str) -> bool:
     for clause in _COMMENT_CLAUSE_SPLIT_RE.split(text.casefold()):
-        normalized = _strip_chimney_fireplace_phrases(clause)
+        normalized = _FIREPLACE_LOCATION_RE.sub("", _strip_chimney_fireplace_phrases(clause))
         if "камин" not in normalized:
             continue
         if _has_non_negated_action(normalized, _FIREPLACE_EDIT_ACTIONS):

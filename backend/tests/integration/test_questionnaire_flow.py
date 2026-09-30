@@ -594,7 +594,7 @@ async def test_questionnaire_generation_is_atomic_under_concurrent_requests(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("object_key", ["lavochka", "izgorod"])
+@pytest.mark.parametrize("object_key", ["lavochka", "izgorod", "eskez-doma"])
 async def test_initial_concept_refinement_updates_scene_generation_chain(object_key: str) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -713,9 +713,12 @@ async def test_initial_concept_refinement_updates_scene_generation_chain(object_
         )
         assert reopened.status_code == 200, reopened.text
 
-        if object_key == "izgorod":
+        if object_key in {"izgorod", "eskez-doma"}:
             session["edit_regions"][object_key] = {"x": 0.12, "y": 0.18, "width": 0.35, "height": 0.42}
-            session["review_comments"][object_key] = "Замени цвет крыши на темный"
+            session["review_comments"][object_key] = (
+                "Замени цвет крыши на темный" if object_key == "izgorod"
+                else "Камин нужно исправить"
+            )
             saved = await client.put(
                 f"/api/v1/projects/{project_id}/questionnaire-session", headers=headers, json=session,
             )
@@ -727,7 +730,10 @@ async def test_initial_concept_refinement_updates_scene_generation_chain(object_
                     f"/api/v1/projects/{project_id}/questionnaire-generation", headers=headers,
                 )
             assert rejected.status_code == 422, rejected.text
-            assert rejected.json()["type"] == "questionnaire_edit_target_mismatch"
+            assert rejected.json()["type"] == (
+                "questionnaire_edit_target_mismatch" if object_key == "izgorod"
+                else "exterior_refinement_interior_not_supported"
+            )
             build_service.assert_not_called()
             assert (await client.get("/api/v1/me", headers=headers)).json()["credits_balance"] == before
             assert await redis_client.lrange(GENERATION_QUEUE_KEY, 0, -1) == queue_before
@@ -739,7 +745,11 @@ async def test_initial_concept_refinement_updates_scene_generation_chain(object_
 
         region = {"x": 0.12, "y": 0.18, "width": 0.35, "height": 0.42}
         session["edit_regions"][object_key] = region
-        session["review_comments"][object_key] = "Сделай изгородь ниже." if object_key == "izgorod" else "Перенести лавочку левее."
+        session["review_comments"][object_key] = {
+            "izgorod": "Сделай изгородь ниже.",
+            "eskez-doma": "Исправь каминную трубу.",
+            "lavochka": "Перенести лавочку левее.",
+        }[object_key]
         session["region_mode"] = None
         session["region_object"] = None
         region_saved = await client.put(
