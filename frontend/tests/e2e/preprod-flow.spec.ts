@@ -305,12 +305,13 @@ test('multi-object initial concept waits for every questionnaire, allows answer 
   await page.locator('details').filter({hasText:'Лавочка'}).locator('summary').click()
   await page.getByRole('button',{name:/Какая лавка\?/}).click()
   await page.getByText('Металл + дерево',{exact:true}).click()
-  await page.getByText('Справа от дома',{exact:true}).click()
+  // A single answer edit returns to the ТЗ review list instead of re-running the questionnaire.
   await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
   expect(generationCount).toBe(0)
 
   await page.locator('details').filter({hasText:'Лавочка'}).locator('summary').click()
   await expect(page.getByRole('button',{name:/Какая лавка\?/})).toContainText('Металл + дерево')
+  await expect(page.getByRole('button',{name:/Где на участке относительно дома\?/})).toContainText('Справа от дома')
   await page.getByRole('button',{name:'Создать общую концепцию'}).click()
   await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
   expect(generationCount).toBe(1)
@@ -395,6 +396,73 @@ test('empty house follow-up is skipped after terrace is placed on the second flo
   await expect(page.getByText('Что еще добавить к дому?')).toHaveCount(0)
   await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
 })
+
+test('editing an upstream answer from the review list re-asks only the dependent question',async({page})=>{
+  session={
+    ...session,
+    selected_objects:['eskez-doma'],
+    plot_area_sotkas:8,
+    initial_concept_mode:true,
+    source_step_completed:true,
+    survey_completed_objects:['eskez-doma'],
+    current_object:null,
+    current_question_id:null,
+    answers:{'eskez-doma':{'4':'2 этажа','6':'Нет','12':'Терраса','12б':['Второй этаж']}},
+  }
+  project={...project,name:'Дом',context:{...project.context,plot_area_m2:800,design_session:session}}
+
+  await page.goto('/?project=' + projectId)
+  await page.locator('details').filter({hasText:'Дом, фасад'}).locator('summary').click()
+  await page.getByRole('button',{name:/Сколько этажей\?/}).click()
+  await page.getByText('1 этаж',{exact:true}).click()
+
+  // The terrace floors answer no longer fits the new storey count: it is discarded and asked
+  // again, while the remaining questions are not replayed.
+  await expect(page.getByText('На каких этажах терраса?')).toBeVisible()
+  await expect(page.getByText('Второй этаж',{exact:true})).toHaveCount(0)
+  await page.getByText('Первый этаж',{exact:true}).click()
+  await page.getByRole('button',{name:'Продолжить'}).click()
+
+  await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
+  expect(generationCount).toBe(0)
+
+  await page.locator('details').filter({hasText:'Дом, фасад'}).locator('summary').click()
+  await expect(page.getByRole('button',{name:/Сколько этажей\?/})).toContainText('1 этаж')
+  await expect(page.getByRole('button',{name:/На каких этажах терраса\?/})).toContainText('Первый этаж')
+})
+
+
+test('backing out after an answer edit invalidates a dependency keeps that object incomplete',async({page})=>{
+  session={
+    ...session,
+    selected_objects:['eskez-doma'],
+    plot_area_sotkas:8,
+    initial_concept_mode:true,
+    source_step_completed:true,
+    survey_completed_objects:['eskez-doma'],
+    current_object:null,
+    current_question_id:null,
+    answers:{'eskez-doma':{'4':'2 этажа','6':'Нет','12':'Терраса','12б':['Второй этаж']}},
+  }
+  project={...project,name:'Дом',context:{...project.context,plot_area_m2:800,design_session:session}}
+
+  await page.goto('/?project=' + projectId)
+  await page.locator('details').filter({hasText:'Дом, фасад'}).locator('summary').click()
+  await page.getByRole('button',{name:/Сколько этажей\?/}).click()
+  await page.getByText('1 этаж',{exact:true}).click()
+
+  await expect(page.getByText('На каких этажах терраса?')).toBeVisible()
+  await page.getByRole('button',{name:'Назад',exact:true}).click()
+
+  await expect(page.getByRole('heading',{name:'Заполните параметры всех объектов'})).toBeVisible()
+  await expect(page.getByText('Всё готово к одной генерации')).toHaveCount(0)
+  expect(session.survey_completed_objects).not.toContain('eskez-doma')
+  expect(session.answers['eskez-doma']['12б']).toBeUndefined()
+
+  await page.getByRole('button',{name:'Дом, фасад',exact:true}).click()
+  await expect(page.getByText('На каких этажах терраса?')).toBeVisible()
+})
+
 
 test('fullscreen control stays available in the mobile product flow',async({page})=>{
   await page.setViewportSize({width:390,height:844})
