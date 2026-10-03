@@ -11,7 +11,8 @@ import pytest
 from PIL import Image
 
 from app.core.config import Settings
-from app.domain.generations.enums import GenerationStatus
+from app.db.models.projects import Project
+from app.domain.generations.enums import GenerationOrigin, GenerationStatus
 from app.providers import neironych
 from app.providers.nexus import NexusOutcomeUnknown
 from app.services.asset_service import LocalMediaStorage
@@ -123,6 +124,64 @@ async def test_saved_unknown_purchase_is_checked_before_changed_runtime_params(
         )
     submit.assert_not_awaited()
     session.commit.assert_not_awaited()
+    assert row.quality_report["provider_request"] == checkpoint
+
+
+@pytest.mark.asyncio
+async def test_missing_legacy_provider_credentials_preserve_accepted_task(monkeypatch, tmp_path):
+    generation_id = uuid4()
+    checkpoint = {
+        "key": f"auroom-{generation_id}-primary",
+        "phase": "primary",
+        "provider": "nexus",
+        "task_id": "accepted-legacy-task",
+        "state": "accepted",
+        "model": "original-image-model",
+    }
+    row = SimpleNamespace(
+        id=generation_id,
+        project_id=uuid4(),
+        input_asset_id=None,
+        status=GenerationStatus.QUEUED,
+        origin=GenerationOrigin.ADMIN_SANDBOX.value,
+        prompt=(
+            worker.ADMIN_SANDBOX_PROMPT_PREFIX
+            + '{"prompt":"test","params":{},"provider":"neironych"}'
+        ),
+        model_name="original-image-model",
+        started_at=None,
+        error=None,
+        quality_report={"provider_request": checkpoint},
+        composition_mode="full_frame",
+        edit_region=None,
+        protected_regions=None,
+        edit_policy=None,
+    )
+    project = SimpleNamespace(deleted_at=None, context={"admin_ai_sandbox": True})
+    session = AsyncMock()
+    session.__aenter__.return_value = session
+
+    async def get(model, unused_id):
+        return project if model is Project else row
+
+    session.get.side_effect = get
+    repository = SimpleNamespace(get_for_update=AsyncMock(return_value=row))
+    monkeypatch.setattr(worker, "get_session_factory", lambda: lambda: session)
+    monkeypatch.setattr(worker, "GenerationRepository", lambda db: repository)
+    refund = AsyncMock()
+    monkeypatch.setattr(worker, "_mark_failed_and_refund", refund)
+
+    await worker.process_generation(
+        generation_id,
+        Settings(
+            nexus_api_key=None,
+            neironych_api_key="test-only",
+            media_root=str(tmp_path),
+        ),
+    )
+    refund.assert_not_awaited()
+    assert row.status == GenerationStatus.PROCESSING
+    assert row.quality_report["requires_reconciliation"] is True
     assert row.quality_report["provider_request"] == checkpoint
 
 

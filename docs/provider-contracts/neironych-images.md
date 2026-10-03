@@ -53,3 +53,19 @@ legacy envelopes without it remain Nexus.
 
 No secret provisioning, production rollout, paid generation, or runtime activation is
 claimed by this document. Activation is a separate verified checkpoint.
+
+## Owner-triggered GitHub Secret delivery
+
+An owner may instead add `NEIRONYCH_API_KEY` in the repository Actions Secrets UI.
+After this change reaches green dev, the owner can manually dispatch `Deploy dev`
+on branch `dev` with `provision_neironych_key=true`. The default is false, including
+all automatic deploys. If using GitHub CLI, the owner runs:
+
+`gh workflow run deploy-dev.yml --repo Bambale0/arhibot --ref dev -f provision_neironych_key=true`
+
+This owner action transfers the secret over the existing verified SSH connection
+only to `/root/arhibot/backend/.env`, preserving ownership, owner-only permissions,
+and unrelated settings. Empty/invalid secrets do not overwrite the current key.
+The key is excluded from command arguments, deploy logs and artifacts. Assistants
+must not dispatch the provisioning flag; the owner performs this final secret action.
+The provider selection remains unchanged until an authenticated admin updates it.
