@@ -1,5 +1,19 @@
 # Agent Execution Ledger
 
+## Active work — single-question questionnaire editing, 2026-10-03
+
+- Baseline: `origin/dev` at `f5353faf742ba203d7c8a34f2fb16835d4dcab47`.
+- Branch: `feat/questionnaire-single-question-edit`; delivery target is a pull request to `dev`.
+- User outcome: from the completed initial-questionnaire review, selecting one answer opens only that question; the user changes it, presses `Сохранить`, and returns to the answer review instead of traversing the remaining questionnaire.
+- Current evidence: the review already deep-links to `current_object/current_question_id`, but `answer()` treats that interaction as normal sequential completion and advances to the next pre-render question.
+- Reuse: persisted `DesignSession.edit_question_ids`, existing answer sanitization/dependency rules, the existing review screen, and the current questionnaire session API. No backend, schema, migration, provider, pricing, secret, or admin setting change is needed.
+- Acceptance: single/multi/number/text values save through one explicit action; successful save returns to review; no generation starts; unrelated answers remain unchanged; newly activated required dependencies are the only additional questions requested; Back exits the targeted edit without walking the questionnaire.
+- Observability/test seam: Playwright route fixtures record saved session state and generation POST count. Add a regression that is RED on the current automatic-next behavior, then run the focused scenario, full browser suite, typecheck and build.
+- Skills: claw UX/frontend audit, wondelai UX heuristics, dev-agents QA audit, anthropics webapp-testing, upstream KSU plus vendored TDD/verification, and obra TDD. `agentskills/agentskills` has no matching React form workflow.
+- Progress: [x] baseline and root cause; [x] RED regression; [x] minimal implementation; [x] focused/full verification; [x] diff review; [ ] PR to `dev` and exact-head CI.
+- TDD evidence: the three-browser regression failed on the old flow because choosing a replacement immediately left the selected question and no `Сохранить` action existed. The implemented flow keeps the selection local until save, persists it, then returns to review. A second regression verifies that changing a parent answer asks only for the newly required dependent answer.
+- Local verification: six focused cases pass across mobile Chromium, desktop Chromium and mobile WebKit; all 144 mobile/desktop Chromium E2E cases pass; frontend typecheck and production build pass; `git diff --check` passes. The attempted all-216 run was stopped after the unchanged WebKit admin-history and browser-quality cases exceeded their existing time budgets on this Windows host; the two affected questionnaire regressions both pass in WebKit.
+
 ## Active work — generation editing feedback, 2026-09-26
 
 Baseline: `dev` `06f780f1133e7990d0a2208ad9d90b36c2c01a18`. User reports removal errors, added bathhouse returning to questionnaire, oversized house, unwanted fence beside flowering hedge, and fireplace/chimney semantics.

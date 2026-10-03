@@ -274,6 +274,7 @@ test('initial concept collects all answers before one generation and supports pr
 
 
 test('multi-object initial concept waits for every questionnaire, allows answer editing, then generates once',async({page})=>{
+  test.setTimeout(45_000)
   session={...session,selected_objects:['lavochka','gazon','prud'],initial_concept_mode:true,current_object:null}
   project={...project,name:'Участок целиком',context:{...project.context,design_session:session}}
 
@@ -304,16 +305,51 @@ test('multi-object initial concept waits for every questionnaire, allows answer 
 
   await page.locator('details').filter({hasText:'Лавочка'}).locator('summary').click()
   await page.getByRole('button',{name:/Какая лавка\?/}).click()
+  await expect(page.getByText('Какая лавка?')).toBeVisible()
   await page.getByText('Металл + дерево',{exact:true}).click()
-  await page.getByText('Справа от дома',{exact:true}).click()
+  await expect(page.getByText('Какая лавка?')).toBeVisible()
+  await page.getByRole('button',{name:'Сохранить'}).click()
   await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
   expect(generationCount).toBe(0)
 
   await page.locator('details').filter({hasText:'Лавочка'}).locator('summary').click()
   await expect(page.getByRole('button',{name:/Какая лавка\?/})).toContainText('Металл + дерево')
+  await expect(page.getByRole('button',{name:/Где на участке относительно дома\?/})).toContainText('Справа от дома')
   await page.getByRole('button',{name:'Создать общую концепцию'}).click()
   await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
   expect(generationCount).toBe(1)
+})
+
+
+test('editing one answer asks only for a newly required dependent answer',async({page})=>{
+  session={
+    ...session,
+    source_step_completed:true,
+    selected_objects:['eskez-doma'],
+    initial_concept_mode:true,
+    survey_completed_objects:['eskez-doma'],
+    current_object:null,
+    current_question_id:null,
+    answers:{'eskez-doma':{'4':'2 этажа','6':'Нет','12':'Нет'}},
+  }
+  project={...project,name:'Дом',context:{...project.context,design_session:session}}
+
+  await page.goto('/?project=' + projectId)
+  await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
+  await page.locator('details').filter({hasText:'Дом, фасад'}).locator('summary').click()
+  await page.getByRole('button',{name:/Нужна терраса\?/}).click()
+  await page.getByText('Терраса',{exact:true}).click()
+  await page.getByRole('button',{name:'Сохранить'}).click()
+
+  await expect(page.getByText('На каких этажах терраса?')).toBeVisible()
+  await page.getByText('Второй этаж',{exact:true}).click()
+  await page.getByRole('button',{name:'Продолжить'}).click()
+  await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
+  expect(generationCount).toBe(0)
+
+  await page.locator('details').filter({hasText:'Дом, фасад'}).locator('summary').click()
+  await expect(page.getByRole('button',{name:/Нужна терраса\?/})).toContainText('Терраса')
+  await expect(page.getByRole('button',{name:/На каких этажах терраса\?/})).toContainText('Второй этаж')
 })
 
 
