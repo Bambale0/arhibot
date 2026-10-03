@@ -1,5 +1,21 @@
 # Agent Execution Ledger
 
+## Active work — single-question questionnaire editing, 2026-10-03
+
+- Baseline: `origin/dev` at `f5353faf742ba203d7c8a34f2fb16835d4dcab47`.
+- Branch: `feat/questionnaire-single-question-edit`; delivery target is a pull request to `dev`.
+- User outcome: from the completed initial-questionnaire review, selecting one answer opens only that question; the user changes it, presses `Сохранить`, and returns to the answer review instead of traversing the remaining questionnaire.
+- Current evidence: the review already deep-links to `current_object/current_question_id`, but `answer()` treats that interaction as normal sequential completion and advances to the next pre-render question.
+- Reuse: persisted `DesignSession.edit_question_ids`, existing answer sanitization/dependency rules, the existing review screen, and the current questionnaire session API. No backend, schema, migration, provider, pricing, secret, or admin setting change is needed.
+- Acceptance: single/multi/number/text values save through one explicit action; successful save returns to review; no generation starts; unrelated answers remain unchanged; newly activated required dependencies are the only additional questions requested; Back exits the targeted edit without walking the questionnaire.
+- Observability/test seam: Playwright route fixtures record saved session state and generation POST count. Add a regression that is RED on the current automatic-next behavior, then run the focused scenario, full browser suite, typecheck and build.
+- Skills: claw UX/frontend audit, wondelai UX heuristics, dev-agents QA audit, anthropics webapp-testing, upstream KSU plus vendored TDD/verification, and obra TDD. `agentskills/agentskills` has no matching React form workflow.
+- Progress: [x] baseline and root cause; [x] RED regression; [x] minimal implementation; [x] focused/full verification; [x] diff review; [x] PR #154 and initial exact-head CI; [ ] review repair round, clean re-review and merge to `dev`.
+- TDD evidence: the three-browser regression failed on the old flow because choosing a replacement immediately left the selected question and no `Сохранить` action existed. The implemented flow keeps the selection local until save, persists it, then returns to review. A second regression verifies that changing a parent answer asks only for the newly required dependent answer.
+- Local verification: six focused cases pass across mobile Chromium, desktop Chromium and mobile WebKit; all 144 mobile/desktop Chromium E2E cases pass; frontend typecheck and production build pass; `git diff --check` passes. The attempted all-216 run was stopped after the unchanged WebKit admin-history and browser-quality cases exceeded their existing time budgets on this Windows host; the two affected questionnaire regressions both pass in WebKit.
+- PR review round 1 confirmed four edge cases on `38e37e4`: Back from a newly activated dependency, clearing an optional multi answer, stale single-choice highlighting, and active-but-skippable dependencies omitted from readiness validation. Four RED browser regressions reproduce them. The repair treats the complete `edit_question_ids` chain as the targeted flow, checks every active unanswered question like the backend, permits an empty configured multi default, and derives single-choice selection from the draft. The 12-case repair set passes in all three browser projects; exact-head CI and clean Codex re-review are required before merge.
+- PR review round 2 confirmed two recovery/normalization gaps on `3ad7e7a`: a persisted targeted-edit marker survived normalization to the overview, and a parent edit could leave a now-invalid conditional skip default. Both were reproduced RED. Normalization now clears edit targets whenever it exits the object, and answer sanitization applies the backend's skip-condition rule before readiness checks. Six focused cases pass across all three browser projects; this is the final repair push before the clean review gate.
+
 ## Active work — generation editing feedback, 2026-09-26
 
 Baseline: `dev` `06f780f1133e7990d0a2208ad9d90b36c2c01a18`. User reports removal errors, added bathhouse returning to questionnaire, oversized house, unwanted fence beside flowering hedge, and fireplace/chimney semantics.
@@ -670,6 +686,35 @@ PR review found two additional gaps: selecting a fence must not imply a gate (an
 
 Release-gate dependency finding: CI36741445338 failed pip-audit on PyJWT2.14.0/CVE-2026-101918 (GHSA-42vr-xj54-vc7v). Verified the maintainer advisory and current patch releases. Raise the minimum to2.15 and regenerate existing hash locks, resolving only PyJWT to2.15.1; no audit suppression or unrelated upgrades. Existing app verification checks signatures and does not use the advisory's pre-verification/JWKS path, so do not claim an observed unauthenticated exploit in AuRoom. Added characterization controls for deeply nested signed/forged payloads returning401; both also pass on this local Python3.14/PyJWT2.14 environment, so these are not RED evidence of the advisory. Runtime lock audit now reports no known vulnerabilities. Recheck all auth integration and lock/schema gates using the patched package. Applied local security-audit guidance in addition to the recorded six-source release/security checklist.
 
+## 2026-10-03: Neironych image-provider migration, dev only
+
+Authorized outcome: switch generation to Neironych through reviewed dev PR, exact-head CI,
+dev merge/deploy and permitted runtime verification. Baseline dev 5d6faca97c7ede0724023fc93d7537637b1d40be.
+Preflight found Nexus hardcoded in worker, model settings already DB/admin managed, explicit
+worker environment allowlist, existing persisted submission-intent and reconciliation guards.
+PR153 fixtures target an unrelated epic and include invalid placeholder image bytes; reuse
+verified wire-contract knowledge only, no epic merge. Live guide has changed since that PR.
+
+Implementation steps: adapter with synchronous b64/URL output and no replay; provider routing
+columns/API/audit and immutable admin-job snapshots; worker provider checkpoints and output
+handling; unchanged credit idempotency and delivery; credential allowlist/readiness; mock
+regressions and review; exact-head CI; dev deploy; owner credential/activation verification.
+
+Secrets are infrastructure; provider/model selection remains authenticated DB/admin. Migration
+preserves Nexus to avoid unconfigured activation. No price/model seed, no paid request, no
+production change. Owner secret provisioning is required before activation and is not verified.
+
+Checks so far: adapter/worker focused checks passed; admin TDD 65 passed; initial full unit
+run 613 passed, 27 skipped, two failures caused by incomplete materialization of unchanged
+frontend files (now materialized and full suite rerunning). PostgreSQL integration/migrations,
+locked Python3.14 runtime, frontend build and deploy are CI gates, not yet claimed.
+Independent review found and fixed sync flyover reference loss and malformed output refund
+paths; new regression controls are being added before publication.
+
+Guidance inspected: claw backend-integration; wondelai release-it; dev-agents-pack Python
+backend; agentskills format README (no task-specific coding skill); anthropics webapp-testing;
+ksu TDD and local vendored verification-before-completion. No upstream scripts blindly run.
+
 ## Neironych multimodal generation contracts — 3 October 2026
 
 - Baseline: `origin/epic/multimodal-generation-control` at `2a35e90`; child branch
@@ -693,3 +738,13 @@ Release-gate dependency finding: CI36741445338 failed pip-audit on PyJWT2.14.0/C
   is required before active worker migration.
 - Risk/rollback: documentation and fixtures do not affect runtime behavior. Rollback is a normal
   revert of this child PR; no migration or paid-provider reconciliation is involved.
+
+Activation update: the operator explicitly confirmed that Nexus is removed and only Neironych
+must be active. Revision `20261003_0039` therefore migrates the singleton dev runtime to
+`primary_provider=neironych`, `fallback_provider=neironych`, primary model
+`gpt-image-2.5-sunburst`, size `3840x2160`, quality `high`, and no fallback model. New runtime rows
+default to Neironych. The dev deployment now requires the protected GitHub
+`NEIRONYCH_API_KEY` secret and atomically provisions it before migration/startup on every deploy;
+there is no longer a manual checkbox that could leave the migrated worker without its credential.
+Historical Nexus routing remains only as a compatibility/reconciliation path for already-persisted
+checkpoints, not as the configured dev generation route. No paid provider request was made.

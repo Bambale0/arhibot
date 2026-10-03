@@ -73,8 +73,9 @@ async def validate_questionnaire_delivery_readiness() -> int:
 
 async def validate_generation_readiness() -> int:
     settings = get_settings()
-    provider_configured = bool((settings.nexus_api_key or "").strip())
-    provider_url_secure = settings.nexus_base_url.strip().startswith("https://")
+    provider_configured = False
+    provider_url_secure = False
+    provider_name = "unconfigured"
     required_types = (GenerationType.FACADE, GenerationType.MASTER_PLAN)
     missing_prompts: list[str] = []
     missing_prices: list[str] = []
@@ -85,6 +86,13 @@ async def validate_generation_readiness() -> int:
         credits = CreditRepository(session)
         runtime = await admin.get_generation_settings()
         runtime_configured = bool(runtime and runtime.primary_model.strip())
+        provider_name = getattr(runtime, "primary_provider", "nexus") or "nexus"
+        provider_configured = bool((
+            settings.neironych_api_key if provider_name == "neironych" else settings.nexus_api_key
+        ) or "")
+        provider_url_secure = (
+            settings.neironych_api_base_url if provider_name == "neironych" else settings.nexus_base_url
+        ).strip().startswith("https://")
         for generation_type in required_types:
             prompt = await admin.get_prompt_template(generation_type.value)
             if (
@@ -106,6 +114,7 @@ async def validate_generation_readiness() -> int:
     )
     print(
         "questionnaire_generation_readiness "
+        f"provider={provider_name} "
         f"provider_configured={str(provider_configured).lower()} "
         f"provider_url_secure={str(provider_url_secure).lower()} "
         f"runtime_configured={str(runtime_configured).lower()} "
@@ -128,3 +137,4 @@ async def run_checks() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(asyncio.run(run_checks()))
+

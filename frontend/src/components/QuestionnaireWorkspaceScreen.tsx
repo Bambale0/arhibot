@@ -119,6 +119,11 @@ function sanitizeObjectAnswers(
         changed = true
         continue
       }
+      if (question.skip_default !== null && answerEquals(value, question.skip_default) && !conditionOk(question.skip_condition, next, houseAccepted, selectedObjects)) {
+        delete next[question.id]
+        changed = true
+        continue
+      }
       if (question.kind === 'single' && typeof value === 'string') {
         const custom = value.startsWith('Свой вариант:') && question.options.includes('Свой вариант')
         const listed = question.options.length === 0 || question.options.includes(value)
@@ -271,6 +276,7 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
     survey_completed_objects:surveyCompletedObjects,
     current_object:currentObject,
     current_question_id:currentQuestionId,
+    edit_question_ids:currentObject ? stored.edit_question_ids : [],
     region_mode:regionMode,
     region_object:regionObject,
   }
@@ -376,6 +382,14 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     )
     : []
   const active = current && session ? visible.find((q) => q.id === session.current_question_id) || null : null
+  const initialQuestionEdit = Boolean(
+    session
+    && current
+    && active?.phase === 'pre_render'
+    && session.initial_concept_mode
+    && !session.initial_concept_accepted
+    && session.edit_question_ids.includes(active.id),
+  )
   const currentGenerationId = current && session && session.region_mode == null ? session.generation_ids[current.key] || null : null
   const canRetryGeneration = Boolean(
     checkedFailure
@@ -590,7 +604,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   async function editInitialQuestion(key:string, questionId:string) {
     if (!session || session.initial_concept_accepted || session.initial_generation_id) return
-    await persist({ ...session, current_object:key, current_question_id:questionId })
+    await persist({
+      ...session,
+      current_object:key,
+      current_question_id:questionId,
+      edit_question_ids:[questionId],
+    })
   }
 
   async function chooseObject(key:string) {
@@ -1146,6 +1165,27 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
           ))
         })
       next = { ...next, edit_question_ids:rest }
+      if (next.initial_concept_mode && !next.initial_concept_accepted) {
+        const missing = preQuestions(current, next).filter((item) => answers[item.id] === undefined)
+        if (missing.length) {
+          return persist({
+            ...next,
+            survey_completed_objects:next.survey_completed_objects.filter((key) => key !== current.key),
+            edit_question_ids:missing.map((item) => item.id),
+            current_question_id:missing[0].id,
+          })
+        }
+        const completed = next.survey_completed_objects.includes(current.key)
+          ? next.survey_completed_objects
+          : [...next.survey_completed_objects, current.key]
+        return persist({
+          ...next,
+          survey_completed_objects:completed,
+          edit_question_ids:[],
+          current_object:null,
+          current_question_id:null,
+        })
+      }
       if (rest.length) return persist({ ...next, current_question_id:rest[0] })
       return startGenerationOrRegion({ ...next, current_question_id:null }, current)
     }
@@ -1203,6 +1243,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   async function previousQuestion() {
     if (!session || !current || !active || busy) return
+    if (initialQuestionEdit) {
+      await persist({ ...session, current_object:null, current_question_id:null, edit_question_ids:[] })
+      return
+    }
     if (active.phase === 'pre_render' && session.initial_concept_accepted && session.accepted_objects.includes(current.key) && !session.pending_removal_object) {
       return cancelRefinement()
     }
@@ -1465,6 +1509,20 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     && (active.min_value == null || numericDraft >= active.min_value)
     && (active.max_value == null || numericDraft <= active.max_value)
   const customDraftValid = Boolean(draft.trim()) && (!customInputIsNumber || numericDraftValid)
+  const initialEditCanSave = active.kind === 'multi'
+    ? multiCanContinue || (canSkip && Array.isArray(active.skip_default) && active.skip_default.length === 0)
+    : active.kind === 'number'
+      ? numericDraftValid
+      : active.kind === 'single' && customOption
+        ? customDraftValid
+        : Boolean(draft.trim())
+  const saveInitialQuestionEdit = () => {
+    if (!initialQuestionEdit) return
+    if (active.kind === 'multi') return answer(active, multi)
+    if (active.kind === 'number') return answer(active, numericDraft)
+    if (active.kind === 'single' && customOption) return answer(active, `Свой вариант: ${draft.trim()}`)
+    return answer(active, draft.trim())
+  }
   const activeTitle = review && session.pending_removal_object === current.key
     ? `Объект «${current.title}» удалён правильно?`
     : active.text
@@ -1472,11 +1530,11 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={() => void previousQuestion()}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><div className="questionnaire-layout"><aside className="questionnaire-progress"><span className="eyebrow">ВЫБРАНО</span>{session.selected_objects.map((key, index) => <div key={key} className={`questionnaire-progress-item ${session.accepted_objects.includes(key) ? 'done' : key === current.key ? 'current' : ''}`}><b>{session.accepted_objects.includes(key) ? '✓' : index + 1}</b><span>{definitions.get(key)?.title || key}</span></div>)}<div className={`questionnaire-progress-item ${current.key === 'zayavka' ? 'current' : ''}`}><b>✓</b><span>Заявка</span></div>{sourceAsset && <div className="questionnaire-source-mini"><ImageIcon/><span>Фото участка загружено</span></div>}</aside><section className="questionnaire-card question-card"><div className="questionnaire-question-head"><div><span className="eyebrow">{active.phase === 'application' ? 'ЗАЯВКА' : review ? 'ОЦЕНКА ЭСКИЗА' : current.title.toUpperCase()}</span><h1>{activeTitle}</h1></div>{canSkip && <span className="optional-badge">можно пропустить</span>}</div>{review && renderOutput && <div className="questionnaire-result"><ResultImage url={renderOutput.url} alt={`Эскиз ${current.title}`}/></div>}
 
-  {!primaryReview && (active.kind === 'single' || (active.kind === 'number' && options.length > 0)) && <div className="questionnaire-options">{standardOptions.map((option) => <button key={option} className={`questionnaire-option ${!customOption && (String(currentValue) === option || draft === option) ? 'selected' : ''}`} onClick={() => {
+  {!primaryReview && (active.kind === 'single' || (active.kind === 'number' && options.length > 0)) && <div className="questionnaire-options">{standardOptions.map((option) => <button key={option} className={`questionnaire-option ${!customOption && (initialQuestionEdit ? draft === option : String(currentValue) === option || draft === option) ? 'selected' : ''}`} onClick={() => {
     setCustomOption(false)
-    if (active.kind === 'number') setDraft(option)
+    if (active.kind === 'number' || initialQuestionEdit) setDraft(option)
     else void answer(active, option)
-  }}><span>{option}</span><i/></button>)}{hasCustomOption && <button className={`questionnaire-option ${customOption || customStored ? 'selected' : ''}`} onClick={() => {
+  }}><span>{option}</span><i/></button>)}{hasCustomOption && <button className={`questionnaire-option ${customOption || (!initialQuestionEdit && customStored) ? 'selected' : ''}`} onClick={() => {
     setCustomOption(true)
     setDraft(customStored && typeof currentValue === 'string' ? currentValue.slice('Свой вариант:'.length).trim() : '')
   }}><span>Свой вариант</span><i/></button>}</div>}
@@ -1488,5 +1546,5 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   {active.kind === 'text' && <div className="questionnaire-field"><label>{active.field_hint || activeTitle}<input value={draft} placeholder={textPlaceholder} onChange={(event) => setDraft(event.target.value)}/></label></div>}
   {active.kind === 'consent' && <label className="consent-row"><input type="checkbox" checked={currentValue === true} onChange={(event) => event.target.checked && void answer(active, true)}/><span>Согласен на обработку персональных данных</span></label>}
   {error && <div className="banner-error">{error}</div>}
-  <div className="questionnaire-actions">{active.kind === 'multi' && <button className="primary-button" disabled={!multiCanContinue || busy} onClick={() => void answer(active, multi)}>Продолжить</button>}{active.kind === 'single' && hasCustomOption && customOption && <button className="primary-button" disabled={!customDraftValid || busy} onClick={() => void answer(active, `Свой вариант: ${draft.trim()}`)}>Продолжить</button>}{active.kind === 'number' && <button className="primary-button" disabled={!numericDraftValid || busy} onClick={() => void answer(active, numericDraft)}>Продолжить</button>}{active.kind === 'text' && <button className="primary-button" disabled={!draft.trim() || busy} onClick={() => void answer(active, draft.trim())}>Продолжить</button>}{canSkip && active.kind !== 'consent' && <button className="secondary-button" disabled={busy} onClick={() => void answer(active, active.skip_default ?? (active.kind === 'multi' ? [] : ''))}>Пропустить</button>}</div></section></div></main>
+  <div className="questionnaire-actions">{initialQuestionEdit && <button className="primary-button" disabled={!initialEditCanSave || busy} onClick={() => void saveInitialQuestionEdit()}>Сохранить</button>}{!initialQuestionEdit && active.kind === 'multi' && <button className="primary-button" disabled={!multiCanContinue || busy} onClick={() => void answer(active, multi)}>Продолжить</button>}{!initialQuestionEdit && active.kind === 'single' && hasCustomOption && customOption && <button className="primary-button" disabled={!customDraftValid || busy} onClick={() => void answer(active, `Свой вариант: ${draft.trim()}`)}>Продолжить</button>}{!initialQuestionEdit && active.kind === 'number' && <button className="primary-button" disabled={!numericDraftValid || busy} onClick={() => void answer(active, numericDraft)}>Продолжить</button>}{!initialQuestionEdit && active.kind === 'text' && <button className="primary-button" disabled={!draft.trim() || busy} onClick={() => void answer(active, draft.trim())}>Продолжить</button>}{!initialQuestionEdit && canSkip && active.kind !== 'consent' && <button className="secondary-button" disabled={busy} onClick={() => void answer(active, active.skip_default ?? (active.kind === 'multi' ? [] : ''))}>Пропустить</button>}</div></section></div></main>
 }

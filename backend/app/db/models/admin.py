@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Float,
@@ -144,8 +146,24 @@ class IdeaSave(Base):
 
 class GenerationRuntimeSettings(Base):
     __tablename__ = "generation_runtime_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "primary_provider IN ('nexus', 'neironych')",
+            name="ck_generation_runtime_primary_provider",
+        ),
+        CheckConstraint(
+            "fallback_provider IN ('nexus', 'neironych')",
+            name="ck_generation_runtime_fallback_provider",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    primary_provider: Mapped[Literal["nexus", "neironych"]] = mapped_column(
+        String(32), nullable=False, default="neironych", server_default="neironych"
+    )
+    fallback_provider: Mapped[Literal["nexus", "neironych"]] = mapped_column(
+        String(32), nullable=False, default="neironych", server_default="neironych"
+    )
     primary_model: Mapped[str] = mapped_column(String(120), nullable=False)
     fallback_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     primary_timeout_seconds: Mapped[int] = mapped_column(
