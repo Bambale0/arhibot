@@ -1,0 +1,23 @@
+{
+  "errors": [
+    {"status": 409, "type": "idempotency_conflict", "automatic_paid_post_retry": false},
+    {
+      "status": 409,
+      "type": "request_already_submitted",
+      "automatic_paid_post_retry": false
+    },
+    {"status": 429, "type": "provider_rate_limited", "automatic_paid_post_retry": false},
+    {
+      "status": 503,
+      "type": "submission_outcome_unknown",
+      "automatic_paid_post_retry": false
+    },
+    {
+      "status": 503,
+      "type": "provider_response_invalid",
+      "automatic_paid_post_retry": false
+    }
+  ],
+  "retry_after": "may be present on 429",
+  "safe_rule": "Do not retry a paid POST automatically after timeout, disconnect, or 5xx."
+}

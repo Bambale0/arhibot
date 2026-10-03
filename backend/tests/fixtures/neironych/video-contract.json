@@ -1,0 +1,44 @@
+{
+  "request": {
+    "model": "seedance-2.0",
+    "prompt": "Preserve exact architecture and move only the camera.",
+    "start_image": {"url": "https://media.example/accepted-still.png"},
+    "duration": 8,
+    "resolution": "1080p",
+    "aspect_ratio": "16:9",
+    "n": 1
+  },
+  "accepted_response": {"request_id": "req_video_sanitized"},
+  "status_response": {
+    "request_id": "req_video_sanitized",
+    "status": "done",
+    "video": {
+      "url": "https://api.xn--e1aikcel5c5a.online/v1/videos/req_video_sanitized/content"
+    },
+    "usage": {"billed_seconds": 8}
+  },
+  "content_response": {
+    "content_type": "video/mp4",
+    "supports_range": true,
+    "partial_status": 206,
+    "requires_partner_authorization": true
+  },
+  "limits": {
+    "duration_seconds": {"min": 4, "max": 15},
+    "resolutions": ["480p", "720p", "1080p", "4k"],
+    "reference_images": 9,
+    "reference_videos": 3,
+    "reference_audios": 3,
+    "reference_media_total": 12,
+    "prompt_utf8_bytes": 40000,
+    "frames_and_reference_media_are_mutually_exclusive": true
+  },
+  "idempotency": {
+    "same_body_and_key_returns_original_request_id": true,
+    "never_create_again_after_application_timeout": true
+  },
+  "verification": {
+    "start_image_shape": "documented_public_guide",
+    "seedance_paid_smoke": "required_before_admin_activation"
+  }
+}
