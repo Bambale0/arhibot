@@ -22,6 +22,27 @@ from app.repositories.credits import CreditRepository
 from app.schemas.projects import ProjectContextResponse
 
 
+def _generation_provider_readiness(runtime, settings) -> tuple[str, bool, bool]:
+    routes: list[str] = []
+    if runtime and runtime.primary_model.strip():
+        routes.append(getattr(runtime, "primary_provider", "nexus") or "nexus")
+    if runtime and runtime.fallback_model and runtime.fallback_model.strip():
+        routes.append(getattr(runtime, "fallback_provider", "nexus") or "nexus")
+    providers = tuple(dict.fromkeys(routes))
+    name = ",".join(providers) or "unconfigured"
+    configured = bool(providers) and all(
+        bool((settings.neironych_api_key if provider == "neironych" else settings.nexus_api_key) or "")
+        for provider in providers
+    )
+    secure = bool(providers) and all(
+        (settings.neironych_api_base_url if provider == "neironych" else settings.nexus_base_url)
+        .strip()
+        .startswith("https://")
+        for provider in providers
+    )
+    return name, configured, secure
+
+
 async def validate_project_contexts() -> int:
     checked = 0
     invalid = 0
@@ -86,13 +107,9 @@ async def validate_generation_readiness() -> int:
         credits = CreditRepository(session)
         runtime = await admin.get_generation_settings()
         runtime_configured = bool(runtime and runtime.primary_model.strip())
-        provider_name = getattr(runtime, "primary_provider", "nexus") or "nexus"
-        provider_configured = bool((
-            settings.neironych_api_key if provider_name == "neironych" else settings.nexus_api_key
-        ) or "")
-        provider_url_secure = (
-            settings.neironych_api_base_url if provider_name == "neironych" else settings.nexus_base_url
-        ).strip().startswith("https://")
+        provider_name, provider_configured, provider_url_secure = (
+            _generation_provider_readiness(runtime, settings)
+        )
         for generation_type in required_types:
             prompt = await admin.get_prompt_template(generation_type.value)
             if (

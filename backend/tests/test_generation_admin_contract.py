@@ -49,19 +49,32 @@ def test_admin_experiments_reject_neironych_protocol_overrides(schema, field) ->
 
 def test_generation_runtime_accepts_provider_routing_without_mutating_params() -> None:
     values = {
-        "primary_provider": "neironych",
+        "primary_provider": "nexus",
         "fallback_provider": "nexus",
         "primary_model": " image-model ",
         "primary_params": {"quality": "medium", "metadata": {"source": "admin"}},
         "mode_params": {"master_plan": {"size": "1536x1024"}},
     }
     payload = GenerationRuntimeUpdate.model_validate(values)
-    assert payload.primary_provider == "neironych"
+    assert payload.primary_provider == "nexus"
     assert payload.fallback_provider == "nexus"
     assert payload.primary_model == "image-model"
     assert values["primary_model"] == " image-model "
     assert values["primary_params"] == {"quality": "medium", "metadata": {"source": "admin"}}
     assert values["mode_params"] == {"master_plan": {"size": "1536x1024"}}
+
+
+@pytest.mark.parametrize("group", ["primary_params", "fallback_params", "mode_params"])
+def test_generation_runtime_rejects_unsupported_neironych_parameters(group) -> None:
+    value = {"master_plan": {"steps": 20}} if group == "mode_params" else {"steps": 20}
+    with pytest.raises(ValidationError, match="unsupported Neironych parameters"):
+        GenerationRuntimeUpdate(
+            primary_provider="neironych",
+            fallback_provider="neironych",
+            primary_model="model",
+            fallback_model="fallback",
+            **{group: value},
+        )
 
 
 def test_generation_runtime_rejects_provenance_field_overrides() -> None:

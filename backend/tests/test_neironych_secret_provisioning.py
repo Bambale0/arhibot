@@ -32,3 +32,6 @@ def test_workflow_provisions_required_secret_on_every_dev_deploy():
     assert '- name: Configure Neironych dev key' in source
     assert 'inputs.provision_neironych_key' not in source
     assert 'NEIRONYCH_API_KEY: ${{ secrets.NEIRONYCH_API_KEY }}' in source
+    assert '"${DEPLOY_APP_DIR}" "${DEPLOY_SHA}" dev' in source
+    deploy = (ROOT / 'ops/deploy_docker.sh').read_text()
+    assert 'AUROOM_DEPLOY_TARGET=dev api python -m app.ops.activate_neironych_dev' in deploy

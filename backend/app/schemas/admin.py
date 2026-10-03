@@ -20,6 +20,7 @@ _PROVIDER_FIELDS = frozenset(
         "images", "mask", "n", "response_format",
     }
 )
+_NEIRONYCH_IMAGE_PARAMS = frozenset({"size", "quality", "aspect_ratio"})
 
 
 class AdminOverviewResponse(BaseModel):
@@ -382,6 +383,26 @@ class GenerationRuntimeUpdate(BaseModel):
                 raise ValueError(
                     f"{label} cannot override provider fields: {', '.join(sorted(conflict))}"
                 )
+        provider_groups = (
+            ("primary_params", self.primary_provider, self.primary_params),
+            ("fallback_params", self.fallback_provider, self.fallback_params),
+        )
+        for label, provider, params in provider_groups:
+            if provider == "neironych":
+                unsupported = set(params) - _NEIRONYCH_IMAGE_PARAMS
+                if unsupported:
+                    raise ValueError(
+                        f"{label} contains unsupported Neironych parameters: "
+                        f"{', '.join(sorted(unsupported))}"
+                    )
+        if "neironych" in {self.primary_provider, self.fallback_provider}:
+            for generation_type, params in self.mode_params.items():
+                unsupported = set(params) - _NEIRONYCH_IMAGE_PARAMS
+                if unsupported:
+                    raise ValueError(
+                        f"mode_params.{generation_type} contains unsupported Neironych parameters: "
+                        f"{', '.join(sorted(unsupported))}"
+                    )
         if (
             self.masked_edit_feather_min_px is not None
             and self.masked_edit_feather_max_px is not None

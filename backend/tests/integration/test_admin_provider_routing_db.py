@@ -18,7 +18,7 @@ from app.db.session import get_session_factory  # noqa: E402
 
 
 @pytest.mark.asyncio
-async def test_migrated_provider_defaults_use_neironych_routing() -> None:
+async def test_migrated_provider_defaults_preserve_legacy_routing() -> None:
     async with get_session_factory()() as session:
         result = await session.execute(
             text(
@@ -27,7 +27,7 @@ async def test_migrated_provider_defaults_use_neironych_routing() -> None:
             ),
             {"id": -(uuid4().int % 1_000_000_000 + 1), "model": "test-image-model"},
         )
-        assert result.one() == ("neironych", "neironych")
+        assert result.one() == ("nexus", "nexus")
         await session.rollback()
 
 

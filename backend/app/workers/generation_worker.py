@@ -804,6 +804,18 @@ async def _generate_checkpointed(
     )
 
 
+def _reconciliation_report(
+    report: dict[str, object] | None, request_id: str | None
+) -> dict[str, object]:
+    updated = dict(report or {})
+    if request_id:
+        checkpoint = updated.get("provider_request")
+        if isinstance(checkpoint, dict):
+            updated["provider_request"] = {**checkpoint, "request_id": request_id}
+    updated["requires_reconciliation"] = True
+    return updated
+
+
 async def process_generation(generation_id: UUID, settings: Settings) -> None:
     async with get_session_factory()() as session:
         generation = await GenerationRepository(session).get_for_update(generation_id)
@@ -1714,17 +1726,16 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 " (orbit loop)" if orbit_request is not None else "",
                 " (bird flyover GIF)" if flyover_request is not None else "",
             )
-    except NexusOutcomeUnknown:
+    except NexusOutcomeUnknown as exc:
         logger.warning(
             "Generation %s awaits provider reconciliation; no resubmission or refund", generation_id
         )
         async with get_session_factory()() as session:
             generation = await GenerationRepository(session).get_for_update(generation_id)
             if generation is not None and generation.status == GenerationStatus.PROCESSING:
-                generation.quality_report = {
-                    **(generation.quality_report or {}),
-                    "requires_reconciliation": True,
-                }
+                generation.quality_report = _reconciliation_report(
+                    generation.quality_report, exc.request_id
+                )
                 generation.error = (
                     "Ожидаем подтверждение результата от сервиса генерации. "
                     "Повторный платный запуск заблокирован; текущая задача сохранена."

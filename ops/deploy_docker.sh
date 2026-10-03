@@ -6,6 +6,11 @@ unset DOCKER_HOST DOCKER_CONTEXT
 
 app_dir=${1:-/root/arhibot}
 release_sha=${2:?release SHA is required}
+deployment_target=${3:-}
+if [[ -n "${deployment_target}" && "${deployment_target}" != "dev" ]]; then
+  echo "Unsupported deployment target: ${deployment_target}" >&2
+  exit 1
+fi
 compose_file="${app_dir}/backend/docker-compose.yml"
 release_root="${app_dir}/.release"
 archive="${release_root}/arhibot-source.tar.gz"
@@ -242,6 +247,11 @@ reported_release_sha=$(curl -fsS http://127.0.0.1:18000/health/version | python3
   echo "API release identity mismatch: ${reported_release_sha:-missing} != ${release_sha}" >&2
   exit 1
 }
+
+if [[ "${deployment_target}" == "dev" ]]; then
+  echo "Activating Neironych routing through the authenticated dev control plane"
+  compose exec -T -e AUROOM_DEPLOY_TARGET=dev api python -m app.ops.activate_neironych_dev
+fi
 
 for service in bot worker broadcast-worker maintenance; do
   service_id=$(compose ps -q "${service}")

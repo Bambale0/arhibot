@@ -107,13 +107,27 @@ class NeironychImageProvider:
         except (httpx.HTTPError, TimeoutError) as exc:
             raise NexusOutcomeUnknown("Neironych submission outcome is unknown; no retry") from exc
         request_id = self._safe_identifier(response.headers.get("X-Request-Id"))
+        if 300 <= response.status_code < 500 and response.status_code not in {408, 409}:
+            try:
+                rejected_payload = response.json()
+            except ValueError:
+                rejected_payload = None
+            code = self._error_code(rejected_payload)
+            raise NexusProviderError(
+                f"Neironych rejected request ({response.status_code}, {code})", retryable=False
+            )
         try:
             payload = response.json()
         except ValueError as exc:
-            raise NexusOutcomeUnknown("Neironych response is not valid JSON") from exc
+            raise NexusOutcomeUnknown(
+                "Neironych response is not valid JSON", request_id=request_id
+            ) from exc
         code = self._error_code(payload)
         if response.status_code in {408, 409} or response.status_code >= 500:
-            raise NexusOutcomeUnknown(f"Neironych outcome unknown ({response.status_code}, {code})")
+            raise NexusOutcomeUnknown(
+                f"Neironych outcome unknown ({response.status_code}, {code})",
+                request_id=request_id,
+            )
         if response.status_code >= 300:
             raise NexusProviderError(f"Neironych rejected request ({response.status_code}, {code})", retryable=False)
         if not isinstance(payload, dict) or not isinstance(payload.get("data"), list) or len(payload["data"]) != 1:

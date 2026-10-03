@@ -31,8 +31,11 @@ alone does not change live model routing. Existing saved Nexus tasks retain Nexu
    the development server's preserved `/root/arhibot/backend/.env`. Never paste it into Git,
    logs, chat, admin settings, or workflow arguments. `NEIRONYCH_API_BASE_URL` defaults to
    the HTTPS origin above; request deadline defaults to 180 seconds.
-2. Deploy only a green `dev` SHA via the existing deployment workflow; the worker allowlist
-   now forwards these variables. Verify readiness reports configured=true without secrets.
+2. Deploy only a green `dev` SHA via the existing deployment workflow. Every automatic or
+   manual dev deployment provisions the repository Actions secret and then uses an ephemeral
+   superadmin access token inside the API container to update routing through authenticated
+   `PUT /api/v1/admin/generation`. The token and provider key never leave the container/logs.
+   The migration itself stays provider-neutral, so later promotion cannot activate production.
 3. Authenticated admin GET/PUT `/api/v1/admin/generation` selects `primary_provider` and
    `fallback_provider` (`nexus` or `neironych`) along with the existing model/parameters.
    Preserve all current settings when updating. Set primary model to an account-supported
@@ -56,16 +59,15 @@ claimed by this document. Activation is a separate verified checkpoint.
 
 ## Owner-triggered GitHub Secret delivery
 
-An owner may instead add `NEIRONYCH_API_KEY` in the repository Actions Secrets UI.
-After this change reaches green dev, the owner can manually dispatch `Deploy dev`
-on branch `dev` with `provision_neironych_key=true`. The default is false, including
-all automatic deploys. If using GitHub CLI, the owner runs:
+An owner adds `NEIRONYCH_API_KEY` in the repository Actions Secrets UI. Every green automatic
+dev deployment and every valid manual dev dispatch provisions that secret before rollout.
+If using GitHub CLI for recovery, the owner runs:
 
-`gh workflow run deploy-dev.yml --repo Bambale0/arhibot --ref dev -f provision_neironych_key=true`
+`gh workflow run deploy-dev.yml --repo Bambale0/arhibot --ref dev`
 
 This owner action transfers the secret over the existing verified SSH connection
 only to `/root/arhibot/backend/.env`, preserving ownership, owner-only permissions,
 and unrelated settings. Empty/invalid secrets do not overwrite the current key.
 The key is excluded from command arguments, deploy logs and artifacts. Assistants
-must not dispatch the provisioning flag; the owner performs this final secret action.
-The provider selection remains unchanged until an authenticated admin updates it.
+must not put the key in workflow arguments. Dev routing is applied through the authenticated
+admin endpoint; production routing remains unchanged unless separately authorized.

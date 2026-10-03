@@ -145,6 +145,8 @@ async def test_runtime_update_rejects_provider_timeout_without_mutating_settings
 async def test_runtime_update_keeps_parameter_objects_independent() -> None:
     service, row, _ = _service()
     payload = GenerationRuntimeUpdate(
+        primary_provider="nexus",
+        fallback_provider="nexus",
         primary_model="image-model",
         primary_params={"metadata": {"source": "admin"}},
         fallback_params={"metadata": {"source": "fallback"}},

@@ -740,11 +740,19 @@ ksu TDD and local vendored verification-before-completion. No upstream scripts b
   revert of this child PR; no migration or paid-provider reconciliation is involved.
 
 Activation update: the operator explicitly confirmed that Nexus is removed and only Neironych
-must be active. Revision `20261003_0039` therefore migrates the singleton dev runtime to
-`primary_provider=neironych`, `fallback_provider=neironych`, primary model
-`gpt-image-2.5-sunburst`, size `3840x2160`, quality `high`, and no fallback model. New runtime rows
-default to Neironych. The dev deployment now requires the protected GitHub
-`NEIRONYCH_API_KEY` secret and atomically provisions it before migration/startup on every deploy;
-there is no longer a manual checkbox that could leave the migrated worker without its credential.
-Historical Nexus routing remains only as a compatibility/reconciliation path for already-persisted
+must be active on dev. Review correctly identified that a global migration-time UPDATE would later
+overwrite production operator settings. Revision `20261003_0039` is therefore provider-neutral
+and preserves existing Nexus routing. The dev deployment requires the protected GitHub
+`NEIRONYCH_API_KEY`, atomically provisions it, and then uses an ephemeral superadmin token inside
+the API container to update routing through authenticated `PUT /api/v1/admin/generation` to
+Neironych, `gpt-image-2.5-sunburst`, size `3840x2160`, quality `high`, and no fallback model.
+The token and key are never printed. Production remains unchanged on future migration. Historical
+Nexus routing remains only as a compatibility/reconciliation path for already-persisted
 checkpoints, not as the configured dev generation route. No paid provider request was made.
+
+PR157 review gate: seven unresolved threads blocked the first merge attempt. All were addressed:
+provider-neutral migration/dev-only authenticated activation; fallback credential readiness;
+private correlation persistence; public checkpoint payload redaction; explicit non-JSON 4xx
+classification; provider-specific parameter validation; current unconditional provisioning docs.
+Focused regression verification is 105 passed with the Windows chmod-only test deselected; Linux
+CI remains authoritative for that POSIX permission test and the full integration/E2E suite.
