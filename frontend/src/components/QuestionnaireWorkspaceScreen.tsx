@@ -119,6 +119,11 @@ function sanitizeObjectAnswers(
         changed = true
         continue
       }
+      if (question.skip_default !== null && answerEquals(value, question.skip_default) && !conditionOk(question.skip_condition, next, houseAccepted, selectedObjects)) {
+        delete next[question.id]
+        changed = true
+        continue
+      }
       if (question.kind === 'single' && typeof value === 'string') {
         const custom = value.startsWith('Свой вариант:') && question.options.includes('Свой вариант')
         const listed = question.options.length === 0 || question.options.includes(value)
@@ -271,6 +276,7 @@ function normalizeStartedSession(stored:DesignSession, catalog:QuestionnaireCata
     survey_completed_objects:surveyCompletedObjects,
     current_object:currentObject,
     current_question_id:currentQuestionId,
+    edit_question_ids:currentObject ? stored.edit_question_ids : [],
     region_mode:regionMode,
     region_object:regionObject,
   }

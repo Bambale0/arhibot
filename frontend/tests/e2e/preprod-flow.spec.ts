@@ -32,7 +32,11 @@ const catalog = {
       {id:'1',text:'Какой гараж?',kind:'single',options:['На 1 автомобиль','На 2 автомобиля'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
       {id:'2',text:'Эскиз гаража вам подходит?',kind:'single',options:['Да, идём дальше','Нет, хочу уточнить и сделать заново'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'review',condition:null,option_rules:{},edit_targets:{}},
     ]},
-    {key:'eskez-doma',title:'Дом, фасад',source_file:'fixture',order:4,scene_policy:{},questions:[
+    {key:'gostevoy',title:'Гостевой дом',source_file:'fixture',order:4,scene_policy:{},questions:[
+      {id:'1',text:'Какой стиль гостевого дома?',kind:'single',options:['Как у дома','Современный'],required:true,skip_default:null,skip_condition:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{'Как у дома':{operator:'house_accepted'}},edit_targets:{}},
+      {id:'8',text:'Чем отделать гостевой дом?',kind:'multi',options:['Дерево','Кирпич'],required:false,skip_default:'отделка дома',skip_condition:{question_id:'1',operator:'eq',value:'Как у дома'},help:null,field_hint:null,max_selections:2,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
+    ]},
+    {key:'eskez-doma',title:'Дом, фасад',source_file:'fixture',order:5,scene_policy:{},questions:[
       {id:'4',text:'Сколько этажей?',kind:'single',options:['1 этаж','2 этажа','2 этажа + мансарда','3 этажа'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
       {id:'6',text:'Нужен гараж или навес?',kind:'single',options:['Да','Нет'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
       {id:'12',text:'Нужна терраса?',kind:'single',options:['Терраса','Нет'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
@@ -403,6 +407,57 @@ test('an optional multi answer can be cleared during targeted editing',async({pa
 
   await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
   expect(session.answers['eskez-doma']['13']).toEqual([])
+  expect(generationCount).toBe(0)
+})
+
+test('reload cancels a persisted targeted edit marker before initial generation',async({page})=>{
+  session={
+    ...session,
+    source_step_completed:true,
+    selected_objects:['lavochka'],
+    initial_concept_mode:true,
+    survey_completed_objects:['lavochka'],
+    current_object:'lavochka',
+    current_question_id:'1',
+    edit_question_ids:['1'],
+    answers:{lavochka:{'1':'Деревянная со спинкой','2':'Справа от дома'}},
+  }
+  project={...project,name:'Лавочка',context:{...project.context,design_session:session}}
+
+  await page.goto('/?project=' + projectId)
+  await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
+  await page.getByRole('button',{name:'Создать общую концепцию'}).click()
+  await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
+  expect(session.current_object).toBeNull()
+  expect(session.current_question_id).toBeNull()
+  expect(session.edit_question_ids).toEqual([])
+  expect(generationCount).toBe(1)
+})
+
+test('editing a parent answer drops an invalid conditional skip and asks its question',async({page})=>{
+  session={
+    ...session,
+    source_step_completed:true,
+    selected_objects:['eskez-doma','gostevoy'],
+    initial_concept_mode:true,
+    survey_completed_objects:['eskez-doma','gostevoy'],
+    current_object:null,
+    current_question_id:null,
+    answers:{
+      'eskez-doma':{'4':'2 этажа','6':'Нет','12':'Нет','13':[]},
+      gostevoy:{'1':'Как у дома','8':'отделка дома'},
+    },
+  }
+  project={...project,name:'Дом и гостевой дом',context:{...project.context,design_session:session}}
+
+  await page.goto('/?project=' + projectId)
+  await page.locator('details').filter({hasText:'Гостевой дом'}).locator('summary').click()
+  await page.getByRole('button',{name:/Какой стиль гостевого дома\?/}).click()
+  await page.getByText('Современный',{exact:true}).click()
+  await page.getByRole('button',{name:'Сохранить'}).click()
+
+  await expect(page.getByText('Чем отделать гостевой дом?')).toBeVisible()
+  expect(session.answers.gostevoy['8']).toBeUndefined()
   expect(generationCount).toBe(0)
 })
 
