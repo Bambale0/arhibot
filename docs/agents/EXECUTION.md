@@ -686,7 +686,6 @@ PR review found two additional gaps: selecting a fence must not imply a gate (an
 
 Release-gate dependency finding: CI36741445338 failed pip-audit on PyJWT2.14.0/CVE-2026-101918 (GHSA-42vr-xj54-vc7v). Verified the maintainer advisory and current patch releases. Raise the minimum to2.15 and regenerate existing hash locks, resolving only PyJWT to2.15.1; no audit suppression or unrelated upgrades. Existing app verification checks signatures and does not use the advisory's pre-verification/JWKS path, so do not claim an observed unauthenticated exploit in AuRoom. Added characterization controls for deeply nested signed/forged payloads returning401; both also pass on this local Python3.14/PyJWT2.14 environment, so these are not RED evidence of the advisory. Runtime lock audit now reports no known vulnerabilities. Recheck all auth integration and lock/schema gates using the patched package. Applied local security-audit guidance in addition to the recorded six-source release/security checklist.
 
-
 ## 2026-10-03: Neironych image-provider migration, dev only
 
 Authorized outcome: switch generation to Neironych through reviewed dev PR, exact-head CI,
@@ -715,3 +714,27 @@ paths; new regression controls are being added before publication.
 Guidance inspected: claw backend-integration; wondelai release-it; dev-agents-pack Python
 backend; agentskills format README (no task-specific coding skill); anthropics webapp-testing;
 ksu TDD and local vendored verification-before-completion. No upstream scripts blindly run.
+
+## Neironych multimodal generation contracts — 3 October 2026
+
+- Baseline: `origin/epic/multimodal-generation-control` at `2a35e90`; child branch
+  `feat/neironych-contracts` targets the epic branch, not `dev` or `main`.
+- User outcome: begin the open multimodal-control epic with its mandatory contract-first slice.
+- Current state: the public guide and unauthenticated capability endpoint were re-read. The guide
+  digest is `756367c0aea3faaebe562a6d6e16b9dd1f635d0e417284cee76e36d19516c517`;
+  all three requested model IDs are currently advertised.
+- Scope: sanitized guide/capability fixtures, contract tests, and provider contract notes only.
+  Worker, database, admin, billing, queue, public delivery and runtime secrets remain unchanged.
+- Security/configuration: no API key was available, read, logged or committed. Model choices remain
+  intended DB/admin configuration; secrets remain environment/secret-store configuration.
+- TDD evidence: nine focused tests failed first because the contract fixtures were absent, then
+  passed after the fixtures were added.
+- Local verification: Python 3.14 focused contract suite `9 passed`; Ruff, compileall and
+  `git diff --check` passed. The full Windows run reached `527 passed, 41 skipped, 23 failed`;
+  failures are confined to unchanged POSIX/bash/symlink/permission/font/layout tests. Linux CI on
+  the exact commit remains the authoritative full-suite gate.
+- Open gate: public docs do not guarantee Grok 4.5 JSON Schema/vision limits for this model, and no
+  paid Sunburst edit or Seedance start-image request was made. Authenticated bounded smoke evidence
+  is required before active worker migration.
+- Risk/rollback: documentation and fixtures do not affect runtime behavior. Rollback is a normal
+  revert of this child PR; no migration or paid-provider reconciliation is involved.
