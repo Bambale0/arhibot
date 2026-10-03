@@ -12,10 +12,10 @@ from app.schemas.admin import (
 )
 
 
-def test_generation_runtime_provider_defaults_use_neironych() -> None:
+def test_generation_runtime_provider_defaults_remain_provider_neutral() -> None:
     payload = GenerationRuntimeUpdate(primary_model="existing-model")
-    assert payload.primary_provider == "neironych"
-    assert payload.fallback_provider == "neironych"
+    assert payload.primary_provider == "nexus"
+    assert payload.fallback_provider == "nexus"
 
 
 @pytest.mark.parametrize("field", ["primary_provider", "fallback_provider"])

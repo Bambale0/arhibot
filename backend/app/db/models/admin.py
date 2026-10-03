@@ -159,10 +159,10 @@ class GenerationRuntimeSettings(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     primary_provider: Mapped[Literal["nexus", "neironych"]] = mapped_column(
-        String(32), nullable=False, default="neironych", server_default="neironych"
+        String(32), nullable=False, default="nexus", server_default="nexus"
     )
     fallback_provider: Mapped[Literal["nexus", "neironych"]] = mapped_column(
-        String(32), nullable=False, default="neironych", server_default="neironych"
+        String(32), nullable=False, default="nexus", server_default="nexus"
     )
     primary_model: Mapped[str] = mapped_column(String(120), nullable=False)
     fallback_model: Mapped[str | None] = mapped_column(String(120), nullable=True)

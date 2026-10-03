@@ -287,11 +287,11 @@ async def test_admin_ai_creation_snapshots_provider_in_envelope_and_audit(
     envelope = create.call_args.args[1].prompt
     assert envelope.startswith(prefix)
     snapshot = loads(envelope.removeprefix(prefix))
-    assert snapshot["provider"] == (provider or "neironych")
+    assert snapshot["provider"] == (provider or "nexus")
     assert snapshot["prompt"] == "A modern house"
     assert snapshot["params"] == {"quality": "medium"}
     audit = next(
         call.args[0] for call in session.add.call_args_list
         if isinstance(call.args[0], AdminAuditLog)
     )
-    assert audit.details["provider"] == (provider or "neironych")
+    assert audit.details["provider"] == (provider or "nexus")
