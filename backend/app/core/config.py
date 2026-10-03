@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     nexus_circuit_failure_threshold: int = 5
     nexus_circuit_recovery_seconds: float = 30.0
 
+    # Neironych credentials/infrastructure; provider/model selection remains in DB/admin.
+    neironych_api_key: str | None = None
+    neironych_api_base_url: str = "https://api.xn--e1aikcel5c5a.online"
+    neironych_request_timeout_seconds: int = 180
+    neironych_http_connect_timeout_seconds: float = 5.0
+
     # YooKassa credentials/infrastructure only. Tariffs live in DB/admin.
     yookassa_shop_id: str | None = None
     yookassa_secret_key: str | None = None
@@ -105,6 +111,16 @@ class Settings(BaseSettings):
             raise ValueError("MAX_IMAGE_PIXELS must be at least 1,000,000")
         if self.max_model_size_bytes < 1_048_576:
             raise ValueError("MAX_MODEL_SIZE_BYTES must be at least 1 MiB")
+        parsed_neironych = urlsplit(self.neironych_api_base_url)
+        if (parsed_neironych.scheme != "https" or not parsed_neironych.netloc
+                or parsed_neironych.username or parsed_neironych.password
+                or parsed_neironych.query or parsed_neironych.fragment
+                or parsed_neironych.path not in {"", "/"}):
+            raise ValueError("NEIRONYCH_API_BASE_URL must be an HTTPS origin without credentials")
+        if not 30 <= self.neironych_request_timeout_seconds <= 600:
+            raise ValueError("NEIRONYCH_REQUEST_TIMEOUT_SECONDS must be between 30 and 600")
+        if self.neironych_http_connect_timeout_seconds <= 0:
+            raise ValueError("Neironych connect timeout must be positive")
         if self.nexus_task_timeout_seconds < 30:
             raise ValueError("NEXUS_TASK_TIMEOUT_SECONDS must be at least 30")
         if self.nexus_poll_interval_seconds < 0.5:
@@ -161,3 +177,4 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+

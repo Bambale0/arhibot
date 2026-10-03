@@ -6,6 +6,12 @@ on:
     types: [completed]
     branches: [dev]
   workflow_dispatch:
+    inputs:
+      provision_neironych_key:
+        description: "Owner action: install repository NEIRONYCH_API_KEY secret on dev"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -118,7 +124,25 @@ jobs:
             arhibot-source.tar.gz \
             arhibot-source.tar.gz.sha256 \
             ops/deploy_docker.sh \
+            ops/provision_neironych_key.py \
             "${remote}:${DEPLOY_APP_DIR}/.release/"
+
+      # Never runs automatically on merge. The owner must opt in after adding
+      # the key via GitHub Secrets; assistants must not dispatch this secret action.
+      - name: Owner-requested Neironych dev key provisioning
+        if: github.event_name == 'workflow_dispatch' && inputs.provision_neironych_key
+        env:
+          NEIRONYCH_API_KEY: ${{ secrets.NEIRONYCH_API_KEY }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ -n "${NEIRONYCH_API_KEY}" ]] || {
+            echo "NEIRONYCH_API_KEY is not configured in GitHub Secrets; leaving dev unchanged" >&2
+            exit 1
+          }
+          remote="${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}"
+          printf '%s' "${NEIRONYCH_API_KEY}" | ssh -p "${DEPLOY_SSH_PORT}" "${remote}" \
+            python3 "${DEPLOY_APP_DIR}/.release/provision_neironych_key.py" "${DEPLOY_APP_DIR}/backend/.env"
 
       - name: Build, migrate and deploy development
         shell: bash
@@ -143,3 +167,4 @@ jobs:
           path: deploy.log
           if-no-files-found: ignore
           retention-days: 14
+
