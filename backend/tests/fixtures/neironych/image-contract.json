@@ -1,0 +1,43 @@
+{
+  "generation_request": {
+    "model": "gpt-image-2.5-sunburst",
+    "prompt": "A cinematic mountain panorama",
+    "size": "3840x2160",
+    "quality": "high",
+    "n": 1,
+    "response_format": "b64_json"
+  },
+  "edit_request": {
+    "model": "gpt-image-2.5-sunburst",
+    "prompt": "Change only the transparent masked region",
+    "images": [
+      {"image_url": "https://media.example/reference.png"}
+    ],
+    "mask": {"image_url": "https://media.example/mask.png"},
+    "n": 1,
+    "response_format": "b64_json"
+  },
+  "success_response": {
+    "created": 1790596800,
+    "data": [
+      {"b64_json": "c2FuaXRpemVkLWltYWdlLWJ5dGVz"}
+    ]
+  },
+  "limits": {
+    "gpt_edit_images": 16,
+    "gpt_edit_masks": 1,
+    "size": "positive WIDTHxHEIGHT or auto",
+    "quality": ["auto", "low", "medium", "high"]
+  },
+  "idempotency": {
+    "header": "Idempotency-Key",
+    "sync_replay_returns_result": false,
+    "same_key_sync_replay_status": 409,
+    "retry_ambiguous_post": false
+  },
+  "verification": {
+    "generation_shape": "documented_public_guide",
+    "edit_shape": "documented_gpt_family_public_guide",
+    "sunburst_edit_paid_smoke": "required_before_worker_switch"
+  }
+}
