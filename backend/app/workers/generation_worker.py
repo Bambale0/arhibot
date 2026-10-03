@@ -550,7 +550,7 @@ async def _generate_admin_frame(
             await db.commit()
     except Exception as exc:
         raise NexusOutcomeUnknown("Could not persist completed animation frame; do not resubmit") from exc
-    return image.data, result.task_id, storage.signed_url(
+    return image.data, result.task_id, result.image_url or storage.signed_url(
         path,
         ttl_seconds=max(settings.media_url_ttl_seconds,
                         max(settings.nexus_task_timeout_seconds, settings.neironych_request_timeout_seconds) + 120),
