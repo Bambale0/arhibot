@@ -382,9 +382,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     && active?.phase === 'pre_render'
     && session.initial_concept_mode
     && !session.initial_concept_accepted
-    && session.survey_completed_objects.includes(current.key)
-    && session.edit_question_ids.length === 1
-    && session.edit_question_ids[0] === active.id,
+    && session.edit_question_ids.includes(active.id),
   )
   const currentGenerationId = current && session && session.region_mode == null ? session.generation_ids[current.key] || null : null
   const canRetryGeneration = Boolean(
@@ -1162,9 +1160,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         })
       next = { ...next, edit_question_ids:rest }
       if (next.initial_concept_mode && !next.initial_concept_accepted) {
-        const missing = preQuestions(current, next).filter((item) =>
-          item.required && answers[item.id] === undefined,
-        )
+        const missing = preQuestions(current, next).filter((item) => answers[item.id] === undefined)
         if (missing.length) {
           return persist({
             ...next,
@@ -1508,7 +1504,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     && (active.max_value == null || numericDraft <= active.max_value)
   const customDraftValid = Boolean(draft.trim()) && (!customInputIsNumber || numericDraftValid)
   const initialEditCanSave = active.kind === 'multi'
-    ? multiCanContinue
+    ? multiCanContinue || (canSkip && Array.isArray(active.skip_default) && active.skip_default.length === 0)
     : active.kind === 'number'
       ? numericDraftValid
       : active.kind === 'single' && customOption
@@ -1528,11 +1524,11 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
 
   return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={() => void previousQuestion()}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{current.title}</span></header><div className="questionnaire-layout"><aside className="questionnaire-progress"><span className="eyebrow">ВЫБРАНО</span>{session.selected_objects.map((key, index) => <div key={key} className={`questionnaire-progress-item ${session.accepted_objects.includes(key) ? 'done' : key === current.key ? 'current' : ''}`}><b>{session.accepted_objects.includes(key) ? '✓' : index + 1}</b><span>{definitions.get(key)?.title || key}</span></div>)}<div className={`questionnaire-progress-item ${current.key === 'zayavka' ? 'current' : ''}`}><b>✓</b><span>Заявка</span></div>{sourceAsset && <div className="questionnaire-source-mini"><ImageIcon/><span>Фото участка загружено</span></div>}</aside><section className="questionnaire-card question-card"><div className="questionnaire-question-head"><div><span className="eyebrow">{active.phase === 'application' ? 'ЗАЯВКА' : review ? 'ОЦЕНКА ЭСКИЗА' : current.title.toUpperCase()}</span><h1>{activeTitle}</h1></div>{canSkip && <span className="optional-badge">можно пропустить</span>}</div>{review && renderOutput && <div className="questionnaire-result"><ResultImage url={renderOutput.url} alt={`Эскиз ${current.title}`}/></div>}
 
-  {!primaryReview && (active.kind === 'single' || (active.kind === 'number' && options.length > 0)) && <div className="questionnaire-options">{standardOptions.map((option) => <button key={option} className={`questionnaire-option ${!customOption && (String(currentValue) === option || draft === option) ? 'selected' : ''}`} onClick={() => {
+  {!primaryReview && (active.kind === 'single' || (active.kind === 'number' && options.length > 0)) && <div className="questionnaire-options">{standardOptions.map((option) => <button key={option} className={`questionnaire-option ${!customOption && (initialQuestionEdit ? draft === option : String(currentValue) === option || draft === option) ? 'selected' : ''}`} onClick={() => {
     setCustomOption(false)
     if (active.kind === 'number' || initialQuestionEdit) setDraft(option)
     else void answer(active, option)
-  }}><span>{option}</span><i/></button>)}{hasCustomOption && <button className={`questionnaire-option ${customOption || customStored ? 'selected' : ''}`} onClick={() => {
+  }}><span>{option}</span><i/></button>)}{hasCustomOption && <button className={`questionnaire-option ${customOption || (!initialQuestionEdit && customStored) ? 'selected' : ''}`} onClick={() => {
     setCustomOption(true)
     setDraft(customStored && typeof currentValue === 'string' ? currentValue.slice('Свой вариант:'.length).trim() : '')
   }}><span>Свой вариант</span><i/></button>}</div>}

@@ -36,13 +36,13 @@ const catalog = {
       {id:'4',text:'Сколько этажей?',kind:'single',options:['1 этаж','2 этажа','2 этажа + мансарда','3 этажа'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
       {id:'6',text:'Нужен гараж или навес?',kind:'single',options:['Да','Нет'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
       {id:'12',text:'Нужна терраса?',kind:'single',options:['Терраса','Нет'],required:true,skip_default:null,help:null,field_hint:null,max_selections:null,phase:'pre_render',condition:null,option_rules:{},edit_targets:{}},
-      {id:'12б',text:'На каких этажах терраса?',kind:'multi',options:['Первый этаж','Второй этаж','Третий этаж','Мансарда'],required:true,skip_default:null,help:null,field_hint:null,max_selections:4,phase:'pre_render',condition:{question_id:'12',operator:'neq',value:'Нет'},option_rules:{
+      {id:'12б',text:'На каких этажах терраса?',kind:'multi',options:['Первый этаж','Второй этаж','Третий этаж','Мансарда'],required:false,skip_default:['Первый этаж'],help:null,field_hint:null,max_selections:4,phase:'pre_render',condition:{question_id:'12',operator:'neq',value:'Нет'},option_rules:{
         'Первый этаж':{question_id:'4',operator:'floor_option',value:'Первый этаж'},
         'Второй этаж':{question_id:'4',operator:'floor_option',value:'Второй этаж'},
         'Третий этаж':{question_id:'4',operator:'floor_option',value:'Третий этаж'},
         'Мансарда':{question_id:'4',operator:'floor_option',value:'Мансарда'},
       },edit_targets:{}},
-      {id:'13',text:'Что еще добавить к дому?',kind:'multi',options:['Балкон','Терраса на плоской кровле'],required:false,skip_default:null,help:null,field_hint:null,max_selections:2,phase:'pre_render',condition:null,option_rules:{
+      {id:'13',text:'Что еще добавить к дому?',kind:'multi',options:['Балкон','Терраса на плоской кровле'],required:false,skip_default:[],help:null,field_hint:null,max_selections:2,phase:'pre_render',condition:null,option_rules:{
         'Балкон':{operator:'all',conditions:[
           {question_id:'4',operator:'neq',value:'1 этаж'},
           {question_id:'12б',operator:'not_contains_any',value:['Второй этаж','Третий этаж','Мансарда']},
@@ -308,6 +308,8 @@ test('multi-object initial concept waits for every questionnaire, allows answer 
   await expect(page.getByText('Какая лавка?')).toBeVisible()
   await page.getByText('Металл + дерево',{exact:true}).click()
   await expect(page.getByText('Какая лавка?')).toBeVisible()
+  await expect(page.getByRole('button',{name:'Металл + дерево'})).toHaveClass(/selected/)
+  await expect(page.getByRole('button',{name:'Деревянная со спинкой'})).not.toHaveClass(/selected/)
   await page.getByRole('button',{name:'Сохранить'}).click()
   await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
   expect(generationCount).toBe(0)
@@ -330,7 +332,7 @@ test('editing one answer asks only for a newly required dependent answer',async(
     survey_completed_objects:['eskez-doma'],
     current_object:null,
     current_question_id:null,
-    answers:{'eskez-doma':{'4':'2 этажа','6':'Нет','12':'Нет'}},
+    answers:{'eskez-doma':{'4':'2 этажа','6':'Нет','12':'Нет','13':[]}},
   }
   project={...project,name:'Дом',context:{...project.context,design_session:session}}
 
@@ -343,13 +345,65 @@ test('editing one answer asks only for a newly required dependent answer',async(
 
   await expect(page.getByText('На каких этажах терраса?')).toBeVisible()
   await page.getByText('Второй этаж',{exact:true}).click()
-  await page.getByRole('button',{name:'Продолжить'}).click()
+  await page.getByRole('button',{name:'Сохранить'}).click()
   await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
   expect(generationCount).toBe(0)
 
   await page.locator('details').filter({hasText:'Дом, фасад'}).locator('summary').click()
   await expect(page.getByRole('button',{name:/Нужна терраса\?/})).toContainText('Терраса')
   await expect(page.getByRole('button',{name:/На каких этажах терраса\?/})).toContainText('Второй этаж')
+})
+
+test('Back exits a targeted edit while a newly active dependent answer is open',async({page})=>{
+  session={
+    ...session,
+    source_step_completed:true,
+    selected_objects:['eskez-doma'],
+    initial_concept_mode:true,
+    survey_completed_objects:['eskez-doma'],
+    current_object:null,
+    current_question_id:null,
+    answers:{'eskez-doma':{'4':'2 этажа','6':'Нет','12':'Нет','13':[]}},
+  }
+  project={...project,name:'Дом',context:{...project.context,design_session:session}}
+
+  await page.goto('/?project=' + projectId)
+  await page.locator('details').filter({hasText:'Дом, фасад'}).locator('summary').click()
+  await page.getByRole('button',{name:/Нужна терраса\?/}).click()
+  await page.getByText('Терраса',{exact:true}).click()
+  await page.getByRole('button',{name:'Сохранить'}).click()
+  await expect(page.getByText('На каких этажах терраса?')).toBeVisible()
+
+  await page.getByRole('button',{name:'Назад'}).click()
+  await expect(page.getByRole('heading',{name:'Заполните параметры всех объектов'})).toBeVisible()
+  await expect(page.getByText('Нужна терраса?')).toHaveCount(0)
+  expect(session.edit_question_ids).toEqual([])
+  expect(generationCount).toBe(0)
+})
+
+test('an optional multi answer can be cleared during targeted editing',async({page})=>{
+  session={
+    ...session,
+    source_step_completed:true,
+    selected_objects:['eskez-doma'],
+    initial_concept_mode:true,
+    survey_completed_objects:['eskez-doma'],
+    current_object:null,
+    current_question_id:null,
+    answers:{'eskez-doma':{'4':'2 этажа','6':'Нет','12':'Нет','13':['Балкон']}},
+  }
+  project={...project,name:'Дом',context:{...project.context,design_session:session}}
+
+  await page.goto('/?project=' + projectId)
+  await page.locator('details').filter({hasText:'Дом, фасад'}).locator('summary').click()
+  await page.getByRole('button',{name:/Что еще добавить к дому\?/}).click()
+  await page.getByText('Балкон',{exact:true}).click()
+  await expect(page.getByRole('button',{name:'Сохранить'})).toBeEnabled()
+  await page.getByRole('button',{name:'Сохранить'}).click()
+
+  await expect(page.getByText('Всё готово к одной генерации')).toBeVisible()
+  expect(session.answers['eskez-doma']['13']).toEqual([])
+  expect(generationCount).toBe(0)
 })
 
 
