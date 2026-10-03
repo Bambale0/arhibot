@@ -24,7 +24,7 @@ def upgrade() -> None:
                 f"{role}_provider",
                 sa.String(length=32),
                 nullable=False,
-                server_default="nexus",
+                server_default="neironych",
             ),
         )
         op.create_check_constraint(
@@ -32,6 +32,23 @@ def upgrade() -> None:
             "generation_runtime_settings",
             f"{role}_provider IN ('nexus', 'neironych')",
         )
+    op.execute(
+        sa.text(
+            """
+            UPDATE generation_runtime_settings
+            SET primary_provider = 'neironych',
+                fallback_provider = 'neironych',
+                primary_model = 'gpt-image-2.5-sunburst',
+                primary_params = jsonb_build_object(
+                    'size', '3840x2160',
+                    'quality', 'high'
+                ),
+                fallback_model = NULL,
+                fallback_params = '{}'::jsonb
+            WHERE id = 1
+            """
+        )
+    )
 
 
 def downgrade() -> None:

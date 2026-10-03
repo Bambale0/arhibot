@@ -250,7 +250,7 @@ async def test_provider_routing_api_rejects_unknown_provider_before_commit():
 async def test_admin_ai_creation_snapshots_provider_in_envelope_and_audit(
     monkeypatch, provider, method, schema, prefix
 ):
-    service, _, session = _service(primary_provider=provider or "nexus")
+    service, _, session = _service(primary_provider=provider or "neironych")
     if provider is None:
         session.execute.return_value.scalar_one_or_none.return_value = None
     actor = SimpleNamespace(id=uuid4())
@@ -285,11 +285,11 @@ async def test_admin_ai_creation_snapshots_provider_in_envelope_and_audit(
     envelope = create.call_args.args[1].prompt
     assert envelope.startswith(prefix)
     snapshot = loads(envelope.removeprefix(prefix))
-    assert snapshot["provider"] == (provider or "nexus")
+    assert snapshot["provider"] == (provider or "neironych")
     assert snapshot["prompt"] == "A modern house"
     assert snapshot["params"] == {"quality": "medium"}
     audit = next(
         call.args[0] for call in session.add.call_args_list
         if isinstance(call.args[0], AdminAuditLog)
     )
-    assert audit.details["provider"] == (provider or "nexus")
+    assert audit.details["provider"] == (provider or "neironych")

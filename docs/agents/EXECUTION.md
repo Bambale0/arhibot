@@ -738,3 +738,13 @@ ksu TDD and local vendored verification-before-completion. No upstream scripts b
   is required before active worker migration.
 - Risk/rollback: documentation and fixtures do not affect runtime behavior. Rollback is a normal
   revert of this child PR; no migration or paid-provider reconciliation is involved.
+
+Activation update: the operator explicitly confirmed that Nexus is removed and only Neironych
+must be active. Revision `20261003_0039` therefore migrates the singleton dev runtime to
+`primary_provider=neironych`, `fallback_provider=neironych`, primary model
+`gpt-image-2.5-sunburst`, size `3840x2160`, quality `high`, and no fallback model. New runtime rows
+default to Neironych. The dev deployment now requires the protected GitHub
+`NEIRONYCH_API_KEY` secret and atomically provisions it before migration/startup on every deploy;
+there is no longer a manual checkbox that could leave the migrated worker without its credential.
+Historical Nexus routing remains only as a compatibility/reconciliation path for already-persisted
+checkpoints, not as the configured dev generation route. No paid provider request was made.

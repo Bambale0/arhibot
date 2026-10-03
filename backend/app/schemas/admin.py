@@ -330,8 +330,8 @@ class AdminAiHistoryItem(BaseModel):
 
 
 class GenerationRuntimeUpdate(BaseModel):
-    primary_provider: GenerationProvider = "nexus"
-    fallback_provider: GenerationProvider = "nexus"
+    primary_provider: GenerationProvider = "neironych"
+    fallback_provider: GenerationProvider = "neironych"
     primary_model: str = Field(min_length=1, max_length=120)
     fallback_model: str | None = Field(default=None, max_length=120)
     primary_timeout_seconds: int = Field(default=90, ge=30, le=600)
@@ -392,8 +392,8 @@ class GenerationRuntimeUpdate(BaseModel):
 
 
 class GenerationRuntimeResponse(BaseModel):
-    primary_provider: GenerationProvider = "nexus"
-    fallback_provider: GenerationProvider = "nexus"
+    primary_provider: GenerationProvider = "neironych"
+    fallback_provider: GenerationProvider = "neironych"
     primary_model: str | None = None
     fallback_model: str | None = None
     primary_timeout_seconds: int = 90

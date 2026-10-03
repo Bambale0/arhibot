@@ -27,8 +27,8 @@ def test_empty_or_unsafe_key_does_not_change_existing_file(tmp_path, key):
     assert path.read_text() == 'NEIRONYCH_API_KEY=old-test-only\n'
 
 
-def test_workflow_provisioning_is_owner_opt_in_only():
+def test_workflow_provisions_required_secret_on_every_dev_deploy():
     source = (ROOT / '.github/workflows/deploy-dev.yml').read_text()
-    assert "if: github.event_name == 'workflow_dispatch' && inputs.provision_neironych_key" in source
-    assert 'default: false' in source
+    assert '- name: Configure Neironych dev key' in source
+    assert 'inputs.provision_neironych_key' not in source
     assert 'NEIRONYCH_API_KEY: ${{ secrets.NEIRONYCH_API_KEY }}' in source
