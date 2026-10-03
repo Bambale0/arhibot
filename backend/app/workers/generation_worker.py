@@ -46,6 +46,7 @@ from app.localized_edit import (
 from app.image_flyover import FlyoverGif, build_flyover_gif
 from app.image_orbit import build_orbit_animation
 from app.prompt_builders.generation import build_generation_prompt
+from app.providers.neironych import NeironychImageProvider, NeironychImageResult
 from app.providers.nexus import (
     NexusImageProvider,
     NexusImageResult,
@@ -79,7 +80,7 @@ QUESTIONNAIRE_ASPECT_RATIOS = {
     "16:9": 16 / 9,
     "9:16": 9 / 16,
 }
-RESERVED_PROVIDER_PARAMS = {"model_name", "prompt", "image_url", "image_urls"}
+RESERVED_PROVIDER_PARAMS = {"model_name", "prompt", "image_url", "image_urls", "model", "images", "mask", "n", "response_format"}
 ADMIN_ORBIT_MAX_CONCURRENCY = 3
 MASKED_EDIT_GUIDE_PROMPT = (
     "MASKED EDIT REFERENCE CONTRACT:\n"
@@ -519,7 +520,7 @@ async def _generate_admin_frame(
         data = await _read_admin_frame(storage, cached)
         return data, cached["task_id"], storage.signed_url(
             cached["path"],
-            ttl_seconds=max(settings.media_url_ttl_seconds, settings.nexus_task_timeout_seconds + 120),
+            ttl_seconds=max(settings.media_url_ttl_seconds, max(settings.nexus_task_timeout_seconds, settings.neironych_request_timeout_seconds) + 120),
         )
 
     result = await _generate_checkpointed(
@@ -528,7 +529,7 @@ async def _generate_admin_frame(
         reference_image_urls=None, timeout_seconds=None, frame_slot=phase,
     )
     try:
-        data = await _download_image(result.image_url, settings)
+        data = await _provider_image_data(result, settings)
     except (httpx.HTTPError, TimeoutError, OSError) as exc:
         raise NexusOutcomeUnknown("Animation frame download must resume the accepted task") from exc
     async with get_session_factory()() as db:
@@ -549,7 +550,11 @@ async def _generate_admin_frame(
             await db.commit()
     except Exception as exc:
         raise NexusOutcomeUnknown("Could not persist completed animation frame; do not resubmit") from exc
-    return image.data, result.task_id, result.image_url
+    return image.data, result.task_id, result.image_url or storage.signed_url(
+        path,
+        ttl_seconds=max(settings.media_url_ttl_seconds,
+                        max(settings.nexus_task_timeout_seconds, settings.neironych_request_timeout_seconds) + 120),
+    )
 
 
 async def _generate_orbit_frames(
@@ -673,6 +678,37 @@ async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -
         await session.commit()
 
 
+def _image_provider(
+    name: str, settings: Settings, *, pending: bool = False,
+) -> NexusImageProvider | NeironychImageProvider:
+    try:
+        if name == "nexus":
+            return NexusImageProvider(settings)
+        if name == "neironych":
+            return NeironychImageProvider(settings)
+        raise NexusProviderError("Unknown configured image provider", retryable=False)
+    except NexusProviderError as exc:
+        if pending:
+            raise NexusOutcomeUnknown("Saved provider is unavailable; reconcile existing purchase") from exc
+        raise
+
+
+async def _provider_image_data(
+    result: NexusImageResult | NeironychImageResult, settings: Settings,
+) -> bytes:
+    if isinstance(result, NeironychImageResult) and result.image_data is not None:
+        return result.image_data
+    try:
+        data = await _download_image(result.image_url, settings)
+        if isinstance(result, NeironychImageResult):
+            await asyncio.to_thread(NeironychImageProvider.validate_image_bytes, data, settings)
+        return data
+    except Exception as exc:
+        if isinstance(result, NeironychImageResult):
+            raise NexusOutcomeUnknown("Neironych output retrieval failed; no resubmission") from exc
+        raise
+
+
 async def _generate_checkpointed(
     provider: NexusImageProvider, generation_id: UUID, *, attempt: int, phase: str,
     model_name: str, prompt: str, source_url: str | None, params: dict[str, object],
@@ -687,6 +723,8 @@ async def _generate_checkpointed(
     """
     key = f"auroom-{generation_id}-{phase}" if attempt == 0 else f"auroom-{generation_id}-quality-{attempt}-{phase}"
     resume_id = None
+    provider_name = getattr(provider, "name", "nexus")
+    prepared_request = None
 
     def save_checkpoint(row: Generation, checkpoint: dict) -> None:
         report = dict(row.quality_report or {})
@@ -706,11 +744,18 @@ async def _generate_checkpointed(
         previous = (report.get("provider_request", {}) if frame_slot is None
                     else report.get("provider_frame_requests", {}).get(frame_slot, {}))
         if previous.get("key") == key:
+            if previous.get("provider", "nexus") != provider_name:
+                raise NexusOutcomeUnknown("Saved provider differs; no new purchase allowed")
             resume_id = previous.get("task_id")
             if not resume_id or resume_id == "sync":
-                raise NexusOutcomeUnknown("Previous Nexus submission could not be reconciled; no duplicate was sent")
+                raise NexusOutcomeUnknown("Previous provider submission could not be reconciled; no duplicate was sent")
             model_name = previous["model"]
         else:
+            if isinstance(provider, NeironychImageProvider):
+                prepared_request = provider.build_request(
+                    model_name=model_name, prompt=prompt, image_url=source_url,
+                    model_params=params, reference_image_urls=reference_image_urls,
+                )
             # Inputs are needed only for a NEW purchase. GET of an accepted task
             # must still recover its completed output if a temporary guide is lost.
             if required_input is not None:
@@ -725,6 +770,9 @@ async def _generate_checkpointed(
                     raise NexusProviderError("Frozen layout reference changed", retryable=False)
             save_checkpoint(row, {
                 "key": key, "attempt": attempt, "phase": phase, "model": model_name,
+                "provider": provider_name,
+                **({"request_endpoint": prepared_request[0], "request_body": prepared_request[1]}
+                   if prepared_request is not None else {}),
                 "state": "submitting", "task_id": None,
             })
             await db.commit()
@@ -739,6 +787,9 @@ async def _generate_checkpointed(
                 row.model_name = model_name
                 save_checkpoint(row, {
                     "key": key, "attempt": attempt, "phase": phase, "model": model_name,
+                    "provider": provider_name,
+                    **({"request_endpoint": prepared_request[0], "request_body": prepared_request[1]}
+                       if prepared_request is not None else {}),
                     "state": "accepted", "task_id": task_id,
                 })
                 await db.commit()
@@ -749,7 +800,20 @@ async def _generate_checkpointed(
         model_name=model_name, prompt=prompt, image_url=source_url, model_params=params,
         idempotency_key=key, reference_image_urls=reference_image_urls,
         timeout_seconds=timeout_seconds, task_id=resume_id, on_task_created=accepted,
+        **({"prepared_request": prepared_request} if prepared_request is not None else {}),
     )
+
+
+def _reconciliation_report(
+    report: dict[str, object] | None, request_id: str | None
+) -> dict[str, object]:
+    updated = dict(report or {})
+    if request_id:
+        checkpoint = updated.get("provider_request")
+        if isinstance(checkpoint, dict):
+            updated["provider_request"] = {**checkpoint, "request_id": request_id}
+    updated["requires_reconciliation"] = True
+    return updated
 
 
 async def process_generation(generation_id: UUID, settings: Settings) -> None:
@@ -862,7 +926,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             asset_service.storage.signed_url(
                 input_asset.storage_path,
                 ttl_seconds=max(
-                    settings.media_url_ttl_seconds, settings.nexus_task_timeout_seconds + 120
+                    settings.media_url_ttl_seconds, max(settings.nexus_task_timeout_seconds, settings.neironych_request_timeout_seconds) + 120
                 ),
             )
             if input_asset is not None
@@ -928,6 +992,16 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             primary_model = runtime.primary_model
             fallback_model = runtime.fallback_model
             primary_timeout_seconds = runtime.primary_timeout_seconds
+        primary_provider = getattr(runtime, "primary_provider", "nexus") or "nexus"
+        fallback_provider = getattr(runtime, "fallback_provider", "nexus") or "nexus"
+        if admin_internal_generation:
+            prefix = next(value for value in (
+                ADMIN_SANDBOX_PROMPT_PREFIX, ADMIN_ORBIT_PROMPT_PREFIX, ADMIN_FLYOVER_GIF_PROMPT_PREFIX
+            ) if generation.prompt.startswith(value))
+            primary_provider = loads(generation.prompt[len(prefix):]).get("provider", "nexus")
+        elif initial_layout_guide:
+            primary_provider = initial_layout_guide.get("primary_provider", "nexus")
+            fallback_provider = initial_layout_guide.get("fallback_provider", "nexus")
         provider_checkpoint = (generation.quality_report or {}).get("provider_request", {})
         provider_geometry = (generation.quality_report or {}).get("provider_geometry")
         composition_mode = generation.composition_mode
@@ -950,7 +1024,6 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             }
         input_storage_path = input_asset.storage_path if input_asset is not None else None
 
-    provider = NexusImageProvider(settings)
     guide_storage = LocalMediaStorage(settings)
     guide_relative_path: str | None = None
     reference_image_urls: list[str] | None = None
@@ -963,6 +1036,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
     provider_work_region = edit_region
     required_input: tuple[Path, str] | None = None
     try:
+        provider = _image_provider(
+            provider_checkpoint.get("provider", "nexus") if provider_checkpoint else primary_provider,
+            settings,
+            pending=bool(provider_checkpoint or (generation.quality_report or {}).get("provider_frame_requests")),
+        )
         if initial_concept_generation and source_url is None and composition_mode != "masked_edit":
             # Never retrofit a guide to an already submitted legacy task. Freeze
             # the file, provider-only prompt and runtime input contract before POST.
@@ -977,6 +1055,8 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         "sha256": sha256(initial_guide.data).hexdigest(),
                         "reference_role": "ground_plane_layout",
                         "prompt": initial_guide.prompt,
+                        "primary_provider": primary_provider,
+                        "fallback_provider": fallback_provider,
                         "primary_model": primary_model,
                         "fallback_model": fallback_model,
                         "primary_params": primary_params,
@@ -1005,7 +1085,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 source_url = guide_storage.signed_url(
                     guide_relative_path,
                     ttl_seconds=max(
-                        settings.media_url_ttl_seconds, settings.nexus_task_timeout_seconds + 120
+                        settings.media_url_ttl_seconds, max(settings.nexus_task_timeout_seconds, settings.neironych_request_timeout_seconds) + 120
                     ),
                 )
                 prompt = initial_layout_guide["prompt"]
@@ -1115,7 +1195,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                             input_storage_path,
                             ttl_seconds=max(
                                 settings.media_url_ttl_seconds,
-                                settings.nexus_task_timeout_seconds + 120,
+                                max(settings.nexus_task_timeout_seconds, settings.neironych_request_timeout_seconds) + 120,
                             ),
                         )
                     ]
@@ -1125,7 +1205,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 source_url = guide_storage.signed_url(
                     guide_relative_path,
                     ttl_seconds=max(
-                        settings.media_url_ttl_seconds, settings.nexus_task_timeout_seconds + 120
+                        settings.media_url_ttl_seconds, max(settings.nexus_task_timeout_seconds, settings.neironych_request_timeout_seconds) + 120
                     ),
                 )
                 primary_params = {
@@ -1152,7 +1232,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                         guide_relative_path,
                         ttl_seconds=max(
                             settings.media_url_ttl_seconds,
-                            settings.nexus_task_timeout_seconds + 120,
+                            max(settings.nexus_task_timeout_seconds, settings.neironych_request_timeout_seconds) + 120,
                         ),
                     )
                 ]
@@ -1267,6 +1347,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     else str(fallback_model) if use_fallback else primary_model
                 )
                 fallback_used = fallback_used or use_fallback
+                selected_provider = (
+                    provider_checkpoint.get("provider", "nexus") if resuming_request
+                    else fallback_provider if use_fallback else primary_provider
+                )
+                provider = _image_provider(selected_provider, settings, pending=resuming_request)
                 try:
                     result = await _generate_checkpointed(
                         provider,
@@ -1285,11 +1370,12 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     if not primary_error.retryable or not fallback_model or use_fallback:
                         raise
                     logger.warning(
-                        "Primary Nexus task failed for %s attempt=%s; using configured fallback",
+                        "Primary provider task failed for %s attempt=%s; using configured fallback",
                         generation_id,
                         quality_attempt + 1,
                     )
                     model_name = fallback_model
+                    provider = _image_provider(fallback_provider, settings)
                     fallback_used = True
                     result = await _generate_checkpointed(
                         provider,
@@ -1306,7 +1392,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     )
                 provider_task_id = result.task_id
                 try:
-                    candidate_data = await _download_image(result.image_url, settings)
+                    candidate_data = await _provider_image_data(result, settings)
                 except httpx.HTTPError as exc:
                     raise NexusOutcomeUnknown(
                         "Provider output download interrupted; resume existing task"
@@ -1640,17 +1726,16 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 " (orbit loop)" if orbit_request is not None else "",
                 " (bird flyover GIF)" if flyover_request is not None else "",
             )
-    except NexusOutcomeUnknown:
+    except NexusOutcomeUnknown as exc:
         logger.warning(
             "Generation %s awaits provider reconciliation; no resubmission or refund", generation_id
         )
         async with get_session_factory()() as session:
             generation = await GenerationRepository(session).get_for_update(generation_id)
             if generation is not None and generation.status == GenerationStatus.PROCESSING:
-                generation.quality_report = {
-                    **(generation.quality_report or {}),
-                    "requires_reconciliation": True,
-                }
+                generation.quality_report = _reconciliation_report(
+                    generation.quality_report, exc.request_id
+                )
                 generation.error = (
                     "Ожидаем подтверждение результата от сервиса генерации. "
                     "Повторный платный запуск заблокирован; текущая задача сохранена."
@@ -1837,3 +1922,4 @@ async def _main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(_main())
+

@@ -118,7 +118,22 @@ jobs:
             arhibot-source.tar.gz \
             arhibot-source.tar.gz.sha256 \
             ops/deploy_docker.sh \
+            ops/provision_neironych_key.py \
             "${remote}:${DEPLOY_APP_DIR}/.release/"
+
+      - name: Configure Neironych dev key
+        env:
+          NEIRONYCH_API_KEY: ${{ secrets.NEIRONYCH_API_KEY }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ -n "${NEIRONYCH_API_KEY}" ]] || {
+            echo "NEIRONYCH_API_KEY is not configured in GitHub Secrets; leaving dev unchanged" >&2
+            exit 1
+          }
+          remote="${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}"
+          printf '%s' "${NEIRONYCH_API_KEY}" | ssh -p "${DEPLOY_SSH_PORT}" "${remote}" \
+            python3 "${DEPLOY_APP_DIR}/.release/provision_neironych_key.py" "${DEPLOY_APP_DIR}/backend/.env"
 
       - name: Build, migrate and deploy development
         shell: bash
@@ -126,13 +141,14 @@ jobs:
           set -Eeuo pipefail
           remote="${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}"
           ssh -p "${DEPLOY_SSH_PORT}" "${remote}" bash -s -- \
-            "${DEPLOY_APP_DIR}" "${DEPLOY_SHA}" <<'REMOTE' 2>&1 | tee deploy.log
+            "${DEPLOY_APP_DIR}" "${DEPLOY_SHA}" dev <<'REMOTE' 2>&1 | tee deploy.log
           set -Eeuo pipefail
           app_dir=$1
           release_sha=$2
+          deployment_target=$3
           cd "${app_dir}/.release"
           chmod 700 deploy_docker.sh
-          ./deploy_docker.sh "${app_dir}" "${release_sha}"
+          ./deploy_docker.sh "${app_dir}" "${release_sha}" "${deployment_target}"
           REMOTE
 
       - name: Upload deploy log
@@ -143,3 +159,4 @@ jobs:
           path: deploy.log
           if-no-files-found: ignore
           retention-days: 14
+

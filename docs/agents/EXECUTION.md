@@ -685,3 +685,74 @@ Review negative control: a bath may explicitly combine planken with log/timber a
 PR review found two additional gaps: selecting a fence must not imply a gate (and vice versa), and an electric bath forbids any stove flue, not only a fireplace chimney. Four new RED cases reproduced these omissions;126 focused checks pass after independent object permissions and the bath-specific negative directive. Existing source-photo preservation, explicit gate/fence supports and per-object required chimneys remain intact. Final exact-head CI reruns all560+ tests; no provider purchase has occurred.
 
 Release-gate dependency finding: CI36741445338 failed pip-audit on PyJWT2.14.0/CVE-2026-101918 (GHSA-42vr-xj54-vc7v). Verified the maintainer advisory and current patch releases. Raise the minimum to2.15 and regenerate existing hash locks, resolving only PyJWT to2.15.1; no audit suppression or unrelated upgrades. Existing app verification checks signatures and does not use the advisory's pre-verification/JWKS path, so do not claim an observed unauthenticated exploit in AuRoom. Added characterization controls for deeply nested signed/forged payloads returning401; both also pass on this local Python3.14/PyJWT2.14 environment, so these are not RED evidence of the advisory. Runtime lock audit now reports no known vulnerabilities. Recheck all auth integration and lock/schema gates using the patched package. Applied local security-audit guidance in addition to the recorded six-source release/security checklist.
+
+## 2026-10-03: Neironych image-provider migration, dev only
+
+Authorized outcome: switch generation to Neironych through reviewed dev PR, exact-head CI,
+dev merge/deploy and permitted runtime verification. Baseline dev 5d6faca97c7ede0724023fc93d7537637b1d40be.
+Preflight found Nexus hardcoded in worker, model settings already DB/admin managed, explicit
+worker environment allowlist, existing persisted submission-intent and reconciliation guards.
+PR153 fixtures target an unrelated epic and include invalid placeholder image bytes; reuse
+verified wire-contract knowledge only, no epic merge. Live guide has changed since that PR.
+
+Implementation steps: adapter with synchronous b64/URL output and no replay; provider routing
+columns/API/audit and immutable admin-job snapshots; worker provider checkpoints and output
+handling; unchanged credit idempotency and delivery; credential allowlist/readiness; mock
+regressions and review; exact-head CI; dev deploy; owner credential/activation verification.
+
+Secrets are infrastructure; provider/model selection remains authenticated DB/admin. Migration
+preserves Nexus to avoid unconfigured activation. No price/model seed, no paid request, no
+production change. Owner secret provisioning is required before activation and is not verified.
+
+Checks so far: adapter/worker focused checks passed; admin TDD 65 passed; initial full unit
+run 613 passed, 27 skipped, two failures caused by incomplete materialization of unchanged
+frontend files (now materialized and full suite rerunning). PostgreSQL integration/migrations,
+locked Python3.14 runtime, frontend build and deploy are CI gates, not yet claimed.
+Independent review found and fixed sync flyover reference loss and malformed output refund
+paths; new regression controls are being added before publication.
+
+Guidance inspected: claw backend-integration; wondelai release-it; dev-agents-pack Python
+backend; agentskills format README (no task-specific coding skill); anthropics webapp-testing;
+ksu TDD and local vendored verification-before-completion. No upstream scripts blindly run.
+
+## Neironych multimodal generation contracts — 3 October 2026
+
+- Baseline: `origin/epic/multimodal-generation-control` at `2a35e90`; child branch
+  `feat/neironych-contracts` targets the epic branch, not `dev` or `main`.
+- User outcome: begin the open multimodal-control epic with its mandatory contract-first slice.
+- Current state: the public guide and unauthenticated capability endpoint were re-read. The guide
+  digest is `756367c0aea3faaebe562a6d6e16b9dd1f635d0e417284cee76e36d19516c517`;
+  all three requested model IDs are currently advertised.
+- Scope: sanitized guide/capability fixtures, contract tests, and provider contract notes only.
+  Worker, database, admin, billing, queue, public delivery and runtime secrets remain unchanged.
+- Security/configuration: no API key was available, read, logged or committed. Model choices remain
+  intended DB/admin configuration; secrets remain environment/secret-store configuration.
+- TDD evidence: nine focused tests failed first because the contract fixtures were absent, then
+  passed after the fixtures were added.
+- Local verification: Python 3.14 focused contract suite `9 passed`; Ruff, compileall and
+  `git diff --check` passed. The full Windows run reached `527 passed, 41 skipped, 23 failed`;
+  failures are confined to unchanged POSIX/bash/symlink/permission/font/layout tests. Linux CI on
+  the exact commit remains the authoritative full-suite gate.
+- Open gate: public docs do not guarantee Grok 4.5 JSON Schema/vision limits for this model, and no
+  paid Sunburst edit or Seedance start-image request was made. Authenticated bounded smoke evidence
+  is required before active worker migration.
+- Risk/rollback: documentation and fixtures do not affect runtime behavior. Rollback is a normal
+  revert of this child PR; no migration or paid-provider reconciliation is involved.
+
+Activation update: the operator explicitly confirmed that Nexus is removed and only Neironych
+must be active on dev. Review correctly identified that a global migration-time UPDATE would later
+overwrite production operator settings. Revision `20261003_0039` is therefore provider-neutral
+and preserves existing Nexus routing. The dev deployment requires the protected GitHub
+`NEIRONYCH_API_KEY`, atomically provisions it, and then uses an ephemeral superadmin token inside
+the API container to update routing through authenticated `PUT /api/v1/admin/generation` to
+Neironych, `gpt-image-2.5-sunburst`, size `3840x2160`, quality `high`, and no fallback model.
+The token and key are never printed. Production remains unchanged on future migration. Historical
+Nexus routing remains only as a compatibility/reconciliation path for already-persisted
+checkpoints, not as the configured dev generation route. No paid provider request was made.
+
+PR157 review gate: seven unresolved threads blocked the first merge attempt. All were addressed:
+provider-neutral migration/dev-only authenticated activation; fallback credential readiness;
+private correlation persistence; public checkpoint payload redaction; explicit non-JSON 4xx
+classification; provider-specific parameter validation; current unconditional provisioning docs.
+Focused regression verification is 105 passed with the Windows chmod-only test deselected; Linux
+CI remains authoritative for that POSIX permission test and the full integration/E2E suite.

@@ -35,6 +35,31 @@ RESERVED_INTERNAL_PROMPT_PREFIXES = (
 )
 
 
+def _public_quality_report(report: dict | None) -> dict | None:
+    if not report:
+        return report
+    public = dict(report)
+    checkpoint = public.get("provider_request")
+    if isinstance(checkpoint, dict):
+        public["provider_request"] = {
+            key: value
+            for key, value in checkpoint.items()
+            if key not in {"key", "request_body", "request_id"}
+        }
+    frame_checkpoints = public.get("provider_frame_requests")
+    if isinstance(frame_checkpoints, dict):
+        public["provider_frame_requests"] = {
+            slot: {
+                key: value
+                for key, value in item.items()
+                if key not in {"key", "request_body", "request_id"}
+            }
+            for slot, item in frame_checkpoints.items()
+            if isinstance(item, dict)
+        }
+    return public
+
+
 class GenerationService:
     def __init__(self, session: AsyncSession, settings: Settings) -> None:
         self.session = session
@@ -85,12 +110,15 @@ class GenerationService:
                 status=422,
                 detail="This prompt prefix is reserved for server-managed generation flows.",
             )
-        if not (self.settings.nexus_api_key or "").strip():
+        if not (
+            (self.settings.neironych_api_key or "").strip()
+            or (self.settings.nexus_api_key or "").strip()
+        ):
             raise AppError(
                 type="generation_provider_not_configured",
                 title="Generation provider not configured",
                 status=503,
-                detail="NexusAPI is not configured for this environment.",
+                detail="No image generation provider is configured for this environment.",
             )
 
         project = await self.projects.get_owned(
@@ -292,7 +320,7 @@ class GenerationService:
             asset = await self.assets.get_owned(generation.output_asset_id, generation.user_id)
             if asset is not None:
                 output_asset = self.asset_service.to_response(asset)
-        quality_report = generation.quality_report
+        quality_report = _public_quality_report(generation.quality_report)
         if quality_report and isinstance(quality_report.get("initial_layout_guide"), dict):
             # Recovery snapshots contain operator parameters and the full provider
             # request. Public diagnostics expose only the non-sensitive identity.
