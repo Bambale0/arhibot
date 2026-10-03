@@ -4,20 +4,26 @@ Baseline: `382b392`. This follow-up uses the existing canonical initial-concept 
 visual-fidelity enrichment, signed local media and paid-request checkpoint. It adds
 no migration, model name, model routing rule, price or provider setting.
 
-Eligible new requests receive a provider-only, unlabeled ground-plane PNG. The
-house polygon occupies the requested ground-area share (total area divided by an
-integer floor count). A rectangular pool uses its stated metre dimensions. The
-conceptual square is **not** a surveyed cadastral shape. The stored canonical brief
-is unchanged.
+Eligible new requests receive a provider-only, unlabeled ground-plane PNG. When
+the house has only full storeys, its polygon can carry the requested ground-area
+share (total area divided by the integer storey count). When an attic is selected
+without an explicit attic-area split, the guide does **not** manufacture a precise
+house footprint: the house is only a relative placement anchor and the scale remains
+unmeasured. A rectangular or oval pool uses its stated metre dimensions; for a
+selected open canopy, the guide additionally encodes the canopy roof projection over
+the water footprint. The conceptual square is **not** a surveyed cadastral shape.
+The stored canonical brief is unchanged.
 
 Eligibility is intentionally bounded: synthetic `whole_site_aerial`, a supported
-explicit house polygon and share without layout warnings, separate open rectangular
-pools with known dimensions that fit their permitted semantic zone, explicit
-full-perimeter hedge/fence, and optionally the
-simple lawn-only questionnaire variant. Source photographs, gates, partial boundaries,
-other plantings, unsupported objects/shapes/dimensions and fractional attic floor
-counts retain the existing generation path. The reference legend names only selected
-objects. No labels, measurement lines or unselected fence are drawn.
+explicit house polygon without layout warnings, separate open or canopy-covered
+rectangular/oval pools with known dimensions that fit their permitted semantic zone,
+explicit full-perimeter hedge/fence, and optionally the simple lawn-only questionnaire
+variant. Exact house-area ratios still require full storeys with a measurable ground
+share; attic briefs remain placement-only unless sufficient area data exists.
+Source photographs, gates, partial boundaries, pool pavilions, attached pools, other
+plantings, unsupported objects/shapes/dimensions and other ambiguous geometry retain
+the existing generation path. The reference legend names only selected objects. No
+labels, measurement lines or unselected fence are drawn.
 
 The worker writes the PNG and commits `initial_layout_guide.v1` before submission
 intent. This snapshot retains the file digest, reference role, enriched prompt and
@@ -46,6 +52,12 @@ Verification covers numerical/raster areas, no text drawing, unsupported-case sk
 the actual QA brief, conditional legends, interruption before submission, accepted
 and ambiguous request recovery, runtime changes, missing/tampered input, legacy
 checkpoints, credit retention/refund, file cleanup and public response redaction.
+
+Scenario 160 adds a regression for a 1,000m² plot with a 200m² two-storey house plus
+attic, an excavated oval 8×4m pool with an open canopy, and a full-perimeter flowering
+hedge. Its house footprint is intentionally not certified because the attic-area share
+is unknown. The raster regression requires the canopy projection to enclose the pool
+water footprint and forbids the hard-fence color in the hedge-only guide.
 
 ## Release verification
 
