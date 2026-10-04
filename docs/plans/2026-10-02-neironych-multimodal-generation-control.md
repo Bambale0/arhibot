@@ -1,12 +1,12 @@
-# Neironych Multimodal Generation Control Implementation Plan
+# Multimodal Generation Control Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: use the repository-local `writing-plans`, `test-driven-development`, `verification-before-completion`, and the provider/backend guidance referenced below. Execute task-by-task from the dedicated epic branch.
 
-**Goal:** Move the AuRoom generation pipeline to a single Neironych AI boundary, make standard **GPT Image 2** the configured primary image family, add `grok-4.5` multimodal questionnaire/result control through `/v1/responses`, and replace the primary Bird GIF creation flow with `seedance-2.0` video generation through Neironych.
+**Goal:** Keep standard **GPT Image 2** generation on Nexus, add `grok-4.5` multimodal questionnaire/result control through Neironych `/v1/responses`, and replace the primary Bird GIF creation flow with `seedance-2.0` video generation through Neironych.
 
-**Architecture:** Preserve the current canonical questionnaire/prompt builders, credit reservation, queue, recovery, and `Generation.quality_report` machinery. Add a typed Neironych provider layer behind the existing worker boundary; deterministic code owns requirements and retry policy, while Grok only observes and scores compliance. An image is not exposed as completed until semantic QA passes. Video is generated only from an accepted still and is represented as a separate generation/output asset.
+**Architecture:** Preserve Nexus as the image-generation provider and reuse its existing durable task/idempotency recovery path. Add a separate typed Neironych boundary only for Grok 4.5 multimodal QA and Seedance 2.0 video. Deterministic code owns requirements and retry policy, while Grok only observes and scores compliance. An image is not exposed as completed until semantic QA passes; video is generated only from an accepted still.
 
-**Tech Stack:** FastAPI, SQLAlchemy/PostgreSQL, Redis worker queue, httpx, Pydantic, React/Vite, Playwright, pytest, Neironych API.
+**Tech Stack:** FastAPI, SQLAlchemy/PostgreSQL, Redis worker queue, httpx, Pydantic, React/Vite, Playwright, pytest, Nexus image API, Neironych Responses/Video API.
 
 ---
 
@@ -14,12 +14,15 @@
 
 These are requirements, not implementation suggestions:
 
-- All AI calls go through **Neironych**. No direct OpenAI, xAI, ByteDance, KIE, or Nexus request may remain in the active production generation path.
-- Provider base is the Neironych API; secrets remain environment/secret-store configuration and are never exposed in admin UI.
-- Primary image family: **GPT Image 2 (standard)** through Neironych.
+- Provider split is explicit:
+  - **Nexus**: image generation/editing.
+  - **Neironych**: Grok multimodal control and Seedance video.
+- No direct OpenAI, xAI, ByteDance, or KIE calls are introduced.
+- Provider secrets remain environment/secret-store configuration and are never exposed in admin UI.
+- Primary image family: **GPT Image 2 (standard) through Nexus**.
+- Target Nexus model alias: **`gpt-image-2`**, subject to live Nexus capability verification before rollout.
 - Do **not** use `gpt-image-2.5-sunburst`.
-- Treat text-to-image and image/reference-edit as separate capabilities if Neironych exposes separate model IDs. The exact Neironych IDs are pinned in Task 1 before implementation and then stored in DB/admin settings.
-- Do not carry over Sunburst-only request fields such as `size: "3840x2160"`, `quality: "high"`, or `response_format: "b64_json"` unless the live GPT Image 2 Neironych contract explicitly supports them.
+- Reuse the existing Nexus image/reference contract and its durable task recovery instead of introducing a second image provider adapter.
 - Multimodal control model: **`grok-4.5`**.
 - Grok endpoint: **`POST /v1/responses`**.
 - Video model: **`seedance-2.0`**.
@@ -76,7 +79,7 @@ Grok 4.5 prompt audit via Neironych /v1/responses
         +-- contract mismatch --> fail internal QA, DO NOT buy image
         |
         v
-GPT Image 2 via Neironych
+GPT Image 2 via Nexus
         |
         v
 Decode b64 image -> validate -> private candidate asset
@@ -277,15 +280,14 @@ Keep `primary_model` / `primary_params` for image generation.
 After provider capability preflight, operator configuration for this epic is:
 
 ```text
-primary_model       = <verified Neironych GPT Image 2 text-to-image model ID>
-image_edit_model     = <verified Neironych GPT Image 2 image/reference-edit model ID, if separate>
+primary_model       = gpt-image-2
 quality_judge_model = grok-4.5
 video_model         = seedance-2.0
 ```
 
 Do **not** hardcode these model IDs in worker branches. They live in DB/admin. Tests may use fixtures/constants.
 
-Recommended initial image params in DB must come from the live GPT Image 2 Neironych contract. Do not reuse the removed Sunburst payload. Prefer the provider's documented `aspect_ratio` / `resolution` contract when that is what Neironych exposes, and keep `n=1` for the AuRoom production path if supported.
+Image params remain Nexus/operator-managed through the existing `primary_params` path. Do not reuse the removed Sunburst payload. Keep the current Nexus GPT Image 2 contract as the authority for aspect ratio, resolution, references and other supported fields.
 
 Recommended initial Seedance preset in DB after live verification:
 
@@ -300,77 +302,68 @@ No migration should blindly overwrite an already configured production row. Depl
 
 ## Secret configuration
 
-Add provider infrastructure settings only:
+Keep the existing Nexus infrastructure settings for image generation:
+
+- `NEXUS_API_KEY`
+- `NEXUS_BASE_URL`
+- existing Nexus task/poll/http resilience settings.
+
+Add Neironych infrastructure settings for judge/video only:
 
 - `NEIRONYCH_API_KEY`
 - `NEIRONYCH_API_BASE_URL`
-- provider connect/read/poll timeouts as required by the verified guide.
+- provider connect/read/poll timeouts required by the verified guide.
 
-The key is environment/secret-store only.
-
-When migration is complete, active production generation must not depend on `NEXUS_API_KEY` / `NEXUS_BASE_URL`.
+Both keys are environment/secret-store only. Runtime readiness must require Nexus when image generation is active and Neironych when judge/video features are enabled.
 
 ---
 
 # Provider boundary
 
-Create a Neironych package rather than expanding the Nexus adapter:
+Use two explicit provider boundaries.
+
+## Nexus — image generation
+
+Reuse `backend/app/providers/nexus.py` and the current worker checkpoint/reconciliation behavior.
+
+Responsibilities:
+
+- standard GPT Image 2 generation with configured model `gpt-image-2`;
+- image-to-image/reference flows through the existing `image_urls` contract;
+- paid create request sent once;
+- accepted task ID persisted before polling;
+- ambiguous create/poll outcomes never authorize another paid POST;
+- current image output validation/download path remains authoritative unless the verified Nexus contract requires a focused change.
+
+Do not create a Neironych image adapter for this epic.
+
+## Neironych — Grok and Seedance
+
+Create:
 
 ```text
 backend/app/providers/neironych/
     __init__.py
     common.py
-    models.py
-    image.py
     responses.py
     video.py
 ```
 
-Responsibilities:
-
 ### `common.py`
 
-- Authorization header.
-- Safe error parsing.
-- correlation/request ID extraction.
-- shared httpx timeout policy.
-- retry classification.
-- no secret-bearing logs.
-- optional `GET /v1/models` capability discovery if confirmed by guide/account.
-
-### `image.py`
-
-Expose a narrow method such as:
-
-```python
-async def generate_image(
-    *,
-    model: str,
-    prompt: str,
-    params: dict[str, object],
-    references: list[ProviderImageInput],
-    idempotency_key: str,
-    request_body: bytes | None = None,
-) -> NeironychImageResult
-```
-
-Result should prefer bytes using the exact verified GPT Image 2 Neironych response contract:
-
-```python
-@dataclass(frozen=True)
-class NeironychImageResult:
-    content: bytes
-    mime_type: str
-    request_id: str | None
-```
-
-If Neironych returns base64, decode and validate it locally; if it returns a provider URL, validate/download it through the verified contract. Do not invent a fake public URL.
+- Bearer auth;
+- safe error parsing;
+- request/correlation ID extraction;
+- shared httpx timeout policy;
+- retry classification;
+- secret-safe logging;
+- optional model capability discovery if supported.
 
 ### `responses.py`
 
 Expose a typed structured-output method for `grok-4.5` over `POST /v1/responses`.
 
-The exact Neironych request/response shape must be pinned from the current `/guide` before coding. Do not assume OpenAI/xAI field compatibility beyond the endpoint/model facts supplied by the operator.
+The exact Neironych request/response shape must be pinned from the current guide before coding. Do not assume direct xAI/OpenAI wire compatibility beyond verified Neironych behavior.
 
 ### `video.py`
 
@@ -444,28 +437,26 @@ Do not expose:
 
 # Implementation tasks
 
-## Task 1 — Pin the live Neironych contracts before touching the worker
+## Task 1 — Pin Nexus GPT Image 2 and Neironych Grok/Seedance contracts before touching the worker
 
 **Files**
-- Create: `backend/tests/fixtures/neironych/` sanitized response fixtures.
-- Create: `docs/provider-contracts/neironych-2026-10-02.md`.
-- Test: `backend/tests/test_neironych_contract.py`.
+- Create/update: `backend/tests/fixtures/providers/` sanitized provider response fixtures.
+- Create: `docs/provider-contracts/nexus-neironych-2026-10-04.md`.
+- Test: provider contract tests for Nexus and Neironych.
 
 **Steps**
 
-1. Read the current Neironych `/guide` with authenticated/account-specific docs if required.
-2. Confirm exact Neironych image endpoint and model ID(s) for standard GPT Image 2.
-3. Confirm whether GPT Image 2 uses one model ID or separate text-to-image / image-to-image IDs for AuRoom's reference/edit use cases, and pin the exact input fields.
-4. Confirm the actual GPT Image 2 response schema (base64, URL, task/result envelope, or other documented shape).
-5. Confirm max request/prompt/image sizes.
-6. Confirm whether image POST supports `Idempotency-Key` and how a request can be reconciled after an ambiguous timeout.
-7. Confirm Grok `/v1/responses` multimodal input shape, image representation, structured JSON/schema support, response field names, request IDs, and limits.
-8. Confirm `grok-4.5` appears in the account model capability list.
-9. Reconfirm Seedance 2.0 contract and model alias returned by the account.
-10. Save sanitized contract examples and SHA/date of the guide used.
-11. Write tests against the saved fixtures before provider implementation.
+1. Verify live Nexus support for standard GPT Image 2 and confirm the exact model alias used by AuRoom; expected target is `gpt-image-2`.
+2. Confirm Nexus GPT Image 2 text/reference behavior and the exact supported `image_urls` / params contract.
+3. Reconfirm Nexus idempotency, task polling and ambiguous-outcome recovery used by the existing adapter.
+4. Read the current Neironych guide for `grok-4.5` and `seedance-2.0`.
+5. Confirm Grok `/v1/responses` multimodal input shape, image representation, structured JSON/schema support, response field names, request IDs and limits.
+6. Confirm `grok-4.5` appears in the Neironych account capability list.
+7. Reconfirm Seedance 2.0 contract and model alias returned by the account.
+8. Save sanitized contract examples and source/date evidence.
+9. Write tests against the saved fixtures before provider implementation.
 
-**Gate:** no worker migration until the contract tests can represent real provider responses. If image reference/edit support is absent for the selected standard GPT Image 2 Neironych capability, add an admin-managed `image_edit_model` setting and fail closed until a verified Neironych edit model is selected; do not silently fall back to Nexus/direct vendors.
+**Gate:** no worker QA/video changes until the real Nexus GPT Image 2 and Neironych Grok/Seedance contracts are represented by tests. Do not silently fall back to another GPT image model or another provider.
 
 ## Task 2 — Add Neironych infrastructure configuration
 
@@ -478,8 +469,8 @@ Do not expose:
 
 **TDD**
 
-1. RED: production generation worker refuses to start when Neironych secret/base configuration required by active runtime is missing.
-2. RED: admin/runtime readiness reports Neironych rather than assuming Nexus.
+1. RED: production readiness requires Nexus for image generation and Neironych only for enabled judge/video features.
+2. RED: admin/runtime readiness reports both provider states independently.
 3. Implement `NEIRONYCH_API_KEY`, base URL and timeout validation.
 4. Do not expose API key in logs or admin.
 5. GREEN: config, runtime-check and preflight tests.
@@ -508,27 +499,27 @@ Cover:
 
 Retry policy must be operation-specific. Do not apply a generic POST retry to paid image/video creation.
 
-## Task 4 — Implement standard GPT Image 2 adapter
+## Task 4 — Characterize and configure Nexus GPT Image 2 as primary
 
 **Files**
-- Create: `backend/app/providers/neironych/image.py`
-- Modify image validation helpers only where necessary.
-- Test: `backend/tests/test_neironych_image.py`.
+- Reuse/modify only if required: `backend/app/providers/nexus.py`
+- Modify runtime/admin default configuration path, not worker hardcodes.
+- Test: `backend/tests/test_nexus_generation.py`, `backend/tests/test_provider_resilience.py`, integration generation tests.
 
 **Required tests**
 
-1. Exact configured model is sent.
-2. Operator params cannot override reserved model/prompt/reference fields.
-3. `n=1` is enforced for the production AuRoom path.
-4. The verified provider result shape is validated; base64 is validated before decode when base64 is the documented response form.
-5. Downloaded/decoded output has a configured max byte count.
-6. Actual image format/pixel dimensions are validated.
-7. Corrupt image is rejected.
-8. Provider 4xx is terminal.
-9. Provider 429/5xx behavior matches the verified idempotency contract.
-10. Ambiguous POST outcome never causes a second paid POST automatically.
-11. Reference/edit fields exactly match the live guide.
-12. No temporary base64 content is logged.
+1. Configured model `gpt-image-2` is sent through Nexus.
+2. Operator params cannot override provenance-critical model/prompt/reference fields.
+3. Reference-image flows keep the existing `image_urls` behavior.
+4. Paid create is attempted once.
+5. Accepted task ID is persisted before polling/resume.
+6. 4xx terminal behavior remains safe.
+7. 429/5xx/timeout behavior follows the verified Nexus idempotency contract.
+8. Ambiguous POST outcome never causes an automatic second paid POST.
+9. Output URL/content is validated before asset commit.
+10. No provider secret or full prompt is logged at unsafe levels.
+
+Do not rewrite the Nexus adapter unless the live GPT Image 2 contract demonstrates a real incompatibility.
 
 ## Task 5 — Implement Grok 4.5 structured multimodal judge
 
@@ -596,10 +587,11 @@ An unknown/invalid judge payload is a judge failure, not an image mismatch.
 
 **Critical regression:** if worker crashes between prompt audit and image generation, restart must not lose the authoritative snapshot or mutate the canonical stored prompt.
 
-## Task 7 — Move image generation to Neironych and private candidate assets
+## Task 7 — Keep Nexus image generation and add private candidate assets
 
 **Files**
 - Modify: `backend/app/workers/generation_worker.py`
+- Reuse: `backend/app/providers/nexus.py`
 - Modify: `backend/app/services/asset_service.py` only if a private candidate role is required.
 - Modify asset enums/schema only if necessary.
 - Test: `backend/tests/integration/test_generation_pipeline.py`
@@ -607,15 +599,14 @@ An unknown/invalid judge payload is a judge failure, not an image mismatch.
 
 **Steps**
 
-1. Write failing tests proving the worker calls the Neironych image adapter.
+1. Write failing tests proving the worker still calls `NexusImageProvider` with configured GPT Image 2.
 2. Preserve the existing persisted-intent-before-paid-POST rule.
-3. Decode and validate the image.
+3. Download/validate the Nexus output.
 4. Save candidate privately.
 5. Do not set final `output_asset_id` yet.
 6. Persist candidate digest and asset ID in `quality_report`.
 7. On restart, reuse the candidate instead of buying another image.
-8. Remove active worker dependence on `NexusImageProvider`.
-9. Keep old Nexus module only until all call sites/tests are migrated; delete it in a later task, not mid-transition.
+8. Semantic QA is layered after Nexus generation; it does not replace Nexus recovery logic.
 
 ## Task 8 — Add result semantic QA and one bounded correction retry
 
@@ -694,30 +685,30 @@ Admin must support:
 
 - primary image model;
 - image params;
-- optional fallback image model (if retained, it is also routed only through Neironych);
+- optional fallback image model, also routed through Nexus unless a future product decision changes provider routing;
 - Grok judge enabled/model/params/timeout/confidence threshold;
 - max semantic retry count;
 - video enabled/model/default params;
-- safe `Neironych configured: yes/no` status;
+- safe `Nexus configured: yes/no` and `Neironych configured: yes/no` statuses;
 - no API key field.
 
 Add validation so provider-reserved fields cannot be injected through free-form params.
 
-## Task 11 — Add Neironych capability preflight
+## Task 11 — Add dual-provider capability preflight
 
 **Files**
 - Modify: runtime checks/admin service/provider common client.
 - Test: model availability tests.
 
-Before operator activates settings, verify the account exposes configured models where the Neironych API supports capability discovery.
+Before operator activates settings, verify Nexus exposes the configured GPT Image 2 model/capability and Neironych exposes configured Grok/Seedance capabilities where discovery is supported.
 
 Fail closed when:
 
-- primary image model missing;
-- Grok model missing while judge enabled;
-- video model missing while video enabled.
+- Nexus primary image model is unavailable;
+- Grok model is missing while judge is enabled;
+- Seedance model is missing while video is enabled.
 
-Do not silently map standard GPT Image 2 to another image family or a premium/special GPT Image variant.
+Do not silently map standard GPT Image 2 to another image family or route it through Neironych.
 
 ## Task 12 — Replace primary Bird GIF creation with Seedance 2.0 video
 
@@ -803,19 +794,21 @@ Log correlation:
 
 Admin audit records model-setting changes.
 
-## Task 16 — Remove direct Nexus from active generation path
+## Task 16 — Final provider-boundary cleanup
 
 Only after Tasks 1–15 are green.
 
 **Files**
-- Remove active imports/call sites to `backend/app/providers/nexus.py`.
-- Remove/deprecate Nexus runtime readiness requirements.
-- Update docs and examples.
-- Keep migration compatibility only where historical data references model strings.
+- Remove dead Neironych image-provider scaffolding if any was introduced during experimentation.
+- Keep `backend/app/providers/nexus.py` as the active image adapter.
+- Update docs/examples so provider ownership is unambiguous.
 
-Regression gate: repository search must show no active production worker call to `NexusImageProvider`.
+Regression gate:
 
-Do not delete old code until deployment drain guarantees no old task needs Nexus recovery.
+- GPT Image 2 image generation/editing -> Nexus.
+- Grok 4.5 prompt/result QA -> Neironych.
+- Seedance 2.0 video -> Neironych.
+- no direct OpenAI/xAI/ByteDance/KIE call in the AuRoom production path.
 
 ---
 
@@ -823,8 +816,8 @@ Do not delete old code until deployment drain guarantees no old task needs Nexus
 
 ## Unit / contract
 
-- Neironych error parsing.
-- image response decode/download/limits.
+- Nexus GPT Image 2 contract/recovery.
+- Neironych Grok/Seedance error parsing.
 - reserved params.
 - exact model forwarding.
 - Grok structured response parsing.
@@ -855,7 +848,7 @@ At minimum:
 
 ## Frontend / Playwright
 
-- admin shows Neironych configuration status.
+- admin shows Nexus and Neironych configuration status.
 - model settings expose image / judge / video separately.
 - Bird GIF creation control replaced by Seedance video control.
 - history still renders legacy GIF/orbit.
@@ -867,7 +860,7 @@ At minimum:
 Use a bounded paid smoke only after mocks/integration are green:
 
 1. one low-risk Grok text+image structured response;
-2. one standard GPT Image 2 image;
+2. one standard GPT Image 2 image through Nexus;
 3. one full questionnaire initial generation with Grok pre/post audit;
 4. one deliberate questionnaire mismatch fixture that triggers exactly one correction retry;
 5. one Seedance 2.0 short flyover from an accepted still.
@@ -880,29 +873,28 @@ Record provider request IDs/cost evidence in private operational notes, not repo
 
 ## Phase A — Merge-compatible code
 
-- add Neironych adapters;
+- keep Nexus image adapter active;
+- add Neironych Grok/Seedance adapters;
 - add config/admin settings;
-- keep Nexus code present but unused by new controlled path;
 - no production switch yet.
 
 ## Phase B — Dev provider switch
 
-1. verify Neironych model availability;
+1. verify Nexus GPT Image 2 availability and Neironych Grok/Seedance availability;
 2. set dev admin runtime:
-   - primary standard GPT Image 2 using the exact verified Neironych model ID;
-   - judge `grok-4.5`;
-   - video `seedance-2.0`;
-3. drain existing generation queue before switching image provider semantics;
+   - primary `gpt-image-2` through Nexus;
+   - judge `grok-4.5` through Neironych;
+   - video `seedance-2.0` through Neironych;
+3. preserve existing Nexus generation recovery semantics;
 4. deploy exact green `dev` SHA;
 5. run the paid acceptance matrix.
 
-## Phase C — Nexus retirement
+## Phase C — Provider-boundary validation
 
-After all old tasks are terminal and recovery no longer depends on Nexus:
-
-- remove direct Nexus provider use;
-- remove Nexus secrets from dev runtime;
-- verify startup/readiness with Neironych only.
+- confirm all new image calls remain on Nexus;
+- confirm Grok/Seedance calls use only Neironych;
+- confirm both provider readiness checks and secrets are wired correctly;
+- confirm no mixed-provider fallback can silently move GPT Image 2 away from Nexus.
 
 ## Phase D — Production promotion
 
@@ -930,7 +922,7 @@ If a Neironych rollout is rolled back:
 - never replay an ambiguous paid image/video POST;
 - keep candidate assets/checkpoints until reconciled;
 - revert app code/config;
-- only restore an older provider path for newly-created generations after old Neironych jobs are terminal/reconciled.
+- keep Nexus image jobs and Neironych judge/video jobs independently reconciled; never reroute an in-flight paid request to another provider as a rollback shortcut.
 
 Database migration downgrade must not try to reconstruct unknown historical operator settings. Prefer backward-compatible nullable/default columns and leave data intact on code rollback when safe.
 
@@ -940,8 +932,8 @@ Database migration downgrade must not try to reconstruct unknown historical oper
 
 The epic is complete when all of the following are demonstrated:
 
-- [ ] Active image generation calls only Neironych.
-- [ ] Configured primary image family is standard GPT Image 2 through the exact verified Neironych model ID(s).
+- [ ] Active image generation/editing calls Nexus.
+- [ ] Configured primary image model is standard GPT Image 2 (`gpt-image-2`) through Nexus.
 - [ ] Questionnaire-derived generation performs Grok 4.5 prompt audit before image spend.
 - [ ] Generated candidates perform Grok 4.5 multimodal result audit before completion.
 - [ ] Grok cannot mutate canonical questionnaire requirements.
@@ -967,14 +959,14 @@ Keep the epic branch as the integration branch for this feature, but implement i
 
 Recommended sequence:
 
-1. `feat/neironych-contracts`
-2. `feat/neironych-image-provider`
-3. `feat/multimodal-requirements-judge`
-4. `feat/generation-semantic-qa`
-5. `feat/neironych-admin-settings`
-6. `feat/seedance-flyover-video`
-7. `refactor/retire-nexus-generation`
-8. `test/neironych-live-acceptance`
+1. `test/provider-contracts-nexus-neironych`
+2. `feat/nexus-gpt-image-2-primary`
+3. `feat/neironych-grok-provider`
+4. `feat/multimodal-requirements-judge`
+5. `feat/generation-semantic-qa`
+6. `feat/provider-admin-settings`
+7. `feat/seedance-flyover-video`
+8. `test/provider-live-acceptance`
 
 Each child PR must independently keep tests green and must not push directly to `dev` or `main`.
 
@@ -1002,15 +994,15 @@ AgentSkills was searched and had no task-specific Neironych/runtime implementati
 
 Before any production code is changed, the first execution PR must answer these contract questions with tests and sanitized provider evidence:
 
-1. What exact Neironych image endpoint and model ID(s) serve standard GPT Image 2?
-2. What is the exact successful GPT Image 2 response shape?
-3. How are image references/edits expressed for this model?
-4. Does image creation support idempotency/reconciliation after a timeout?
-5. What exact multimodal content shape does Neironych `/v1/responses` accept for `grok-4.5`?
-6. What structured-output mechanism is supported there?
-7. What are Grok image count/size/context limits on this account?
-8. What exact model IDs are returned by Neironych capability discovery?
-9. Does Seedance 2.0 accept the desired `start_image` shape on this account?
-10. What provider request IDs/headers are available for observability?
+1. Does Nexus currently expose standard GPT Image 2 as `gpt-image-2` for the AuRoom account?
+2. What exact Nexus params/reference contract applies to GPT Image 2 generation and edits?
+3. Does the existing Nexus task/idempotency/reconciliation behavior remain valid for GPT Image 2?
+4. What exact multimodal content shape does Neironych `/v1/responses` accept for `grok-4.5`?
+5. What structured-output mechanism is supported there?
+6. What are Grok image count/size/context limits on this account?
+7. Does Neironych expose `grok-4.5` and `seedance-2.0` to this account?
+8. Does Seedance 2.0 accept the desired `start_image` shape on this account?
+9. What provider request IDs/headers are available for observability on both providers?
+10. Which failures are safe to retry and which require reconciliation without another paid POST?
 
-Any mismatch between this document and the current provider guide must be resolved in favor of the verified provider contract, with the plan updated in the same PR.
+Any mismatch between this document and verified provider contracts must be resolved in favor of the verified contract, with the plan updated in the same PR.
