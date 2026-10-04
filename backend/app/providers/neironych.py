@@ -22,6 +22,58 @@ from app.prompt_builders.visual_fidelity import build_visual_fidelity_prompt
 from app.providers.nexus import NexusOutcomeUnknown, NexusProviderError
 
 
+class NeironychProviderError(NexusProviderError):
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message, retryable=retryable)
+
+
+@dataclass(frozen=True, slots=True)
+class NeironychHttpConfig:
+    base_url: str
+    headers: dict[str, str]
+    timeout: httpx.Timeout
+
+
+def build_neironych_http_config(settings: Settings) -> NeironychHttpConfig:
+    key = (settings.neironych_api_key or "").strip()
+    if not key:
+        raise NeironychProviderError("NEIRONYCH_API_KEY is not configured")
+    return NeironychHttpConfig(
+        base_url=settings.neironych_api_base_url.rstrip("/"),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        timeout=httpx.Timeout(
+            settings.neironych_request_timeout_seconds,
+            connect=settings.neironych_http_connect_timeout_seconds,
+        ),
+    )
+
+
+def extract_request_id(response: httpx.Response) -> str | None:
+    for name in ("x-request-id", "request-id", "x-correlation-id"):
+        value = response.headers.get(name)
+        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", value):
+            return value
+    return None
+
+
+def safe_error(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return (response.text or "unknown error")[:300]
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = error.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()[:300]
+        for key in ("detail", "message", "error"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:300]
+    return "provider_error"
+
+
 @dataclass(frozen=True, slots=True)
 class NeironychImageResult:
     task_id: str
