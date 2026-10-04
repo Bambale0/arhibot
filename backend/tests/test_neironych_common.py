@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from app.core.config import Settings
-from app.providers.neironych.common import (
+from app.providers.neironych import (
     NeironychProviderError,
     build_neironych_http_config,
     extract_request_id,
