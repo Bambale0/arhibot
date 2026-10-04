@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: use the repository-local `writing-plans`, `test-driven-development`, `verification-before-completion`, and the provider/backend guidance referenced below. Execute task-by-task from the dedicated epic branch.
 
-**Goal:** Move the AuRoom generation pipeline to a single Neironych AI boundary, make `gpt-image-2.5-sunburst` the configured primary image model, add `grok-4.5` multimodal questionnaire/result control through `/v1/responses`, and replace the primary Bird GIF creation flow with `seedance-2.0` video generation through Neironych.
+**Goal:** Move the AuRoom generation pipeline to a single Neironych AI boundary, make standard **GPT Image 2** the configured primary image family, add `grok-4.5` multimodal questionnaire/result control through `/v1/responses`, and replace the primary Bird GIF creation flow with `seedance-2.0` video generation through Neironych.
 
 **Architecture:** Preserve the current canonical questionnaire/prompt builders, credit reservation, queue, recovery, and `Generation.quality_report` machinery. Add a typed Neironych provider layer behind the existing worker boundary; deterministic code owns requirements and retry policy, while Grok only observes and scores compliance. An image is not exposed as completed until semantic QA passes. Video is generated only from an accepted still and is represented as a separate generation/output asset.
 
@@ -16,13 +16,10 @@ These are requirements, not implementation suggestions:
 
 - All AI calls go through **Neironych**. No direct OpenAI, xAI, ByteDance, KIE, or Nexus request may remain in the active production generation path.
 - Provider base is the Neironych API; secrets remain environment/secret-store configuration and are never exposed in admin UI.
-- Primary image model: **`gpt-image-2.5-sunburst`**.
-- The user-provided image contract includes:
-  - `model: "gpt-image-2.5-sunburst"`
-  - `size: "3840x2160"`
-  - `quality: "high"`
-  - `n: 1`
-  - `response_format: "b64_json"`
+- Primary image family: **GPT Image 2 (standard)** through Neironych.
+- Do **not** use `gpt-image-2.5-sunburst`.
+- Treat text-to-image and image/reference-edit as separate capabilities if Neironych exposes separate model IDs. The exact Neironych IDs are pinned in Task 1 before implementation and then stored in DB/admin settings.
+- Do not carry over Sunburst-only request fields such as `size: "3840x2160"`, `quality: "high"`, or `response_format: "b64_json"` unless the live GPT Image 2 Neironych contract explicitly supports them.
 - Multimodal control model: **`grok-4.5`**.
 - Grok endpoint: **`POST /v1/responses`**.
 - Video model: **`seedance-2.0`**.
@@ -79,7 +76,7 @@ Grok 4.5 prompt audit via Neironych /v1/responses
         +-- contract mismatch --> fail internal QA, DO NOT buy image
         |
         v
-gpt-image-2.5-sunburst via Neironych
+GPT Image 2 via Neironych
         |
         v
 Decode b64 image -> validate -> private candidate asset
@@ -280,23 +277,15 @@ Keep `primary_model` / `primary_params` for image generation.
 After provider capability preflight, operator configuration for this epic is:
 
 ```text
-primary_model       = gpt-image-2.5-sunburst
+primary_model       = <verified Neironych GPT Image 2 text-to-image model ID>
+image_edit_model     = <verified Neironych GPT Image 2 image/reference-edit model ID, if separate>
 quality_judge_model = grok-4.5
 video_model         = seedance-2.0
 ```
 
 Do **not** hardcode these model IDs in worker branches. They live in DB/admin. Tests may use fixtures/constants.
 
-Recommended initial image params in DB, subject to the live Neironych guide contract:
-
-```json
-{
-  "size": "3840x2160",
-  "quality": "high",
-  "n": 1,
-  "response_format": "b64_json"
-}
-```
+Recommended initial image params in DB must come from the live GPT Image 2 Neironych contract. Do not reuse the removed Sunburst payload. Prefer the provider's documented `aspect_ratio` / `resolution` contract when that is what Neironych exposes, and keep `n=1` for the AuRoom production path if supported.
 
 Recommended initial Seedance preset in DB after live verification:
 
@@ -365,7 +354,7 @@ async def generate_image(
 ) -> NeironychImageResult
 ```
 
-Result should prefer bytes because the requested contract uses `response_format=b64_json`:
+Result should prefer bytes using the exact verified GPT Image 2 Neironych response contract:
 
 ```python
 @dataclass(frozen=True)
@@ -375,7 +364,7 @@ class NeironychImageResult:
     request_id: str | None
 ```
 
-Do not turn base64 into a fake public URL.
+If Neironych returns base64, decode and validate it locally; if it returns a provider URL, validate/download it through the verified contract. Do not invent a fake public URL.
 
 ### `responses.py`
 
@@ -465,9 +454,9 @@ Do not expose:
 **Steps**
 
 1. Read the current Neironych `/guide` with authenticated/account-specific docs if required.
-2. Confirm exact image endpoint for `gpt-image-2.5-sunburst`.
-3. Confirm whether the same model supports AuRoom's reference/edit use cases and the exact input fields.
-4. Confirm image response schema for `response_format=b64_json`.
+2. Confirm exact Neironych image endpoint and model ID(s) for standard GPT Image 2.
+3. Confirm whether GPT Image 2 uses one model ID or separate text-to-image / image-to-image IDs for AuRoom's reference/edit use cases, and pin the exact input fields.
+4. Confirm the actual GPT Image 2 response schema (base64, URL, task/result envelope, or other documented shape).
 5. Confirm max request/prompt/image sizes.
 6. Confirm whether image POST supports `Idempotency-Key` and how a request can be reconciled after an ambiguous timeout.
 7. Confirm Grok `/v1/responses` multimodal input shape, image representation, structured JSON/schema support, response field names, request IDs, and limits.
@@ -476,7 +465,7 @@ Do not expose:
 10. Save sanitized contract examples and SHA/date of the guide used.
 11. Write tests against the saved fixtures before provider implementation.
 
-**Gate:** no worker migration until the contract tests can represent real provider responses. If image reference/edit support is absent for `gpt-image-2.5-sunburst`, add an admin-managed `image_edit_model` setting and fail closed until a verified Neironych edit model is selected; do not silently fall back to Nexus/direct vendors.
+**Gate:** no worker migration until the contract tests can represent real provider responses. If image reference/edit support is absent for the selected standard GPT Image 2 Neironych capability, add an admin-managed `image_edit_model` setting and fail closed until a verified Neironych edit model is selected; do not silently fall back to Nexus/direct vendors.
 
 ## Task 2 — Add Neironych infrastructure configuration
 
@@ -519,7 +508,7 @@ Cover:
 
 Retry policy must be operation-specific. Do not apply a generic POST retry to paid image/video creation.
 
-## Task 4 — Implement `gpt-image-2.5-sunburst` adapter
+## Task 4 — Implement standard GPT Image 2 adapter
 
 **Files**
 - Create: `backend/app/providers/neironych/image.py`
@@ -531,8 +520,8 @@ Retry policy must be operation-specific. Do not apply a generic POST retry to pa
 1. Exact configured model is sent.
 2. Operator params cannot override reserved model/prompt/reference fields.
 3. `n=1` is enforced for the production AuRoom path.
-4. Base64 is validated before decode.
-5. Decoded output has a configured max byte count.
+4. The verified provider result shape is validated; base64 is validated before decode when base64 is the documented response form.
+5. Downloaded/decoded output has a configured max byte count.
 6. Actual image format/pixel dimensions are validated.
 7. Corrupt image is rejected.
 8. Provider 4xx is terminal.
@@ -728,7 +717,7 @@ Fail closed when:
 - Grok model missing while judge enabled;
 - video model missing while video enabled.
 
-Do not silently map `gpt-image-2.5-sunburst` to GPT Image 2 or any other model.
+Do not silently map standard GPT Image 2 to another image family or a premium/special GPT Image variant.
 
 ## Task 12 — Replace primary Bird GIF creation with Seedance 2.0 video
 
@@ -835,7 +824,7 @@ Do not delete old code until deployment drain guarantees no old task needs Nexus
 ## Unit / contract
 
 - Neironych error parsing.
-- image b64 decode/limits.
+- image response decode/download/limits.
 - reserved params.
 - exact model forwarding.
 - Grok structured response parsing.
@@ -878,7 +867,7 @@ At minimum:
 Use a bounded paid smoke only after mocks/integration are green:
 
 1. one low-risk Grok text+image structured response;
-2. one `gpt-image-2.5-sunburst` image;
+2. one standard GPT Image 2 image;
 3. one full questionnaire initial generation with Grok pre/post audit;
 4. one deliberate questionnaire mismatch fixture that triggers exactly one correction retry;
 5. one Seedance 2.0 short flyover from an accepted still.
@@ -900,7 +889,7 @@ Record provider request IDs/cost evidence in private operational notes, not repo
 
 1. verify Neironych model availability;
 2. set dev admin runtime:
-   - primary `gpt-image-2.5-sunburst`;
+   - primary standard GPT Image 2 using the exact verified Neironych model ID;
    - judge `grok-4.5`;
    - video `seedance-2.0`;
 3. drain existing generation queue before switching image provider semantics;
@@ -952,7 +941,7 @@ Database migration downgrade must not try to reconstruct unknown historical oper
 The epic is complete when all of the following are demonstrated:
 
 - [ ] Active image generation calls only Neironych.
-- [ ] Configured primary image model is `gpt-image-2.5-sunburst`.
+- [ ] Configured primary image family is standard GPT Image 2 through the exact verified Neironych model ID(s).
 - [ ] Questionnaire-derived generation performs Grok 4.5 prompt audit before image spend.
 - [ ] Generated candidates perform Grok 4.5 multimodal result audit before completion.
 - [ ] Grok cannot mutate canonical questionnaire requirements.
@@ -1013,8 +1002,8 @@ AgentSkills was searched and had no task-specific Neironych/runtime implementati
 
 Before any production code is changed, the first execution PR must answer these contract questions with tests and sanitized provider evidence:
 
-1. What exact image endpoint serves `gpt-image-2.5-sunburst`?
-2. What is the exact successful `b64_json` response shape?
+1. What exact Neironych image endpoint and model ID(s) serve standard GPT Image 2?
+2. What is the exact successful GPT Image 2 response shape?
 3. How are image references/edits expressed for this model?
 4. Does image creation support idempotency/reconciliation after a timeout?
 5. What exact multimodal content shape does Neironych `/v1/responses` accept for `grok-4.5`?
