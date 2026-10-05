@@ -134,7 +134,7 @@ def test_dev_activation_payload_preserves_quality_controls_and_replaces_routing(
     assert payload["fallback_model"] == "nano-banana-pro"
     assert payload["primary_params"] == {}
     assert payload["fallback_params"] == {"image_size": "2K"}
-    assert payload["mode_params"] == {}
+    assert payload["mode_params"] == {"facade": {"guidance": 7}}
     assert payload["generation_quality_max_retries"] == 2
     assert "updated_at" not in payload
     GenerationRuntimeUpdate.model_validate(payload)
