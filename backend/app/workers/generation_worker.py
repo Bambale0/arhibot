@@ -579,13 +579,15 @@ async def _check_admin_frame_cache(generation_id: UUID, settings: Settings) -> N
             await _read_admin_frame(storage, frame)
 
 
-async def _cleanup_admin_frames(generation_id: UUID, settings: Settings) -> None:
+async def _cleanup_internal_frames(
+    generation_id: UUID, settings: Settings, *, folder_name: str
+) -> None:
     async with get_session_factory()() as db:
         row = await db.get(Generation, generation_id)
         if row is None or row.status not in {GenerationStatus.COMPLETED, GenerationStatus.FAILED}:
             return
     storage = LocalMediaStorage(settings)
-    folder = storage.absolute_path(f"internal/admin-frames/{generation_id}")
+    folder = storage.absolute_path(f"internal/{folder_name}/{generation_id}")
     if folder.is_dir():
         for path in folder.iterdir():
             if path.is_file():
@@ -593,10 +595,16 @@ async def _cleanup_admin_frames(generation_id: UUID, settings: Settings) -> None
         await asyncio.to_thread(folder.rmdir)
 
 
+async def _cleanup_admin_frames(generation_id: UUID, settings: Settings) -> None:
+    await _cleanup_internal_frames(
+        generation_id, settings, folder_name="admin-frames"
+    )
+
+
 async def _generate_admin_frame(
     *, provider: NexusImageProvider, generation_id: UUID, phase: str,
     model_name: str, prompt: str, params: dict[str, object], source_url: str,
-    settings: Settings,
+    settings: Settings, folder_name: str = "admin-frames",
 ) -> tuple[bytes, str, str]:
     storage = LocalMediaStorage(settings)
     async with get_session_factory()() as db:
@@ -622,7 +630,7 @@ async def _generate_admin_frame(
         raise NexusOutcomeUnknown("Animation frame download must resume the accepted task") from exc
     async with get_session_factory()() as db:
         image = AssetService(AssetRepository(db), ProjectRepository(db), settings)._validate_image(data)
-    path = f"internal/admin-frames/{generation_id}/{phase}.{image.extension}"
+    path = f"internal/{folder_name}/{generation_id}/{phase}.{image.extension}"
     try:
         await storage.write(path, image.data)
         async with get_session_factory()() as db:
