@@ -59,3 +59,21 @@ def test_seedance_frame_mode_rejects_non_https_images() -> None:
             end_image_url="https://media.example.test/end.png",
             params={"duration": 8},
         )
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"",
+        b"not-an-mp4",
+        b"\x00\x00\x00\x18moovwithout-ftyp",
+    ],
+)
+def test_seedance_output_requires_mp4_ftyp_box(content: bytes) -> None:
+    with pytest.raises(ValueError, match="MP4"):
+        NeironychVideoProvider.validate_video_content(content, max_bytes=1024)
+
+
+def test_seedance_output_accepts_mp4_ftyp_box() -> None:
+    content = b"\x00\x00\x00\x18ftypmp42" + b"x" * 32
+    NeironychVideoProvider.validate_video_content(content, max_bytes=1024)
