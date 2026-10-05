@@ -985,9 +985,15 @@ async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -
             return
         generation.status = GenerationStatus.FAILED
         generation.error = str(error)[:1000] or "Generation failed"
-        if isinstance(error, GenerationQualityRejected):
+        if isinstance(error, (GenerationQualityRejected, ConceptVideoIdentityRejected)):
             generation.quality_status = "rejected"
-            generation.quality_report = error.report
+            if isinstance(error, GenerationQualityRejected):
+                generation.quality_report = error.report
+            else:
+                generation.quality_report = {
+                    **(generation.quality_report or {}),
+                    "video_identity_review": error.report,
+                }
         generation.completed_at = datetime.now(UTC)
         if generation.credits_charged > 0:
             await CreditService(session).apply(
@@ -2133,7 +2139,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 relative_path,
             )
             logger.info(
-                "Generation %s completed with %s%s%s%s%s",
+                "Generation %s completed with %s%s%s%s%s%s",
                 generation_id,
                 model_name,
                 " (fallback)" if fallback_used else "",
