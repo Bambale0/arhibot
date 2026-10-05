@@ -17,7 +17,6 @@ from app.providers.neironych import (
 )
 from app.providers.nexus import NexusOutcomeUnknown
 
-
 _TERMINAL_SUCCESS = {"completed", "succeeded", "success", "done", "ready"}
 _TERMINAL_FAILURE = {"failed", "error", "expired", "cancelled", "canceled"}
 _ALLOWED_RESOLUTIONS = {"480p", "720p", "1080p", "4k"}
@@ -178,8 +177,10 @@ class NeironychVideoProvider:
                     request_id=extract_request_id(response),
                 )
             if response.status_code >= 400:
+                error_detail = safe_error(response)
                 raise NeironychProviderError(
-                    f"Neironych video create failed ({response.status_code}): {safe_error(response)}"
+                    f"Neironych video create failed ({response.status_code}): "
+                    f"{error_detail}"
                 )
             try:
                 body = response.json()
