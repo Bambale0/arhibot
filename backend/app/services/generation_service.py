@@ -377,6 +377,24 @@ class GenerationService:
             origin=GenerationOrigin.QUESTIONNAIRE_VIDEO,
         )
 
+    async def get_video(
+        self, user: User, source_generation_id: UUID
+    ) -> GenerationResponse | None:
+        source = await self.repository.get_owned(source_generation_id, user.id)
+        if source is None:
+            raise AppError(
+                type="video_source_not_found",
+                title="Concept not found",
+                status=404,
+                detail="The source generation does not exist or is not available.",
+            )
+        if source.output_asset_id is None:
+            return None
+        existing = await self.repository.get_active_video_for_source_asset(
+            source.output_asset_id, user.id
+        )
+        return await self.to_response(existing) if existing is not None else None
+
     async def repeat(self, user: User, generation_id: UUID) -> GenerationResponse:
         source = await self.repository.get_owned(generation_id, user.id)
         if source is None:
