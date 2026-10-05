@@ -309,6 +309,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const [ideaPublishing, setIdeaPublishing] = useState(false)
   const [error, setError] = useState<string|null>(null)
   const [bootstrapVersion, setBootstrapVersion] = useState(0)
+  const initialGenerationId = session?.initial_generation_id || null
 
   useEffect(() => {
     let stop=false
@@ -434,7 +435,6 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     && checkedUnstarted.objectKey === current?.key
     && !currentGenerationId
   )
-  const initialGenerationId = session?.initial_generation_id || null
   const parsedPlotArea = Number(plotAreaDraft)
   const plotAreaValid = Number.isInteger(parsedPlotArea) && parsedPlotArea >= 4 && parsedPlotArea <= 15
   const latestAcceptedKey = session?.accepted_objects.at(-1) || null
