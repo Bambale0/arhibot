@@ -340,6 +340,18 @@ class GenerationService:
         def bind_video(generation: Generation, _project: Project) -> None:
             generation.model_name = (runtime.video_model or "").strip()
             generation.quality_status = "pending"
+            image_params = dict(runtime.primary_params or {})
+            image_params.setdefault("aspect_ratio", "16:9")
+            generation.quality_report = {
+                "video_runtime": {
+                    "image_provider": "nexus",
+                    "image_model": runtime.primary_model,
+                    "image_params": image_params,
+                    "judge_model": (runtime.quality_judge_model or "").strip(),
+                    "video_model": (runtime.video_model or "").strip(),
+                    "video_params": dict(runtime.video_params or {}),
+                }
+            }
 
         return await self.create(
             user,
