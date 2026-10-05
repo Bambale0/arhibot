@@ -267,9 +267,6 @@ test('initial concept collects all answers before one generation and supports pr
   await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
   expect(generationCount).toBe(1)
   await expect(page.getByRole('button',{name:'🎬 Создать видео'})).toBeVisible()
-  await page.getByRole('button',{name:'🎬 Создать видео'}).click()
-  await expect(page.getByText(/Готовим пролёт по вашей концепции/)).toBeVisible()
-  expect(videoGeneration?.type).toBe('video')
 
   await page.getByRole('button',{name:'Изменить ТЗ · новая генерация'}).click()
   await expect(page.getByLabel('Размер участка, соток')).toHaveValue('8')
@@ -279,6 +276,10 @@ test('initial concept collects all answers before one generation and supports pr
   expect(generationCount).toBe(2)
   expect(session.plot_area_sotkas).toBe(12)
   expect(session.site_plan.plot.area_sotkas).toBe(12)
+  await expect(page.getByRole('button',{name:'🎬 Создать видео'})).toBeVisible()
+  await page.getByRole('button',{name:'🎬 Создать видео'}).click()
+  await expect(page.getByText(/Готовим пролёт по вашей концепции/)).toBeVisible()
+  expect(videoGeneration?.type).toBe('video')
 
   await page.getByRole('button',{name:'Принять концепцию'}).click()
   await expect(page.getByText('Что делаем дальше?')).toBeVisible()
