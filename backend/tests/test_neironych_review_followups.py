@@ -3,7 +3,7 @@ import pytest
 from types import SimpleNamespace
 
 from app.core.config import Settings
-from app.ops.activate_neironych_dev import build_activation_payload
+from app.ops.activate_dev_generation_routing import build_activation_payload
 from app.providers import neironych
 from app.providers.nexus import NexusOutcomeUnknown, NexusProviderError
 from app.runtime_checks import _generation_provider_readiness
@@ -67,6 +67,27 @@ async def test_ambiguous_response_preserves_safe_provider_request_id(monkeypatch
     assert error.value.request_id == "req-safe-503"
 
 
+
+@pytest.mark.asyncio
+async def test_connect_timeout_before_submission_is_not_ambiguous(monkeypatch) -> None:
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            request = httpx.Request("POST", "https://api.example.test/v1/images/generations")
+            raise httpx.ConnectTimeout("connect timed out", request=request)
+
+    monkeypatch.setattr(neironych.httpx, "AsyncClient", lambda **kwargs: Client())
+    with pytest.raises(NexusProviderError) as error:
+        await _provider().generate(**_request())
+    assert not isinstance(error.value, NexusOutcomeUnknown)
+    assert error.value.retryable is True
+    assert "connect" in str(error.value).lower()
+
 def test_reconciliation_persists_request_id_in_private_checkpoint() -> None:
     original = {"provider_request": {"provider": "neironych", "state": "submitting"}}
     report = _reconciliation_report(original, "req-safe-503")
@@ -108,10 +129,11 @@ def test_dev_activation_payload_preserves_quality_controls_and_replaces_routing(
             "updated_at": "not-editable",
         }
     )
-    assert payload["primary_provider"] == payload["fallback_provider"] == "neironych"
-    assert payload["primary_model"] == "gpt-image-2.5-sunburst"
-    assert payload["fallback_model"] is None
-    assert payload["primary_params"] == {"size": "3840x2160", "quality": "high"}
+    assert payload["primary_provider"] == payload["fallback_provider"] == "nexus"
+    assert payload["primary_model"] == "gpt-image-2"
+    assert payload["fallback_model"] == "nano-banana-pro"
+    assert payload["primary_params"] == {}
+    assert payload["fallback_params"] == {"image_size": "2K"}
     assert payload["mode_params"] == {}
     assert payload["generation_quality_max_retries"] == 2
     assert "updated_at" not in payload
