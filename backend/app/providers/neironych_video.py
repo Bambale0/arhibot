@@ -226,6 +226,21 @@ class NeironychVideoProvider:
             ) from exc
         return self._status(payload), payload
 
+    @staticmethod
+    def validate_video_content(content: bytes, *, max_bytes: int) -> None:
+        if not content or len(content) > max_bytes:
+            raise ValueError("MP4 video size is invalid")
+        # ISO Base Media File Format normally exposes an ftyp box at the
+        # beginning. Accept a small leading box, but reject arbitrary bytes
+        # or an HTML/error body returned with a misleading content type.
+        offset = content.find(b"ftyp", 4, min(len(content), 64))
+        if offset < 4:
+            raise ValueError("MP4 ftyp box is missing")
+        box_size = int.from_bytes(content[offset - 4 : offset], "big")
+        if box_size < 8 or offset - 4 + box_size > len(content):
+            raise ValueError("MP4 ftyp box is invalid")
+
+
     async def _download(self, request_id: str) -> tuple[bytes, str]:
         max_bytes = int(self.settings.max_video_size_bytes)
         last_error: Exception | None = None
@@ -278,12 +293,14 @@ class NeironychVideoProvider:
                             response.headers.get("content-type") or "video/mp4"
                         ).split(";", 1)[0]
                 content = b"".join(chunks)
-                if not content:
-                    raise NeironychProviderError("Neironych returned empty video content")
                 if mime not in {"video/mp4", "application/octet-stream"}:
                     raise NeironychProviderError(
                         f"Unexpected Neironych video content type: {mime}"
                     )
+                try:
+                    self.validate_video_content(content, max_bytes=max_bytes)
+                except ValueError as exc:
+                    raise NeironychProviderError(str(exc)) from exc
                 return content, "video/mp4"
             except (httpx.HTTPError, TimeoutError, NeironychProviderError) as exc:
                 last_error = exc
