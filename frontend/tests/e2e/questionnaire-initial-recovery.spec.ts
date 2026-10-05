@@ -111,3 +111,134 @@ test(`initial concept resumes ${pausedByProvider ? 'paused provider task' : 'pol
 })
 
 }
+
+
+test('failed initial concept retries only after explicit user action', async ({ page }) => {
+  const now = '2026-10-05T21:04:20Z'
+  const projectId = '33333333-3333-4333-8333-333333333334'
+  const failedGenerationId = '44444444-4444-4444-8444-444444444451'
+  const replacementGenerationId = '44444444-4444-4444-8444-444444444452'
+  const outputId = '55555555-5555-4555-8555-555555555561'
+  const catalog:QuestionnaireCatalog = {
+    version:'initial-failed-retry', application_key:'zayavka', source_rules:[],
+    sections:[{key:'furniture', title:'Мебель', object_keys:['lavochka']}],
+    questionnaires:[{key:'lavochka', title:'Лавочка', source_file:'fixture', order:0, scene_policy:{}, questions:[{
+      id:'1', text:'Какая лавочка?', kind:'single', options:['Деревянная'], required:true,
+      skip_default:null, skip_condition:null, help:null, field_hint:null, placeholder:null,
+      max_selections:null, phase:'pre_render', condition:null, option_rules:{}, edit_targets:{},
+    }]}],
+  }
+  let session = {
+    ...createDesignSession(catalog.version, ['lavochka']),
+    plot_area_sotkas:8, source_step_completed:true, current_object:null,
+    survey_completed_objects:['lavochka'], initial_generation_id:failedGenerationId,
+    answers:{lavochka:{'1':'Деревянная'}},
+  }
+  const project:Project = {
+    id:projectId, name:'Общая концепция', description:null, status:'active',
+    context:{questionnaire_draft:false, plot_area_m2:800, design_session:session},
+    created_at:now, updated_at:now,
+  }
+  const output:Asset = {
+    id:outputId, project_id:projectId, type:'image', purpose:'generation_output',
+    original_filename:'concept.svg', mime_type:'image/svg+xml', size_bytes:100,
+    width:640, height:480, created_at:now,
+    url:'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"></svg>'),
+  }
+  const failed:Generation = {
+    id:failedGenerationId, project_id:projectId, input_asset_id:null, output_asset:null,
+    type:'master_plan', status:'failed', credits_charged:0, model_name:'gpt-image-2.5-sunburst',
+    fallback_used:false, composition_mode:'replace', edit_region:null, protected_regions:[],
+    error:'Сервис генерации недоступен до отправки запроса. Кредит возвращён; повторите генерацию.',
+    created_at:now, updated_at:now, started_at:now, completed_at:now,
+  }
+  const queued:Generation = {
+    ...failed,
+    id:replacementGenerationId,
+    status:'queued',
+    credits_charged:1,
+    model_name:'gpt-image-2',
+    error:null,
+    started_at:null,
+    completed_at:null,
+  }
+  const completed:Generation = {
+    ...queued,
+    status:'completed',
+    output_asset:output,
+    started_at:now,
+    completed_at:now,
+  }
+
+  let generationPosts = 0
+  let sessionWrites = 0
+  let replacementReads = 0
+  await page.addInitScript(() => sessionStorage.setItem('auroom.access_token', 'e2e'))
+  await page.route('**/api/v1/**', async route => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    const method = request.method()
+    let body:unknown
+    let status = 200
+
+    if (path.endsWith('/me')) body = {
+      id:'11111111-1111-4111-8111-111111111111', display_name:'Проверка', status:'active',
+      role:'user', credits_balance:10, created_at:now, updated_at:now, capabilities:{can_generate:true},
+    }
+    else if (path.endsWith('/projects') && method === 'GET') body = {items:[], next_cursor:null, has_more:false}
+    else if (path.endsWith(`/projects/${projectId}`) && method === 'GET') body = project
+    else if (path.endsWith('/questionnaires') && method === 'GET') body = catalog
+    else if (path.endsWith('/questionnaire-generation-cost') && method === 'GET') body = {
+      generation_type:'master_plan', initial_credits:1, credits:1,
+      initial_offer_available:false, is_available:true,
+    }
+    else if (path.endsWith(`/projects/${projectId}/questionnaire-session`) && method === 'GET') {
+      body = {session}
+    }
+    else if (path.endsWith(`/projects/${projectId}/questionnaire-session`) && method === 'PUT') {
+      sessionWrites += 1
+      session = JSON.parse(request.postData() || '{}')
+      project.context.design_session = session
+      body = {session}
+    }
+    else if (path.endsWith(`/projects/${projectId}/questionnaire-generation/${failedGenerationId}`) && method === 'GET') {
+      body = failed
+    }
+    else if (path.endsWith(`/projects/${projectId}/questionnaire-generation/${replacementGenerationId}`) && method === 'GET') {
+      replacementReads += 1
+      body = completed
+    }
+    else if (path.endsWith(`/projects/${projectId}/questionnaire-generation`) && method === 'POST') {
+      generationPosts += 1
+      expect(session.initial_generation_id).toBeNull()
+      session = {...session, initial_generation_id:replacementGenerationId}
+      project.context.design_session = session
+      body = queued
+      status = 202
+    }
+    else if (path.endsWith(`/generations/${failedGenerationId}/video`) && method === 'GET') body = null
+    else if (path.endsWith(`/generations/${replacementGenerationId}/video`) && method === 'GET') body = null
+    else if (path.endsWith('/ideas') && method === 'GET') body = []
+    else if (path.includes('/ideas/mine/') && method === 'GET') body = null
+    else {
+      status = 404
+      body = {type:'mock_unhandled', detail:`${method} ${path}`}
+    }
+    await route.fulfill({status, contentType:'application/json', body:JSON.stringify(body)})
+  })
+
+  await page.goto(`/?project=${projectId}`)
+  await expect(page.getByText(failed.error!)).toBeVisible()
+  await expect(page.getByRole('button', {name:'Повторить генерацию · 1 кр.', exact:true})).toBeVisible()
+  await expect(page.getByRole('button', {name:'Изменить ТЗ', exact:true})).toBeVisible()
+  expect(generationPosts).toBe(0)
+
+  await page.getByRole('button', {name:'Повторить генерацию · 1 кр.', exact:true}).click()
+
+  await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
+  await expect(page.getByRole('button', {name:'Принять концепцию', exact:true})).toBeVisible()
+  expect(generationPosts).toBe(1)
+  expect(sessionWrites).toBe(1)
+  expect(replacementReads).toBeGreaterThanOrEqual(1)
+  expect(session.initial_generation_id).toBe(replacementGenerationId)
+})
