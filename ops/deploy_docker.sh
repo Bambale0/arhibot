@@ -249,8 +249,8 @@ reported_release_sha=$(curl -fsS http://127.0.0.1:18000/health/version | python3
 }
 
 if [[ "${deployment_target}" == "dev" ]]; then
-  echo "Activating Neironych routing through the authenticated dev control plane"
-  compose exec -T -e AUROOM_DEPLOY_TARGET=dev api python -m app.ops.activate_neironych_dev
+  echo "Applying canonical development generation routing through the authenticated control plane"
+  compose exec -T -e AUROOM_DEPLOY_TARGET=dev api python -m app.ops.activate_dev_generation_routing
 fi
 
 for service in bot worker broadcast-worker maintenance; do
