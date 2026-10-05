@@ -290,6 +290,8 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const [sourceAsset, setSourceAsset] = useState<Asset|null>(null)
   const [sceneAsset, setSceneAsset] = useState<Asset|null>(null)
   const [renderOutput, setRenderOutput] = useState<Asset|null>(null)
+  const [videoGeneration, setVideoGeneration] = useState<Generation|null>(null)
+  const [videoBusy, setVideoBusy] = useState(false)
   const [draft, setDraft] = useState<string>('')
   const [multi, setMulti] = useState<string[]>([])
   const [reviewComment, setReviewComment] = useState<string>('')
@@ -354,6 +356,35 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     })()
     return () => { stop=true }
   }, [project.id, bootstrapVersion])
+
+  useEffect(() => {
+    if (!initialGenerationId) {
+      setVideoGeneration(null)
+      return
+    }
+    let stopped = false
+    void api.getGenerationVideo(initialGenerationId)
+      .then((generation) => { if (!stopped) setVideoGeneration(generation) })
+      .catch(() => { /* video continuation is optional */ })
+    return () => { stopped = true }
+  }, [initialGenerationId, renderOutput?.id, session?.initial_concept_accepted])
+
+  useEffect(() => {
+    if (!videoGeneration || !['queued','processing'].includes(videoGeneration.status)) return
+    let stopped = false
+    const timer = window.setInterval(() => {
+      void api.getGeneration(videoGeneration.id)
+        .then((generation) => {
+          if (stopped) return
+          setVideoGeneration(generation)
+          if (generation.status === 'failed') {
+            setError(generation.error || 'Не удалось создать видео. Концепция сохранена без изменений.')
+          }
+        })
+        .catch(() => { /* keep polling after transient client/network errors */ })
+    }, 2500)
+    return () => { stopped = true; window.clearInterval(timer) }
+  }, [videoGeneration?.id, videoGeneration?.status])
 
   useEffect(() => {
     let stopped = false
@@ -960,6 +991,34 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     }
   }
 
+  async function createConceptVideo() {
+    if (!initialGenerationId || videoBusy || ['queued','processing'].includes(videoGeneration?.status || '')) return
+    setVideoBusy(true)
+    setError(null)
+    try {
+      setVideoGeneration(await api.createGenerationVideo(initialGenerationId))
+    } catch (err) {
+      if (err instanceof api.ApiError) {
+        if (err.errorType === 'insufficient_credits') {
+          setError('Недостаточно кредитов для видео. Пополните баланс в Профиле.')
+          return
+        }
+        if ([
+          'video_generation_not_configured',
+          'video_provider_not_configured',
+          'video_keyframe_provider_not_configured',
+          'generation_price_not_configured',
+        ].includes(err.errorType)) {
+          setError('Видео пока не настроено. Концепция сохранена — попробуйте позже.')
+          return
+        }
+      }
+      setError(err instanceof Error ? err.message : 'Не удалось поставить видео в очередь')
+    } finally {
+      setVideoBusy(false)
+    }
+  }
+
   function generationErrorMessage(err:unknown):string {
     if (err instanceof api.ApiError) {
       if (err.errorType === 'insufficient_credits') return 'Недостаточно кредитов. Пополните баланс в Профиле.'
@@ -1352,6 +1411,20 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     }
   }
 
+  const videoContinuationControl = initialGenerationId ? <div className="questionnaire-video-continuation">
+    {videoGeneration?.status === 'completed' && videoGeneration.output_asset?.type === 'video' && <div className="questionnaire-result">
+      <video controls playsInline preload="metadata" src={videoGeneration.output_asset.url}>
+        Ваш браузер не поддерживает воспроизведение видео.
+      </video>
+    </div>}
+    {videoGeneration && ['queued','processing'].includes(videoGeneration.status) && <div className="empty-inline">🎬 Готовим пролёт по вашей концепции. Можно выйти и вернуться позже.</div>}
+    {(!videoGeneration || videoGeneration.status === 'failed') && <div className="questionnaire-actions">
+      <button type="button" className="primary-button" disabled={videoBusy} onClick={() => void createConceptVideo()}>
+        {videoBusy ? 'Ставим видео в очередь…' : '🎬 Создать видео'}
+      </button>
+    </div>}
+  </div> : null
+
   const ideaPublishControl = latestAcceptedGenerationId ? <div className="questionnaire-idea-share">
     <p>Хотите показать эту работу другим? В ленту попадут только изображение и параметры проектирования — без данных заявки.</p>
     <button
@@ -1399,6 +1472,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
           return <details key={key}><summary>{definition.title}</summary>{answered.map((question) => <button type="button" key={question.id} disabled={busy} onClick={() => void editInitialQuestion(key, question.id)}><span>{question.text}</span><strong>{text(answers[question.id])}</strong></button>)}</details>
         })}</div>}
         {ready && !initialGenerationId && <><p className="region-hint">Одна общая генерация · {initialGenerationCostLabel()}</p><div className="questionnaire-actions"><button className="primary-button" disabled={busy || !plotAreaValid || generationCost?.is_available === false} onClick={() => void generateInitial(session)}>Создать общую концепцию</button></div></>}
+        {initialGenerationId && renderOutput && videoContinuationControl}
         {initialGenerationId && renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void acceptInitial()}>Принять концепцию</button><button className="secondary-button" disabled={busy} onClick={() => void reopenInitialAnswers()}>Изменить ТЗ · новая генерация</button></div>}
         {(busy || generationInFlight) && initialGenerationId && !renderOutput && <div className="empty-inline">Создаём весь участок одной генерацией…</div>}
         {initialGenerationId && !renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy || generationInFlight} onClick={() => void checkInitialGeneration()}>Проверить генерацию</button></div>}
@@ -1410,7 +1484,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     const availableToAdd = catalog.sections
       .flatMap((section) => section.object_keys)
       .filter((key) => !session.selected_objects.includes(key))
-    return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{hasAccepted ? 'Что дальше?' : 'Выбор объекта'}</span></header><section className="questionnaire-card"><span className="eyebrow">{hasAccepted ? 'КОНЦЕПЦИЯ ПРИНЯТА' : 'НАЧАЛО ОПРОСА'}</span><h1>{hasAccepted ? (session.initial_concept_mode ? 'Что делаем дальше?' : 'Что проектируем дальше?') : 'С чего начнём?'}</h1><p>{hasAccepted ? 'Любое изменение принятой концепции создаёт новую итерацию. Перед запуском вы увидите её стоимость.' : 'Выберите объект.'}</p>{!hasAccepted && remainingLegacy.length > 0 && <div className="questionnaire-options">{remainingLegacy.map((key) => <button key={key} className="questionnaire-option" disabled={busy} onClick={() => void chooseObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && sceneAsset && <div className="questionnaire-result"><ResultImage url={sceneAsset.url} alt="Последний принятый эскиз"/></div>}{hasAccepted && session.initial_concept_mode && session.accepted_objects.includes('eskez-doma') && <p className="region-hint">В доработке дома меняется внешний вид. Мебель, комнаты и интерьер за окнами не редактируются.</p>}{hasAccepted && session.initial_concept_mode && <p className="region-hint">Следующая генерация · {generationCostLabel()}</p>}{hasAccepted && session.initial_concept_mode && <div className="questionnaire-options">{session.accepted_objects.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void startRefinement(key)}><span>Изменить: {definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && session.initial_concept_mode && session.accepted_objects.length > 1 && <details className="questionnaire-object-actions"><summary>Удалить объект</summary><div className="questionnaire-options">{session.accepted_objects.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void startRemoval(key)}><span>Удалить: {definitions.get(key)?.title || key}</span><i/></button>)}</div></details>}{hasAccepted && session.initial_concept_mode && availableToAdd.length > 0 && <details className="questionnaire-object-actions"><summary>Добавить новый объект</summary><div className="questionnaire-options">{availableToAdd.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void addObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div></details>}{hasAccepted && ideaPublishControl}{hasAccepted && <div className="questionnaire-actions questionnaire-next-actions"><button className="primary-button" disabled={busy} onClick={() => void chooseApplication()}>Перейти к заявке</button></div>}{error && <div className="banner-error">{error}</div>}</section></main>
+    return <main className="questionnaire-shell"><header className="questionnaire-topbar"><button className="back-button" onClick={onBack}><BackIcon/> Назад</button><strong>{project.name}</strong><span>{hasAccepted ? 'Что дальше?' : 'Выбор объекта'}</span></header><section className="questionnaire-card"><span className="eyebrow">{hasAccepted ? 'КОНЦЕПЦИЯ ПРИНЯТА' : 'НАЧАЛО ОПРОСА'}</span><h1>{hasAccepted ? (session.initial_concept_mode ? 'Что делаем дальше?' : 'Что проектируем дальше?') : 'С чего начнём?'}</h1><p>{hasAccepted ? 'Любое изменение принятой концепции создаёт новую итерацию. Перед запуском вы увидите её стоимость.' : 'Выберите объект.'}</p>{!hasAccepted && remainingLegacy.length > 0 && <div className="questionnaire-options">{remainingLegacy.map((key) => <button key={key} className="questionnaire-option" disabled={busy} onClick={() => void chooseObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && sceneAsset && <div className="questionnaire-result"><ResultImage url={sceneAsset.url} alt="Последний принятый эскиз"/></div>}{hasAccepted && session.initial_concept_mode && session.accepted_objects.includes('eskez-doma') && <p className="region-hint">В доработке дома меняется внешний вид. Мебель, комнаты и интерьер за окнами не редактируются.</p>}{hasAccepted && session.initial_concept_mode && <p className="region-hint">Следующая генерация · {generationCostLabel()}</p>}{hasAccepted && session.initial_concept_mode && <div className="questionnaire-options">{session.accepted_objects.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void startRefinement(key)}><span>Изменить: {definitions.get(key)?.title || key}</span><i/></button>)}</div>}{hasAccepted && session.initial_concept_mode && session.accepted_objects.length > 1 && <details className="questionnaire-object-actions"><summary>Удалить объект</summary><div className="questionnaire-options">{session.accepted_objects.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void startRemoval(key)}><span>Удалить: {definitions.get(key)?.title || key}</span><i/></button>)}</div></details>}{hasAccepted && session.initial_concept_mode && videoContinuationControl}{hasAccepted && session.initial_concept_mode && availableToAdd.length > 0 && <details className="questionnaire-object-actions"><summary>Добавить новый объект</summary><div className="questionnaire-options">{availableToAdd.map((key) => <button key={key} className="questionnaire-option" disabled={busy || generationCost?.is_available === false} onClick={() => void addObject(key)}><span>{definitions.get(key)?.title || key}</span><i/></button>)}</div></details>}{hasAccepted && ideaPublishControl}{hasAccepted && <div className="questionnaire-actions questionnaire-next-actions"><button className="primary-button" disabled={busy} onClick={() => void chooseApplication()}>Перейти к заявке</button></div>}{error && <div className="banner-error">{error}</div>}</section></main>
   }
 
   if (session.region_mode === 'edit' && session.region_object) {
