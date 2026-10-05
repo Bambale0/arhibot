@@ -53,7 +53,7 @@ export type ProjectList = {
 export type Asset = {
   id: string
   project_id: string | null
-  type: 'image'
+  type: 'image' | 'video'
   purpose: 'generation_input' | 'project_reference' | 'generation_output'
   original_filename: string | null
   mime_type: string
@@ -65,7 +65,7 @@ export type Asset = {
   created_at: string
 }
 
-export type GenerationMode = 'floor_plan' | 'facade' | 'master_plan' | 'interior'
+export type GenerationMode = 'floor_plan' | 'facade' | 'master_plan' | 'interior' | 'video'
 export type GenerationStatus = 'queued' | 'processing' | 'completed' | 'failed'
 
 export type Generation = {
@@ -233,6 +233,10 @@ export type AdminGenerationSettings = {
   primary_params: Record<string, unknown>
   fallback_params: Record<string, unknown>
   mode_params: Record<string, Record<string, unknown>>
+  quality_judge_model: string | null
+  video_enabled: boolean
+  video_model: string | null
+  video_params: Record<string, unknown>
   masked_edit_provider_context_margin_fraction: number
   masked_edit_feather_fraction: number
   masked_edit_feather_min_px: number

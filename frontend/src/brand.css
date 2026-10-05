@@ -144,7 +144,8 @@ textarea:focus-visible {
 .project-visual,
 .idea-visual,
 .history-placeholder,
-.history-card img {
+.history-card img,
+.history-card video {
   background: #141918;
 }
 .project-home-icon,

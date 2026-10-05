@@ -306,6 +306,13 @@ class AdminService:
             primary_params=row.primary_params or {},
             fallback_params=row.fallback_params or {},
             mode_params=row.mode_params or {},
+            quality_judge_model=getattr(row, "quality_judge_model", None) or "grok-4.5",
+            video_enabled=bool(getattr(row, "video_enabled", False)),
+            video_model=getattr(row, "video_model", None) or "seedance-2.0",
+            video_params=(
+                getattr(row, "video_params", None)
+                or {"duration": 8, "resolution": "1080p", "aspect_ratio": "16:9"}
+            ),
             masked_edit_provider_context_margin_fraction=row.masked_edit_provider_context_margin_fraction,
             masked_edit_feather_fraction=row.masked_edit_feather_fraction,
             masked_edit_feather_min_px=row.masked_edit_feather_min_px,
@@ -360,6 +367,10 @@ class AdminService:
         row.primary_params = deepcopy(payload.primary_params)
         row.fallback_params = deepcopy(payload.fallback_params)
         row.mode_params = deepcopy(payload.mode_params)
+        for field in ("quality_judge_model", "video_enabled", "video_model", "video_params"):
+            if row is not None and field in payload.model_fields_set:
+                value = getattr(payload, field)
+                setattr(row, field, deepcopy(value) if field == "video_params" else value)
         quality_fields = (
             "masked_edit_provider_context_margin_fraction",
             "masked_edit_feather_fraction",
@@ -395,6 +406,10 @@ class AdminService:
                 "primary_model": payload.primary_model,
                 "fallback_model": payload.fallback_model,
                 "primary_timeout_seconds": payload.primary_timeout_seconds,
+                "quality_judge_model": row.quality_judge_model,
+                "video_enabled": row.video_enabled,
+                "video_model": row.video_model,
+                "video_param_keys": sorted((row.video_params or {}).keys()),
             },
         )
         await self.session.commit()

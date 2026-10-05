@@ -47,6 +47,8 @@ from app.image_flyover import FlyoverGif, build_flyover_gif
 from app.image_orbit import build_orbit_animation
 from app.prompt_builders.generation import build_generation_prompt
 from app.providers.neironych import NeironychImageProvider, NeironychImageResult
+from app.providers.neironych_responses import NeironychResponsesProvider
+from app.providers.neironych_video import NeironychVideoProvider
 from app.providers.nexus import (
     NexusImageProvider,
     NexusImageResult,
@@ -69,6 +71,7 @@ INITIAL_CONCEPT_PROMPT_PREFIX = "AUROOM_INITIAL_CONCEPT_V1"
 ADMIN_SANDBOX_PROMPT_PREFIX = "AUROOM_ADMIN_SANDBOX_V1\n"
 ADMIN_ORBIT_PROMPT_PREFIX = "AUROOM_ADMIN_ORBIT_V1\n"
 ADMIN_FLYOVER_GIF_PROMPT_PREFIX = "AUROOM_ADMIN_FLYOVER_GIF_V1\n"
+CONCEPT_VIDEO_PROMPT_PREFIX = "AUROOM_CONCEPT_VIDEO_V1\n"
 QUESTIONNAIRE_PROMPT_PREFIXES = (
     QUESTIONNAIRE_PROMPT_PREFIX,
     INITIAL_CONCEPT_PROMPT_PREFIX,
@@ -113,6 +116,80 @@ class GenerationQualityRejected(RuntimeError):
             "Попробуйте выделить область немного шире или изменить запрос."
         )
         self.report = report
+
+
+class ConceptVideoIdentityRejected(RuntimeError):
+    def __init__(self, report: dict[str, object]) -> None:
+        super().__init__(
+            "Не удалось сохранить геометрию проекта для видео. "
+            "Исходная концепция не изменена; видео не было запущено."
+        )
+        self.report = report
+
+
+def _concept_video_dimensions(params: dict[str, object]) -> tuple[int, int]:
+    resolution = str(params.get("resolution") or "1080p").strip()
+    short_side = {"480p": 480, "720p": 720, "1080p": 1080, "4k": 2160}.get(
+        resolution
+    )
+    if short_side is None:
+        raise ValueError("Unsupported concept video resolution")
+    ratio = str(params.get("aspect_ratio") or "16:9").strip()
+    try:
+        raw_width, raw_height = (int(value) for value in ratio.split(":", 1))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid concept video aspect ratio") from exc
+    if raw_width <= 0 or raw_height <= 0:
+        raise ValueError("Invalid concept video aspect ratio")
+    if raw_width >= raw_height:
+        height = short_side
+        width = round(short_side * raw_width / raw_height)
+    else:
+        width = short_side
+        height = round(short_side * raw_height / raw_width)
+    return width, height
+
+
+def _concept_video_end_frame_prompt(canonical_prompt: str) -> str:
+    return (
+        "CAMERA MOVE ONLY. Create a second keyframe of the exact same architectural "
+        "project and exact same plot shown in reference image 1. Move the camera about "
+        "15 degrees to the right, raise it slightly, and pull back a little while keeping "
+        "the project centered. Preserve exact house geometry and footprint, number of "
+        "floors, roof, windows, doors, garage, terraces, pool, paths, fence/hedge, "
+        "landscaping structure, materials, object count and all relative positions. "
+        "Do not add, remove, redesign or relocate anything. Do not change season, weather "
+        "or lighting direction. Natural parallax is allowed; architectural morphing is not. "
+        "The canonical brief below is authoritative for architecture and site constraints; "
+        "only its camera/viewpoint instruction is superseded by this controlled camera move.\n\n"
+        f"CANONICAL BRIEF:\n{canonical_prompt}"
+    )
+
+
+def _concept_video_identity_prompt(canonical_prompt: str) -> str:
+    return (
+        "Image 1 is the accepted AuRoom concept. Image 2 is a candidate second camera "
+        "keyframe. Determine whether image 2 preserves the exact same architectural project "
+        "and site layout. Camera viewpoint/parallax may change, but buildings, footprint, "
+        "roof, openings, garage, terraces, pool, paths, fence/hedge, landscaping structure, "
+        "materials, object count and relative positions must remain the same. Mark same_scene "
+        "false for any redesign, moved/missing/added object, changed roof/opening geometry or "
+        "site-layout drift.\n\nCANONICAL BRIEF:\n"
+        f"{canonical_prompt}"
+    )
+
+
+def _concept_video_motion_prompt() -> str:
+    return (
+        "Create a smooth cinematic architectural drone flyover between the supplied start "
+        "and end frames. They depict the exact same architectural project. STRICT IDENTITY "
+        "LOCK: preserve exact house and site geometry, footprint, roof, windows, doors, "
+        "terraces, garage, pool, paths, fence, landscaping structure, materials, object count "
+        "and relative object positions. Camera motion only. No architectural morphing, no "
+        "moving buildings, no changing openings or roof geometry, no adding/removing objects, "
+        "no vegetation growth/disappearance and no site-layout drift. Use a slow stable drone "
+        "move with natural parallax."
+    )
 
 
 def _quality_retry_prompt(prompt: str, report: dict[str, object]) -> str:
@@ -299,6 +376,26 @@ def _admin_flyover_gif_request(
         inbetween_frames,
         frame_duration_ms,
     )
+
+
+def _concept_video_request(generation: Generation) -> UUID | None:
+    if generation.origin != GenerationOrigin.QUESTIONNAIRE_VIDEO.value:
+        return None
+    if not generation.prompt.startswith(CONCEPT_VIDEO_PROMPT_PREFIX):
+        raise ValueError("Concept video generation has an invalid envelope.")
+    if generation.input_asset_id is None:
+        raise ValueError("Concept video source image is missing.")
+    raw_payload = generation.prompt.removeprefix(CONCEPT_VIDEO_PROMPT_PREFIX)
+    try:
+        payload = loads(raw_payload)
+    except JSONDecodeError as exc:
+        raise ValueError("Concept video envelope is invalid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Concept video envelope must be an object.")
+    try:
+        return UUID(str(payload["source_generation_id"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Concept video source generation id is invalid.") from exc
 
 
 def _flyover_frame_prompt(
@@ -491,13 +588,15 @@ async def _check_admin_frame_cache(generation_id: UUID, settings: Settings) -> N
             await _read_admin_frame(storage, frame)
 
 
-async def _cleanup_admin_frames(generation_id: UUID, settings: Settings) -> None:
+async def _cleanup_internal_frames(
+    generation_id: UUID, settings: Settings, *, folder_name: str
+) -> None:
     async with get_session_factory()() as db:
         row = await db.get(Generation, generation_id)
         if row is None or row.status not in {GenerationStatus.COMPLETED, GenerationStatus.FAILED}:
             return
     storage = LocalMediaStorage(settings)
-    folder = storage.absolute_path(f"internal/admin-frames/{generation_id}")
+    folder = storage.absolute_path(f"internal/{folder_name}/{generation_id}")
     if folder.is_dir():
         for path in folder.iterdir():
             if path.is_file():
@@ -505,10 +604,16 @@ async def _cleanup_admin_frames(generation_id: UUID, settings: Settings) -> None
         await asyncio.to_thread(folder.rmdir)
 
 
+async def _cleanup_admin_frames(generation_id: UUID, settings: Settings) -> None:
+    await _cleanup_internal_frames(
+        generation_id, settings, folder_name="admin-frames"
+    )
+
+
 async def _generate_admin_frame(
     *, provider: NexusImageProvider, generation_id: UUID, phase: str,
     model_name: str, prompt: str, params: dict[str, object], source_url: str,
-    settings: Settings,
+    settings: Settings, folder_name: str = "admin-frames",
 ) -> tuple[bytes, str, str]:
     storage = LocalMediaStorage(settings)
     async with get_session_factory()() as db:
@@ -534,7 +639,7 @@ async def _generate_admin_frame(
         raise NexusOutcomeUnknown("Animation frame download must resume the accepted task") from exc
     async with get_session_factory()() as db:
         image = AssetService(AssetRepository(db), ProjectRepository(db), settings)._validate_image(data)
-    path = f"internal/admin-frames/{generation_id}/{phase}.{image.extension}"
+    path = f"internal/{folder_name}/{generation_id}/{phase}.{image.extension}"
     try:
         await storage.write(path, image.data)
         async with get_session_factory()() as db:
@@ -633,6 +738,225 @@ async def _generate_flyover_frames(
     return generated_frames, last_task_id
 
 
+async def _stored_frame_url(
+    generation_id: UUID,
+    phase: str,
+    settings: Settings,
+) -> str:
+    async with get_session_factory()() as db:
+        row = await db.get(Generation, generation_id)
+        if row is None:
+            raise NexusProviderError("Generation frame owner is unavailable", retryable=False)
+        frame = (row.quality_report or {}).get("provider_frame_requests", {}).get(phase, {})
+        path = frame.get("path")
+        if frame.get("state") != "completed" or not isinstance(path, str) or not path:
+            raise NexusProviderError("Saved video keyframe is unavailable", retryable=False)
+    return LocalMediaStorage(settings).signed_url(
+        path,
+        ttl_seconds=max(
+            settings.media_url_ttl_seconds,
+            settings.neironych_video_timeout_seconds + 300,
+        ),
+    )
+
+
+async def _persist_video_identity_submission(
+    generation_id: UUID,
+    *,
+    model: str,
+    key: str,
+) -> None:
+    async with get_session_factory()() as db:
+        row = await GenerationRepository(db).get_for_update(generation_id)
+        if row is None or row.status != GenerationStatus.PROCESSING:
+            raise NexusProviderError("Video generation is no longer processing", retryable=False)
+        report = dict(row.quality_report or {})
+        existing = report.get("video_identity_request")
+        if isinstance(existing, dict) and existing.get("state") == "submitted":
+            raise NexusOutcomeUnknown(
+                "Previous Grok identity request outcome is unknown; do not duplicate"
+            )
+        report["video_identity_request"] = {
+            "state": "submitted",
+            "model": model,
+            "key": key,
+        }
+        row.quality_report = report
+        await db.commit()
+
+
+async def _persist_video_identity_review(
+    generation_id: UUID,
+    review,
+) -> None:
+    async with get_session_factory()() as db:
+        row = await GenerationRepository(db).get_for_update(generation_id)
+        if row is None or row.status != GenerationStatus.PROCESSING:
+            raise NexusProviderError("Video generation is no longer processing", retryable=False)
+        report = dict(row.quality_report or {})
+        report["video_identity_request"] = {
+            **dict(report.get("video_identity_request") or {}),
+            "state": "completed",
+        }
+        report["video_identity_review"] = review.model_dump(mode="json")
+        row.quality_report = report
+        await db.commit()
+
+
+async def _prepare_video_request(
+    generation_id: UUID,
+    *,
+    model: str,
+    request_body: str,
+    key: str,
+) -> tuple[str | None, str]:
+    async with get_session_factory()() as db:
+        row = await GenerationRepository(db).get_for_update(generation_id)
+        if row is None or row.status != GenerationStatus.PROCESSING:
+            raise NexusProviderError("Video generation is no longer processing", retryable=False)
+        report = dict(row.quality_report or {})
+        existing = report.get("video_request")
+        if isinstance(existing, dict) and existing.get("key") == key:
+            saved_body = existing.get("request_body")
+            if not isinstance(saved_body, str) or not saved_body:
+                raise NexusOutcomeUnknown("Saved Seedance request body is unavailable")
+            return row.provider_task_id, saved_body
+        report["video_request"] = {
+            "state": "prepared",
+            "model": model,
+            "key": key,
+            "request_body": request_body,
+        }
+        row.quality_report = report
+        await db.commit()
+        return row.provider_task_id, request_body
+
+
+async def _persist_video_request_id(
+    generation_id: UUID,
+    request_id: str,
+) -> None:
+    async with get_session_factory()() as db:
+        row = await GenerationRepository(db).get_for_update(generation_id)
+        if row is None or row.status != GenerationStatus.PROCESSING:
+            raise NexusProviderError("Video generation stopped before request checkpoint", retryable=False)
+        report = dict(row.quality_report or {})
+        report["video_request"] = {
+            **dict(report.get("video_request") or {}),
+            "state": "accepted",
+            "request_id": request_id,
+        }
+        row.quality_report = report
+        row.provider_task_id = request_id
+        await db.commit()
+
+
+async def _run_concept_video(
+    *,
+    generation_id: UUID,
+    provider: NexusImageProvider,
+    source_url: str,
+    source_prompt: str,
+    runtime_snapshot: dict[str, object],
+    settings: Settings,
+) -> tuple[bytes, str, str, tuple[int, int], dict[str, object]]:
+    image_model = str(runtime_snapshot.get("image_model") or "").strip()
+    image_params = dict(runtime_snapshot.get("image_params") or {})
+    judge_model = str(runtime_snapshot.get("judge_model") or "").strip()
+    video_model = str(runtime_snapshot.get("video_model") or "").strip()
+    video_params = dict(runtime_snapshot.get("video_params") or {})
+    if not all((image_model, judge_model, video_model)):
+        raise NexusProviderError("Concept video runtime snapshot is incomplete", retryable=False)
+
+    await _generate_admin_frame(
+        provider=provider,
+        generation_id=generation_id,
+        phase="video-end",
+        model_name=image_model,
+        prompt=_concept_video_end_frame_prompt(source_prompt),
+        params=image_params,
+        source_url=source_url,
+        settings=settings,
+        folder_name="video-frames",
+    )
+    end_url = await _stored_frame_url(generation_id, "video-end", settings)
+
+    async with get_session_factory()() as db:
+        current = await db.get(Generation, generation_id)
+        saved_review = (
+            (current.quality_report or {}).get("video_identity_review")
+            if current is not None
+            else None
+        )
+    if isinstance(saved_review, dict):
+        from app.providers.neironych_responses import VideoIdentityReview
+        identity = VideoIdentityReview.model_validate(saved_review)
+    else:
+        identity_key = f"auroom-{generation_id}-video-identity"
+        await _persist_video_identity_submission(
+            generation_id, model=judge_model, key=identity_key
+        )
+        judge = NeironychResponsesProvider(settings)
+        identity = await judge.review_identity(
+            model=judge_model,
+            prompt=_concept_video_identity_prompt(source_prompt),
+            image_urls=[source_url, end_url],
+            idempotency_key=identity_key,
+            client_request_id=str(generation_id),
+        )
+        await _persist_video_identity_review(generation_id, identity)
+
+    if not identity.same_scene:
+        raise ConceptVideoIdentityRejected(identity.model_dump(mode="json"))
+
+    video_provider = NeironychVideoProvider(settings)
+    video_prompt = _concept_video_motion_prompt()
+    prepared_payload = video_provider.build_payload(
+        model=video_model,
+        prompt=video_prompt,
+        start_image_url=source_url,
+        end_image_url=end_url,
+        params=video_params,
+    )
+    request_body = dumps(
+        prepared_payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    video_key = f"auroom-{generation_id}-seedance"
+    request_id, request_body = await _prepare_video_request(
+        generation_id,
+        model=video_model,
+        request_body=request_body,
+        key=video_key,
+    )
+
+    async def accepted(provider_request_id: str) -> None:
+        await _persist_video_request_id(generation_id, provider_request_id)
+
+    result = await video_provider.generate(
+        model=video_model,
+        prompt=video_prompt,
+        start_image_url=source_url,
+        end_image_url=end_url,
+        params=video_params,
+        idempotency_key=video_key,
+        client_request_id=str(generation_id),
+        request_id=request_id,
+        request_body=request_body,
+        on_request_created=accepted,
+    )
+    width, height = _concept_video_dimensions(video_params)
+    return (
+        result.content,
+        result.request_id,
+        video_model,
+        (width, height),
+        identity.model_dump(mode="json"),
+    )
+
+
 async def _commit_output_or_cleanup(
     session,
     storage: LocalMediaStorage,
@@ -661,9 +985,15 @@ async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -
             return
         generation.status = GenerationStatus.FAILED
         generation.error = str(error)[:1000] or "Generation failed"
-        if isinstance(error, GenerationQualityRejected):
+        if isinstance(error, (GenerationQualityRejected, ConceptVideoIdentityRejected)):
             generation.quality_status = "rejected"
-            generation.quality_report = error.report
+            if isinstance(error, GenerationQualityRejected):
+                generation.quality_report = error.report
+            else:
+                generation.quality_report = {
+                    **(generation.quality_report or {}),
+                    "video_identity_review": error.report,
+                }
         generation.completed_at = datetime.now(UTC)
         if generation.credits_charged > 0:
             await CreditService(session).apply(
@@ -844,6 +1174,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             sandbox_request = _admin_sandbox_request(generation, project)
             orbit_request = _admin_orbit_request(generation, project)
             flyover_request = _admin_flyover_gif_request(generation, project)
+            video_source_generation_id = _concept_video_request(generation)
         except ValueError as exc:
             await session.rollback()
             await _mark_failed_and_refund(generation_id, exc)
@@ -860,6 +1191,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         admin_internal_generation = (
             sandbox_request is not None or orbit_request is not None or flyover_request is not None
         )
+        concept_video_generation = video_source_generation_id is not None
         admin_repository = AdminRepository(session)
         initial_concept_generation = (
             generation.origin == GenerationOrigin.QUESTIONNAIRE_INITIAL.value
@@ -887,22 +1219,60 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 "Questionnaire generation has an invalid server prompt.",
             )
             return
+        video_runtime = (
+            (generation.quality_report or {}).get("video_runtime")
+            if concept_video_generation
+            else None
+        )
+        video_source_prompt = ""
+        if concept_video_generation:
+            if not isinstance(video_runtime, dict):
+                await session.rollback()
+                await _mark_failed_and_refund(
+                    generation_id, "Concept video runtime snapshot is missing."
+                )
+                return
+            source_generation = await session.get(Generation, video_source_generation_id)
+            if (
+                source_generation is None
+                or source_generation.user_id != generation.user_id
+                or source_generation.project_id != generation.project_id
+                or source_generation.status != GenerationStatus.COMPLETED
+                or source_generation.output_asset_id != generation.input_asset_id
+                or source_generation.origin not in {
+                    GenerationOrigin.QUESTIONNAIRE.value,
+                    GenerationOrigin.QUESTIONNAIRE_INITIAL.value,
+                }
+            ):
+                await session.rollback()
+                await _mark_failed_and_refund(
+                    generation_id, "Concept video source generation is no longer valid."
+                )
+                return
+            video_source_prompt = source_generation.prompt
+
         initial_layout_guide = (generation.quality_report or {}).get("initial_layout_guide")
         runtime = (
             None if admin_internal_generation else await admin_repository.get_generation_settings()
         )
         prompt_template = (
             None
-            if questionnaire_generation or admin_internal_generation
+            if questionnaire_generation or admin_internal_generation or concept_video_generation
             else await admin_repository.get_prompt_template(generation.type.value)
         )
-        if not admin_internal_generation and not (initial_concept_generation and initial_layout_guide) and (
+        if (
+            not admin_internal_generation
+            and not concept_video_generation
+            and not (initial_concept_generation and initial_layout_guide)
+            and (
             runtime is None
             or not runtime.primary_model.strip()
             or (
                 not questionnaire_generation
+                and not concept_video_generation
                 and (prompt_template is None or not prompt_template.template.strip())
             )
+        )
         ):
             await session.rollback()
             await _mark_failed_and_refund(
@@ -926,7 +1296,17 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             asset_service.storage.signed_url(
                 input_asset.storage_path,
                 ttl_seconds=max(
-                    settings.media_url_ttl_seconds, max(settings.nexus_task_timeout_seconds, settings.neironych_request_timeout_seconds) + 120
+                    settings.media_url_ttl_seconds,
+                    max(
+                        settings.nexus_task_timeout_seconds,
+                        settings.neironych_request_timeout_seconds,
+                    )
+                    + 120,
+                    (
+                        settings.neironych_video_timeout_seconds + 300
+                        if concept_video_generation
+                        else 0
+                    ),
                 ),
             )
             if input_asset is not None
@@ -960,6 +1340,25 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             fallback_model = None
             fallback_params = {}
             primary_timeout_seconds = None
+        elif concept_video_generation:
+            assert isinstance(video_runtime, dict)
+            primary_model = str(video_runtime.get("image_model") or "").strip()
+            primary_params = dict(video_runtime.get("image_params") or {})
+            fallback_model = None
+            fallback_params = {}
+            primary_timeout_seconds = None
+            prompt = _concept_video_end_frame_prompt(video_source_prompt)
+            if (
+                video_runtime.get("image_provider") != "nexus"
+                or not primary_model
+                or not str(video_runtime.get("judge_model") or "").strip()
+                or not str(video_runtime.get("video_model") or "").strip()
+            ):
+                await session.rollback()
+                await _mark_failed_and_refund(
+                    generation_id, "Concept video runtime snapshot is invalid."
+                )
+                return
         elif initial_concept_generation and initial_layout_guide:
             primary_model = initial_layout_guide["primary_model"]
             fallback_model = initial_layout_guide["fallback_model"]
@@ -994,6 +1393,9 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             primary_timeout_seconds = runtime.primary_timeout_seconds
         primary_provider = getattr(runtime, "primary_provider", "nexus") or "nexus"
         fallback_provider = getattr(runtime, "fallback_provider", "nexus") or "nexus"
+        if concept_video_generation:
+            primary_provider = "nexus"
+            fallback_provider = "nexus"
         if admin_internal_generation:
             prefix = next(value for value in (
                 ADMIN_SANDBOX_PROMPT_PREFIX, ADMIN_ORBIT_PROMPT_PREFIX, ADMIN_FLYOVER_GIF_PROMPT_PREFIX
@@ -1032,6 +1434,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
     fallback_used = False
     provider_task_id: str | None = None
     flyover_gif: FlyoverGif | None = None
+    video_dimensions: tuple[int, int] | None = None
     quality_report: dict[str, object] | None = None
     provider_work_region = edit_region
     required_input: tuple[Path, str] | None = None
@@ -1248,7 +1651,27 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 len(protected_regions),
                 quality_settings is not None,
             )
-        if flyover_request is not None:
+        if concept_video_generation:
+            if source_url is None or input_storage_path is None:
+                raise RuntimeError("Concept video generation requires the accepted concept image.")
+            if not isinstance(provider, NexusImageProvider):
+                raise RuntimeError("Concept video keyframe generation must use Nexus.")
+            assert isinstance(video_runtime, dict)
+            (
+                data,
+                provider_task_id,
+                model_name,
+                video_dimensions,
+                _video_identity_report,
+            ) = await _run_concept_video(
+                generation_id=generation_id,
+                provider=provider,
+                source_url=source_url,
+                source_prompt=video_source_prompt,
+                runtime_snapshot=video_runtime,
+                settings=settings,
+            )
+        elif flyover_request is not None:
             if source_url is None or input_storage_path is None:
                 raise RuntimeError("Flyover GIF generation requires a source image.")
             (
@@ -1660,13 +2083,23 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             )
             asset_id = uuid4()
             now = datetime.now(UTC)
-            if flyover_gif is not None:
+            if concept_video_generation:
+                if video_dimensions is None:
+                    raise RuntimeError("Concept video output dimensions are unavailable.")
+                output_data = data
+                extension = "mp4"
+                mime_type = "video/mp4"
+                width, height = video_dimensions
+                original_filename = "auroom-concept-flyover.mp4"
+                output_asset_type = AssetType.VIDEO
+            elif flyover_gif is not None:
                 output_data = flyover_gif.data
                 extension = "gif"
                 mime_type = "image/gif"
                 width = flyover_gif.width
                 height = flyover_gif.height
                 original_filename = "auroom-bird-flyover.gif"
+                output_asset_type = AssetType.IMAGE
             else:
                 image = asset_service._validate_image(data)
                 output_data = image.data
@@ -1679,6 +2112,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     if orbit_request is not None
                     else f"auroom-{generation.type.value}.{image.extension}"
                 )
+                output_asset_type = AssetType.IMAGE
             relative_path = f"users/{generation.user_id}/{now:%Y/%m}/{asset_id}.{extension}"
             await asset_service.storage.write(relative_path, output_data)
 
@@ -1686,7 +2120,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 id=asset_id,
                 user_id=generation.user_id,
                 project_id=generation.project_id,
-                type=AssetType.IMAGE,
+                type=output_asset_type,
                 purpose=AssetPurpose.GENERATION_OUTPUT,
                 original_filename=original_filename,
                 mime_type=mime_type,
@@ -1703,6 +2137,8 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             if quality_report is not None:
                 generation.quality_report = quality_report
                 generation.quality_status = "passed"
+            if concept_video_generation:
+                generation.quality_status = "passed"
             if generation.quality_report:
                 generation.quality_report = {
                     key: value
@@ -1718,13 +2154,14 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 relative_path,
             )
             logger.info(
-                "Generation %s completed with %s%s%s%s%s",
+                "Generation %s completed with %s%s%s%s%s%s",
                 generation_id,
                 model_name,
                 " (fallback)" if fallback_used else "",
                 " (masked composite)" if composition_mode == "masked_edit" else "",
                 " (orbit loop)" if orbit_request is not None else "",
                 " (bird flyover GIF)" if flyover_request is not None else "",
+                " (concept video)" if concept_video_generation else "",
             )
     except NexusOutcomeUnknown as exc:
         logger.warning(
@@ -1750,6 +2187,13 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 await _cleanup_admin_frames(generation_id, settings)
             except Exception:
                 logger.warning("Could not clean animation frame cache for %s", generation_id, exc_info=True)
+        if concept_video_generation:
+            try:
+                await _cleanup_internal_frames(
+                    generation_id, settings, folder_name="video-frames"
+                )
+            except Exception:
+                logger.warning("Could not clean concept video frame cache for %s", generation_id, exc_info=True)
         if guide_relative_path is not None:
             guide_path = guide_storage.absolute_path(guide_relative_path)
             try:
@@ -1799,6 +2243,22 @@ async def _reconcile_database_jobs(settings: Settings) -> None:
                 checkpoint = (generation.quality_report or {}).get("provider_request", {})
                 requires_reconciliation = (generation.quality_report or {}).get("requires_reconciliation")
                 frames = (generation.quality_report or {}).get("provider_frame_requests", {})
+                identity_request = (generation.quality_report or {}).get(
+                    "video_identity_request", {}
+                )
+                identity_review = (generation.quality_report or {}).get(
+                    "video_identity_review"
+                )
+                if (
+                    requires_reconciliation
+                    and isinstance(identity_request, dict)
+                    and identity_request.get("state") == "submitted"
+                    and not isinstance(identity_review, dict)
+                ):
+                    # /v1/responses is synchronous. Replaying the same key returns 409
+                    # instead of the lost result, so an ambiguous Grok review must be
+                    # reconciled manually rather than converted into a second paid call.
+                    continue
                 resumable_frames = bool(frames) and all(
                     frame.get("state") == "completed"
                     or (frame.get("task_id") and frame.get("task_id") != "sync")

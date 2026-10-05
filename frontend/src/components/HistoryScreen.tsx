@@ -8,6 +8,7 @@ const labels: Record<GenerationMode, string> = {
   facade: 'Дом, фасад',
   master_plan: 'Объект на участке',
   interior: 'Дизайн помещения',
+  video: 'Видео-пролёт',
 }
 
 const statusLabels: Record<Generation['status'], string> = {
@@ -98,7 +99,11 @@ export function HistoryScreen({ onOpenGeneration }: Props) {
           <div className="history-grid">
             {items.map((item) => (
               <article className="history-card" key={item.id}>
-                {item.output_asset && !brokenImages.has(item.id) ? <img src={item.output_asset.url} alt="Результат генерации" onError={() => setBrokenImages((current) => new Set(current).add(item.id))}/> : <div className="history-placeholder"><SparkIcon/><span>{item.output_asset ? 'Изображение временно недоступно' : statusLabels[item.status]}</span></div>}
+                {item.output_asset && !brokenImages.has(item.id)
+                  ? item.output_asset.type === 'video'
+                    ? <video muted playsInline preload="metadata" src={item.output_asset.url} onError={() => setBrokenImages((current) => new Set(current).add(item.id))}/>
+                    : <img src={item.output_asset.url} alt="Результат генерации" onError={() => setBrokenImages((current) => new Set(current).add(item.id))}/>
+                  : <div className="history-placeholder"><SparkIcon/><span>{item.output_asset ? 'Медиа временно недоступно' : statusLabels[item.status]}</span></div>}
                 <div>
                   <span className="history-mode">{labels[item.type]} · {statusLabels[item.status]} · {item.credits_charged} кр.</span>
                   <h3>{projectNames[item.project_id] || 'Проект AuRoom'}</h3>

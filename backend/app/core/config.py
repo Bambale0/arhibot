@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     neironych_api_base_url: str = "https://api.xn--e1aikcel5c5a.online"
     neironych_request_timeout_seconds: int = 180
     neironych_http_connect_timeout_seconds: float = 5.0
+    neironych_video_timeout_seconds: int = 900
+    neironych_video_poll_seconds: float = 10.0
+    max_video_size_bytes: int = 200 * 1024 * 1024
 
     # YooKassa credentials/infrastructure only. Tariffs live in DB/admin.
     yookassa_shop_id: str | None = None
@@ -121,6 +124,12 @@ class Settings(BaseSettings):
             raise ValueError("NEIRONYCH_REQUEST_TIMEOUT_SECONDS must be between 30 and 600")
         if self.neironych_http_connect_timeout_seconds <= 0:
             raise ValueError("Neironych connect timeout must be positive")
+        if not 60 <= self.neironych_video_timeout_seconds <= 3600:
+            raise ValueError("NEIRONYCH_VIDEO_TIMEOUT_SECONDS must be between 60 and 3600")
+        if not 1 <= self.neironych_video_poll_seconds <= 60:
+            raise ValueError("NEIRONYCH_VIDEO_POLL_SECONDS must be between 1 and 60")
+        if not 1_048_576 <= self.max_video_size_bytes <= 1_073_741_824:
+            raise ValueError("MAX_VIDEO_SIZE_BYTES must be between 1 MiB and 1 GiB")
         if self.nexus_task_timeout_seconds < 30:
             raise ValueError("NEXUS_TASK_TIMEOUT_SECONDS must be at least 30")
         if self.nexus_poll_interval_seconds < 0.5:

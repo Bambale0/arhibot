@@ -21,6 +21,7 @@ _PROVIDER_FIELDS = frozenset(
     }
 )
 _NEIRONYCH_IMAGE_PARAMS = frozenset({"size", "quality", "aspect_ratio"})
+_VIDEO_PARAMS = frozenset({"duration", "resolution", "aspect_ratio"})
 
 
 class AdminOverviewResponse(BaseModel):
@@ -339,6 +340,12 @@ class GenerationRuntimeUpdate(BaseModel):
     primary_params: dict[str, Any] = Field(default_factory=dict)
     fallback_params: dict[str, Any] = Field(default_factory=dict)
     mode_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    quality_judge_model: str | None = Field(default="grok-4.5", max_length=120)
+    video_enabled: bool = False
+    video_model: str | None = Field(default="seedance-2.0", max_length=120)
+    video_params: dict[str, Any] = Field(
+        default_factory=lambda: {"duration": 8, "resolution": "1080p", "aspect_ratio": "16:9"}
+    )
     masked_edit_provider_context_margin_fraction: float | None = Field(default=None, ge=0, le=0.25)
     masked_edit_feather_fraction: float | None = Field(default=None, ge=0, le=0.1)
     masked_edit_feather_min_px: int | None = Field(default=None, ge=0, le=128)
@@ -358,9 +365,9 @@ class GenerationRuntimeUpdate(BaseModel):
             raise ValueError("Primary model is required")
         return value
 
-    @field_validator("fallback_model")
+    @field_validator("fallback_model", "quality_judge_model", "video_model")
     @classmethod
-    def strip_fallback(cls, value: str | None) -> str | None:
+    def strip_optional_model(cls, value: str | None) -> str | None:
         if value is None:
             return None
         value = value.strip()
@@ -383,6 +390,12 @@ class GenerationRuntimeUpdate(BaseModel):
                 raise ValueError(
                     f"{label} cannot override provider fields: {', '.join(sorted(conflict))}"
                 )
+        unknown_video_params = set(self.video_params) - _VIDEO_PARAMS
+        if unknown_video_params:
+            raise ValueError(
+                "video_params contains unsupported fields: "
+                + ", ".join(sorted(unknown_video_params))
+            )
         provider_groups = (
             ("primary_params", self.primary_provider, self.primary_params),
             ("fallback_params", self.fallback_provider, self.fallback_params),
@@ -421,6 +434,10 @@ class GenerationRuntimeResponse(BaseModel):
     primary_params: dict[str, Any] = Field(default_factory=dict)
     fallback_params: dict[str, Any] = Field(default_factory=dict)
     mode_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    quality_judge_model: str | None = "grok-4.5"
+    video_enabled: bool = False
+    video_model: str | None = "seedance-2.0"
+    video_params: dict[str, Any] = Field(default_factory=dict)
     masked_edit_provider_context_margin_fraction: float
     masked_edit_feather_fraction: float
     masked_edit_feather_min_px: int

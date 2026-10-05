@@ -243,7 +243,11 @@ class AssetService:
             width=asset.width,
             height=asset.height,
             url=self.storage.signed_url(asset.storage_path),
-            preview_url=self.storage.signed_feed_preview_url(asset.storage_path),
+            preview_url=(
+                self.storage.signed_feed_preview_url(asset.storage_path)
+                if asset.type == AssetType.IMAGE
+                else None
+            ),
             created_at=asset.created_at,
         )
 
