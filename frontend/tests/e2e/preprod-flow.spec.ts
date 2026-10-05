@@ -103,8 +103,9 @@ test.beforeEach(async ({page})=>{
     if(path.endsWith('/me')&&method==='GET') return json(route,user)
     if(path.endsWith('/projects')&&method==='GET') return json(route,{items:homeProjects,next_cursor:null,has_more:false})
     if(path.endsWith(`/projects/${projectId}`)&&method==='GET') return json(route,project)
-    if(path.endsWith(`/generations/${generationIds[0]}/video`)&&method==='GET') return json(route,videoGeneration)
-    if(path.endsWith(`/generations/${generationIds[0]}/video`)&&method==='POST'){videoGeneration=queuedVideo();return json(route,videoGeneration,202)}
+    const videoSourceId=generationIds.find((id)=>path.endsWith(`/generations/${id}/video`))
+    if(videoSourceId&&method==='GET') return json(route,videoGeneration)
+    if(videoSourceId&&method==='POST'){videoGeneration=queuedVideo();return json(route,videoGeneration,202)}
     if(path.endsWith(`/generations/${videoGenerationId}`)&&method==='GET') return json(route,videoGeneration || queuedVideo())
     for(let i=0;i<generationIds.length;i++) if(path.endsWith(`/generations/${generationIds[i]}`)&&method==='GET') return json(route,generation(i))
     if(path.endsWith('/questionnaires')&&method==='GET') return json(route,catalog)
