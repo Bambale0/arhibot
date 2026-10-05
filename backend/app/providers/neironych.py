@@ -156,6 +156,11 @@ class NeironychImageProvider:
                 async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
                     response = await client.post(f"{self.base_url}{endpoint}", json=body,
                         headers={**self.headers, "Idempotency-Key": idempotency_key})
+        except (httpx.ConnectTimeout, httpx.ConnectError) as exc:
+            raise NexusProviderError(
+                "Neironych connection failed before request submission",
+                retryable=True,
+            ) from exc
         except (httpx.HTTPError, TimeoutError) as exc:
             raise NexusOutcomeUnknown("Neironych submission outcome is unknown; no retry") from exc
         request_id = self._safe_identifier(response.headers.get("X-Request-Id"))
