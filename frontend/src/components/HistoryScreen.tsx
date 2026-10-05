@@ -103,7 +103,7 @@ export function HistoryScreen({ onOpenGeneration }: Props) {
                   ? item.output_asset.type === 'video'
                     ? <video muted playsInline preload="metadata" src={item.output_asset.url} onError={() => setBrokenImages((current) => new Set(current).add(item.id))}/>
                     : <img src={item.output_asset.url} alt="Результат генерации" onError={() => setBrokenImages((current) => new Set(current).add(item.id))}/>
-                  : <div className="history-placeholder"><SparkIcon/><span>{item.output_asset ? 'Медиа временно недоступно' : statusLabels[item.status]}</span></div>}
+                  : <div className="history-placeholder"><SparkIcon/><span>{item.output_asset ? (item.output_asset.type === 'video' ? 'Видео временно недоступно' : 'Изображение временно недоступно') : statusLabels[item.status]}</span></div>}
                 <div>
                   <span className="history-mode">{labels[item.type]} · {statusLabels[item.status]} · {item.credits_charged} кр.</span>
                   <h3>{projectNames[item.project_id] || 'Проект AuRoom'}</h3>
