@@ -54,9 +54,7 @@ def upgrade() -> None:
             "video_params",
             postgresql.JSONB(astext_type=sa.Text()),
             nullable=False,
-            server_default=sa.text(
-                """'{"duration":8,"resolution":"1080p","aspect_ratio":"16:9"}'::jsonb"""
-            ),
+            server_default=sa.text("'{}'::jsonb"),
         ),
     )
 
