@@ -1413,6 +1413,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
     fallback_used = False
     provider_task_id: str | None = None
     flyover_gif: FlyoverGif | None = None
+    video_dimensions: tuple[int, int] | None = None
     quality_report: dict[str, object] | None = None
     provider_work_region = edit_region
     required_input: tuple[Path, str] | None = None
@@ -1629,7 +1630,27 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 len(protected_regions),
                 quality_settings is not None,
             )
-        if flyover_request is not None:
+        if concept_video_generation:
+            if source_url is None or input_storage_path is None:
+                raise RuntimeError("Concept video generation requires the accepted concept image.")
+            if not isinstance(provider, NexusImageProvider):
+                raise RuntimeError("Concept video keyframe generation must use Nexus.")
+            assert isinstance(video_runtime, dict)
+            (
+                data,
+                provider_task_id,
+                model_name,
+                video_dimensions,
+                _video_identity_report,
+            ) = await _run_concept_video(
+                generation_id=generation_id,
+                provider=provider,
+                source_url=source_url,
+                source_prompt=video_source_prompt,
+                runtime_snapshot=video_runtime,
+                settings=settings,
+            )
+        elif flyover_request is not None:
             if source_url is None or input_storage_path is None:
                 raise RuntimeError("Flyover GIF generation requires a source image.")
             (
@@ -2041,13 +2062,23 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             )
             asset_id = uuid4()
             now = datetime.now(UTC)
-            if flyover_gif is not None:
+            if concept_video_generation:
+                if video_dimensions is None:
+                    raise RuntimeError("Concept video output dimensions are unavailable.")
+                output_data = data
+                extension = "mp4"
+                mime_type = "video/mp4"
+                width, height = video_dimensions
+                original_filename = "auroom-concept-flyover.mp4"
+                output_asset_type = AssetType.VIDEO
+            elif flyover_gif is not None:
                 output_data = flyover_gif.data
                 extension = "gif"
                 mime_type = "image/gif"
                 width = flyover_gif.width
                 height = flyover_gif.height
                 original_filename = "auroom-bird-flyover.gif"
+                output_asset_type = AssetType.IMAGE
             else:
                 image = asset_service._validate_image(data)
                 output_data = image.data
@@ -2060,6 +2091,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     if orbit_request is not None
                     else f"auroom-{generation.type.value}.{image.extension}"
                 )
+                output_asset_type = AssetType.IMAGE
             relative_path = f"users/{generation.user_id}/{now:%Y/%m}/{asset_id}.{extension}"
             await asset_service.storage.write(relative_path, output_data)
 
@@ -2067,7 +2099,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 id=asset_id,
                 user_id=generation.user_id,
                 project_id=generation.project_id,
-                type=AssetType.IMAGE,
+                type=output_asset_type,
                 purpose=AssetPurpose.GENERATION_OUTPUT,
                 original_filename=original_filename,
                 mime_type=mime_type,
@@ -2083,6 +2115,8 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             generation.provider_task_id = provider_task_id
             if quality_report is not None:
                 generation.quality_report = quality_report
+                generation.quality_status = "passed"
+            if concept_video_generation:
                 generation.quality_status = "passed"
             if generation.quality_report:
                 generation.quality_report = {
@@ -2106,6 +2140,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 " (masked composite)" if composition_mode == "masked_edit" else "",
                 " (orbit loop)" if orbit_request is not None else "",
                 " (bird flyover GIF)" if flyover_request is not None else "",
+                " (concept video)" if concept_video_generation else "",
             )
     except NexusOutcomeUnknown as exc:
         logger.warning(
@@ -2131,6 +2166,13 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 await _cleanup_admin_frames(generation_id, settings)
             except Exception:
                 logger.warning("Could not clean animation frame cache for %s", generation_id, exc_info=True)
+        if concept_video_generation:
+            try:
+                await _cleanup_internal_frames(
+                    generation_id, settings, folder_name="video-frames"
+                )
+            except Exception:
+                logger.warning("Could not clean concept video frame cache for %s", generation_id, exc_info=True)
         if guide_relative_path is not None:
             guide_path = guide_storage.absolute_path(guide_relative_path)
             try:
