@@ -306,10 +306,13 @@ class AdminService:
             primary_params=row.primary_params or {},
             fallback_params=row.fallback_params or {},
             mode_params=row.mode_params or {},
-            quality_judge_model=row.quality_judge_model,
-            video_enabled=row.video_enabled,
-            video_model=row.video_model,
-            video_params=row.video_params or {},
+            quality_judge_model=getattr(row, "quality_judge_model", None) or "grok-4.5",
+            video_enabled=bool(getattr(row, "video_enabled", False)),
+            video_model=getattr(row, "video_model", None) or "seedance-2.0",
+            video_params=(
+                getattr(row, "video_params", None)
+                or {"duration": 8, "resolution": "1080p", "aspect_ratio": "16:9"}
+            ),
             masked_edit_provider_context_margin_fraction=row.masked_edit_provider_context_margin_fraction,
             masked_edit_feather_fraction=row.masked_edit_feather_fraction,
             masked_edit_feather_min_px=row.masked_edit_feather_min_px,
