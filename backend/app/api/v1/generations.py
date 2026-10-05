@@ -75,23 +75,6 @@ async def get_generation_video(
     )
 
 
-@router.get(
-    "/{generation_id}/video",
-    operation_id="getGenerationVideo",
-    summary="Get concept video continuation",
-    response_model=GenerationResponse | None,
-)
-async def get_generation_video(
-    generation_id: UUID,
-    user: CurrentUser,
-    session: DbSession,
-    settings: Settings = Depends(get_settings),
-) -> GenerationResponse | None:
-    return await build_generation_service(session, settings).get_video(
-        user, generation_id
-    )
-
-
 @router.post(
     "/{generation_id}/video",
     operation_id="createGenerationVideo",
