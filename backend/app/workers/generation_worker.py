@@ -1296,7 +1296,17 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             asset_service.storage.signed_url(
                 input_asset.storage_path,
                 ttl_seconds=max(
-                    settings.media_url_ttl_seconds, max(settings.nexus_task_timeout_seconds, settings.neironych_request_timeout_seconds) + 120
+                    settings.media_url_ttl_seconds,
+                    max(
+                        settings.nexus_task_timeout_seconds,
+                        settings.neironych_request_timeout_seconds,
+                    )
+                    + 120,
+                    (
+                        settings.neironych_video_timeout_seconds + 300
+                        if concept_video_generation
+                        else 0
+                    ),
                 ),
             )
             if input_asset is not None
