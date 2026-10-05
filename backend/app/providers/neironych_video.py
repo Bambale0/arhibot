@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from time import monotonic
 from urllib.parse import urlsplit
@@ -130,7 +131,7 @@ class NeironychVideoProvider:
     async def create(
         self,
         *,
-        payload: dict[str, object],
+        request_body: str,
         idempotency_key: str,
         client_request_id: str,
     ) -> str:
@@ -155,7 +156,7 @@ class NeironychVideoProvider:
                     response = await client.post(
                         "/v1/videos/generations",
                         headers=headers,
-                        json=payload,
+                        content=request_body.encode("utf-8"),
                     )
             except (httpx.HTTPError, TimeoutError) as exc:
                 last_error = exc
@@ -305,19 +306,31 @@ class NeironychVideoProvider:
         idempotency_key: str,
         client_request_id: str,
         request_id: str | None = None,
+        request_body: str | None = None,
         on_request_created=None,
     ) -> NeironychVideoResult:
-        payload = self.build_payload(
-            model=model,
-            prompt=prompt,
-            start_image_url=start_image_url,
-            end_image_url=end_image_url,
-            params=params,
-        )
+        if request_body is None:
+            payload = self.build_payload(
+                model=model,
+                prompt=prompt,
+                start_image_url=start_image_url,
+                end_image_url=end_image_url,
+                params=params,
+            )
+            request_body = json.dumps(
+                payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            )
+        else:
+            try:
+                saved = json.loads(request_body)
+            except json.JSONDecodeError as exc:
+                raise ValueError("Saved Seedance request body is invalid JSON") from exc
+            if not isinstance(saved, dict) or saved.get("model") != model:
+                raise ValueError("Saved Seedance request body model mismatch")
         current_id = (request_id or "").strip()
         if not current_id:
             current_id = await self.create(
-                payload=payload,
+                request_body=request_body,
                 idempotency_key=idempotency_key,
                 client_request_id=client_request_id,
             )
