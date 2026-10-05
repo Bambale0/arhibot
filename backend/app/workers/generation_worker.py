@@ -1260,7 +1260,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             if questionnaire_generation or admin_internal_generation or concept_video_generation
             else await admin_repository.get_prompt_template(generation.type.value)
         )
-        if not admin_internal_generation and not (initial_concept_generation and initial_layout_guide) and (
+        if (
+            not admin_internal_generation
+            and not concept_video_generation
+            and not (initial_concept_generation and initial_layout_guide)
+            and (
             runtime is None
             or not runtime.primary_model.strip()
             or (
@@ -1268,6 +1272,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 and not concept_video_generation
                 and (prompt_template is None or not prompt_template.template.strip())
             )
+        )
         ):
             await session.rollback()
             await _mark_failed_and_refund(
