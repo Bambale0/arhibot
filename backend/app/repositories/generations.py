@@ -28,6 +28,45 @@ class GenerationRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_owned_for_update(
+        self, generation_id: UUID, user_id: UUID
+    ) -> Generation | None:
+        result = await self.session.execute(
+            select(Generation)
+            .join(Project, Project.id == Generation.project_id)
+            .where(
+                Generation.id == generation_id,
+                Generation.user_id == user_id,
+                Project.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+        return result.scalar_one_or_none()
+
+    async def get_active_video_for_source_asset(
+        self, asset_id: UUID, user_id: UUID
+    ) -> Generation | None:
+        result = await self.session.execute(
+            select(Generation)
+            .join(Project, Project.id == Generation.project_id)
+            .where(
+                Generation.input_asset_id == asset_id,
+                Generation.user_id == user_id,
+                Generation.origin == "questionnaire_video",
+                Generation.status.in_(
+                    [
+                        GenerationStatus.QUEUED,
+                        GenerationStatus.PROCESSING,
+                        GenerationStatus.COMPLETED,
+                    ]
+                ),
+                Project.deleted_at.is_(None),
+            )
+            .order_by(Generation.created_at.desc(), Generation.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def get(self, generation_id: UUID) -> Generation | None:
         return await self.session.get(Generation, generation_id)
 
