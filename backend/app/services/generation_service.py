@@ -61,6 +61,18 @@ def _public_quality_report(report: dict | None) -> dict | None:
             for slot, item in frame_checkpoints.items()
             if isinstance(item, dict)
         }
+    identity_request = public.get("video_identity_request")
+    if isinstance(identity_request, dict):
+        public["video_identity_request"] = {
+            key: value for key, value in identity_request.items() if key != "key"
+        }
+    video_request = public.get("video_request")
+    if isinstance(video_request, dict):
+        public["video_request"] = {
+            key: value
+            for key, value in video_request.items()
+            if key not in {"key", "request_body", "request_id"}
+        }
     return public
 
 
