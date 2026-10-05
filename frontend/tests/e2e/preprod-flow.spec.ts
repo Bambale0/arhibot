@@ -113,7 +113,13 @@ test.beforeEach(async ({page})=>{
     if(path.endsWith('/questionnaire-projects')&&method==='POST') return json(route,project,201)
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='GET') return json(route,{session})
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='PUT') {session=withMockSitePlan(JSON.parse(req.postData()||'{}'));project={...project,context:{...project.context,design_session:session}};return json(route,{session})}
-    if(path.endsWith(`/projects/${projectId}/questionnaire-generation`)&&method==='POST'){const i=generationCount++;return json(route,generation(i,'queued'),202)}
+    if(path.endsWith(`/projects/${projectId}/questionnaire-generation`)&&method==='POST'){
+      const i=generationCount++
+      const queued=generation(i,'queued')
+      session={...session,initial_generation_id:queued.id}
+      project={...project,context:{...project.context,design_session:session}}
+      return json(route,queued,202)
+    }
     if(path.endsWith(`/projects/${projectId}/questionnaire-initial-accept`)&&method==='POST'){
       const completed=generation(0)
       session={...session,initial_concept_accepted:true,accepted_objects:[...session.selected_objects],generation_ids:Object.fromEntries(session.selected_objects.map((key:string)=>[key,generationIds[0]])),scene_asset_id:completed.output_asset.id,current_object:null,current_question_id:null}
