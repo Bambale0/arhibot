@@ -199,7 +199,10 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
             grok_calls.append(kwargs)
             assert kwargs["model"] == "grok-4.5"
             assert len(kwargs["image_urls"]) == 2
-            assert all(url.startswith("https://media.example.test/") for url in kwargs["image_urls"])
+            assert all(
+                url.startswith("https://media.example.test/")
+                for url in kwargs["image_urls"]
+            )
             return VideoIdentityReview(
                 same_scene=True,
                 confidence=0.98,
