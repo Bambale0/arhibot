@@ -1003,7 +1003,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
           setError('Недостаточно кредитов для видео. Пополните баланс в Профиле.')
           return
         }
-        if ([
+        if (err.errorType && [
           'video_generation_not_configured',
           'video_provider_not_configured',
           'video_keyframe_provider_not_configured',
