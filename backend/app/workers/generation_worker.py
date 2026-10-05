@@ -940,6 +940,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             sandbox_request = _admin_sandbox_request(generation, project)
             orbit_request = _admin_orbit_request(generation, project)
             flyover_request = _admin_flyover_gif_request(generation, project)
+            video_source_generation_id = _concept_video_request(generation)
         except ValueError as exc:
             await session.rollback()
             await _mark_failed_and_refund(generation_id, exc)
@@ -956,6 +957,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         admin_internal_generation = (
             sandbox_request is not None or orbit_request is not None or flyover_request is not None
         )
+        concept_video_generation = video_source_generation_id is not None
         admin_repository = AdminRepository(session)
         initial_concept_generation = (
             generation.origin == GenerationOrigin.QUESTIONNAIRE_INITIAL.value
@@ -983,13 +985,45 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 "Questionnaire generation has an invalid server prompt.",
             )
             return
+        video_runtime = (
+            (generation.quality_report or {}).get("video_runtime")
+            if concept_video_generation
+            else None
+        )
+        video_source_prompt = ""
+        if concept_video_generation:
+            if not isinstance(video_runtime, dict):
+                await session.rollback()
+                await _mark_failed_and_refund(
+                    generation_id, "Concept video runtime snapshot is missing."
+                )
+                return
+            source_generation = await session.get(Generation, video_source_generation_id)
+            if (
+                source_generation is None
+                or source_generation.user_id != generation.user_id
+                or source_generation.project_id != generation.project_id
+                or source_generation.status != GenerationStatus.COMPLETED
+                or source_generation.output_asset_id != generation.input_asset_id
+                or source_generation.origin not in {
+                    GenerationOrigin.QUESTIONNAIRE.value,
+                    GenerationOrigin.QUESTIONNAIRE_INITIAL.value,
+                }
+            ):
+                await session.rollback()
+                await _mark_failed_and_refund(
+                    generation_id, "Concept video source generation is no longer valid."
+                )
+                return
+            video_source_prompt = source_generation.prompt
+
         initial_layout_guide = (generation.quality_report or {}).get("initial_layout_guide")
         runtime = (
             None if admin_internal_generation else await admin_repository.get_generation_settings()
         )
         prompt_template = (
             None
-            if questionnaire_generation or admin_internal_generation
+            if questionnaire_generation or admin_internal_generation or concept_video_generation
             else await admin_repository.get_prompt_template(generation.type.value)
         )
         if not admin_internal_generation and not (initial_concept_generation and initial_layout_guide) and (
@@ -997,6 +1031,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             or not runtime.primary_model.strip()
             or (
                 not questionnaire_generation
+                and not concept_video_generation
                 and (prompt_template is None or not prompt_template.template.strip())
             )
         ):
@@ -1056,6 +1091,25 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             fallback_model = None
             fallback_params = {}
             primary_timeout_seconds = None
+        elif concept_video_generation:
+            assert isinstance(video_runtime, dict)
+            primary_model = str(video_runtime.get("image_model") or "").strip()
+            primary_params = dict(video_runtime.get("image_params") or {})
+            fallback_model = None
+            fallback_params = {}
+            primary_timeout_seconds = None
+            prompt = _concept_video_end_frame_prompt(video_source_prompt)
+            if (
+                video_runtime.get("image_provider") != "nexus"
+                or not primary_model
+                or not str(video_runtime.get("judge_model") or "").strip()
+                or not str(video_runtime.get("video_model") or "").strip()
+            ):
+                await session.rollback()
+                await _mark_failed_and_refund(
+                    generation_id, "Concept video runtime snapshot is invalid."
+                )
+                return
         elif initial_concept_generation and initial_layout_guide:
             primary_model = initial_layout_guide["primary_model"]
             fallback_model = initial_layout_guide["fallback_model"]
@@ -1090,6 +1144,9 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             primary_timeout_seconds = runtime.primary_timeout_seconds
         primary_provider = getattr(runtime, "primary_provider", "nexus") or "nexus"
         fallback_provider = getattr(runtime, "fallback_provider", "nexus") or "nexus"
+        if concept_video_generation:
+            primary_provider = "nexus"
+            fallback_provider = "nexus"
         if admin_internal_generation:
             prefix = next(value for value in (
                 ADMIN_SANDBOX_PROMPT_PREFIX, ADMIN_ORBIT_PROMPT_PREFIX, ADMIN_FLYOVER_GIF_PROMPT_PREFIX
