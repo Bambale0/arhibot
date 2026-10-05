@@ -739,16 +739,17 @@ ksu TDD and local vendored verification-before-completion. No upstream scripts b
 - Risk/rollback: documentation and fixtures do not affect runtime behavior. Rollback is a normal
   revert of this child PR; no migration or paid-provider reconciliation is involved.
 
-Activation update: the operator explicitly confirmed that Nexus is removed and only Neironych
-must be active on dev. Review correctly identified that a global migration-time UPDATE would later
-overwrite production operator settings. Revision `20261003_0039` is therefore provider-neutral
-and preserves existing Nexus routing. The dev deployment requires the protected GitHub
-`NEIRONYCH_API_KEY`, atomically provisions it, and then uses an ephemeral superadmin token inside
-the API container to update routing through authenticated `PUT /api/v1/admin/generation` to
-Neironych, `gpt-image-2.5-sunburst`, size `3840x2160`, quality `high`, and no fallback model.
-The token and key are never printed. Production remains unchanged on future migration. Historical
-Nexus routing remains only as a compatibility/reconciliation path for already-persisted
-checkpoints, not as the configured dev generation route. No paid provider request was made.
+Activation update (superseded 2026-10-05): the current operator decision is that standard
+image generation stays on **Nexus**, with `gpt-image-2` primary and `nano-banana-pro` fallback.
+Neironych remains provisioned for Grok 4.5 and Seedance 2.0 only. Revision `20261003_0039`
+remains provider-neutral so production operator settings are never overwritten by migration.
+The dev deploy uses an ephemeral superadmin token inside the API container and authenticated
+`PUT /api/v1/admin/generation` to enforce the canonical Nexus image route while preserving
+quality/mode settings. The protected `NEIRONYCH_API_KEY` is still provisioned for multimodal
+control/video and is never printed. A 2026-10-05 dev incident exposed that the old activation
+step had switched images back to Neironych; a TCP connect timeout was then incorrectly treated
+as an ambiguous paid submission. The runtime was restored to Nexus and the adapter now treats
+pre-submit connect failures as ordinary retryable provider failures.
 
 PR157 review gate: seven unresolved threads blocked the first merge attempt. All were addressed:
 provider-neutral migration/dev-only authenticated activation; fallback credential readiness;
