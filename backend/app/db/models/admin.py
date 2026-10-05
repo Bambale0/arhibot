@@ -191,7 +191,7 @@ class GenerationRuntimeSettings(Base):
         JSONB,
         nullable=False,
         default=lambda: {"duration": 8, "resolution": "1080p", "aspect_ratio": "16:9"},
-        server_default='{"duration":8,"resolution":"1080p","aspect_ratio":"16:9"}',
+        server_default="{}",
     )
     masked_edit_provider_context_margin_fraction: Mapped[float] = mapped_column(
         Float, nullable=False, default=0.03, server_default="0.03"
