@@ -2233,6 +2233,22 @@ async def _reconcile_database_jobs(settings: Settings) -> None:
                 checkpoint = (generation.quality_report or {}).get("provider_request", {})
                 requires_reconciliation = (generation.quality_report or {}).get("requires_reconciliation")
                 frames = (generation.quality_report or {}).get("provider_frame_requests", {})
+                identity_request = (generation.quality_report or {}).get(
+                    "video_identity_request", {}
+                )
+                identity_review = (generation.quality_report or {}).get(
+                    "video_identity_review"
+                )
+                if (
+                    requires_reconciliation
+                    and isinstance(identity_request, dict)
+                    and identity_request.get("state") == "submitted"
+                    and not isinstance(identity_review, dict)
+                ):
+                    # /v1/responses is synchronous. Replaying the same key returns 409
+                    # instead of the lost result, so an ambiguous Grok review must be
+                    # reconciled manually rather than converted into a second paid call.
+                    continue
                 resumable_frames = bool(frames) and all(
                     frame.get("state") == "completed"
                     or (frame.get("task_id") and frame.get("task_id") != "sync")
