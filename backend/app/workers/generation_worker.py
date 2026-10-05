@@ -47,6 +47,8 @@ from app.image_flyover import FlyoverGif, build_flyover_gif
 from app.image_orbit import build_orbit_animation
 from app.prompt_builders.generation import build_generation_prompt
 from app.providers.neironych import NeironychImageProvider, NeironychImageResult
+from app.providers.neironych_responses import NeironychResponsesProvider
+from app.providers.neironych_video import NeironychVideoProvider
 from app.providers.nexus import (
     NexusImageProvider,
     NexusImageResult,
@@ -69,6 +71,7 @@ INITIAL_CONCEPT_PROMPT_PREFIX = "AUROOM_INITIAL_CONCEPT_V1"
 ADMIN_SANDBOX_PROMPT_PREFIX = "AUROOM_ADMIN_SANDBOX_V1\n"
 ADMIN_ORBIT_PROMPT_PREFIX = "AUROOM_ADMIN_ORBIT_V1\n"
 ADMIN_FLYOVER_GIF_PROMPT_PREFIX = "AUROOM_ADMIN_FLYOVER_GIF_V1\n"
+CONCEPT_VIDEO_PROMPT_PREFIX = "AUROOM_CONCEPT_VIDEO_V1\n"
 QUESTIONNAIRE_PROMPT_PREFIXES = (
     QUESTIONNAIRE_PROMPT_PREFIX,
     INITIAL_CONCEPT_PROMPT_PREFIX,
@@ -113,6 +116,71 @@ class GenerationQualityRejected(RuntimeError):
             "Попробуйте выделить область немного шире или изменить запрос."
         )
         self.report = report
+
+
+def _concept_video_dimensions(params: dict[str, object]) -> tuple[int, int]:
+    resolution = str(params.get("resolution") or "1080p").strip()
+    short_side = {"480p": 480, "720p": 720, "1080p": 1080, "4k": 2160}.get(
+        resolution
+    )
+    if short_side is None:
+        raise ValueError("Unsupported concept video resolution")
+    ratio = str(params.get("aspect_ratio") or "16:9").strip()
+    try:
+        raw_width, raw_height = (int(value) for value in ratio.split(":", 1))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid concept video aspect ratio") from exc
+    if raw_width <= 0 or raw_height <= 0:
+        raise ValueError("Invalid concept video aspect ratio")
+    if raw_width >= raw_height:
+        height = short_side
+        width = round(short_side * raw_width / raw_height)
+    else:
+        width = short_side
+        height = round(short_side * raw_height / raw_width)
+    return width, height
+
+
+def _concept_video_end_frame_prompt(canonical_prompt: str) -> str:
+    return (
+        "CAMERA MOVE ONLY. Create a second keyframe of the exact same architectural "
+        "project and exact same plot shown in reference image 1. Move the camera about "
+        "15 degrees to the right, raise it slightly, and pull back a little while keeping "
+        "the project centered. Preserve exact house geometry and footprint, number of "
+        "floors, roof, windows, doors, garage, terraces, pool, paths, fence/hedge, "
+        "landscaping structure, materials, object count and all relative positions. "
+        "Do not add, remove, redesign or relocate anything. Do not change season, weather "
+        "or lighting direction. Natural parallax is allowed; architectural morphing is not. "
+        "The canonical brief below is authoritative for architecture and site constraints; "
+        "only its camera/viewpoint instruction is superseded by this controlled camera move.\n\n"
+        f"CANONICAL BRIEF:\n{canonical_prompt}"
+    )
+
+
+def _concept_video_identity_prompt(canonical_prompt: str) -> str:
+    return (
+        "Image 1 is the accepted AuRoom concept. Image 2 is a candidate second camera "
+        "keyframe. Determine whether image 2 preserves the exact same architectural project "
+        "and site layout. Camera viewpoint/parallax may change, but buildings, footprint, "
+        "roof, openings, garage, terraces, pool, paths, fence/hedge, landscaping structure, "
+        "materials, object count and relative positions must remain the same. Mark same_scene "
+        "false for any redesign, moved/missing/added object, changed roof/opening geometry or "
+        "site-layout drift.\n\nCANONICAL BRIEF:\n"
+        f"{canonical_prompt}"
+    )
+
+
+def _concept_video_motion_prompt() -> str:
+    return (
+        "Create a smooth cinematic architectural drone flyover between the supplied start "
+        "and end frames. They depict the exact same architectural project. STRICT IDENTITY "
+        "LOCK: preserve exact house and site geometry, footprint, roof, windows, doors, "
+        "terraces, garage, pool, paths, fence, landscaping structure, materials, object count "
+        "and relative object positions. Camera motion only. No architectural morphing, no "
+        "moving buildings, no changing openings or roof geometry, no adding/removing objects, "
+        "no vegetation growth/disappearance and no site-layout drift. Use a slow stable drone "
+        "move with natural parallax."
+    )
 
 
 def _quality_retry_prompt(prompt: str, report: dict[str, object]) -> str:
@@ -299,6 +367,26 @@ def _admin_flyover_gif_request(
         inbetween_frames,
         frame_duration_ms,
     )
+
+
+def _concept_video_request(generation: Generation) -> UUID | None:
+    if generation.origin != GenerationOrigin.QUESTIONNAIRE_VIDEO.value:
+        return None
+    if not generation.prompt.startswith(CONCEPT_VIDEO_PROMPT_PREFIX):
+        raise ValueError("Concept video generation has an invalid envelope.")
+    if generation.input_asset_id is None:
+        raise ValueError("Concept video source image is missing.")
+    raw_payload = generation.prompt.removeprefix(CONCEPT_VIDEO_PROMPT_PREFIX)
+    try:
+        payload = loads(raw_payload)
+    except JSONDecodeError as exc:
+        raise ValueError("Concept video envelope is invalid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Concept video envelope must be an object.")
+    try:
+        return UUID(str(payload["source_generation_id"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Concept video source generation id is invalid.") from exc
 
 
 def _flyover_frame_prompt(
