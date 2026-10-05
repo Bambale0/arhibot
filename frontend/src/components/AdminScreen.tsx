@@ -29,6 +29,10 @@ const modes: { id: GenerationMode; label: string }[] = [
   { id: 'master_plan', label: 'Мастер-план' },
   { id: 'interior', label: 'Интерьер' },
 ]
+const priceModes: { id: GenerationMode; label: string }[] = [
+  ...modes,
+  { id: 'video', label: 'Видео-пролёт' },
+]
 
 type Tab = 'tariffs' | 'ideas' | 'applications' | 'questionnaires' | 'generation' | 'users' | 'payments' | 'broadcasts' | 'telegram' | 'system' | 'audit'
 
@@ -413,6 +417,10 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   const [primaryParams,setPrimaryParams]=useState(JSON.stringify(settings.primary_params,null,2))
   const [fallbackParams,setFallbackParams]=useState(JSON.stringify(settings.fallback_params,null,2))
   const [modeParams,setModeParams]=useState(JSON.stringify(settings.mode_params,null,2))
+  const [judgeModel,setJudgeModel]=useState(settings.quality_judge_model || 'grok-4.5')
+  const [videoEnabled,setVideoEnabled]=useState(settings.video_enabled)
+  const [videoModel,setVideoModel]=useState(settings.video_model || 'seedance-2.0')
+  const [videoParams,setVideoParams]=useState(JSON.stringify(settings.video_params || {duration:8,resolution:'1080p',aspect_ratio:'16:9'},null,2))
   const [providerMargin,setProviderMargin]=useState(String(settings.masked_edit_provider_context_margin_fraction))
   const [featherFraction,setFeatherFraction]=useState(String(settings.masked_edit_feather_fraction))
   const [featherMin,setFeatherMin]=useState(String(settings.masked_edit_feather_min_px))
@@ -525,6 +533,10 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
         primary_params:JSON.parse(primaryParams||'{}') as Record<string,unknown>,
         fallback_params:JSON.parse(fallbackParams||'{}') as Record<string,unknown>,
         mode_params:JSON.parse(modeParams||'{}') as Record<string,Record<string,unknown>>,
+        quality_judge_model:judgeModel.trim()||null,
+        video_enabled:videoEnabled,
+        video_model:videoModel.trim()||null,
+        video_params:JSON.parse(videoParams||'{}') as Record<string,unknown>,
         masked_edit_provider_context_margin_fraction:margin,
         masked_edit_feather_fraction:featherFractionValue,
         masked_edit_feather_min_px:featherMinValue,
@@ -582,6 +594,11 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   async function savePrice(mode: GenerationMode, value: number, active: boolean){try{const saved=await api.adminUpdateGenerationPrice(mode,value,active);onPrices([...prices.filter(x=>x.generation_type!==mode),saved])}catch(err){onError(errorText(err))}}
   return <section className="admin-panel"><div className="admin-panel-title"><div><h2>AI, стоимость и промпты</h2><p>Модели, параметры, стоимость кредитов и prompt templates управляются из БД.</p></div></div>
     <div className="admin-form-grid"><label>Primary model<input value={primary} onChange={e=>setPrimary(e.target.value)}/></label><label>Fallback model<input value={fallback} onChange={e=>setFallback(e.target.value)}/></label><label>Primary timeout, сек<input type="number" min="30" max="600" value={primaryTimeout} onChange={e=>setPrimaryTimeout(e.target.value)}/><small>Срок подтверждения создания задачи. Принятая задача ожидается до общего таймаута провайдера; резервная модель запускается только после подтверждённой ошибки задачи.</small></label><label className="admin-span-2">Primary params<textarea className="admin-code" value={primaryParams} onChange={e=>setPrimaryParams(e.target.value)}/></label><label className="admin-span-2">Fallback params<textarea className="admin-code" value={fallbackParams} onChange={e=>setFallbackParams(e.target.value)}/></label><label className="admin-span-2">Параметры по сценариям<textarea className="admin-code" value={modeParams} onChange={e=>setModeParams(e.target.value)}/></label>
+      <div className="admin-span-2"><h3>Видео после концепции</h3><small>Keyframe B создаёт текущий Primary Nexus image model; Grok проверяет A/B, затем Seedance строит MP4. Identity-lock prompt управляется сервером.</small></div>
+      <label><span><input type="checkbox" checked={videoEnabled} onChange={e=>setVideoEnabled(e.target.checked)}/> Видео включено</span></label>
+      <label>Grok judge model<input value={judgeModel} onChange={e=>setJudgeModel(e.target.value)} placeholder="grok-4.5"/></label>
+      <label>Seedance model<input value={videoModel} onChange={e=>setVideoModel(e.target.value)} placeholder="seedance-2.0"/></label>
+      <label className="admin-span-2">Video params<textarea className="admin-code" value={videoParams} onChange={e=>setVideoParams(e.target.value)}/><small>Например: {"{"}"duration":8,"resolution":"1080p","aspect_ratio":"16:9"{"}"}</small></label>
       <div className="admin-span-2"><h3>Masked edit quality</h3><small>Контекст provider шире final commit region; финальный compositor по-прежнему запрещает изменения снаружи пользовательской области.</small></div>
       <label>Provider margin, доля<input type="number" min="0" max="0.25" step="0.005" value={providerMargin} onChange={e=>setProviderMargin(e.target.value)}/></label>
       <label>Feather fraction<input type="number" min="0" max="0.1" step="0.001" value={featherFraction} onChange={e=>setFeatherFraction(e.target.value)}/></label>
@@ -644,7 +661,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
               </article>
             })}</div>}
     </div>
-    <div className="admin-subpanel"><h3>Стоимость генераций</h3><div className="admin-price-grid">{modes.map((m)=>{const row=prices.find(p=>p.generation_type===m.id);return <PriceEditor key={m.id} mode={m.id} label={m.label} initial={row} onSave={savePrice}/>})}</div></div>
+    <div className="admin-subpanel"><h3>Стоимость генераций</h3><div className="admin-price-grid">{priceModes.map((m)=>{const row=prices.find(p=>p.generation_type===m.id);return <PriceEditor key={m.id} mode={m.id} label={m.label} initial={row} onSave={savePrice}/>})}</div></div>
     <div className="admin-prompts"><h3>Системные промпты</h3>{modes.map((m)=><PromptEditor key={m.id} mode={m.id} label={m.label} item={prompts.find(p=>p.generation_type===m.id)} onSaved={(saved)=>onPrompts([...prompts.filter(p=>p.generation_type!==m.id),saved])} onError={onError}/>)}</div>
   </section>
 }
