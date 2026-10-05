@@ -8,6 +8,7 @@ const labels: Record<GenerationMode, string> = {
   facade: 'Дом, фасад',
   master_plan: 'Объект на участке',
   interior: 'Дизайн помещения',
+  video: 'Видео-пролёт',
 }
 
 const statusLabels: Record<Generation['status'], string> = {
