@@ -265,6 +265,8 @@ export function createGeneration(payload: { project_id: string; input_asset_id?:
   return request<Generation>('/generations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 }
 export function repeatGeneration(generationId: string) { return request<Generation>(`/generations/${generationId}/repeat`, { method: 'POST' }) }
+export function createGenerationVideo(generationId: string) { return request<Generation>(`/generations/${generationId}/video`, { method: 'POST' }) }
+export function getGenerationVideo(generationId: string) { return request<Generation | null>(`/generations/${generationId}/video`) }
 export function getGeneration(generationId: string) { return request<Generation>(`/generations/${generationId}`) }
 export function listGenerations(projectId?: string, limit = 50, cursor?: string | null) {
   const params = new URLSearchParams({ limit: String(limit) }); if (projectId) params.set('project_id', projectId); if (cursor) params.set('cursor', cursor)
@@ -321,6 +323,10 @@ export function adminUpdateGenerationSettings(payload: {
   primary_params: Record<string, unknown>
   fallback_params: Record<string, unknown>
   mode_params: Record<string, Record<string, unknown>>
+  quality_judge_model: string | null
+  video_enabled: boolean
+  video_model: string | null
+  video_params: Record<string, unknown>
   masked_edit_provider_context_margin_fraction: number
   masked_edit_feather_fraction: number
   masked_edit_feather_min_px: number

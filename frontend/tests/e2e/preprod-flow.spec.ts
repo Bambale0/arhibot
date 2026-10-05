@@ -4,6 +4,7 @@ const now = '2026-09-10T18:30:00Z'
 const user = { id:'11111111-1111-4111-8111-111111111111', display_name:'Предпрод', status:'active', role:'user', credits_balance:10, created_at:now, updated_at:now, capabilities:{can_generate:true} }
 const projectId='33333333-3333-4333-8333-333333333333'
 const generationIds=['44444444-4444-4444-8444-444444444441','44444444-4444-4444-8444-444444444442']
+const videoGenerationId='44444444-4444-4444-8444-444444444443'
 const assetIds=['55555555-5555-4555-8555-555555555551','55555555-5555-4555-8555-555555555552']
 const ideaId='66666666-6666-4666-8666-666666666666'
 const catalog = {
@@ -64,8 +65,9 @@ let publication:any=null
 let savedIdea=false
 let hideIdeaFromFeed=false
 let homeProjects:any[]=[]
+let videoGeneration:any=null
 function resetState(){
-  generationCount=0; publication=null; savedIdea=false; hideIdeaFromFeed=false; homeProjects=[]
+  generationCount=0; publication=null; savedIdea=false; hideIdeaFromFeed=false; homeProjects=[]; videoGeneration=null
   session={session_id:'77777777-7777-4777-8777-777777777777',catalog_version:catalog.version,selected_objects:['lavochka'],plot_area_sotkas:8,site_plan:null,initial_concept_mode:false,survey_completed_objects:[],initial_generation_id:null,initial_concept_accepted:false,current_object:null,current_question_id:null,source_step_completed:false,source_asset_id:null,scene_asset_id:null,answers:{},accepted_objects:[],removed_objects:[],pending_removal_object:null,generation_ids:{},edit_question_ids:[],review_comments:{},edit_regions:{},lock_regions:{},region_mode:null,region_object:null,application_submitted:false}
   project={id:projectId,name:'Лавочка',description:null,status:'active',context:{questionnaire_draft:false,plot_area_m2:800,design_session:session},created_at:now,updated_at:now}
 }
@@ -90,6 +92,7 @@ function withMockSitePlan(next:any){
   return {...next,site_plan:{schema:'auroom.site_plan.v1',plot:{area_sotkas:next.plot_area_sotkas,area_m2:next.plot_area_sotkas*100,coordinate_system:'normalized',front_side:'y0',geometry_accuracy:'relative'},objects,warnings:[]}}
 }
 function generation(i:number,status='completed'){return {id:generationIds[i],project_id:projectId,input_asset_id:null,output_asset:status==='completed'?asset(i):null,type:'master_plan',status,credits_charged:1,model_name:'mock',fallback_used:false,composition_mode:'replace',edit_region:null,protected_regions:[],error:null,created_at:now,updated_at:now,started_at:now,completed_at:status==='completed'?now:null}}
+function queuedVideo(){return {id:videoGenerationId,project_id:projectId,input_asset_id:assetIds[0],output_asset:null,type:'video',status:'queued',credits_charged:3,model_name:'seedance-2.0',fallback_used:false,composition_mode:'replace',edit_region:null,protected_regions:[],error:null,created_at:now,updated_at:now,started_at:null,completed_at:null}}
 async function json(route:Route,data:unknown,status=200){await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)})}
 
 test.beforeEach(async ({page})=>{
@@ -100,13 +103,23 @@ test.beforeEach(async ({page})=>{
     if(path.endsWith('/me')&&method==='GET') return json(route,user)
     if(path.endsWith('/projects')&&method==='GET') return json(route,{items:homeProjects,next_cursor:null,has_more:false})
     if(path.endsWith(`/projects/${projectId}`)&&method==='GET') return json(route,project)
+    const videoSourceId=generationIds.find((id)=>path.endsWith(`/generations/${id}/video`))
+    if(videoSourceId&&method==='GET') return json(route,videoGeneration)
+    if(videoSourceId&&method==='POST'){videoGeneration=queuedVideo();return json(route,videoGeneration,202)}
+    if(path.endsWith(`/generations/${videoGenerationId}`)&&method==='GET') return json(route,videoGeneration || queuedVideo())
     for(let i=0;i<generationIds.length;i++) if(path.endsWith(`/generations/${generationIds[i]}`)&&method==='GET') return json(route,generation(i))
     if(path.endsWith('/questionnaires')&&method==='GET') return json(route,catalog)
     if(path.endsWith('/questionnaire-generation-cost')&&method==='GET') return json(route,{generation_type:'master_plan',initial_credits:0,credits:1,initial_offer_available:true,is_available:true})
     if(path.endsWith('/questionnaire-projects')&&method==='POST') return json(route,project,201)
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='GET') return json(route,{session})
     if(path.endsWith(`/projects/${projectId}/questionnaire-session`)&&method==='PUT') {session=withMockSitePlan(JSON.parse(req.postData()||'{}'));project={...project,context:{...project.context,design_session:session}};return json(route,{session})}
-    if(path.endsWith(`/projects/${projectId}/questionnaire-generation`)&&method==='POST'){const i=generationCount++;return json(route,generation(i,'queued'),202)}
+    if(path.endsWith(`/projects/${projectId}/questionnaire-generation`)&&method==='POST'){
+      const i=generationCount++
+      const queued=generation(i,'queued')
+      session={...session,initial_generation_id:queued.id}
+      project={...project,context:{...project.context,design_session:session}}
+      return json(route,queued,202)
+    }
     if(path.endsWith(`/projects/${projectId}/questionnaire-initial-accept`)&&method==='POST'){
       const completed=generation(0)
       session={...session,initial_concept_accepted:true,accepted_objects:[...session.selected_objects],generation_ids:Object.fromEntries(session.selected_objects.map((key:string)=>[key,generationIds[0]])),scene_asset_id:completed.output_asset.id,current_object:null,current_question_id:null}
@@ -260,6 +273,7 @@ test('initial concept collects all answers before one generation and supports pr
   await page.getByRole('button',{name:'Создать общую концепцию'}).click()
   await expect(page.getByAltText('Общая концепция участка')).toBeVisible()
   expect(generationCount).toBe(1)
+  await expect(page.getByRole('button',{name:'🎬 Создать видео'})).toBeVisible()
 
   await page.getByRole('button',{name:'Изменить ТЗ · новая генерация'}).click()
   await expect(page.getByLabel('Размер участка, соток')).toHaveValue('8')
@@ -269,10 +283,15 @@ test('initial concept collects all answers before one generation and supports pr
   expect(generationCount).toBe(2)
   expect(session.plot_area_sotkas).toBe(12)
   expect(session.site_plan.plot.area_sotkas).toBe(12)
+  await expect(page.getByRole('button',{name:'🎬 Создать видео'})).toBeVisible()
+  await page.getByRole('button',{name:'🎬 Создать видео'}).click()
+  await expect(page.getByText(/Готовим пролёт по вашей концепции/)).toBeVisible()
+  expect(videoGeneration?.type).toBe('video')
 
   await page.getByRole('button',{name:'Принять концепцию'}).click()
   await expect(page.getByText('Что делаем дальше?')).toBeVisible()
   await expect(page.getByText('Следующая генерация · 1 кр.')).toBeVisible()
+  await expect(page.getByText(/Готовим пролёт по вашей концепции/)).toBeVisible()
 })
 
 

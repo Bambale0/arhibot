@@ -89,3 +89,31 @@ def test_image_request_preserves_geometry_but_prohibits_visible_annotations(
         assert prohibition in prompt
     assert "geometry constraints only" in prompt
     assert params["image_urls"] == ["https://media.example.test/source.png"]
+
+
+def test_gpt_image_2_nexus_contract_uses_configured_model_and_deduplicates_references() -> None:
+    params = NexusImageProvider._build_params(
+        model_name="gpt-image-2",
+        prompt="AUROOM_INITIAL_CONCEPT_V1\nCanonical brief",
+        image_url="https://media.example.test/source.png",
+        reference_image_urls=[
+            "https://media.example.test/source.png",
+            "https://media.example.test/site.png",
+        ],
+        model_params={
+            "model_name": "must-not-override",
+            "prompt": "must-not-override",
+            "image_urls": ["https://evil.example.test/injected.png"],
+            "aspect_ratio": "16:9",
+            "resolution": "2K",
+        },
+    )
+
+    assert params["model_name"] == "gpt-image-2"
+    assert params["prompt"].startswith("AUROOM_INITIAL_CONCEPT_V1\nCanonical brief\n")
+    assert params["image_urls"] == [
+        "https://media.example.test/source.png",
+        "https://media.example.test/site.png",
+    ]
+    assert params["aspect_ratio"] == "16:9"
+    assert params["resolution"] == "2K"

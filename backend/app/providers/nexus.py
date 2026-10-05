@@ -33,8 +33,9 @@ class NexusProviderError(RuntimeError):
 class NexusOutcomeUnknown(NexusProviderError):
     """A request may still be billable/running; never permit a fresh purchase."""
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, request_id: str | None = None) -> None:
         super().__init__(message, retryable=False)
+        self.request_id = request_id
 
 
 class NexusImageProvider:

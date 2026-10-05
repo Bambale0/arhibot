@@ -13,6 +13,17 @@ from app.domain.users.enums import UserRole, UserStatus
 from app.schemas.generations import GenerationResponse
 
 
+GenerationProvider = Literal["nexus", "neironych"]
+_PROVIDER_FIELDS = frozenset(
+    {
+        "model_name", "model", "prompt", "image_url", "image_urls",
+        "images", "mask", "n", "response_format",
+    }
+)
+_NEIRONYCH_IMAGE_PARAMS = frozenset({"size", "quality", "aspect_ratio"})
+_VIDEO_PARAMS = frozenset({"duration", "resolution", "aspect_ratio"})
+
+
 class AdminOverviewResponse(BaseModel):
     yookassa_configured: bool
     nexus_configured: bool
@@ -238,8 +249,7 @@ class AdminAiSandboxCreate(BaseModel):
 
     @model_validator(mode="after")
     def protect_provider_fields(self) -> "AdminAiSandboxCreate":
-        reserved = {"model_name", "prompt", "image_url", "image_urls"}
-        conflict = reserved.intersection(self.params)
+        conflict = _PROVIDER_FIELDS.intersection(self.params)
         if conflict:
             raise ValueError(
                 f"Sandbox params cannot override provider fields: {', '.join(sorted(conflict))}"
@@ -270,8 +280,7 @@ class AdminAiOrbitCreate(BaseModel):
 
     @model_validator(mode="after")
     def protect_provider_fields(self) -> "AdminAiOrbitCreate":
-        reserved = {"model_name", "prompt", "image_url", "image_urls"}
-        conflict = reserved.intersection(self.params)
+        conflict = _PROVIDER_FIELDS.intersection(self.params)
         if conflict:
             raise ValueError(
                 f"Orbit params cannot override provider fields: {', '.join(sorted(conflict))}"
@@ -303,8 +312,7 @@ class AdminAiFlyoverGifCreate(BaseModel):
 
     @model_validator(mode="after")
     def protect_provider_fields(self) -> "AdminAiFlyoverGifCreate":
-        reserved = {"model_name", "prompt", "image_url", "image_urls"}
-        conflict = reserved.intersection(self.params)
+        conflict = _PROVIDER_FIELDS.intersection(self.params)
         if conflict:
             raise ValueError(
                 f"Flyover params cannot override provider fields: {', '.join(sorted(conflict))}"
@@ -324,12 +332,20 @@ class AdminAiHistoryItem(BaseModel):
 
 
 class GenerationRuntimeUpdate(BaseModel):
+    primary_provider: GenerationProvider = "nexus"
+    fallback_provider: GenerationProvider = "nexus"
     primary_model: str = Field(min_length=1, max_length=120)
     fallback_model: str | None = Field(default=None, max_length=120)
     primary_timeout_seconds: int = Field(default=90, ge=30, le=600)
     primary_params: dict[str, Any] = Field(default_factory=dict)
     fallback_params: dict[str, Any] = Field(default_factory=dict)
     mode_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    quality_judge_model: str | None = Field(default="grok-4.5", max_length=120)
+    video_enabled: bool = False
+    video_model: str | None = Field(default="seedance-2.0", max_length=120)
+    video_params: dict[str, Any] = Field(
+        default_factory=lambda: {"duration": 8, "resolution": "1080p", "aspect_ratio": "16:9"}
+    )
     masked_edit_provider_context_margin_fraction: float | None = Field(default=None, ge=0, le=0.25)
     masked_edit_feather_fraction: float | None = Field(default=None, ge=0, le=0.1)
     masked_edit_feather_min_px: int | None = Field(default=None, ge=0, le=128)
@@ -349,9 +365,9 @@ class GenerationRuntimeUpdate(BaseModel):
             raise ValueError("Primary model is required")
         return value
 
-    @field_validator("fallback_model")
+    @field_validator("fallback_model", "quality_judge_model", "video_model")
     @classmethod
-    def strip_fallback(cls, value: str | None) -> str | None:
+    def strip_optional_model(cls, value: str | None) -> str | None:
         if value is None:
             return None
         value = value.strip()
@@ -363,18 +379,43 @@ class GenerationRuntimeUpdate(BaseModel):
         unknown = set(self.mode_params) - allowed
         if unknown:
             raise ValueError(f"Unknown generation modes: {', '.join(sorted(unknown))}")
-        reserved = {"model_name", "prompt", "image_url", "image_urls"}
         groups = {
             "primary_params": self.primary_params,
             "fallback_params": self.fallback_params,
             **{f"mode_params.{key}": value for key, value in self.mode_params.items()},
         }
         for label, params in groups.items():
-            conflict = reserved.intersection(params)
+            conflict = _PROVIDER_FIELDS.intersection(params)
             if conflict:
                 raise ValueError(
                     f"{label} cannot override provider fields: {', '.join(sorted(conflict))}"
                 )
+        unknown_video_params = set(self.video_params) - _VIDEO_PARAMS
+        if unknown_video_params:
+            raise ValueError(
+                "video_params contains unsupported fields: "
+                + ", ".join(sorted(unknown_video_params))
+            )
+        provider_groups = (
+            ("primary_params", self.primary_provider, self.primary_params),
+            ("fallback_params", self.fallback_provider, self.fallback_params),
+        )
+        for label, provider, params in provider_groups:
+            if provider == "neironych":
+                unsupported = set(params) - _NEIRONYCH_IMAGE_PARAMS
+                if unsupported:
+                    raise ValueError(
+                        f"{label} contains unsupported Neironych parameters: "
+                        f"{', '.join(sorted(unsupported))}"
+                    )
+        if "neironych" in {self.primary_provider, self.fallback_provider}:
+            for generation_type, params in self.mode_params.items():
+                unsupported = set(params) - _NEIRONYCH_IMAGE_PARAMS
+                if unsupported:
+                    raise ValueError(
+                        f"mode_params.{generation_type} contains unsupported Neironych parameters: "
+                        f"{', '.join(sorted(unsupported))}"
+                    )
         if (
             self.masked_edit_feather_min_px is not None
             and self.masked_edit_feather_max_px is not None
@@ -385,12 +426,18 @@ class GenerationRuntimeUpdate(BaseModel):
 
 
 class GenerationRuntimeResponse(BaseModel):
+    primary_provider: GenerationProvider = "nexus"
+    fallback_provider: GenerationProvider = "nexus"
     primary_model: str | None = None
     fallback_model: str | None = None
     primary_timeout_seconds: int = 90
     primary_params: dict[str, Any] = Field(default_factory=dict)
     fallback_params: dict[str, Any] = Field(default_factory=dict)
     mode_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    quality_judge_model: str | None = "grok-4.5"
+    video_enabled: bool = False
+    video_model: str | None = "seedance-2.0"
+    video_params: dict[str, Any] = Field(default_factory=dict)
     masked_edit_provider_context_margin_fraction: float
     masked_edit_feather_fraction: float
     masked_edit_feather_min_px: int

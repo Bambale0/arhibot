@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Float,
@@ -144,8 +146,24 @@ class IdeaSave(Base):
 
 class GenerationRuntimeSettings(Base):
     __tablename__ = "generation_runtime_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "primary_provider IN ('nexus', 'neironych')",
+            name="ck_generation_runtime_primary_provider",
+        ),
+        CheckConstraint(
+            "fallback_provider IN ('nexus', 'neironych')",
+            name="ck_generation_runtime_fallback_provider",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    primary_provider: Mapped[Literal["nexus", "neironych"]] = mapped_column(
+        String(32), nullable=False, default="nexus", server_default="nexus"
+    )
+    fallback_provider: Mapped[Literal["nexus", "neironych"]] = mapped_column(
+        String(32), nullable=False, default="nexus", server_default="nexus"
+    )
     primary_model: Mapped[str] = mapped_column(String(120), nullable=False)
     fallback_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     primary_timeout_seconds: Mapped[int] = mapped_column(
@@ -159,6 +177,21 @@ class GenerationRuntimeSettings(Base):
     )
     mode_params: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    quality_judge_model: Mapped[str | None] = mapped_column(
+        String(120), nullable=True, default="grok-4.5", server_default="grok-4.5"
+    )
+    video_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    video_model: Mapped[str | None] = mapped_column(
+        String(120), nullable=True, default="seedance-2.0", server_default="seedance-2.0"
+    )
+    video_params: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=lambda: {"duration": 8, "resolution": "1080p", "aspect_ratio": "16:9"},
+        server_default="{}",
     )
     masked_edit_provider_context_margin_fraction: Mapped[float] = mapped_column(
         Float, nullable=False, default=0.03, server_default="0.03"

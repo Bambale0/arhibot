@@ -530,7 +530,8 @@
   border-radius: 2px;
   background: #edf0ed;
 }
-.questionnaire-result img {
+.questionnaire-result img,
+.questionnaire-result video {
   display: block;
   width: 100%;
   max-height: min(60dvh, 580px);
@@ -774,7 +775,8 @@
   .questionnaire-result {
     margin-inline: -2px;
   }
-  .questionnaire-result img {
+  .questionnaire-result img,
+  .questionnaire-result video {
     max-height: min(52dvh, 500px);
   }
 

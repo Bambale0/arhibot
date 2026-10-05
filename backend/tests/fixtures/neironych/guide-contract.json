@@ -1,0 +1,29 @@
+{
+  "source": "https://api.xn--e1aikcel5c5a.online/guide?lang=ru",
+  "retrieved_at": "2026-10-03",
+  "guide_contract_checked_at": "2026-09-28",
+  "guide_sha256": "756367c0aea3faaebe562a6d6e16b9dd1f635d0e417284cee76e36d19516c517",
+  "base_url": "https://api.xn--e1aikcel5c5a.online",
+  "authentication": {
+    "generation": "Authorization: Bearer <PARTNER_API_KEY>",
+    "models": "not required"
+  },
+  "idempotency_key": {
+    "required_for_generation_posts": true,
+    "min_length": 8,
+    "max_length": 160
+  },
+  "endpoints": {
+    "models": "GET /v1/models",
+    "responses": "POST /v1/responses",
+    "image_generation": "POST /v1/images/generations",
+    "image_edit": "POST /v1/images/edits",
+    "video_generation": "POST /v1/videos/generations",
+    "video_status": "GET /v1/videos/{request_id}",
+    "video_content": "GET /v1/videos/{request_id}/content"
+  },
+  "request_id": {
+    "header": "X-Request-Id",
+    "video_body_field": "request_id"
+  }
+}

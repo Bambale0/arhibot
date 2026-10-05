@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from json import dumps
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,8 +11,10 @@ from app.core.redis import redis_client
 from app.db.models.generations import Generation
 from app.db.models.projects import Project
 from app.db.models.users import User
+from app.domain.assets.enums import AssetType
 from app.domain.generations.enums import GenerationOrigin, GenerationStatus, GenerationType
 from app.domain.users.enums import UserRole
+from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
 from app.repositories.credits import CreditRepository
 from app.repositories.generations import GenerationRepository
@@ -32,7 +35,45 @@ RESERVED_INTERNAL_PROMPT_PREFIXES = (
     "AUROOM_ADMIN_SANDBOX_V1",
     "AUROOM_ADMIN_ORBIT_V1",
     "AUROOM_ADMIN_FLYOVER_GIF_V1",
+    "AUROOM_CONCEPT_VIDEO_V1",
 )
+
+
+def _public_quality_report(report: dict | None) -> dict | None:
+    if not report:
+        return report
+    public = dict(report)
+    checkpoint = public.get("provider_request")
+    if isinstance(checkpoint, dict):
+        public["provider_request"] = {
+            key: value
+            for key, value in checkpoint.items()
+            if key not in {"key", "request_body", "request_id"}
+        }
+    frame_checkpoints = public.get("provider_frame_requests")
+    if isinstance(frame_checkpoints, dict):
+        public["provider_frame_requests"] = {
+            slot: {
+                key: value
+                for key, value in item.items()
+                if key not in {"key", "request_body", "request_id"}
+            }
+            for slot, item in frame_checkpoints.items()
+            if isinstance(item, dict)
+        }
+    identity_request = public.get("video_identity_request")
+    if isinstance(identity_request, dict):
+        public["video_identity_request"] = {
+            key: value for key, value in identity_request.items() if key != "key"
+        }
+    video_request = public.get("video_request")
+    if isinstance(video_request, dict):
+        public["video_request"] = {
+            key: value
+            for key, value in video_request.items()
+            if key not in {"key", "request_body", "request_id"}
+        }
+    return public
 
 
 class GenerationService:
@@ -76,6 +117,13 @@ class GenerationService:
                 meta={"max_inflight": max_inflight},
             )
         normalized_prompt = payload.prompt.strip()
+        if origin == GenerationOrigin.GENERIC and payload.type == GenerationType.VIDEO:
+            raise AppError(
+                type="video_generation_endpoint_required",
+                title="Video continuation endpoint required",
+                status=422,
+                detail="Create concept video from a completed AuRoom generation.",
+            )
         if origin == GenerationOrigin.GENERIC and normalized_prompt.startswith(
             RESERVED_INTERNAL_PROMPT_PREFIXES
         ):
@@ -85,12 +133,15 @@ class GenerationService:
                 status=422,
                 detail="This prompt prefix is reserved for server-managed generation flows.",
             )
-        if not (self.settings.nexus_api_key or "").strip():
+        if not (
+            (self.settings.neironych_api_key or "").strip()
+            or (self.settings.nexus_api_key or "").strip()
+        ):
             raise AppError(
                 type="generation_provider_not_configured",
                 title="Generation provider not configured",
                 status=503,
-                detail="NexusAPI is not configured for this environment.",
+                detail="No image generation provider is configured for this environment.",
             )
 
         project = await self.projects.get_owned(
@@ -211,6 +262,157 @@ class GenerationService:
 
         return await self.to_response(generation)
 
+    async def create_video(
+        self, user: User, source_generation_id: UUID
+    ) -> GenerationResponse:
+        # Serialize the continuation decision with other credit/generation admission.
+        await self.credit_repository.get_user_for_update(user.id)
+        source = await self.repository.get_owned_for_update(source_generation_id, user.id)
+        if source is None:
+            raise AppError(
+                type="video_source_not_found",
+                title="Concept not found",
+                status=404,
+                detail="The source generation does not exist or is not available.",
+            )
+        if source.status != GenerationStatus.COMPLETED or source.output_asset_id is None:
+            raise AppError(
+                type="video_source_not_ready",
+                title="Concept is not ready",
+                status=409,
+                detail="Wait until the concept image is completed before creating video.",
+            )
+        if source.origin not in {
+            GenerationOrigin.QUESTIONNAIRE.value,
+            GenerationOrigin.QUESTIONNAIRE_INITIAL.value,
+        }:
+            raise AppError(
+                type="video_source_not_questionnaire",
+                title="Concept video is unavailable",
+                status=422,
+                detail="Video continuation is available for questionnaire concepts.",
+            )
+
+        source_asset = await self.assets.get_owned(source.output_asset_id, user.id)
+        if source_asset is None or source_asset.type != AssetType.IMAGE:
+            raise AppError(
+                type="video_source_asset_invalid",
+                title="Concept image is unavailable",
+                status=409,
+                detail="The completed concept image is not available for video generation.",
+            )
+
+        existing = await self.repository.get_active_video_for_source_asset(
+            source_asset.id, user.id
+        )
+        if existing is not None:
+            return await self.to_response(existing)
+
+        runtime = await AdminRepository(self.session).get_generation_settings()
+        if (
+            runtime is None
+            or not runtime.video_enabled
+            or not (runtime.video_model or "").strip()
+            or not (runtime.quality_judge_model or "").strip()
+        ):
+            raise AppError(
+                type="video_generation_not_configured",
+                title="Video generation is not configured",
+                status=503,
+                detail="Video continuation is temporarily unavailable.",
+            )
+        if runtime.primary_provider != "nexus" or not runtime.primary_model.strip():
+            raise AppError(
+                type="video_keyframe_provider_not_configured",
+                title="Video keyframe generation is not configured",
+                status=503,
+                detail="The Nexus image runtime must be configured before creating video.",
+            )
+        if not (self.settings.nexus_api_key or "").strip():
+            raise AppError(
+                type="video_keyframe_provider_not_configured",
+                title="Video keyframe provider is unavailable",
+                status=503,
+                detail="The Nexus image provider is not configured.",
+            )
+        if not (self.settings.neironych_api_key or "").strip():
+            raise AppError(
+                type="video_provider_not_configured",
+                title="Video provider is unavailable",
+                status=503,
+                detail="Neironych is not configured for Grok and Seedance.",
+            )
+
+        envelope = "AUROOM_CONCEPT_VIDEO_V1\n" + dumps(
+            {"source_generation_id": str(source.id)},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+        def bind_video(generation: Generation, _project: Project) -> None:
+            generation.model_name = (runtime.video_model or "").strip()
+            generation.quality_status = "pending"
+            image_params = dict(runtime.primary_params or {})
+            image_params.setdefault("aspect_ratio", "16:9")
+            generation.quality_report = {
+                "video_runtime": {
+                    "image_provider": "nexus",
+                    "image_model": runtime.primary_model,
+                    "image_params": image_params,
+                    "judge_model": (runtime.quality_judge_model or "").strip(),
+                    "video_model": (runtime.video_model or "").strip(),
+                    "video_params": dict(runtime.video_params or {}),
+                }
+            }
+
+        return await self.create(
+            user,
+            GenerationCreate(
+                project_id=source.project_id,
+                input_asset_id=source_asset.id,
+                type=GenerationType.VIDEO,
+                prompt=envelope,
+            ),
+            before_commit=bind_video,
+            origin=GenerationOrigin.QUESTIONNAIRE_VIDEO,
+        )
+
+    async def get_video(
+        self, user: User, source_generation_id: UUID
+    ) -> GenerationResponse | None:
+        source = await self.repository.get_owned(source_generation_id, user.id)
+        if source is None:
+            raise AppError(
+                type="video_source_not_found",
+                title="Concept not found",
+                status=404,
+                detail="The source generation does not exist or is not available.",
+            )
+        if source.output_asset_id is None:
+            return None
+        existing = await self.repository.get_active_video_for_source_asset(
+            source.output_asset_id, user.id
+        )
+        return await self.to_response(existing) if existing is not None else None
+
+    async def get_video(
+        self, user: User, source_generation_id: UUID
+    ) -> GenerationResponse | None:
+        source = await self.repository.get_owned(source_generation_id, user.id)
+        if source is None:
+            raise AppError(
+                type="video_source_not_found",
+                title="Concept not found",
+                status=404,
+                detail="The source generation does not exist or is not available.",
+            )
+        if source.output_asset_id is None:
+            return None
+        video = await self.repository.get_active_video_for_source_asset(
+            source.output_asset_id, user.id
+        )
+        return await self.to_response(video) if video is not None else None
+
     async def repeat(self, user: User, generation_id: UUID) -> GenerationResponse:
         source = await self.repository.get_owned(generation_id, user.id)
         if source is None:
@@ -292,7 +494,7 @@ class GenerationService:
             asset = await self.assets.get_owned(generation.output_asset_id, generation.user_id)
             if asset is not None:
                 output_asset = self.asset_service.to_response(asset)
-        quality_report = generation.quality_report
+        quality_report = _public_quality_report(generation.quality_report)
         if quality_report and isinstance(quality_report.get("initial_layout_guide"), dict):
             # Recovery snapshots contain operator parameters and the full provider
             # request. Public diagnostics expose only the non-sensitive identity.

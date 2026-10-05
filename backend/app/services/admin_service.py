@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from json import JSONDecodeError, dumps, loads
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -297,12 +298,21 @@ class AdminService:
                 detail="Generation runtime settings have not been configured.",
             )
         return GenerationRuntimeResponse(
+            primary_provider=row.primary_provider,
+            fallback_provider=row.fallback_provider,
             primary_model=row.primary_model,
             fallback_model=row.fallback_model,
             primary_timeout_seconds=row.primary_timeout_seconds,
             primary_params=row.primary_params or {},
             fallback_params=row.fallback_params or {},
             mode_params=row.mode_params or {},
+            quality_judge_model=getattr(row, "quality_judge_model", None) or "grok-4.5",
+            video_enabled=bool(getattr(row, "video_enabled", False)),
+            video_model=getattr(row, "video_model", None) or "seedance-2.0",
+            video_params=(
+                getattr(row, "video_params", None)
+                or {"duration": 8, "resolution": "1080p", "aspect_ratio": "16:9"}
+            ),
             masked_edit_provider_context_margin_fraction=row.masked_edit_provider_context_margin_fraction,
             masked_edit_feather_fraction=row.masked_edit_feather_fraction,
             masked_edit_feather_min_px=row.masked_edit_feather_min_px,
@@ -319,26 +329,48 @@ class AdminService:
     async def update_generation_settings(
         self, actor: User, payload: GenerationRuntimeUpdate
     ) -> GenerationRuntimeResponse:
-        if payload.primary_timeout_seconds > self.settings.nexus_task_timeout_seconds:
+        row = await self.repository.get_generation_settings(for_update=True)
+        # Older admin clients omit provider fields; keep their existing routing intact.
+        primary_provider = (
+            payload.primary_provider
+            if row is None or "primary_provider" in payload.model_fields_set
+            else row.primary_provider
+        )
+        fallback_provider = (
+            payload.fallback_provider
+            if row is None or "fallback_provider" in payload.model_fields_set
+            else row.fallback_provider
+        )
+        provider_timeout = (
+            self.settings.neironych_request_timeout_seconds
+            if primary_provider == "neironych"
+            else self.settings.nexus_task_timeout_seconds
+        )
+        if payload.primary_timeout_seconds > provider_timeout:
             raise AppError(
                 type="generation_primary_timeout_too_large",
                 title="Primary generation timeout exceeds provider timeout",
                 status=422,
                 detail=(
-                    "Primary timeout must not exceed the configured Nexus task timeout "
-                    f"({self.settings.nexus_task_timeout_seconds} seconds)."
+                    f"Primary timeout must not exceed the configured {primary_provider} timeout "
+                    f"({provider_timeout} seconds)."
                 ),
             )
-        row = await self.repository.get_generation_settings(for_update=True)
         if row is None:
             row = GenerationRuntimeSettings(id=1, primary_model=payload.primary_model)
             self.repository.add_generation_settings(row)
+        row.primary_provider = primary_provider
+        row.fallback_provider = fallback_provider
         row.primary_model = payload.primary_model
         row.fallback_model = payload.fallback_model
         row.primary_timeout_seconds = payload.primary_timeout_seconds
-        row.primary_params = payload.primary_params
-        row.fallback_params = payload.fallback_params
-        row.mode_params = payload.mode_params
+        row.primary_params = deepcopy(payload.primary_params)
+        row.fallback_params = deepcopy(payload.fallback_params)
+        row.mode_params = deepcopy(payload.mode_params)
+        for field in ("quality_judge_model", "video_enabled", "video_model", "video_params"):
+            if row is not None and field in payload.model_fields_set:
+                value = getattr(payload, field)
+                setattr(row, field, deepcopy(value) if field == "video_params" else value)
         quality_fields = (
             "masked_edit_provider_context_margin_fraction",
             "masked_edit_feather_fraction",
@@ -369,9 +401,15 @@ class AdminService:
             entity_type="generation_settings",
             entity_id="1",
             details={
+                "primary_provider": row.primary_provider,
+                "fallback_provider": row.fallback_provider,
                 "primary_model": payload.primary_model,
                 "fallback_model": payload.fallback_model,
                 "primary_timeout_seconds": payload.primary_timeout_seconds,
+                "quality_judge_model": row.quality_judge_model,
+                "video_enabled": row.video_enabled,
+                "video_model": row.video_model,
+                "video_param_keys": sorted((row.video_params or {}).keys()),
             },
         )
         await self.session.commit()
@@ -393,8 +431,10 @@ class AdminService:
             await self.session.commit()
             await self.session.refresh(project)
 
+        runtime = await self.repository.get_generation_settings()
+        provider = runtime.primary_provider if runtime is not None else "nexus"
         envelope = ADMIN_SANDBOX_PROMPT_PREFIX + dumps(
-            {"prompt": payload.prompt, "params": payload.params},
+            {"prompt": payload.prompt, "params": payload.params, "provider": provider},
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -427,6 +467,7 @@ class AdminService:
             entity_type="generation",
             entity_id=str(generated.id),
             details={
+                "provider": provider,
                 "model_name": payload.model_name,
                 "prompt_length": len(payload.prompt),
                 "param_keys": sorted(payload.params),
@@ -473,8 +514,11 @@ class AdminService:
                 detail="Use a completed result from the admin AI Sandbox.",
             )
 
+        runtime = await self.repository.get_generation_settings()
+        provider = runtime.primary_provider if runtime is not None else "nexus"
         envelope = ADMIN_ORBIT_PROMPT_PREFIX + dumps(
             {
+                "provider": provider,
                 "prompt": payload.prompt,
                 "params": payload.params,
                 "frame_count": payload.frame_count,
@@ -513,6 +557,7 @@ class AdminService:
             entity_type="generation",
             entity_id=str(generated.id),
             details={
+                "provider": provider,
                 "source_generation_id": str(source.id),
                 "model_name": payload.model_name,
                 "frame_count": payload.frame_count,
@@ -562,8 +607,11 @@ class AdminService:
                 detail="Use a completed result from the admin AI Sandbox.",
             )
 
+        runtime = await self.repository.get_generation_settings()
+        provider = runtime.primary_provider if runtime is not None else "nexus"
         envelope = ADMIN_FLYOVER_GIF_PROMPT_PREFIX + dumps(
             {
+                "provider": provider,
                 "prompt": payload.prompt,
                 "params": payload.params,
                 "keyframe_count": payload.keyframe_count,
@@ -603,6 +651,7 @@ class AdminService:
             entity_type="generation",
             entity_id=str(generated.id),
             details={
+                "provider": provider,
                 "source_generation_id": str(source.id),
                 "model_name": payload.model_name,
                 "keyframe_count": payload.keyframe_count,

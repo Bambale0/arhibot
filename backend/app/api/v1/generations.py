@@ -58,6 +58,51 @@ async def list_generations(
     )
 
 
+@router.get(
+    "/{generation_id}/video",
+    operation_id="getGenerationVideo",
+    summary="Get video continuation for concept",
+    response_model=GenerationResponse | None,
+)
+async def get_generation_video(
+    generation_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> GenerationResponse | None:
+    return await build_generation_service(session, settings).get_video(
+        user, generation_id
+    )
+
+
+@router.post(
+    "/{generation_id}/video",
+    operation_id="createGenerationVideo",
+    summary="Create video from concept",
+    description=(
+        "Queues a locked architectural flyover from a completed questionnaire concept. "
+        "AuRoom creates a second camera keyframe, verifies scene identity, then renders MP4."
+    ),
+    response_model=GenerationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        404: {"model": ProblemDetails, "description": "Source generation not found."},
+        409: {"model": ProblemDetails, "description": "Source generation is not ready."},
+        422: {"model": ProblemDetails, "description": "Source is not an eligible concept."},
+        503: {"model": ProblemDetails, "description": "Video provider, runtime, or price unavailable."},
+    },
+)
+async def create_generation_video(
+    generation_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    settings: Settings = Depends(get_settings),
+) -> GenerationResponse:
+    return await build_generation_service(session, settings).create_video(
+        user, generation_id
+    )
+
+
 @router.post(
     "/{generation_id}/repeat",
     operation_id="repeatGeneration",

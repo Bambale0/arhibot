@@ -14,7 +14,7 @@ export function HistoryGenerationScreen({ project, generation, onBack }: {
   generation: Generation
   onBack: () => void
 }) {
-  const [imageFailed, setImageFailed] = useState(false)
+  const [mediaFailed, setMediaFailed] = useState(false)
   return <main className="questionnaire-shell">
     <header className="questionnaire-topbar">
       <button className="back-button" type="button" onClick={onBack}><BackIcon /> Назад</button>
@@ -24,14 +24,16 @@ export function HistoryGenerationScreen({ project, generation, onBack }: {
     <section className="questionnaire-card">
       <span className="eyebrow">РЕЗУЛЬТАТ AUROOM</span>
       <h1>{statusText[generation.status]}</h1>
-      {generation.output_asset && !imageFailed ? (
+      {generation.output_asset && !mediaFailed ? (
         <div className="questionnaire-result">
-          <img src={generation.output_asset.url} alt="Сгенерированная работа AuRoom" onError={() => setImageFailed(true)} />
+          {generation.output_asset.type === 'video'
+            ? <video controls playsInline preload="metadata" src={generation.output_asset.url} onError={() => setMediaFailed(true)}>Ваш браузер не поддерживает видео.</video>
+            : <img src={generation.output_asset.url} alt="Сгенерированная работа AuRoom" onError={() => setMediaFailed(true)} />}
         </div>
       ) : (
         <div className="empty-state">
           <SparkIcon />
-          <p>{imageFailed ? 'Изображение временно недоступно. Попробуйте открыть работу позже.' : generation.status === 'failed' ? 'Готового изображения для этой генерации нет.' : 'Готовое изображение появится после завершения генерации.'}</p>
+          <p>{mediaFailed ? 'Медиа временно недоступно. Попробуйте открыть работу позже.' : generation.status === 'failed' ? 'Готового результата для этой генерации нет.' : 'Готовый результат появится после завершения генерации.'}</p>
         </div>
       )}
       <button className="secondary-button questionnaire-wide" type="button" onClick={onBack}>Вернуться в историю</button>

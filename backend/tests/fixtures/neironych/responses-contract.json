@@ -1,0 +1,55 @@
+{
+  "request": {
+    "model": "grok-4.5",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "input_text", "text": "Evaluate the known requirement IDs."},
+          {
+            "type": "input_image",
+            "image_url": "https://media.example/candidate.png"
+          }
+        ]
+      }
+    ],
+    "max_output_tokens": 1024,
+    "text": {
+      "format": {
+        "type": "json_schema",
+        "name": "auroom_quality_verdict",
+        "strict": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "verdict": {"type": "string", "enum": ["pass", "fail"]}
+          },
+          "required": ["verdict"],
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  "success_response": {
+    "id": "resp_sanitized",
+    "object": "response",
+    "status": "completed",
+    "output": [
+      {
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {"type": "output_text", "text": "{\"verdict\":\"pass\"}"}
+        ]
+      }
+    ],
+    "usage": {"input_tokens": 12, "output_tokens": 5, "total_tokens": 17}
+  },
+  "verification": {
+    "endpoint": "documented_public_guide",
+    "multimodal_input_shape": "documented_public_guide",
+    "json_schema_api_shape": "documented_public_guide",
+    "model_specific_json_schema": "requires_authenticated_smoke",
+    "vision_limits": "not_declared_by_public_guide"
+  }
+}
