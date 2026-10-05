@@ -118,6 +118,15 @@ class GenerationQualityRejected(RuntimeError):
         self.report = report
 
 
+class ConceptVideoIdentityRejected(RuntimeError):
+    def __init__(self, report: dict[str, object]) -> None:
+        super().__init__(
+            "Не удалось сохранить геометрию проекта для видео. "
+            "Исходная концепция не изменена; видео не было запущено."
+        )
+        self.report = report
+
+
 def _concept_video_dimensions(params: dict[str, object]) -> tuple[int, int]:
     resolution = str(params.get("resolution") or "1080p").strip()
     short_side = {"480p": 480, "720p": 720, "1080p": 1080, "4k": 2160}.get(
@@ -727,6 +736,225 @@ async def _generate_flyover_frames(
         generated_frames.append(data)
         last_task_id = task_id
     return generated_frames, last_task_id
+
+
+async def _stored_frame_url(
+    generation_id: UUID,
+    phase: str,
+    settings: Settings,
+) -> str:
+    async with get_session_factory()() as db:
+        row = await db.get(Generation, generation_id)
+        if row is None:
+            raise NexusProviderError("Generation frame owner is unavailable", retryable=False)
+        frame = (row.quality_report or {}).get("provider_frame_requests", {}).get(phase, {})
+        path = frame.get("path")
+        if frame.get("state") != "completed" or not isinstance(path, str) or not path:
+            raise NexusProviderError("Saved video keyframe is unavailable", retryable=False)
+    return LocalMediaStorage(settings).signed_url(
+        path,
+        ttl_seconds=max(
+            settings.media_url_ttl_seconds,
+            settings.neironych_video_timeout_seconds + 300,
+        ),
+    )
+
+
+async def _persist_video_identity_submission(
+    generation_id: UUID,
+    *,
+    model: str,
+    key: str,
+) -> None:
+    async with get_session_factory()() as db:
+        row = await GenerationRepository(db).get_for_update(generation_id)
+        if row is None or row.status != GenerationStatus.PROCESSING:
+            raise NexusProviderError("Video generation is no longer processing", retryable=False)
+        report = dict(row.quality_report or {})
+        existing = report.get("video_identity_request")
+        if isinstance(existing, dict) and existing.get("state") == "submitted":
+            raise NexusOutcomeUnknown(
+                "Previous Grok identity request outcome is unknown; do not duplicate"
+            )
+        report["video_identity_request"] = {
+            "state": "submitted",
+            "model": model,
+            "key": key,
+        }
+        row.quality_report = report
+        await db.commit()
+
+
+async def _persist_video_identity_review(
+    generation_id: UUID,
+    review,
+) -> None:
+    async with get_session_factory()() as db:
+        row = await GenerationRepository(db).get_for_update(generation_id)
+        if row is None or row.status != GenerationStatus.PROCESSING:
+            raise NexusProviderError("Video generation is no longer processing", retryable=False)
+        report = dict(row.quality_report or {})
+        report["video_identity_request"] = {
+            **dict(report.get("video_identity_request") or {}),
+            "state": "completed",
+        }
+        report["video_identity_review"] = review.model_dump(mode="json")
+        row.quality_report = report
+        await db.commit()
+
+
+async def _prepare_video_request(
+    generation_id: UUID,
+    *,
+    model: str,
+    request_body: str,
+    key: str,
+) -> tuple[str | None, str]:
+    async with get_session_factory()() as db:
+        row = await GenerationRepository(db).get_for_update(generation_id)
+        if row is None or row.status != GenerationStatus.PROCESSING:
+            raise NexusProviderError("Video generation is no longer processing", retryable=False)
+        report = dict(row.quality_report or {})
+        existing = report.get("video_request")
+        if isinstance(existing, dict) and existing.get("key") == key:
+            saved_body = existing.get("request_body")
+            if not isinstance(saved_body, str) or not saved_body:
+                raise NexusOutcomeUnknown("Saved Seedance request body is unavailable")
+            return row.provider_task_id, saved_body
+        report["video_request"] = {
+            "state": "prepared",
+            "model": model,
+            "key": key,
+            "request_body": request_body,
+        }
+        row.quality_report = report
+        await db.commit()
+        return row.provider_task_id, request_body
+
+
+async def _persist_video_request_id(
+    generation_id: UUID,
+    request_id: str,
+) -> None:
+    async with get_session_factory()() as db:
+        row = await GenerationRepository(db).get_for_update(generation_id)
+        if row is None or row.status != GenerationStatus.PROCESSING:
+            raise NexusProviderError("Video generation stopped before request checkpoint", retryable=False)
+        report = dict(row.quality_report or {})
+        report["video_request"] = {
+            **dict(report.get("video_request") or {}),
+            "state": "accepted",
+            "request_id": request_id,
+        }
+        row.quality_report = report
+        row.provider_task_id = request_id
+        await db.commit()
+
+
+async def _run_concept_video(
+    *,
+    generation_id: UUID,
+    provider: NexusImageProvider,
+    source_url: str,
+    source_prompt: str,
+    runtime_snapshot: dict[str, object],
+    settings: Settings,
+) -> tuple[bytes, str, str, tuple[int, int], dict[str, object]]:
+    image_model = str(runtime_snapshot.get("image_model") or "").strip()
+    image_params = dict(runtime_snapshot.get("image_params") or {})
+    judge_model = str(runtime_snapshot.get("judge_model") or "").strip()
+    video_model = str(runtime_snapshot.get("video_model") or "").strip()
+    video_params = dict(runtime_snapshot.get("video_params") or {})
+    if not all((image_model, judge_model, video_model)):
+        raise NexusProviderError("Concept video runtime snapshot is incomplete", retryable=False)
+
+    await _generate_admin_frame(
+        provider=provider,
+        generation_id=generation_id,
+        phase="video-end",
+        model_name=image_model,
+        prompt=_concept_video_end_frame_prompt(source_prompt),
+        params=image_params,
+        source_url=source_url,
+        settings=settings,
+        folder_name="video-frames",
+    )
+    end_url = await _stored_frame_url(generation_id, "video-end", settings)
+
+    async with get_session_factory()() as db:
+        current = await db.get(Generation, generation_id)
+        saved_review = (
+            (current.quality_report or {}).get("video_identity_review")
+            if current is not None
+            else None
+        )
+    if isinstance(saved_review, dict):
+        from app.providers.neironych_responses import VideoIdentityReview
+        identity = VideoIdentityReview.model_validate(saved_review)
+    else:
+        identity_key = f"auroom-{generation_id}-video-identity"
+        await _persist_video_identity_submission(
+            generation_id, model=judge_model, key=identity_key
+        )
+        judge = NeironychResponsesProvider(settings)
+        identity = await judge.review_identity(
+            model=judge_model,
+            prompt=_concept_video_identity_prompt(source_prompt),
+            image_urls=[source_url, end_url],
+            idempotency_key=identity_key,
+            client_request_id=str(generation_id),
+        )
+        await _persist_video_identity_review(generation_id, identity)
+
+    if not identity.same_scene:
+        raise ConceptVideoIdentityRejected(identity.model_dump(mode="json"))
+
+    video_provider = NeironychVideoProvider(settings)
+    video_prompt = _concept_video_motion_prompt()
+    prepared_payload = video_provider.build_payload(
+        model=video_model,
+        prompt=video_prompt,
+        start_image_url=source_url,
+        end_image_url=end_url,
+        params=video_params,
+    )
+    request_body = dumps(
+        prepared_payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    video_key = f"auroom-{generation_id}-seedance"
+    request_id, request_body = await _prepare_video_request(
+        generation_id,
+        model=video_model,
+        request_body=request_body,
+        key=video_key,
+    )
+
+    async def accepted(provider_request_id: str) -> None:
+        await _persist_video_request_id(generation_id, provider_request_id)
+
+    result = await video_provider.generate(
+        model=video_model,
+        prompt=video_prompt,
+        start_image_url=source_url,
+        end_image_url=end_url,
+        params=video_params,
+        idempotency_key=video_key,
+        client_request_id=str(generation_id),
+        request_id=request_id,
+        request_body=request_body,
+        on_request_created=accepted,
+    )
+    width, height = _concept_video_dimensions(video_params)
+    return (
+        result.content,
+        result.request_id,
+        video_model,
+        (width, height),
+        identity.model_dump(mode="json"),
+    )
 
 
 async def _commit_output_or_cleanup(
