@@ -1418,17 +1418,15 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             primary_timeout_seconds = None
         elif concept_video_generation:
             assert isinstance(video_runtime, dict)
-            primary_model = str(video_runtime.get("image_model") or "").strip()
-            primary_params = dict(video_runtime.get("image_params") or {})
+            primary_model = str(video_runtime.get("video_model") or "").strip()
+            primary_params = {}
             fallback_model = None
             fallback_params = {}
             primary_timeout_seconds = None
-            prompt = _concept_video_end_frame_prompt(video_source_prompt)
+            prompt = video_source_prompt
             if (
-                video_runtime.get("image_provider") != "nexus"
+                not str(video_runtime.get("judge_model") or "").strip()
                 or not primary_model
-                or not str(video_runtime.get("judge_model") or "").strip()
-                or not str(video_runtime.get("video_model") or "").strip()
             ):
                 await session.rollback()
                 await _mark_failed_and_refund(
@@ -1469,9 +1467,6 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             primary_timeout_seconds = runtime.primary_timeout_seconds
         primary_provider = getattr(runtime, "primary_provider", "nexus") or "nexus"
         fallback_provider = getattr(runtime, "fallback_provider", "nexus") or "nexus"
-        if concept_video_generation:
-            primary_provider = "nexus"
-            fallback_provider = "nexus"
         if admin_internal_generation:
             prefix = next(value for value in (
                 ADMIN_SANDBOX_PROMPT_PREFIX, ADMIN_ORBIT_PROMPT_PREFIX, ADMIN_FLYOVER_GIF_PROMPT_PREFIX
@@ -1515,10 +1510,19 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
     provider_work_region = edit_region
     required_input: tuple[Path, str] | None = None
     try:
-        provider = _image_provider(
-            provider_checkpoint.get("provider", "nexus") if provider_checkpoint else primary_provider,
-            settings,
-            pending=bool(provider_checkpoint or (generation.quality_report or {}).get("provider_frame_requests")),
+        provider = (
+            None
+            if concept_video_generation
+            else _image_provider(
+                provider_checkpoint.get("provider", "nexus")
+                if provider_checkpoint
+                else primary_provider,
+                settings,
+                pending=bool(
+                    provider_checkpoint
+                    or (generation.quality_report or {}).get("provider_frame_requests")
+                ),
+            )
         )
         if initial_concept_generation and source_url is None and composition_mode != "masked_edit":
             # Never retrofit a guide to an already submitted legacy task. Freeze
