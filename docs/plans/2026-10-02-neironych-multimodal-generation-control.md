@@ -748,6 +748,12 @@ Grok may sanity-check the two frames, but an edge hidden only by the determinist
 
 Do not combine `start_image` / `end_image` with reference-media mode for Seedance 2.0.
 
+Recovery invariants:
+- Grok identity review and Seedance generation use different deterministic UUIDs in `X-Client-Request-Id`;
+- persist each phase ID with its own checkpoint so provider lookup cannot confuse the two operations;
+- after an accepted Seedance create, a short `404 generation_not_found` is treated as status propagation delay and retries GET only;
+- never issue another paid video POST merely because the status endpoint is briefly not visible.
+
 Save result as `video/mp4` asset and return through existing signed media delivery.
 
 ## Task 13 — Preserve legacy GIF/orbit history without creating new GIFs
