@@ -1406,10 +1406,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             fallback_params = {}
             primary_timeout_seconds = None
             prompt = video_source_prompt
-            if (
-                not str(video_runtime.get("judge_model") or "").strip()
-                or not primary_model
-            ):
+            if not primary_model:
                 await session.rollback()
                 await _mark_failed_and_refund(
                     generation_id, "Concept video runtime snapshot is invalid."
