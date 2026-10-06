@@ -321,20 +321,6 @@ class GenerationService:
                 status=503,
                 detail="Video continuation is temporarily unavailable.",
             )
-        if runtime.primary_provider != "nexus" or not runtime.primary_model.strip():
-            raise AppError(
-                type="video_keyframe_provider_not_configured",
-                title="Video keyframe generation is not configured",
-                status=503,
-                detail="The Nexus image runtime must be configured before creating video.",
-            )
-        if not (self.settings.nexus_api_key or "").strip():
-            raise AppError(
-                type="video_keyframe_provider_not_configured",
-                title="Video keyframe provider is unavailable",
-                status=503,
-                detail="The Nexus image provider is not configured.",
-            )
         if not (self.settings.neironych_api_key or "").strip():
             raise AppError(
                 type="video_provider_not_configured",
@@ -352,13 +338,9 @@ class GenerationService:
         def bind_video(generation: Generation, _project: Project) -> None:
             generation.model_name = (runtime.video_model or "").strip()
             generation.quality_status = "pending"
-            image_params = dict(runtime.primary_params or {})
-            image_params.setdefault("aspect_ratio", "16:9")
             generation.quality_report = {
                 "video_runtime": {
-                    "image_provider": "nexus",
-                    "image_model": runtime.primary_model,
-                    "image_params": image_params,
+                    "keyframe_strategy": "locked_pan_zoom_v1",
                     "judge_model": (runtime.quality_judge_model or "").strip(),
                     "video_model": (runtime.video_model or "").strip(),
                     "video_params": dict(runtime.video_params or {}),
