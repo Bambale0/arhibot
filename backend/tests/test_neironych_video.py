@@ -74,6 +74,31 @@ def test_seedance_20_rejects_duration_outside_contract(duration: int) -> None:
         )
 
 
+@pytest.mark.parametrize("duration", [3, 31])
+def test_seedance_25_rejects_duration_outside_contract(duration: int) -> None:
+    provider = NeironychVideoProvider(_settings())
+    with pytest.raises(ValueError, match="duration"):
+        provider.build_payload(
+            model="seedance-2.5",
+            prompt="move",
+            start_image_url="https://media.example.test/start.png",
+            end_image_url="https://media.example.test/end.png",
+            params={"duration": duration, "resolution": "1080p", "aspect_ratio": "16:9"},
+        )
+
+
+def test_seedance_25_rejects_4k_frame_mode() -> None:
+    provider = NeironychVideoProvider(_settings())
+    with pytest.raises(ValueError, match="resolution"):
+        provider.build_payload(
+            model="seedance-2.5",
+            prompt="move",
+            start_image_url="https://media.example.test/start.png",
+            end_image_url="https://media.example.test/end.png",
+            params={"duration": 8, "resolution": "4k", "aspect_ratio": "16:9"},
+        )
+
+
 def test_seedance_frame_mode_rejects_non_https_images() -> None:
     provider = NeironychVideoProvider(_settings())
     with pytest.raises(ValueError, match="HTTPS"):
