@@ -95,7 +95,7 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
                 "video_model": "seedance-2.5",
                 "video_params": {
                     "duration": 8,
-                    "resolution": "1080p",
+                    "resolution": "480p",
                     "aspect_ratio": "16:9",
                 },
             },
@@ -240,16 +240,16 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         assert body["quality_status"] == "passed"
         assert body["output_asset"]["type"] == "video"
         assert body["output_asset"]["mime_type"] == "video/mp4"
-        assert body["output_asset"]["width"] == 1920
-        assert body["output_asset"]["height"] == 1080
+        assert body["output_asset"]["width"] == 854
+        assert body["output_asset"]["height"] == 480
         identity = body["quality_report"]["video_identity_review"]
         assert identity["same_scene"] is True
         assert identity["confidence"] == 1.0
-        assert identity["verification"] == "deterministic_locked_pan_zoom_v1"
-        assert body["quality_report"]["video_motion_profile"] == "safe_cinematic_parallax_v1"
+        assert identity["verification"] == "deterministic_locked_bird_anchor_v1"
+        assert body["quality_report"]["video_motion_profile"] == "bird_flyover_safe_v1"
         end_frame = body["quality_report"]["provider_frame_requests"]["video-end"]
         assert end_frame["provider"] == "deterministic"
-        assert end_frame["model"] == "locked_pan_zoom_v1"
+        assert end_frame["model"] == "locked_bird_anchor_v1"
         assert end_frame["state"] == "completed"
         assert end_frame["crop_box"]
         assert end_frame["source_sha256"]
