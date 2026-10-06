@@ -757,3 +757,35 @@ private correlation persistence; public checkpoint payload redaction; explicit n
 classification; provider-specific parameter validation; current unconditional provisioning docs.
 Focused regression verification is 105 passed with the Windows chmod-only test deselected; Linux
 CI remains authoritative for that POSIX permission test and the full integration/E2E suite.
+
+
+## Duplicate YooKassa recovery webhook race — 6 October 2026
+
+Baseline PR167 head `294234f698a5d7de89e0fda5121d133aac2e99f7`, targeting `dev`. CI run
+`37480909853` failed only in Backend integration: 100 integration checks passed and
+`test_uncertain_payment_verified_recovery_is_idempotent[webhook]` failed because one of two
+concurrent verified `payment.succeeded` webhooks returned
+`503 billing_webhook_object_not_ready`.
+
+Evidence/root cause: `BillingService.handle_webhook()` first performs an unlocked
+`has_provider_payment(provider_id)` lookup and, when false, later reloads the metadata-referenced
+local payment. A concurrent webhook can link and commit the same provider ID between those two
+reads. The second request then sees a legitimate already-linked/succeeded payment but rejects it
+because any non-null `yookassa_payment_id` is currently classified as “not ready”. This is a
+TOCTOU/idempotency bug in webhook admission, not a Seedance/video regression.
+
+Plan/acceptance:
+1. [ ] Add a deterministic integration regression that forces both provider-ID existence reads to
+   return false, lets the first webhook finish, then resumes the second before its local-payment
+   lookup. Confirm RED on the existing implementation.
+2. [ ] Make the smallest webhook admission change: an already-linked candidate is acceptable only
+   when its provider ID equals the incoming verified provider ID; mismatched IDs and invalid local
+   states remain fail-closed.
+3. [ ] Verify both concurrent webhooks return 200 while credit application remains exactly once.
+4. [ ] Repeat the focused race/integration checks, then require exact-head PR CI green before merge.
+5. [ ] After merge, verify automatic dev deployment SHA before any paid Seedance smoke.
+
+No schema, tariff, secret, model, retry threshold, payment amount or provider configuration change.
+Guidance used: KSU/local systematic-debugging, TDD and verification-before-completion; claw and
+dev-agents-pack debugger; WondelAI release-it retry/idempotency guidance. AgentSkills yielded no
+runtime-specific payment guidance; Anthropic webapp-testing is not applicable to this backend race.
