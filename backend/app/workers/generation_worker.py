@@ -958,6 +958,7 @@ async def _run_concept_video(
             raise NexusProviderError("Video generation is no longer processing", retryable=False)
         report = dict(row.quality_report or {})
         report["video_identity_review"] = identity_report
+        report["video_motion_profile"] = "safe_cinematic_parallax_v1"
         row.quality_report = report
         await db.commit()
 
