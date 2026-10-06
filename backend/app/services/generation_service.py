@@ -313,7 +313,6 @@ class GenerationService:
             runtime is None
             or not runtime.video_enabled
             or not (runtime.video_model or "").strip()
-            or not (runtime.quality_judge_model or "").strip()
         ):
             raise AppError(
                 type="video_generation_not_configured",
