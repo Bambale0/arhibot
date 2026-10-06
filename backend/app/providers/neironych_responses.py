@@ -15,7 +15,6 @@ from app.providers.neironych import (
 )
 from app.providers.nexus import NexusOutcomeUnknown
 
-
 _VIDEO_IDENTITY_JSON_SCHEMA: dict[str, object] = {
     "type": "object",
     "properties": {
