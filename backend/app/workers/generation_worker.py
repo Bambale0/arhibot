@@ -153,15 +153,44 @@ def _concept_video_dimensions(params: dict[str, object]) -> tuple[int, int]:
 def _concept_video_end_frame_prompt(canonical_prompt: str) -> str:
     return (
         "CAMERA MOVE ONLY. Create a second keyframe of the exact same architectural "
-        "project and exact same plot shown in reference image 1. Move the camera about "
-        "15 degrees to the right, raise it slightly, and pull back a little while keeping "
-        "the project centered. Preserve exact house geometry and footprint, number of "
-        "floors, roof, windows, doors, garage, terraces, pool, paths, fence/hedge, "
+        "project and exact same plot shown in reference image 1. Use a SMALL camera move: "
+        "about 6 degrees to the right and only a slight elevation. Keep nearly the same "
+        "focal length, framing, subject scale and crop; do not pull back and do not reveal "
+        "large unseen sides of the project. Preserve exact house geometry and footprint, "
+        "number of floors, roof, windows, doors, garage, terraces, pool, paths, fence/hedge, "
         "landscaping structure, materials, object count and all relative positions. "
         "Do not add, remove, redesign or relocate anything. Do not change season, weather "
         "or lighting direction. Natural parallax is allowed; architectural morphing is not. "
-        "The canonical brief below is authoritative for architecture and site constraints; "
-        "only its camera/viewpoint instruction is superseded by this controlled camera move.\n\n"
+        "Treat reference image 1 as the visual source of truth. The canonical brief below "
+        "is authoritative for architecture and site constraints; only its camera/viewpoint "
+        "instruction is superseded by this controlled camera move.\n\n"
+        f"CANONICAL BRIEF:\n{canonical_prompt}"
+    )
+
+
+def _concept_video_end_frame_retry_prompt(
+    canonical_prompt: str,
+    critical_differences: list[str],
+) -> str:
+    issues = "; ".join(
+        str(item).strip()[:240]
+        for item in critical_differences[:8]
+        if str(item).strip()
+    )
+    if not issues:
+        issues = "the previous candidate changed the architecture or site layout"
+    return (
+        "CAMERA MOVE ONLY — CORRECTIVE RETRY. Generate a NEW candidate directly from "
+        "reference image 1; do not imitate or continue the rejected candidate. The previous "
+        f"keyframe was rejected because: {issues}. Use an even smaller camera move: about "
+        "3 degrees to the right with a minimal elevation only. Keep the same focal length, "
+        "same subject scale, same crop and almost identical composition. Do not pull back, "
+        "do not expose unseen architecture, and do not invent hidden geometry. Preserve "
+        "every visible roof plane, wall volume, window, door, garage opening, terrace, "
+        "chimney, pool, path, fence, planting area, material and relative object position. "
+        "Do not add cars, pools, decks, fences, balconies, vegetation, structures or any "
+        "other object absent from reference image 1. Do not remove anything. Reference "
+        "image 1 is the visual source of truth.\n\n"
         f"CANONICAL BRIEF:\n{canonical_prompt}"
     )
 
@@ -765,6 +794,7 @@ async def _persist_video_identity_submission(
     *,
     model: str,
     key: str,
+    attempt: int,
 ) -> None:
     async with get_session_factory()() as db:
         row = await GenerationRepository(db).get_for_update(generation_id)
@@ -776,11 +806,18 @@ async def _persist_video_identity_submission(
             raise NexusOutcomeUnknown(
                 "Previous Grok identity request outcome is unknown; do not duplicate"
             )
-        report["video_identity_request"] = {
+        request = {
             "state": "submitted",
             "model": model,
             "key": key,
+            "attempt": attempt,
         }
+        attempts = dict(report.get("video_identity_attempts") or {})
+        attempt_entry = dict(attempts.get(str(attempt)) or {})
+        attempt_entry["request"] = request
+        attempts[str(attempt)] = attempt_entry
+        report["video_identity_attempts"] = attempts
+        report["video_identity_request"] = request
         row.quality_report = report
         await db.commit()
 
@@ -788,17 +825,29 @@ async def _persist_video_identity_submission(
 async def _persist_video_identity_review(
     generation_id: UUID,
     review,
+    *,
+    attempt: int,
 ) -> None:
     async with get_session_factory()() as db:
         row = await GenerationRepository(db).get_for_update(generation_id)
         if row is None or row.status != GenerationStatus.PROCESSING:
             raise NexusProviderError("Video generation is no longer processing", retryable=False)
         report = dict(row.quality_report or {})
-        report["video_identity_request"] = {
+        review_payload = review.model_dump(mode="json")
+        request = {
             **dict(report.get("video_identity_request") or {}),
             "state": "completed",
+            "attempt": attempt,
         }
-        report["video_identity_review"] = review.model_dump(mode="json")
+        attempts = dict(report.get("video_identity_attempts") or {})
+        attempt_entry = dict(attempts.get(str(attempt)) or {})
+        attempt_entry["request"] = request
+        attempt_entry["review"] = review_payload
+        attempts[str(attempt)] = attempt_entry
+        report["video_identity_attempts"] = attempts
+        report["video_identity_request"] = request
+        report["video_identity_review"] = review_payload
+        report["video_identity_attempt"] = attempt
         row.quality_report = report
         await db.commit()
 
@@ -877,33 +926,49 @@ async def _run_concept_video(
     if not all((image_model, judge_model, video_model)):
         raise NexusProviderError("Concept video runtime snapshot is incomplete", retryable=False)
 
-    await _generate_admin_frame(
-        provider=provider,
-        generation_id=generation_id,
-        phase="video-end",
-        model_name=image_model,
-        prompt=_concept_video_end_frame_prompt(source_prompt),
-        params=image_params,
-        source_url=source_url,
-        settings=settings,
-        folder_name="video-frames",
-    )
-    end_url = await _stored_frame_url(generation_id, "video-end", settings)
-
     async with get_session_factory()() as db:
         current = await db.get(Generation, generation_id)
-        saved_review = (
-            (current.quality_report or {}).get("video_identity_review")
-            if current is not None
-            else None
+        current_report = dict(current.quality_report or {}) if current is not None else {}
+        saved_review = current_report.get("video_identity_review")
+        raw_attempt = current_report.get("video_identity_attempt", 0)
+
+    try:
+        review_attempt = int(raw_attempt or 0)
+    except (TypeError, ValueError):
+        review_attempt = 0
+    if review_attempt not in {0, 1}:
+        raise NexusProviderError(
+            "Concept video identity checkpoint has an invalid attempt",
+            retryable=False,
         )
+
     if isinstance(saved_review, dict):
         from app.providers.neironych_responses import VideoIdentityReview
+
         identity = VideoIdentityReview.model_validate(saved_review)
+        end_phase = "video-end" if review_attempt == 0 else "video-end-retry-1"
+        end_url = await _stored_frame_url(generation_id, end_phase, settings)
     else:
-        identity_key = f"auroom-{generation_id}-video-identity"
+        review_attempt = 0
+        end_phase = "video-end"
+        await _generate_admin_frame(
+            provider=provider,
+            generation_id=generation_id,
+            phase=end_phase,
+            model_name=image_model,
+            prompt=_concept_video_end_frame_prompt(source_prompt),
+            params=image_params,
+            source_url=source_url,
+            settings=settings,
+            folder_name="video-frames",
+        )
+        end_url = await _stored_frame_url(generation_id, end_phase, settings)
+        identity_key = f"auroom-{generation_id}-video-identity-0"
         await _persist_video_identity_submission(
-            generation_id, model=judge_model, key=identity_key
+            generation_id,
+            model=judge_model,
+            key=identity_key,
+            attempt=0,
         )
         judge = NeironychResponsesProvider(settings)
         identity = await judge.review_identity(
@@ -911,9 +976,52 @@ async def _run_concept_video(
             prompt=_concept_video_identity_prompt(source_prompt),
             image_urls=[source_url, end_url],
             idempotency_key=identity_key,
-            client_request_id=str(generation_id),
+            client_request_id=f"{generation_id}:identity:0",
         )
-        await _persist_video_identity_review(generation_id, identity)
+        await _persist_video_identity_review(
+            generation_id,
+            identity,
+            attempt=0,
+        )
+
+    if not identity.same_scene and review_attempt == 0:
+        review_attempt = 1
+        end_phase = "video-end-retry-1"
+        await _generate_admin_frame(
+            provider=provider,
+            generation_id=generation_id,
+            phase=end_phase,
+            model_name=image_model,
+            prompt=_concept_video_end_frame_retry_prompt(
+                source_prompt,
+                identity.critical_differences,
+            ),
+            params=image_params,
+            source_url=source_url,
+            settings=settings,
+            folder_name="video-frames",
+        )
+        end_url = await _stored_frame_url(generation_id, end_phase, settings)
+        identity_key = f"auroom-{generation_id}-video-identity-1"
+        await _persist_video_identity_submission(
+            generation_id,
+            model=judge_model,
+            key=identity_key,
+            attempt=1,
+        )
+        judge = NeironychResponsesProvider(settings)
+        identity = await judge.review_identity(
+            model=judge_model,
+            prompt=_concept_video_identity_prompt(source_prompt),
+            image_urls=[source_url, end_url],
+            idempotency_key=identity_key,
+            client_request_id=f"{generation_id}:identity:1",
+        )
+        await _persist_video_identity_review(
+            generation_id,
+            identity,
+            attempt=1,
+        )
 
     if not identity.same_scene:
         raise ConceptVideoIdentityRejected(identity.model_dump(mode="json"))
@@ -964,7 +1072,6 @@ async def _run_concept_video(
         (width, height),
         identity.model_dump(mode="json"),
     )
-
 
 async def _commit_output_or_cleanup(
     session,
