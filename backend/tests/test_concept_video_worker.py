@@ -42,6 +42,8 @@ def test_concept_video_identity_prompt_knows_end_frame_is_pixel_derived() -> Non
 @pytest.mark.parametrize(
     ("params", "expected"),
     [
+        ({}, (854, 480)),
+        ({"resolution": "480p", "aspect_ratio": "16:9"}, (854, 480)),
         ({"resolution": "1080p", "aspect_ratio": "16:9"}, (1920, 1080)),
         ({"resolution": "720p", "aspect_ratio": "9:16"}, (720, 1280)),
         ({"resolution": "4k", "aspect_ratio": "16:9"}, (3840, 2160)),
