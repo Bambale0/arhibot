@@ -15,6 +15,29 @@ from app.providers.neironych import (
 )
 from app.providers.nexus import NexusOutcomeUnknown
 
+_VIDEO_IDENTITY_JSON_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "same_scene": {"type": "boolean"},
+        "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+        },
+        "critical_differences": {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": 20,
+        },
+    },
+    "required": [
+        "same_scene",
+        "confidence",
+        "critical_differences",
+    ],
+    "additionalProperties": False,
+}
+
 
 class VideoIdentityReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -77,6 +100,14 @@ class NeironychResponsesProvider:
             "model": model.strip(),
             "input": [{"role": "user", "content": content}],
             "max_output_tokens": 1200,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "auroom_video_identity",
+                    "strict": True,
+                    "schema": _VIDEO_IDENTITY_JSON_SCHEMA,
+                }
+            },
         }
 
     @staticmethod

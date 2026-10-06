@@ -30,6 +30,35 @@ def test_grok_identity_payload_contains_both_frames_and_json_instruction() -> No
 
     assert payload["model"] == "grok-4.5"
     assert payload["max_output_tokens"] == 1200
+    assert payload["text"] == {
+        "format": {
+            "type": "json_schema",
+            "name": "auroom_video_identity",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "same_scene": {"type": "boolean"},
+                    "confidence": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                    "critical_differences": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 20,
+                    },
+                },
+                "required": [
+                    "same_scene",
+                    "confidence",
+                    "critical_differences",
+                ],
+                "additionalProperties": False,
+            },
+        }
+    }
     content = payload["input"][0]["content"]
     assert content[0]["type"] == "input_text"
     assert "JSON" in content[0]["text"]
