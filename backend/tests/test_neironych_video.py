@@ -39,6 +39,28 @@ def test_seedance_20_builds_locked_start_end_frame_payload() -> None:
     }
 
 
+def test_seedance_25_builds_locked_frame_payload_with_adaptive_ratio() -> None:
+    provider = NeironychVideoProvider(_settings())
+    payload = provider.build_payload(
+        model="seedance-2.5",
+        prompt="Camera move only. Preserve the exact architecture.",
+        start_image_url="https://media.example.test/start.png",
+        end_image_url="https://media.example.test/end.png",
+        params={"duration": 8, "resolution": "1080p", "aspect_ratio": "16:9"},
+    )
+
+    assert payload == {
+        "model": "seedance-2.5",
+        "prompt": "Camera move only. Preserve the exact architecture.",
+        "start_image": {"url": "https://media.example.test/start.png"},
+        "end_image": {"url": "https://media.example.test/end.png"},
+        "duration": 8,
+        "resolution": "1080p",
+        "aspect_ratio": "adaptive",
+        "n": 1,
+    }
+
+
 @pytest.mark.parametrize("duration", [3, 16])
 def test_seedance_20_rejects_duration_outside_contract(duration: int) -> None:
     provider = NeironychVideoProvider(_settings())
