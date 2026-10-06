@@ -90,7 +90,7 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
                 "primary_params": {"resolution": "2K"},
                 "fallback_params": {},
                 "mode_params": {},
-                "quality_judge_model": "grok-4.5",
+                "quality_judge_model": None,
                 "video_enabled": True,
                 "video_model": "seedance-2.0",
                 "video_params": {
