@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
+from uuid import UUID, uuid4
 
 import pytest
 from PIL import Image
