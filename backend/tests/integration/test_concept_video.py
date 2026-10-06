@@ -212,6 +212,8 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         async def fake_video_generate(self, **kwargs):  # noqa: ANN001, ARG001
             seedance_calls.append(kwargs)
             assert kwargs["model"] == "seedance-2.0"
+            # The Nexus keyframe task id must never be reused as a Seedance request id.
+            assert kwargs["request_id"] is None
             assert kwargs["request_body"]
             assert kwargs["start_image_url"].startswith("https://media.example.test/")
             assert kwargs["end_image_url"].startswith("https://media.example.test/")
