@@ -835,3 +835,27 @@ validation; integration runs 2.5 with no Nexus/Grok calls and asserts adaptive w
 migrate the runtime DB default/current 2.0 selection to 2.5 without touching image routing,
 pricing or secrets; exact-head CI, dev deploy and server smoke; then exactly one live video job
 on the previously failing concept and inspect the resulting MP4.
+
+
+## Bounded Bird flyover from one accepted still — 6 October 2026
+
+Product decision: concept video should visibly read as a bird flyover, not a digital zoom, while
+remaining a one-image workflow. Keep Seedance 2.5 and the deterministic pixel-derived end anchor;
+do not reintroduce Nexus/Grok pre-generation calls or pretend a one-view source supports a faithful
+360-degree reconstruction.
+
+Motion contract:
+- 480p, 8 seconds by current product runtime.
+- camera rise + slight forward motion + shallow orbital arc;
+- target 20–35 degrees of viewpoint change, hard prompt ceiling 45 degrees;
+- keep currently visible facades dominant;
+- never reveal a hidden rear facade or cross the roof ridge;
+- if geometry would need to be invented, reduce the arc/rise instead.
+- diagnostics: `bird_flyover_safe_v1`, target/max angle metadata and
+  `locked_bird_anchor_v1` source-bound deterministic frame transform.
+
+TDD RED was captured on CI #1082: integration failed on the new 480p even-dimension expectation
+(`853 != 854`) before implementation. Implementation also versions the cached anchor, rounds
+derived video metadata to even dimensions, defaults product/provider fallbacks to 480p and adds
+migration `20261006_0042` for existing Seedance 2.5 runtime rows. Full exact-head CI, dev deploy,
+server smoke and one bounded live visual acceptance remain the release gates.

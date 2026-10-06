@@ -12,23 +12,24 @@ class LockedVideoKeyframe:
     width: int
     height: int
     crop_box: tuple[int, int, int, int]
-    transform: str = "locked_pan_zoom_v1"
+    transform: str = "locked_bird_anchor_v1"
 
 
 def build_locked_video_end_frame(
     source: bytes,
     *,
     max_pixels: int,
-    zoom: float = 1.06,
-    pan_x: float = 0.40,
-    pan_y: float = -0.25,
+    zoom: float = 1.09,
+    pan_x: float = 0.62,
+    pan_y: float = -0.72,
 ) -> LockedVideoKeyframe:
-    """Create a subtle deterministic motion anchor from an accepted render.
+    """Create a deterministic framing anchor for a bounded bird flyover.
 
     No new scene content is synthesized. The function crops entirely inside
     the accepted image and resizes that crop back to the original canvas.
-    Positive pan_x moves the virtual camera to the right; negative pan_y moves
-    it slightly upward.
+    The stronger upward/lateral framing cue encourages camera rise and parallax
+    while every pixel still comes from the accepted concept.
+    Positive pan_x moves the framing to the right; negative pan_y moves it upward.
     """
 
     if not 1.0 < zoom <= 1.15:

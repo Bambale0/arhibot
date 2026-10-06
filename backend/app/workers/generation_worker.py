@@ -129,7 +129,7 @@ class ConceptVideoIdentityRejected(RuntimeError):
 
 
 def _concept_video_dimensions(params: dict[str, object]) -> tuple[int, int]:
-    resolution = str(params.get("resolution") or "1080p").strip()
+    resolution = str(params.get("resolution") or "480p").strip()
     short_side = {"480p": 480, "720p": 720, "1080p": 1080, "4k": 2160}.get(
         resolution
     )
@@ -145,9 +145,13 @@ def _concept_video_dimensions(params: dict[str, object]) -> tuple[int, int]:
     if raw_width >= raw_height:
         height = short_side
         width = round(short_side * raw_width / raw_height)
+        if width % 2:
+            width += 1
     else:
         width = short_side
         height = round(short_side * raw_height / raw_width)
+        if height % 2:
+            height += 1
     return width, height
 
 
@@ -176,21 +180,24 @@ def _concept_video_identity_prompt(canonical_prompt: str) -> str:
 
 def _concept_video_motion_prompt() -> str:
     return (
-        "Create a premium photorealistic architectural camera move between the supplied start "
-        "and end frames. The accepted start still is the ground truth and the end frame is a "
-        "pixel-derived framing anchor from that exact same still. CAMERA MOTION ONLY. Use a "
-        "slow stabilized forward dolly, a small lateral truck to the right, and a slight camera "
-        "rise, with smooth ease-in and ease-out, constant focal length, stable horizon and no "
-        "lens breathing. Keep the camera on the same visible side of the property. Do not orbit, "
-        "do not pass over the roof, do not swing around corners, and do not reveal unseen sides "
-        "of the building. If stronger parallax would require inventing unseen geometry, reduce "
-        "the apparent parallax and preserve the accepted image instead. STRICT IDENTITY LOCK: "
-        "preserve exact house and site geometry, footprint, roof, windows, doors, terraces, "
-        "garage, pool, paths, fence, landscaping structure, materials, object count and all "
-        "relative object positions. No architectural morphing, no changing openings, no roof "
-        "deformation, no object additions/removals, no relighting, no weather change, no "
-        "vegetation animation, no moving water, no people and no vehicles. The result should "
-        "feel like a calm high-end real-estate slider/drone shot, not a redesign."
+        "Create a premium photorealistic bounded bird's-eye architectural flyover between the "
+        "supplied start and end frames. The accepted start still is the ground truth and the end "
+        "frame is a pixel-derived framing anchor from that exact same still. CAMERA MOTION ONLY. "
+        "Use a slow stabilized camera rise with a slight forward move and a shallow orbital arc "
+        "around the currently visible front corner / visible side of the property. Target about "
+        "20 to 35 degrees of viewpoint change and never exceed 45 degrees. Keep the currently "
+        "visible facades dominant throughout the shot. Use smooth ease-in and ease-out, constant "
+        "focal length, stable horizon and no lens breathing. Do not continue around a corner far "
+        "enough to reveal a hidden rear facade, and do not cross over the roof ridge. If the move "
+        "would require inventing unseen architecture or site geometry, reduce the arc and camera "
+        "rise rather than hallucinating new content. STRICT IDENTITY LOCK: preserve exact house "
+        "and site geometry, footprint, roof, windows, doors, terraces, garage, pool, paths, fence, "
+        "landscaping structure, materials, object count and all relative object positions. No "
+        "architectural morphing, no changing openings, no roof deformation, no object additions/"
+        "removals, no relighting, no weather change, no vegetation animation, no moving water, "
+        "no people and no vehicles. The result should feel like a short high-end real-estate "
+        "drone reveal, with visible parallax and elevation change, not a digital zoom and not a "
+        "full 360-degree orbit."
     )
 
 
@@ -766,7 +773,7 @@ async def _ensure_locked_video_end_frame(
     if (
         cached.get("state") == "completed"
         and cached.get("provider") == "deterministic"
-        and cached.get("model") == "locked_pan_zoom_v1"
+        and cached.get("model") == "locked_bird_anchor_v1"
         and cached.get("source_sha256") == source_digest
     ):
         await _read_admin_frame(storage, cached)
@@ -950,7 +957,7 @@ async def _run_concept_video(
         "same_scene": True,
         "confidence": 1.0,
         "critical_differences": [],
-        "verification": "deterministic_locked_pan_zoom_v1",
+        "verification": "deterministic_locked_bird_anchor_v1",
     }
     async with get_session_factory()() as db:
         row = await GenerationRepository(db).get_for_update(generation_id)
@@ -958,7 +965,13 @@ async def _run_concept_video(
             raise NexusProviderError("Video generation is no longer processing", retryable=False)
         report = dict(row.quality_report or {})
         report["video_identity_review"] = identity_report
-        report["video_motion_profile"] = "safe_cinematic_parallax_v1"
+        report["video_motion_profile"] = "bird_flyover_safe_v1"
+        report["video_motion_constraints"] = {
+            "target_arc_degrees": [20, 35],
+            "max_arc_degrees": 45,
+            "rear_facade_reveal": False,
+            "resolution": str(video_params.get("resolution") or "480p"),
+        }
         row.quality_report = report
         await db.commit()
 
@@ -1005,12 +1018,14 @@ async def _run_concept_video(
         request_body=request_body,
         on_request_created=accepted,
     )
-    width, height = _concept_video_dimensions(video_params)
+    dimensions = video_provider.video_dimensions(result.content)
+    if dimensions is None:
+        dimensions = _concept_video_dimensions(video_params)
     return (
         result.content,
         result.request_id,
         video_model,
-        (width, height),
+        dimensions,
         identity_report,
     )
 

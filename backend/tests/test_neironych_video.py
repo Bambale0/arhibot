@@ -61,6 +61,20 @@ def test_seedance_25_builds_locked_frame_payload_with_adaptive_ratio() -> None:
     }
 
 
+def test_seedance_25_defaults_locked_frame_payload_to_480p() -> None:
+    provider = NeironychVideoProvider(_settings())
+    payload = provider.build_payload(
+        model="seedance-2.5",
+        prompt="move",
+        start_image_url="https://media.example.test/start.png",
+        end_image_url="https://media.example.test/end.png",
+        params={},
+    )
+
+    assert payload["resolution"] == "480p"
+    assert payload["aspect_ratio"] == "adaptive"
+
+
 @pytest.mark.parametrize("duration", [3, 16])
 def test_seedance_20_rejects_duration_outside_contract(duration: int) -> None:
     provider = NeironychVideoProvider(_settings())
@@ -127,6 +141,38 @@ def test_seedance_output_requires_mp4_ftyp_box(content: bytes) -> None:
 def test_seedance_output_accepts_mp4_ftyp_box() -> None:
     content = b"\x00\x00\x00\x18ftypmp42" + b"x" * 32
     NeironychVideoProvider.validate_video_content(content, max_bytes=1024)
+
+
+def test_seedance_reads_actual_mp4_video_dimensions() -> None:
+    def box(kind: bytes, payload: bytes) -> bytes:
+        return (len(payload) + 8).to_bytes(4, "big") + kind + payload
+
+    tkhd = box(
+        b"tkhd",
+        b"\x00" * 24
+        + (860 << 16).to_bytes(4, "big")
+        + (480 << 16).to_bytes(4, "big"),
+    )
+    video = box(b"ftyp", b"mp42" + b"\x00" * 12) + box(b"moov", box(b"trak", tkhd))
+
+    assert NeironychVideoProvider.video_dimensions(video) == (860, 480)
+
+
+def test_seedance_video_dimensions_ignore_audio_only_tracks() -> None:
+    def box(kind: bytes, payload: bytes) -> bytes:
+        return (len(payload) + 8).to_bytes(4, "big") + kind + payload
+
+    audio_tkhd = box(b"tkhd", b"\x00" * 24 + b"\x00" * 8)
+    video_tkhd = box(
+        b"tkhd",
+        b"\x00" * 24
+        + (854 << 16).to_bytes(4, "big")
+        + (480 << 16).to_bytes(4, "big"),
+    )
+    payload = box(b"trak", audio_tkhd) + box(b"trak", video_tkhd)
+    video = box(b"ftyp", b"mp42" + b"\x00" * 12) + box(b"moov", payload)
+
+    assert NeironychVideoProvider.video_dimensions(video) == (854, 480)
 
 
 @pytest.mark.asyncio

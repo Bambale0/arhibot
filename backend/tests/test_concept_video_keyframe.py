@@ -30,7 +30,7 @@ def test_locked_video_keyframe_is_deterministic_pixel_transform() -> None:
     assert 0 <= top < bottom <= 180
     assert right - left < 320
     assert bottom - top < 180
-    assert first.transform == "locked_pan_zoom_v1"
+    assert first.transform == "locked_bird_anchor_v1"
 
 
 def test_locked_video_keyframe_does_not_invent_new_canvas_area() -> None:

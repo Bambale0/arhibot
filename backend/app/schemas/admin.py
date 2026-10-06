@@ -344,7 +344,7 @@ class GenerationRuntimeUpdate(BaseModel):
     video_enabled: bool = False
     video_model: str | None = Field(default="seedance-2.5", max_length=120)
     video_params: dict[str, Any] = Field(
-        default_factory=lambda: {"duration": 8, "resolution": "1080p", "aspect_ratio": "16:9"}
+        default_factory=lambda: {"duration": 8, "resolution": "480p", "aspect_ratio": "16:9"}
     )
     masked_edit_provider_context_margin_fraction: float | None = Field(default=None, ge=0, le=0.25)
     masked_edit_feather_fraction: float | None = Field(default=None, ge=0, le=0.1)
