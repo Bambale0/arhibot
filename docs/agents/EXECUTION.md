@@ -813,3 +813,25 @@ Plan:
 No provider/model/tariff/schema change. Keep seedance-2.0, 1080p/16:9/runtime admin params and the
 existing paid-POST idempotency/recovery rules. If a genuinely larger orbit is desired later, it
 requires additional trustworthy 3D/multi-view geometry rather than prompt wording alone.
+
+
+## Seedance frame capability mismatch — 6 October 2026
+
+Live dev job `63dd3e14-0daa-4d8b-bbe7-6355ad1f6a39` reached Neironych after PR168 and
+failed before acceptance with HTTP 409 `capability_mismatch`. Its persisted body used
+`seedance-2.0`, deterministic start+end frames, 8 seconds, 1080p and fixed 16:9. The
+end frame was correctly local/deterministic and source-bound by SHA-256, so this is a provider
+capability-route mismatch rather than geometry drift.
+
+Fresh provider evidence on 6 October: authenticated `GET /v1/models` for the configured AuRoom
+partner advertises both `seedance-2.0` and `seedance-2.5`. The current public guide explicitly
+documents Seedance 2.5 first+last-frame mode and requires adaptive (or omitted) aspect ratio for
+2.5 frame mode. Therefore the locked-frame concept-video route moves to `seedance-2.5` with
+provider wire `aspect_ratio=adaptive`; AuRoom keeps its source/end pixel provenance and its
+safe cinematic motion prompt.
+
+Acceptance: contract RED for 2.5 before adapter support; model-specific duration/resolution
+validation; integration runs 2.5 with no Nexus/Grok calls and asserts adaptive wire payload;
+migrate the runtime DB default/current 2.0 selection to 2.5 without touching image routing,
+pricing or secrets; exact-head CI, dev deploy and server smoke; then exactly one live video job
+on the previously failing concept and inspect the resulting MP4.
