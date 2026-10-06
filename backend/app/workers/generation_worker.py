@@ -9,11 +9,12 @@ from hashlib import sha256
 from json import JSONDecodeError, dumps, loads
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import httpx
 from sqlalchemy import select
 
+from app.concept_video_keyframe import build_locked_video_end_frame
 from app.core.config import Settings, get_settings
 from app.core.metrics import (
     record_generation_quality_retry_success,
@@ -34,17 +35,17 @@ from app.image_compositor import (
     compose_masked_edit,
     expand_normalized_region,
 )
+from app.image_flyover import FlyoverGif, build_flyover_gif
+from app.image_orbit import build_orbit_animation
 from app.image_quality import analyze_masked_edit_quality
 from app.initial_layout_guide import build_initial_layout_guide
 from app.localized_edit import (
     LocalCandidateFramingError,
     choose_local_geometry,
-    local_source,
     local_edit_prompt,
+    local_source,
     project_local_candidate,
 )
-from app.image_flyover import FlyoverGif, build_flyover_gif
-from app.image_orbit import build_orbit_animation
 from app.prompt_builders.generation import build_generation_prompt
 from app.providers.neironych import NeironychImageProvider, NeironychImageResult
 from app.providers.neironych_responses import NeironychResponsesProvider
@@ -52,8 +53,8 @@ from app.providers.neironych_video import NeironychVideoProvider
 from app.providers.nexus import (
     NexusImageProvider,
     NexusImageResult,
-    NexusProviderError,
     NexusOutcomeUnknown,
+    NexusProviderError,
 )
 from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
@@ -150,31 +151,25 @@ def _concept_video_dimensions(params: dict[str, object]) -> tuple[int, int]:
     return width, height
 
 
-def _concept_video_end_frame_prompt(canonical_prompt: str) -> str:
-    return (
-        "CAMERA MOVE ONLY. Create a second keyframe of the exact same architectural "
-        "project and exact same plot shown in reference image 1. Move the camera about "
-        "15 degrees to the right, raise it slightly, and pull back a little while keeping "
-        "the project centered. Preserve exact house geometry and footprint, number of "
-        "floors, roof, windows, doors, garage, terraces, pool, paths, fence/hedge, "
-        "landscaping structure, materials, object count and all relative positions. "
-        "Do not add, remove, redesign or relocate anything. Do not change season, weather "
-        "or lighting direction. Natural parallax is allowed; architectural morphing is not. "
-        "The canonical brief below is authoritative for architecture and site constraints; "
-        "only its camera/viewpoint instruction is superseded by this controlled camera move.\n\n"
-        f"CANONICAL BRIEF:\n{canonical_prompt}"
+def _concept_video_client_request_id(generation_id: UUID, phase: str) -> str:
+    return str(
+        uuid5(
+            NAMESPACE_URL,
+            f"auroom:concept-video:{generation_id}:{phase}",
+        )
     )
 
 
 def _concept_video_identity_prompt(canonical_prompt: str) -> str:
     return (
-        "Image 1 is the accepted AuRoom concept. Image 2 is a candidate second camera "
-        "keyframe. Determine whether image 2 preserves the exact same architectural project "
-        "and site layout. Camera viewpoint/parallax may change, but buildings, footprint, "
-        "roof, openings, garage, terraces, pool, paths, fence/hedge, landscaping structure, "
-        "materials, object count and relative positions must remain the same. Mark same_scene "
-        "false for any redesign, moved/missing/added object, changed roof/opening geometry or "
-        "site-layout drift.\n\nCANONICAL BRIEF:\n"
+        "Image 1 is the accepted AuRoom concept. Image 2 is NOT an independently generated "
+        "design: it is a deterministic crop/zoom/pan made only from pixels of Image 1. "
+        "A narrow border may be outside the crop, so objects clipped only at the outer edge "
+        "must NOT be treated as removed or redesigned. Determine whether the visible interior "
+        "architecture and site content are the same. Mark same_scene false only if Image 2 "
+        "contains visible geometry/content that could not come from Image 1, such as a changed "
+        "roof/opening, added object, relocated structure or altered site layout.\n\n"
+        "CANONICAL BRIEF:\n"
         f"{canonical_prompt}"
     )
 
@@ -738,20 +733,75 @@ async def _generate_flyover_frames(
     return generated_frames, last_task_id
 
 
-async def _stored_frame_url(
+async def _ensure_locked_video_end_frame(
     generation_id: UUID,
-    phase: str,
+    *,
+    source_data: bytes,
     settings: Settings,
 ) -> str:
+    storage = LocalMediaStorage(settings)
+    phase = "video-end"
+
     async with get_session_factory()() as db:
-        row = await db.get(Generation, generation_id)
-        if row is None:
-            raise NexusProviderError("Generation frame owner is unavailable", retryable=False)
-        frame = (row.quality_report or {}).get("provider_frame_requests", {}).get(phase, {})
-        path = frame.get("path")
-        if frame.get("state") != "completed" or not isinstance(path, str) or not path:
-            raise NexusProviderError("Saved video keyframe is unavailable", retryable=False)
-    return LocalMediaStorage(settings).signed_url(
+        row = await GenerationRepository(db).get_for_update(generation_id)
+        if row is None or row.status != GenerationStatus.PROCESSING:
+            raise NexusProviderError(
+                "Video generation is no longer processing",
+                retryable=False,
+            )
+        cached = (
+            (row.quality_report or {})
+            .get("provider_frame_requests", {})
+            .get(phase, {})
+        )
+
+    if (
+        cached.get("state") == "completed"
+        and cached.get("provider") == "deterministic"
+        and cached.get("model") == "locked_pan_zoom_v1"
+    ):
+        await _read_admin_frame(storage, cached)
+        return storage.signed_url(
+            cached["path"],
+            ttl_seconds=max(
+                settings.media_url_ttl_seconds,
+                settings.neironych_video_timeout_seconds + 300,
+            ),
+        )
+
+    frame = await asyncio.to_thread(
+        build_locked_video_end_frame,
+        source_data,
+        max_pixels=settings.max_image_pixels,
+    )
+    path = f"internal/video-frames/{generation_id}/{phase}.png"
+    await storage.write(path, frame.data)
+
+    async with get_session_factory()() as db:
+        row = await GenerationRepository(db).get_for_update(generation_id)
+        if row is None or row.status != GenerationStatus.PROCESSING:
+            raise NexusProviderError(
+                "Video generation stopped before keyframe commit",
+                retryable=False,
+            )
+        report = dict(row.quality_report or {})
+        frames = dict(report.get("provider_frame_requests", {}))
+        frames[phase] = {
+            "state": "completed",
+            "provider": "deterministic",
+            "model": frame.transform,
+            "phase": phase,
+            "path": path,
+            "sha256": sha256(frame.data).hexdigest(),
+            "crop_box": list(frame.crop_box),
+            "width": frame.width,
+            "height": frame.height,
+        }
+        report["provider_frame_requests"] = frames
+        row.quality_report = report
+        await db.commit()
+
+    return storage.signed_url(
         path,
         ttl_seconds=max(
             settings.media_url_ttl_seconds,
@@ -765,6 +815,7 @@ async def _persist_video_identity_submission(
     *,
     model: str,
     key: str,
+    client_request_id: str,
 ) -> None:
     async with get_session_factory()() as db:
         row = await GenerationRepository(db).get_for_update(generation_id)
@@ -780,6 +831,7 @@ async def _persist_video_identity_submission(
             "state": "submitted",
             "model": model,
             "key": key,
+            "client_request_id": client_request_id,
         }
         row.quality_report = report
         await db.commit()
@@ -809,6 +861,7 @@ async def _prepare_video_request(
     model: str,
     request_body: str,
     key: str,
+    client_request_id: str,
 ) -> tuple[str | None, str]:
     async with get_session_factory()() as db:
         row = await GenerationRepository(db).get_for_update(generation_id)
@@ -834,6 +887,7 @@ async def _prepare_video_request(
             "state": "prepared",
             "model": model,
             "key": key,
+            "client_request_id": client_request_id,
             "request_body": request_body,
         }
         row.quality_report = report
@@ -863,32 +917,23 @@ async def _persist_video_request_id(
 async def _run_concept_video(
     *,
     generation_id: UUID,
-    provider: NexusImageProvider,
     source_url: str,
+    source_data: bytes,
     source_prompt: str,
     runtime_snapshot: dict[str, object],
     settings: Settings,
 ) -> tuple[bytes, str, str, tuple[int, int], dict[str, object]]:
-    image_model = str(runtime_snapshot.get("image_model") or "").strip()
-    image_params = dict(runtime_snapshot.get("image_params") or {})
     judge_model = str(runtime_snapshot.get("judge_model") or "").strip()
     video_model = str(runtime_snapshot.get("video_model") or "").strip()
     video_params = dict(runtime_snapshot.get("video_params") or {})
-    if not all((image_model, judge_model, video_model)):
+    if not all((judge_model, video_model)):
         raise NexusProviderError("Concept video runtime snapshot is incomplete", retryable=False)
 
-    await _generate_admin_frame(
-        provider=provider,
-        generation_id=generation_id,
-        phase="video-end",
-        model_name=image_model,
-        prompt=_concept_video_end_frame_prompt(source_prompt),
-        params=image_params,
-        source_url=source_url,
+    end_url = await _ensure_locked_video_end_frame(
+        generation_id,
+        source_data=source_data,
         settings=settings,
-        folder_name="video-frames",
     )
-    end_url = await _stored_frame_url(generation_id, "video-end", settings)
 
     async with get_session_factory()() as db:
         current = await db.get(Generation, generation_id)
@@ -902,8 +947,15 @@ async def _run_concept_video(
         identity = VideoIdentityReview.model_validate(saved_review)
     else:
         identity_key = f"auroom-{generation_id}-video-identity"
+        identity_client_request_id = _concept_video_client_request_id(
+            generation_id,
+            "identity",
+        )
         await _persist_video_identity_submission(
-            generation_id, model=judge_model, key=identity_key
+            generation_id,
+            model=judge_model,
+            key=identity_key,
+            client_request_id=identity_client_request_id,
         )
         judge = NeironychResponsesProvider(settings)
         identity = await judge.review_identity(
@@ -911,7 +963,7 @@ async def _run_concept_video(
             prompt=_concept_video_identity_prompt(source_prompt),
             image_urls=[source_url, end_url],
             idempotency_key=identity_key,
-            client_request_id=str(generation_id),
+            client_request_id=identity_client_request_id,
         )
         await _persist_video_identity_review(generation_id, identity)
 
@@ -934,11 +986,16 @@ async def _run_concept_video(
         sort_keys=True,
     )
     video_key = f"auroom-{generation_id}-seedance"
+    video_client_request_id = _concept_video_client_request_id(
+        generation_id,
+        "seedance",
+    )
     request_id, request_body = await _prepare_video_request(
         generation_id,
         model=video_model,
         request_body=request_body,
         key=video_key,
+        client_request_id=video_client_request_id,
     )
 
     async def accepted(provider_request_id: str) -> None:
@@ -951,7 +1008,7 @@ async def _run_concept_video(
         end_image_url=end_url,
         params=video_params,
         idempotency_key=video_key,
-        client_request_id=str(generation_id),
+        client_request_id=video_client_request_id,
         request_id=request_id,
         request_body=request_body,
         on_request_created=accepted,
@@ -1351,17 +1408,15 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             primary_timeout_seconds = None
         elif concept_video_generation:
             assert isinstance(video_runtime, dict)
-            primary_model = str(video_runtime.get("image_model") or "").strip()
-            primary_params = dict(video_runtime.get("image_params") or {})
+            primary_model = str(video_runtime.get("video_model") or "").strip()
+            primary_params = {}
             fallback_model = None
             fallback_params = {}
             primary_timeout_seconds = None
-            prompt = _concept_video_end_frame_prompt(video_source_prompt)
+            prompt = video_source_prompt
             if (
-                video_runtime.get("image_provider") != "nexus"
+                not str(video_runtime.get("judge_model") or "").strip()
                 or not primary_model
-                or not str(video_runtime.get("judge_model") or "").strip()
-                or not str(video_runtime.get("video_model") or "").strip()
             ):
                 await session.rollback()
                 await _mark_failed_and_refund(
@@ -1402,9 +1457,6 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             primary_timeout_seconds = runtime.primary_timeout_seconds
         primary_provider = getattr(runtime, "primary_provider", "nexus") or "nexus"
         fallback_provider = getattr(runtime, "fallback_provider", "nexus") or "nexus"
-        if concept_video_generation:
-            primary_provider = "nexus"
-            fallback_provider = "nexus"
         if admin_internal_generation:
             prefix = next(value for value in (
                 ADMIN_SANDBOX_PROMPT_PREFIX, ADMIN_ORBIT_PROMPT_PREFIX, ADMIN_FLYOVER_GIF_PROMPT_PREFIX
@@ -1448,10 +1500,19 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
     provider_work_region = edit_region
     required_input: tuple[Path, str] | None = None
     try:
-        provider = _image_provider(
-            provider_checkpoint.get("provider", "nexus") if provider_checkpoint else primary_provider,
-            settings,
-            pending=bool(provider_checkpoint or (generation.quality_report or {}).get("provider_frame_requests")),
+        provider = (
+            None
+            if concept_video_generation
+            else _image_provider(
+                provider_checkpoint.get("provider", "nexus")
+                if provider_checkpoint
+                else primary_provider,
+                settings,
+                pending=bool(
+                    provider_checkpoint
+                    or (generation.quality_report or {}).get("provider_frame_requests")
+                ),
+            )
         )
         if initial_concept_generation and source_url is None and composition_mode != "masked_edit":
             # Never retrofit a guide to an already submitted legacy task. Freeze
@@ -1663,9 +1724,9 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
         if concept_video_generation:
             if source_url is None or input_storage_path is None:
                 raise RuntimeError("Concept video generation requires the accepted concept image.")
-            if not isinstance(provider, NexusImageProvider):
-                raise RuntimeError("Concept video keyframe generation must use Nexus.")
             assert isinstance(video_runtime, dict)
+            source_path = LocalMediaStorage(settings).absolute_path(input_storage_path)
+            source_data = await asyncio.to_thread(source_path.read_bytes)
             (
                 data,
                 provider_task_id,
@@ -1674,8 +1735,8 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 _video_identity_report,
             ) = await _run_concept_video(
                 generation_id=generation_id,
-                provider=provider,
                 source_url=source_url,
+                source_data=source_data,
                 source_prompt=video_source_prompt,
                 runtime_snapshot=video_runtime,
                 settings=settings,

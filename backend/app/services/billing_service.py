@@ -580,8 +580,14 @@ class BillingService:
                 )
                 if (
                     candidate is None
-                    or candidate.yookassa_payment_id is not None
-                    or candidate.status not in {"creating", "failed", "uncertain"}
+                    or (
+                        candidate.yookassa_payment_id is None
+                        and candidate.status not in {"creating", "failed", "uncertain"}
+                    )
+                    or (
+                        candidate.yookassa_payment_id is not None
+                        and candidate.yookassa_payment_id != provider_id
+                    )
                 ):
                     raise AppError(
                         type="billing_webhook_object_not_ready",

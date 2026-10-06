@@ -36,7 +36,7 @@ These are requirements, not implementation suggestions:
   - total reference media: <= 12;
   - prompt: <= 40,000 UTF-8 bytes;
   - frame mode must not be mixed with reference-media mode.
-- For the AuRoom flyover, prefer **accepted still as `start_image` + textual invariants**, not a pile of reference images.
+- For the AuRoom flyover, use the **accepted still as `start_image`** and derive `end_image` deterministically from the same pixels with a small server-side pan/zoom crop. Do not purchase a second generative image just to move the camera.
 - Maximum semantic quality regeneration: **one paid image retry** per generation by default.
 - The LLM judge does **not** own business rules. Questionnaire validity, visibility rules, object inheritance, required objects, and retry counts remain deterministic server logic.
 - No production promotion is part of this epic unless explicitly requested later.
@@ -736,7 +736,23 @@ Server-owned video prompt:
 
 Use the **accepted output still** as Seedance `start_image`.
 
-Do not combine `start_image` with reference-media mode for Seedance 2.0.
+Build Seedance `end_image` with the deterministic `locked_pan_zoom_v1` server transform:
+- crop only inside the accepted still;
+- apply a small zoom/pan;
+- resize back to the original canvas;
+- synthesize no new scene pixels;
+- persist the private end-frame digest/transform in `quality_report`;
+- never call Nexus/GPT Image to invent a second viewpoint for this continuation.
+
+Grok may sanity-check the two frames, but an edge hidden only by the deterministic crop is not a redesign.
+
+Do not combine `start_image` / `end_image` with reference-media mode for Seedance 2.0.
+
+Recovery invariants:
+- Grok identity review and Seedance generation use different deterministic UUIDs in `X-Client-Request-Id`;
+- persist each phase ID with its own checkpoint so provider lookup cannot confuse the two operations;
+- after an accepted Seedance create, a short `404 generation_not_found` is treated as status propagation delay and retries GET only;
+- never issue another paid video POST merely because the status endpoint is briefly not visible.
 
 Save result as `video/mp4` asset and return through existing signed media delivery.
 

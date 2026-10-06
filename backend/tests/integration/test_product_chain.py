@@ -1031,6 +1031,111 @@ async def test_uncertain_payment_verified_recovery_is_idempotent(monkeypatch, re
 
 
 @pytest.mark.asyncio
+async def test_duplicate_recovery_webhook_accepts_same_provider_after_stale_lookup(monkeypatch):
+    import asyncio
+
+    from app.repositories.billing import BillingRepository
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+        tokens, headers = await _register_admin(client)
+        code = f'webhook-race-{uuid4().hex[:10]}'
+        tariff = await client.post('/api/v1/admin/tariffs', headers=headers, json={
+            'code': code,
+            'name': 'Webhook race pack',
+            'credits': 7,
+            'amount': '100.00',
+            'currency': 'RUB',
+            'is_active': True,
+            'sort_order': 0,
+        })
+        assert tariff.status_code == 201, tariff.text
+
+        metadata = {}
+
+        async def lost_response(self, **kwargs):
+            metadata.update(kwargs['metadata'])
+            raise YooKassaError('response lost', ambiguous=True)
+
+        monkeypatch.setattr(YooKassaProvider, 'create_payment', lost_response)
+        created = await client.post(
+            '/api/v1/billing/payments',
+            headers=headers,
+            json={'package_code': code},
+        )
+        assert created.status_code == 503, created.text
+
+        provider_id = f'payment-{uuid4()}'
+
+        async def verify(self, payment_id):
+            assert payment_id == provider_id
+            return YooKassaPayment(
+                id=provider_id,
+                status='succeeded',
+                amount=Decimal('100.00'),
+                currency='RUB',
+                metadata=dict(metadata),
+            )
+
+        monkeypatch.setattr(YooKassaProvider, 'get_payment', verify)
+
+        original_has_provider_payment = BillingRepository.has_provider_payment
+        first_lookup_done = asyncio.Event()
+        second_lookup_done = asyncio.Event()
+        first_request_done = asyncio.Event()
+        lookup_count = 0
+
+        async def gated_has_provider_payment(self, current_provider_id):
+            nonlocal lookup_count
+            result = await original_has_provider_payment(self, current_provider_id)
+            lookup_count += 1
+            if lookup_count == 1:
+                first_lookup_done.set()
+                await second_lookup_done.wait()
+            elif lookup_count == 2:
+                second_lookup_done.set()
+                await first_request_done.wait()
+            return result
+
+        monkeypatch.setattr(
+            BillingRepository,
+            'has_provider_payment',
+            gated_has_provider_payment,
+        )
+
+        webhook = {
+            'event': 'payment.succeeded',
+            'object': {'id': provider_id, 'metadata': dict(metadata)},
+        }
+        first_task = asyncio.create_task(
+            client.post('/api/v1/billing/webhooks/yookassa', json=webhook)
+        )
+        await first_lookup_done.wait()
+        second_task = asyncio.create_task(
+            client.post('/api/v1/billing/webhooks/yookassa', json=webhook)
+        )
+        await second_lookup_done.wait()
+
+        first = await first_task
+        first_request_done.set()
+        second = await second_task
+
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+        assert (await client.get('/api/v1/me', headers=headers)).json()['credits_balance'] == 7
+
+        ledger = await client.get(
+            '/api/v1/admin/credit-transactions',
+            headers=headers,
+            params={'user_id': tokens['user']['id']},
+        )
+        assert ledger.status_code == 200, ledger.text
+        assert len([
+            row for row in ledger.json()
+            if row['kind'] == 'payment_credit'
+        ]) == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('field', ['billing_payment_id', 'user_id', 'package_code', 'amount', 'currency'])
 async def test_admin_recovery_rejects_provider_mismatch(monkeypatch, field):
     from app.db.models.billing import BillingPayment

@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
+from uuid import UUID, uuid4
 
 import pytest
 from PIL import Image
@@ -159,6 +160,55 @@ async def test_unknown_yookassa_webhook_id_does_not_trigger_provider_request(
             {
                 "event": "payment.succeeded",
                 "object": {"id": "unknown-payment"},
+            }
+        )
+    assert exc.value.status == 503
+    assert exc.value.type == "billing_webhook_object_not_ready"
+    assert provider_called is False
+
+
+@pytest.mark.asyncio
+async def test_yookassa_webhook_rejects_metadata_payment_linked_to_another_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payment_id = uuid4()
+    candidate = SimpleNamespace(
+        id=payment_id,
+        yookassa_payment_id="different-provider-payment",
+        status="succeeded",
+    )
+    service = BillingService(
+        object(),  # type: ignore[arg-type]
+        Settings(yookassa_shop_id="shop", yookassa_secret_key="secret"),
+    )
+
+    class FakeRepository:
+        async def has_provider_payment(self, provider_id: str) -> bool:
+            assert provider_id == "incoming-provider-payment"
+            return False
+
+        async def get_payment(self, current_payment_id: UUID):
+            assert current_payment_id == payment_id
+            return candidate
+
+    service.repository = FakeRepository()  # type: ignore[assignment]
+    provider_called = False
+
+    async def unexpected_get_payment(self, provider_id: str):  # noqa: ANN001, ARG001
+        nonlocal provider_called
+        provider_called = True
+        raise AssertionError("provider must not be called for mismatched local linkage")
+
+    monkeypatch.setattr(YooKassaProvider, "get_payment", unexpected_get_payment)
+
+    with pytest.raises(AppError) as exc:
+        await service.handle_webhook(
+            {
+                "event": "payment.succeeded",
+                "object": {
+                    "id": "incoming-provider-payment",
+                    "metadata": {"billing_payment_id": str(payment_id)},
+                },
             }
         )
     assert exc.value.status == 503

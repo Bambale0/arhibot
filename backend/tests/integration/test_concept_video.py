@@ -35,7 +35,7 @@ from app.providers.neironych_video import (  # noqa: E402
     NeironychVideoProvider,
     NeironychVideoResult,
 )
-from app.providers.nexus import NexusImageProvider, NexusImageResult  # noqa: E402
+from app.providers.nexus import NexusImageProvider  # noqa: E402
 from app.services.asset_service import LocalMediaStorage  # noqa: E402
 from app.services.generation_service import GENERATION_QUEUE_KEY  # noqa: E402
 from app.workers import generation_worker  # noqa: E402
@@ -183,17 +183,9 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         grok_calls: list[dict] = []
         seedance_calls: list[dict] = []
 
-        async def fake_nexus_generate(self, **kwargs):  # noqa: ANN001, ARG001
+        async def fail_if_nexus_generate_is_called(self, **kwargs):  # noqa: ANN001, ARG001
             nexus_calls.append(kwargs)
-            if kwargs.get("on_task_created") is not None:
-                await kwargs["on_task_created"]("video-keyframe-task")
-            return NexusImageResult(
-                task_id="video-keyframe-task",
-                image_url="https://cdn.example.test/keyframe.png",
-            )
-
-        async def fake_provider_image_data(result, settings):  # noqa: ANN001, ARG001
-            return _png()
+            raise AssertionError("concept video must not buy a Nexus keyframe")
 
         async def fake_review(self, **kwargs):  # noqa: ANN001, ARG001
             grok_calls.append(kwargs)
@@ -226,8 +218,11 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
                 mime_type="video/mp4",
             )
 
-        monkeypatch.setattr(NexusImageProvider, "generate", fake_nexus_generate)
-        monkeypatch.setattr(generation_worker, "_provider_image_data", fake_provider_image_data)
+        monkeypatch.setattr(
+            NexusImageProvider,
+            "generate",
+            fail_if_nexus_generate_is_called,
+        )
         monkeypatch.setattr(NeironychResponsesProvider, "review_identity", fake_review)
         monkeypatch.setattr(NeironychVideoProvider, "generate", fake_video_generate)
 
@@ -237,11 +232,12 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         await generation_worker.process_generation(video_id, settings)
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(video_id))
 
-        assert len(nexus_calls) == 1
-        assert nexus_calls[0]["model_name"] == "gpt-image-2"
-        assert "CAMERA MOVE ONLY" in nexus_calls[0]["prompt"]
+        assert nexus_calls == []
         assert len(grok_calls) == 1
         assert len(seedance_calls) == 1
+        assert grok_calls[0]["client_request_id"] != seedance_calls[0]["client_request_id"]
+        assert UUID(grok_calls[0]["client_request_id"])
+        assert UUID(seedance_calls[0]["client_request_id"])
 
         completed = await client.get(
             f"/api/v1/generations/{video_id}",
@@ -258,6 +254,11 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         assert body["output_asset"]["width"] == 1920
         assert body["output_asset"]["height"] == 1080
         assert body["quality_report"]["video_identity_review"]["same_scene"] is True
+        end_frame = body["quality_report"]["provider_frame_requests"]["video-end"]
+        assert end_frame["provider"] == "deterministic"
+        assert end_frame["model"] == "locked_pan_zoom_v1"
+        assert end_frame["state"] == "completed"
+        assert end_frame["crop_box"]
         assert "request_body" not in body["quality_report"]["video_request"]
         assert "key" not in body["quality_report"]["video_request"]
 

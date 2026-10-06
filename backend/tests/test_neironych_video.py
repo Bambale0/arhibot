@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 
 from app.core.config import Settings
-from app.providers.neironych_video import NeironychVideoProvider
+from app.providers.neironych_video import (
+    NeironychVideoNotVisible,
+    NeironychVideoProvider,
+)
 
 
 def _settings() -> Settings:
@@ -77,3 +80,55 @@ def test_seedance_output_requires_mp4_ftyp_box(content: bytes) -> None:
 def test_seedance_output_accepts_mp4_ftyp_box() -> None:
     content = b"\x00\x00\x00\x18ftypmp42" + b"x" * 32
     NeironychVideoProvider.validate_video_content(content, max_bytes=1024)
+
+
+@pytest.mark.asyncio
+async def test_seedance_retries_status_visibility_without_new_create(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = NeironychVideoProvider(
+        _settings().model_copy(
+            update={
+                "neironych_video_poll_seconds": 0.01,
+                "neironych_video_timeout_seconds": 60,
+            }
+        )
+    )
+    calls = 0
+
+    async def fake_status(request_id: str):
+        nonlocal calls
+        calls += 1
+        assert request_id == "video-request-1"
+        if calls == 1:
+            raise NeironychVideoNotVisible("not visible yet", retryable=True)
+        return "done", {"status": "done"}
+
+    async def fake_download(request_id: str):
+        assert request_id == "video-request-1"
+        return b"\x00\x00\x00\x18ftypmp42" + b"x" * 32, "video/mp4"
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    async def forbidden_create(**_kwargs):
+        raise AssertionError("accepted video request must not be submitted again")
+
+    monkeypatch.setattr(provider, "_status_request", fake_status)
+    monkeypatch.setattr(provider, "_download", fake_download)
+    monkeypatch.setattr(provider, "create", forbidden_create)
+    monkeypatch.setattr("app.providers.neironych_video.asyncio.sleep", no_sleep)
+
+    result = await provider.generate(
+        model="seedance-2.0",
+        prompt="Camera motion only.",
+        start_image_url="https://media.example.test/start.png",
+        end_image_url="https://media.example.test/end.png",
+        params={"duration": 8, "resolution": "1080p", "aspect_ratio": "16:9"},
+        idempotency_key="video-idempotency-key",
+        client_request_id="11111111-1111-4111-8111-111111111111",
+        request_id="video-request-1",
+    )
+
+    assert result.request_id == "video-request-1"
+    assert calls == 2
