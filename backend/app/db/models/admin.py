@@ -190,7 +190,7 @@ class GenerationRuntimeSettings(Base):
     video_params: Mapped[dict] = mapped_column(
         JSONB,
         nullable=False,
-        default=lambda: {"duration": 8, "resolution": "1080p", "aspect_ratio": "16:9"},
+        default=lambda: {"duration": 8, "resolution": "480p", "aspect_ratio": "16:9"},
         server_default="{}",
     )
     masked_edit_provider_context_margin_fraction: Mapped[float] = mapped_column(
