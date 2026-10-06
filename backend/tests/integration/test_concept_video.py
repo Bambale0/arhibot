@@ -247,6 +247,11 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         assert identity["confidence"] == 1.0
         assert identity["verification"] == "deterministic_locked_bird_anchor_v1"
         assert body["quality_report"]["video_motion_profile"] == "bird_flyover_safe_v1"
+        constraints = body["quality_report"]["video_motion_constraints"]
+        assert constraints["target_arc_degrees"] == [20, 35]
+        assert constraints["max_arc_degrees"] == 45
+        assert constraints["rear_facade_reveal"] is False
+        assert constraints["resolution"] == "480p"
         end_frame = body["quality_report"]["provider_frame_requests"]["video-end"]
         assert end_frame["provider"] == "deterministic"
         assert end_frame["model"] == "locked_bird_anchor_v1"
