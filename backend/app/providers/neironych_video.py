@@ -253,6 +253,45 @@ class NeironychVideoProvider:
         return self._status(payload), payload
 
     @staticmethod
+    def video_dimensions(content: bytes) -> tuple[int, int] | None:
+        """Read the display dimensions from a standard MP4 video track."""
+
+        def boxes(start: int, end: int):
+            pos = start
+            while pos + 8 <= end:
+                size = int.from_bytes(content[pos : pos + 4], "big")
+                kind = content[pos + 4 : pos + 8]
+                header = 8
+                if size == 1:
+                    if pos + 16 > end:
+                        return
+                    size = int.from_bytes(content[pos + 8 : pos + 16], "big")
+                    header = 16
+                elif size == 0:
+                    size = end - pos
+                if size < header or pos + size > end:
+                    return
+                yield kind, pos + header, pos + size
+                pos += size
+
+        for kind, moov_start, moov_end in boxes(0, len(content)):
+            if kind != b"moov":
+                continue
+            for track_kind, track_start, track_end in boxes(moov_start, moov_end):
+                if track_kind != b"trak":
+                    continue
+                for box_kind, box_start, box_end in boxes(track_start, track_end):
+                    if box_kind != b"tkhd" or box_end - box_start < 8:
+                        continue
+                    width_raw = int.from_bytes(content[box_end - 8 : box_end - 4], "big")
+                    height_raw = int.from_bytes(content[box_end - 4 : box_end], "big")
+                    width = round(width_raw / 65536)
+                    height = round(height_raw / 65536)
+                    if width > 0 and height > 0:
+                        return width, height
+        return None
+
+    @staticmethod
     def validate_video_content(content: bytes, *, max_bytes: int) -> None:
         if not content or len(content) > max_bytes:
             raise ValueError("MP4 video size is invalid")
