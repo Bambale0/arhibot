@@ -176,14 +176,21 @@ def _concept_video_identity_prompt(canonical_prompt: str) -> str:
 
 def _concept_video_motion_prompt() -> str:
     return (
-        "Create a smooth cinematic architectural drone flyover between the supplied start "
-        "and end frames. They depict the exact same architectural project. STRICT IDENTITY "
-        "LOCK: preserve exact house and site geometry, footprint, roof, windows, doors, "
-        "terraces, garage, pool, paths, fence, landscaping structure, materials, object count "
-        "and relative object positions. Camera motion only. No architectural morphing, no "
-        "moving buildings, no changing openings or roof geometry, no adding/removing objects, "
-        "no vegetation growth/disappearance and no site-layout drift. Use a slow stable drone "
-        "move with natural parallax."
+        "Create a premium photorealistic architectural camera move between the supplied start "
+        "and end frames. The accepted start still is the ground truth and the end frame is a "
+        "pixel-derived framing anchor from that exact same still. CAMERA MOTION ONLY. Use a "
+        "slow stabilized forward dolly, a small lateral truck to the right, and a slight camera "
+        "rise, with smooth ease-in and ease-out, constant focal length, stable horizon and no "
+        "lens breathing. Keep the camera on the same visible side of the property. Do not orbit, "
+        "do not pass over the roof, do not swing around corners, and do not reveal unseen sides "
+        "of the building. If stronger parallax would require inventing unseen geometry, reduce "
+        "the apparent parallax and preserve the accepted image instead. STRICT IDENTITY LOCK: "
+        "preserve exact house and site geometry, footprint, roof, windows, doors, terraces, "
+        "garage, pool, paths, fence, landscaping structure, materials, object count and all "
+        "relative object positions. No architectural morphing, no changing openings, no roof "
+        "deformation, no object additions/removals, no relighting, no weather change, no "
+        "vegetation animation, no moving water, no people and no vehicles. The result should "
+        "feel like a calm high-end real-estate slider/drone shot, not a redesign."
     )
 
 
@@ -755,10 +762,12 @@ async def _ensure_locked_video_end_frame(
             .get(phase, {})
         )
 
+    source_digest = sha256(source_data).hexdigest()
     if (
         cached.get("state") == "completed"
         and cached.get("provider") == "deterministic"
         and cached.get("model") == "locked_pan_zoom_v1"
+        and cached.get("source_sha256") == source_digest
     ):
         await _read_admin_frame(storage, cached)
         return storage.signed_url(
@@ -793,6 +802,7 @@ async def _ensure_locked_video_end_frame(
             "phase": phase,
             "path": path,
             "sha256": sha256(frame.data).hexdigest(),
+            "source_sha256": source_digest,
             "crop_box": list(frame.crop_box),
             "width": frame.width,
             "height": frame.height,
@@ -923,10 +933,11 @@ async def _run_concept_video(
     runtime_snapshot: dict[str, object],
     settings: Settings,
 ) -> tuple[bytes, str, str, tuple[int, int], dict[str, object]]:
-    judge_model = str(runtime_snapshot.get("judge_model") or "").strip()
+    del source_prompt  # deterministic keyframe provenance replaces the old visual identity judge
+
     video_model = str(runtime_snapshot.get("video_model") or "").strip()
     video_params = dict(runtime_snapshot.get("video_params") or {})
-    if not all((judge_model, video_model)):
+    if not video_model:
         raise NexusProviderError("Concept video runtime snapshot is incomplete", retryable=False)
 
     end_url = await _ensure_locked_video_end_frame(
@@ -935,40 +946,21 @@ async def _run_concept_video(
         settings=settings,
     )
 
+    identity_report: dict[str, object] = {
+        "same_scene": True,
+        "confidence": 1.0,
+        "critical_differences": [],
+        "verification": "deterministic_locked_pan_zoom_v1",
+    }
     async with get_session_factory()() as db:
-        current = await db.get(Generation, generation_id)
-        saved_review = (
-            (current.quality_report or {}).get("video_identity_review")
-            if current is not None
-            else None
-        )
-    if isinstance(saved_review, dict):
-        from app.providers.neironych_responses import VideoIdentityReview
-        identity = VideoIdentityReview.model_validate(saved_review)
-    else:
-        identity_key = f"auroom-{generation_id}-video-identity"
-        identity_client_request_id = _concept_video_client_request_id(
-            generation_id,
-            "identity",
-        )
-        await _persist_video_identity_submission(
-            generation_id,
-            model=judge_model,
-            key=identity_key,
-            client_request_id=identity_client_request_id,
-        )
-        judge = NeironychResponsesProvider(settings)
-        identity = await judge.review_identity(
-            model=judge_model,
-            prompt=_concept_video_identity_prompt(source_prompt),
-            image_urls=[source_url, end_url],
-            idempotency_key=identity_key,
-            client_request_id=identity_client_request_id,
-        )
-        await _persist_video_identity_review(generation_id, identity)
-
-    if not identity.same_scene:
-        raise ConceptVideoIdentityRejected(identity.model_dump(mode="json"))
+        row = await GenerationRepository(db).get_for_update(generation_id)
+        if row is None or row.status != GenerationStatus.PROCESSING:
+            raise NexusProviderError("Video generation is no longer processing", retryable=False)
+        report = dict(row.quality_report or {})
+        report["video_identity_review"] = identity_report
+        report["video_motion_profile"] = "safe_cinematic_parallax_v1"
+        row.quality_report = report
+        await db.commit()
 
     video_provider = NeironychVideoProvider(settings)
     video_prompt = _concept_video_motion_prompt()
@@ -1019,7 +1011,7 @@ async def _run_concept_video(
         result.request_id,
         video_model,
         (width, height),
-        identity.model_dump(mode="json"),
+        identity_report,
     )
 
 
@@ -1414,10 +1406,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             fallback_params = {}
             primary_timeout_seconds = None
             prompt = video_source_prompt
-            if (
-                not str(video_runtime.get("judge_model") or "").strip()
-                or not primary_model
-            ):
+            if not primary_model:
                 await session.rollback()
                 await _mark_failed_and_refund(
                     generation_id, "Concept video runtime snapshot is invalid."

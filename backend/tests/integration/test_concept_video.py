@@ -27,10 +27,7 @@ from app.domain.generations.enums import (  # noqa: E402
 )
 from app.domain.users.enums import UserRole  # noqa: E402
 from app.main import app  # noqa: E402
-from app.providers.neironych_responses import (  # noqa: E402
-    NeironychResponsesProvider,
-    VideoIdentityReview,
-)
+from app.providers.neironych_responses import NeironychResponsesProvider  # noqa: E402
 from app.providers.neironych_video import (  # noqa: E402
     NeironychVideoProvider,
     NeironychVideoResult,
@@ -93,7 +90,7 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
                 "primary_params": {"resolution": "2K"},
                 "fallback_params": {},
                 "mode_params": {},
-                "quality_judge_model": "grok-4.5",
+                "quality_judge_model": None,
                 "video_enabled": True,
                 "video_model": "seedance-2.0",
                 "video_params": {
@@ -180,25 +177,15 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         assert after_duplicate == before - 3
 
         nexus_calls: list[dict] = []
-        grok_calls: list[dict] = []
         seedance_calls: list[dict] = []
 
         async def fail_if_nexus_generate_is_called(self, **kwargs):  # noqa: ANN001, ARG001
             nexus_calls.append(kwargs)
             raise AssertionError("concept video must not buy a Nexus keyframe")
 
-        async def fake_review(self, **kwargs):  # noqa: ANN001, ARG001
-            grok_calls.append(kwargs)
-            assert kwargs["model"] == "grok-4.5"
-            assert len(kwargs["image_urls"]) == 2
-            assert all(
-                url.startswith("https://media.example.test/")
-                for url in kwargs["image_urls"]
-            )
-            return VideoIdentityReview(
-                same_scene=True,
-                confidence=0.98,
-                critical_differences=[],
+        async def fail_if_grok_identity_is_called(self, **kwargs):  # noqa: ANN001, ARG001
+            raise AssertionError(
+                "locked pixel-derived concept video must not depend on Grok identity review"
             )
 
         async def fake_video_generate(self, **kwargs):  # noqa: ANN001, ARG001
@@ -223,7 +210,11 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
             "generate",
             fail_if_nexus_generate_is_called,
         )
-        monkeypatch.setattr(NeironychResponsesProvider, "review_identity", fake_review)
+        monkeypatch.setattr(
+            NeironychResponsesProvider,
+            "review_identity",
+            fail_if_grok_identity_is_called,
+        )
         monkeypatch.setattr(NeironychVideoProvider, "generate", fake_video_generate)
 
         settings = get_settings().model_copy(
@@ -233,10 +224,7 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(video_id))
 
         assert nexus_calls == []
-        assert len(grok_calls) == 1
         assert len(seedance_calls) == 1
-        assert grok_calls[0]["client_request_id"] != seedance_calls[0]["client_request_id"]
-        assert UUID(grok_calls[0]["client_request_id"])
         assert UUID(seedance_calls[0]["client_request_id"])
 
         completed = await client.get(
@@ -253,12 +241,17 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         assert body["output_asset"]["mime_type"] == "video/mp4"
         assert body["output_asset"]["width"] == 1920
         assert body["output_asset"]["height"] == 1080
-        assert body["quality_report"]["video_identity_review"]["same_scene"] is True
+        identity = body["quality_report"]["video_identity_review"]
+        assert identity["same_scene"] is True
+        assert identity["confidence"] == 1.0
+        assert identity["verification"] == "deterministic_locked_pan_zoom_v1"
+        assert body["quality_report"]["video_motion_profile"] == "safe_cinematic_parallax_v1"
         end_frame = body["quality_report"]["provider_frame_requests"]["video-end"]
         assert end_frame["provider"] == "deterministic"
         assert end_frame["model"] == "locked_pan_zoom_v1"
         assert end_frame["state"] == "completed"
         assert end_frame["crop_box"]
+        assert end_frame["source_sha256"]
         assert "request_body" not in body["quality_report"]["video_request"]
         assert "key" not in body["quality_report"]["video_request"]
 
