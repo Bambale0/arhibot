@@ -598,7 +598,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
       <label><span><input type="checkbox" checked={videoEnabled} onChange={e=>setVideoEnabled(e.target.checked)}/> Видео включено</span></label>
       <label>Grok judge model<input value={judgeModel} onChange={e=>setJudgeModel(e.target.value)} placeholder="grok-4.5"/></label>
       <label>Seedance model<input value={videoModel} onChange={e=>setVideoModel(e.target.value)} placeholder="seedance-2.5"/></label>
-      <label className="admin-span-2">Video params<textarea className="admin-code" value={videoParams} onChange={e=>setVideoParams(e.target.value)}/><small>Например: {"{"}"duration":8,"resolution":"1080p","aspect_ratio":"16:9"{"}"}</small></label>
+      <label className="admin-span-2">Video params<textarea className="admin-code" value={videoParams} onChange={e=>setVideoParams(e.target.value)}/><small>Например: {"{"}"duration":8,"resolution":"480p","aspect_ratio":"16:9"{"}"}</small></label>
       <div className="admin-span-2"><h3>Masked edit quality</h3><small>Контекст provider шире final commit region; финальный compositor по-прежнему запрещает изменения снаружи пользовательской области.</small></div>
       <label>Provider margin, доля<input type="number" min="0" max="0.25" step="0.005" value={providerMargin} onChange={e=>setProviderMargin(e.target.value)}/></label>
       <label>Feather fraction<input type="number" min="0" max="0.1" step="0.001" value={featherFraction} onChange={e=>setFeatherFraction(e.target.value)}/></label>
