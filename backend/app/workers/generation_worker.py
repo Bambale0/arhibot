@@ -151,22 +151,6 @@ def _concept_video_dimensions(params: dict[str, object]) -> tuple[int, int]:
     return width, height
 
 
-def _concept_video_end_frame_prompt(canonical_prompt: str) -> str:
-    return (
-        "CAMERA MOVE ONLY. Create a second keyframe of the exact same architectural "
-        "project and exact same plot shown in reference image 1. Move the camera about "
-        "15 degrees to the right, raise it slightly, and pull back a little while keeping "
-        "the project centered. Preserve exact house geometry and footprint, number of "
-        "floors, roof, windows, doors, garage, terraces, pool, paths, fence/hedge, "
-        "landscaping structure, materials, object count and all relative positions. "
-        "Do not add, remove, redesign or relocate anything. Do not change season, weather "
-        "or lighting direction. Natural parallax is allowed; architectural morphing is not. "
-        "The canonical brief below is authoritative for architecture and site constraints; "
-        "only its camera/viewpoint instruction is superseded by this controlled camera move.\n\n"
-        f"CANONICAL BRIEF:\n{canonical_prompt}"
-    )
-
-
 def _concept_video_identity_prompt(canonical_prompt: str) -> str:
     return (
         "Image 1 is the accepted AuRoom concept. Image 2 is NOT an independently generated "
@@ -738,102 +722,6 @@ async def _generate_flyover_frames(
         generated_frames.append(data)
         last_task_id = task_id
     return generated_frames, last_task_id
-
-
-async def _stored_frame_url(
-    generation_id: UUID,
-    phase: str,
-    settings: Settings,
-) -> str:
-    async with get_session_factory()() as db:
-        row = await db.get(Generation, generation_id)
-        if row is None:
-            raise NexusProviderError("Generation frame owner is unavailable", retryable=False)
-        frame = (row.quality_report or {}).get("provider_frame_requests", {}).get(phase, {})
-        path = frame.get("path")
-        if frame.get("state") != "completed" or not isinstance(path, str) or not path:
-            raise NexusProviderError("Saved video keyframe is unavailable", retryable=False)
-    return LocalMediaStorage(settings).signed_url(
-        path,
-        ttl_seconds=max(
-            settings.media_url_ttl_seconds,
-            settings.neironych_video_timeout_seconds + 300,
-        ),
-    )
-
-
-async def _ensure_locked_video_end_frame(
-    generation_id: UUID,
-    *,
-    source_data: bytes,
-    settings: Settings,
-) -> str:
-    storage = LocalMediaStorage(settings)
-    phase = "video-end"
-
-    async with get_session_factory()() as db:
-        row = await GenerationRepository(db).get_for_update(generation_id)
-        if row is None or row.status != GenerationStatus.PROCESSING:
-            raise NexusProviderError("Video generation is no longer processing", retryable=False)
-        cached = (
-            (row.quality_report or {})
-            .get("provider_frame_requests", {})
-            .get(phase, {})
-        )
-
-    if (
-        cached.get("state") == "completed"
-        and cached.get("provider") == "deterministic"
-        and cached.get("model") == "locked_pan_zoom_v1"
-    ):
-        await _read_admin_frame(storage, cached)
-        return storage.signed_url(
-            cached["path"],
-            ttl_seconds=max(
-                settings.media_url_ttl_seconds,
-                settings.neironych_video_timeout_seconds + 300,
-            ),
-        )
-
-    frame = await asyncio.to_thread(
-        build_locked_video_end_frame,
-        source_data,
-        max_pixels=settings.max_image_pixels,
-    )
-    path = f"internal/video-frames/{generation_id}/{phase}.png"
-    await storage.write(path, frame.data)
-
-    async with get_session_factory()() as db:
-        row = await GenerationRepository(db).get_for_update(generation_id)
-        if row is None or row.status != GenerationStatus.PROCESSING:
-            raise NexusProviderError(
-                "Video generation stopped before keyframe commit",
-                retryable=False,
-            )
-        report = dict(row.quality_report or {})
-        frames = dict(report.get("provider_frame_requests", {}))
-        frames[phase] = {
-            "state": "completed",
-            "provider": "deterministic",
-            "model": frame.transform,
-            "phase": phase,
-            "path": path,
-            "sha256": sha256(frame.data).hexdigest(),
-            "crop_box": list(frame.crop_box),
-            "width": frame.width,
-            "height": frame.height,
-        }
-        report["provider_frame_requests"] = frames
-        row.quality_report = report
-        await db.commit()
-
-    return storage.signed_url(
-        path,
-        ttl_seconds=max(
-            settings.media_url_ttl_seconds,
-            settings.neironych_video_timeout_seconds + 300,
-        ),
-    )
 
 
 async def _persist_video_identity_submission(
