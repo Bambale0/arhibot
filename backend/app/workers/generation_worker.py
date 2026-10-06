@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 import httpx
 from sqlalchemy import select
 
+from app.concept_video_keyframe import build_locked_video_end_frame
 from app.core.config import Settings, get_settings
 from app.core.metrics import (
     record_generation_quality_retry_success,
@@ -23,7 +24,6 @@ from app.core.metrics import (
     record_masked_edit_started,
 )
 from app.core.redis import redis_client
-from app.concept_video_keyframe import build_locked_video_end_frame
 from app.db.models.assets import Asset
 from app.db.models.generations import Generation
 from app.db.models.projects import Project
@@ -35,17 +35,17 @@ from app.image_compositor import (
     compose_masked_edit,
     expand_normalized_region,
 )
+from app.image_flyover import FlyoverGif, build_flyover_gif
+from app.image_orbit import build_orbit_animation
 from app.image_quality import analyze_masked_edit_quality
 from app.initial_layout_guide import build_initial_layout_guide
 from app.localized_edit import (
     LocalCandidateFramingError,
     choose_local_geometry,
-    local_source,
     local_edit_prompt,
+    local_source,
     project_local_candidate,
 )
-from app.image_flyover import FlyoverGif, build_flyover_gif
-from app.image_orbit import build_orbit_animation
 from app.prompt_builders.generation import build_generation_prompt
 from app.providers.neironych import NeironychImageProvider, NeironychImageResult
 from app.providers.neironych_responses import NeironychResponsesProvider
@@ -53,8 +53,8 @@ from app.providers.neironych_video import NeironychVideoProvider
 from app.providers.nexus import (
     NexusImageProvider,
     NexusImageResult,
-    NexusProviderError,
     NexusOutcomeUnknown,
+    NexusProviderError,
 )
 from app.repositories.admin import AdminRepository
 from app.repositories.assets import AssetRepository
