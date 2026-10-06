@@ -92,7 +92,7 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
                 "mode_params": {},
                 "quality_judge_model": None,
                 "video_enabled": True,
-                "video_model": "seedance-2.0",
+                "video_model": "seedance-2.5",
                 "video_params": {
                     "duration": 8,
                     "resolution": "1080p",
@@ -163,7 +163,7 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         video_id = UUID(created.json()["id"])
         assert created.json()["type"] == "video"
         assert created.json()["credits_charged"] == 3
-        assert created.json()["model_name"] == "seedance-2.0"
+        assert created.json()["model_name"] == "seedance-2.5"
 
         duplicate = await client.post(
             f"/api/v1/generations/{source_id}/video",
@@ -190,10 +190,11 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
 
         async def fake_video_generate(self, **kwargs):  # noqa: ANN001, ARG001
             seedance_calls.append(kwargs)
-            assert kwargs["model"] == "seedance-2.0"
+            assert kwargs["model"] == "seedance-2.5"
             # The Nexus keyframe task id must never be reused as a Seedance request id.
             assert kwargs["request_id"] is None
             assert kwargs["request_body"]
+            assert '"aspect_ratio":"adaptive"' in kwargs["request_body"]
             assert kwargs["start_image_url"].startswith("https://media.example.test/")
             assert kwargs["end_image_url"].startswith("https://media.example.test/")
             callback = kwargs.get("on_request_created")
@@ -235,7 +236,7 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         body = completed.json()
         assert body["status"] == "completed"
         assert body["type"] == "video"
-        assert body["model_name"] == "seedance-2.0"
+        assert body["model_name"] == "seedance-2.5"
         assert body["quality_status"] == "passed"
         assert body["output_asset"]["type"] == "video"
         assert body["output_asset"]["mime_type"] == "video/mp4"

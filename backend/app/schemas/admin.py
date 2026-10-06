@@ -342,7 +342,7 @@ class GenerationRuntimeUpdate(BaseModel):
     mode_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
     quality_judge_model: str | None = Field(default="grok-4.5", max_length=120)
     video_enabled: bool = False
-    video_model: str | None = Field(default="seedance-2.0", max_length=120)
+    video_model: str | None = Field(default="seedance-2.5", max_length=120)
     video_params: dict[str, Any] = Field(
         default_factory=lambda: {"duration": 8, "resolution": "1080p", "aspect_ratio": "16:9"}
     )
@@ -436,7 +436,7 @@ class GenerationRuntimeResponse(BaseModel):
     mode_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
     quality_judge_model: str | None = "grok-4.5"
     video_enabled: bool = False
-    video_model: str | None = "seedance-2.0"
+    video_model: str | None = "seedance-2.5"
     video_params: dict[str, Any] = Field(default_factory=dict)
     masked_edit_provider_context_margin_fraction: float
     masked_edit_feather_fraction: float

@@ -419,7 +419,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   const [modeParams,setModeParams]=useState(JSON.stringify(settings.mode_params,null,2))
   const [judgeModel,setJudgeModel]=useState(settings.quality_judge_model || 'grok-4.5')
   const [videoEnabled,setVideoEnabled]=useState(settings.video_enabled)
-  const [videoModel,setVideoModel]=useState(settings.video_model || 'seedance-2.0')
+  const [videoModel,setVideoModel]=useState(settings.video_model || 'seedance-2.5')
   const [videoParams,setVideoParams]=useState(JSON.stringify(settings.video_params || {duration:8,resolution:'1080p',aspect_ratio:'16:9'},null,2))
   const [providerMargin,setProviderMargin]=useState(String(settings.masked_edit_provider_context_margin_fraction))
   const [featherFraction,setFeatherFraction]=useState(String(settings.masked_edit_feather_fraction))
@@ -594,10 +594,10 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   async function savePrice(mode: GenerationMode, value: number, active: boolean){try{const saved=await api.adminUpdateGenerationPrice(mode,value,active);onPrices([...prices.filter(x=>x.generation_type!==mode),saved])}catch(err){onError(errorText(err))}}
   return <section className="admin-panel"><div className="admin-panel-title"><div><h2>AI, стоимость и промпты</h2><p>Модели, параметры, стоимость кредитов и prompt templates управляются из БД.</p></div></div>
     <div className="admin-form-grid"><label>Primary model<input value={primary} onChange={e=>setPrimary(e.target.value)}/></label><label>Fallback model<input value={fallback} onChange={e=>setFallback(e.target.value)}/></label><label>Primary timeout, сек<input type="number" min="30" max="600" value={primaryTimeout} onChange={e=>setPrimaryTimeout(e.target.value)}/><small>Срок подтверждения создания задачи. Принятая задача ожидается до общего таймаута провайдера; резервная модель запускается только после подтверждённой ошибки задачи.</small></label><label className="admin-span-2">Primary params<textarea className="admin-code" value={primaryParams} onChange={e=>setPrimaryParams(e.target.value)}/></label><label className="admin-span-2">Fallback params<textarea className="admin-code" value={fallbackParams} onChange={e=>setFallbackParams(e.target.value)}/></label><label className="admin-span-2">Параметры по сценариям<textarea className="admin-code" value={modeParams} onChange={e=>setModeParams(e.target.value)}/></label>
-      <div className="admin-span-2"><h3>Видео после концепции</h3><small>Keyframe B создаёт текущий Primary Nexus image model; Grok проверяет A/B, затем Seedance строит MP4. Identity-lock prompt управляется сервером.</small></div>
+      <div className="admin-span-2"><h3>Видео после концепции</h3><small>Keyframe B строится детерминированно из пикселей принятой концепции без Nexus/Grok. Seedance 2.5 получает locked start/end frames; identity-lock и cinematic motion prompt управляются сервером.</small></div>
       <label><span><input type="checkbox" checked={videoEnabled} onChange={e=>setVideoEnabled(e.target.checked)}/> Видео включено</span></label>
       <label>Grok judge model<input value={judgeModel} onChange={e=>setJudgeModel(e.target.value)} placeholder="grok-4.5"/></label>
-      <label>Seedance model<input value={videoModel} onChange={e=>setVideoModel(e.target.value)} placeholder="seedance-2.0"/></label>
+      <label>Seedance model<input value={videoModel} onChange={e=>setVideoModel(e.target.value)} placeholder="seedance-2.5"/></label>
       <label className="admin-span-2">Video params<textarea className="admin-code" value={videoParams} onChange={e=>setVideoParams(e.target.value)}/><small>Например: {"{"}"duration":8,"resolution":"1080p","aspect_ratio":"16:9"{"}"}</small></label>
       <div className="admin-span-2"><h3>Masked edit quality</h3><small>Контекст provider шире final commit region; финальный compositor по-прежнему запрещает изменения снаружи пользовательской области.</small></div>
       <label>Provider margin, доля<input type="number" min="0" max="0.25" step="0.005" value={providerMargin} onChange={e=>setProviderMargin(e.target.value)}/></label>

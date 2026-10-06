@@ -185,7 +185,7 @@ class GenerationRuntimeSettings(Base):
         Boolean, nullable=False, default=False, server_default="false"
     )
     video_model: Mapped[str | None] = mapped_column(
-        String(120), nullable=True, default="seedance-2.0", server_default="seedance-2.0"
+        String(120), nullable=True, default="seedance-2.5", server_default="seedance-2.5"
     )
     video_params: Mapped[dict] = mapped_column(
         JSONB,

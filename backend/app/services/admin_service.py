@@ -308,7 +308,7 @@ class AdminService:
             mode_params=row.mode_params or {},
             quality_judge_model=getattr(row, "quality_judge_model", None) or "grok-4.5",
             video_enabled=bool(getattr(row, "video_enabled", False)),
-            video_model=getattr(row, "video_model", None) or "seedance-2.0",
+            video_model=getattr(row, "video_model", None) or "seedance-2.5",
             video_params=(
                 getattr(row, "video_params", None)
                 or {"duration": 8, "resolution": "1080p", "aspect_ratio": "16:9"}
