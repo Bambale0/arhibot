@@ -9,7 +9,7 @@ from hashlib import sha256
 from json import JSONDecodeError, dumps, loads
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import httpx
 from sqlalchemy import select
@@ -149,6 +149,15 @@ def _concept_video_dimensions(params: dict[str, object]) -> tuple[int, int]:
         width = short_side
         height = round(short_side * raw_height / raw_width)
     return width, height
+
+
+def _concept_video_client_request_id(generation_id: UUID, phase: str) -> str:
+    return str(
+        uuid5(
+            NAMESPACE_URL,
+            f"auroom:concept-video:{generation_id}:{phase}",
+        )
+    )
 
 
 def _concept_video_identity_prompt(canonical_prompt: str) -> str:
@@ -806,6 +815,7 @@ async def _persist_video_identity_submission(
     *,
     model: str,
     key: str,
+    client_request_id: str,
 ) -> None:
     async with get_session_factory()() as db:
         row = await GenerationRepository(db).get_for_update(generation_id)
@@ -821,6 +831,7 @@ async def _persist_video_identity_submission(
             "state": "submitted",
             "model": model,
             "key": key,
+            "client_request_id": client_request_id,
         }
         row.quality_report = report
         await db.commit()
@@ -850,6 +861,7 @@ async def _prepare_video_request(
     model: str,
     request_body: str,
     key: str,
+    client_request_id: str,
 ) -> tuple[str | None, str]:
     async with get_session_factory()() as db:
         row = await GenerationRepository(db).get_for_update(generation_id)
@@ -875,6 +887,7 @@ async def _prepare_video_request(
             "state": "prepared",
             "model": model,
             "key": key,
+            "client_request_id": client_request_id,
             "request_body": request_body,
         }
         row.quality_report = report
@@ -934,8 +947,15 @@ async def _run_concept_video(
         identity = VideoIdentityReview.model_validate(saved_review)
     else:
         identity_key = f"auroom-{generation_id}-video-identity"
+        identity_client_request_id = _concept_video_client_request_id(
+            generation_id,
+            "identity",
+        )
         await _persist_video_identity_submission(
-            generation_id, model=judge_model, key=identity_key
+            generation_id,
+            model=judge_model,
+            key=identity_key,
+            client_request_id=identity_client_request_id,
         )
         judge = NeironychResponsesProvider(settings)
         identity = await judge.review_identity(
@@ -943,7 +963,7 @@ async def _run_concept_video(
             prompt=_concept_video_identity_prompt(source_prompt),
             image_urls=[source_url, end_url],
             idempotency_key=identity_key,
-            client_request_id=str(generation_id),
+            client_request_id=identity_client_request_id,
         )
         await _persist_video_identity_review(generation_id, identity)
 
@@ -966,11 +986,16 @@ async def _run_concept_video(
         sort_keys=True,
     )
     video_key = f"auroom-{generation_id}-seedance"
+    video_client_request_id = _concept_video_client_request_id(
+        generation_id,
+        "seedance",
+    )
     request_id, request_body = await _prepare_video_request(
         generation_id,
         model=video_model,
         request_body=request_body,
         key=video_key,
+        client_request_id=video_client_request_id,
     )
 
     async def accepted(provider_request_id: str) -> None:
@@ -983,7 +1008,7 @@ async def _run_concept_video(
         end_image_url=end_url,
         params=video_params,
         idempotency_key=video_key,
-        client_request_id=str(generation_id),
+        client_request_id=video_client_request_id,
         request_id=request_id,
         request_body=request_body,
         on_request_created=accepted,
