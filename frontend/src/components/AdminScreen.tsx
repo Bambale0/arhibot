@@ -420,7 +420,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   const [judgeModel,setJudgeModel]=useState(settings.quality_judge_model || 'grok-4.5')
   const [videoEnabled,setVideoEnabled]=useState(settings.video_enabled)
   const [videoModel,setVideoModel]=useState(settings.video_model || 'seedance-2.5')
-  const [videoParams,setVideoParams]=useState(JSON.stringify(settings.video_params || {duration:8,resolution:'1080p',aspect_ratio:'16:9'},null,2))
+  const [videoParams,setVideoParams]=useState(JSON.stringify(settings.video_params || {duration:8,resolution:'480p',aspect_ratio:'16:9'},null,2))
   const [providerMargin,setProviderMargin]=useState(String(settings.masked_edit_provider_context_margin_fraction))
   const [featherFraction,setFeatherFraction]=useState(String(settings.masked_edit_feather_fraction))
   const [featherMin,setFeatherMin]=useState(String(settings.masked_edit_feather_min_px))
