@@ -724,6 +724,83 @@ async def _generate_flyover_frames(
     return generated_frames, last_task_id
 
 
+async def _ensure_locked_video_end_frame(
+    generation_id: UUID,
+    *,
+    source_data: bytes,
+    settings: Settings,
+) -> str:
+    storage = LocalMediaStorage(settings)
+    phase = "video-end"
+
+    async with get_session_factory()() as db:
+        row = await GenerationRepository(db).get_for_update(generation_id)
+        if row is None or row.status != GenerationStatus.PROCESSING:
+            raise NexusProviderError(
+                "Video generation is no longer processing",
+                retryable=False,
+            )
+        cached = (
+            (row.quality_report or {})
+            .get("provider_frame_requests", {})
+            .get(phase, {})
+        )
+
+    if (
+        cached.get("state") == "completed"
+        and cached.get("provider") == "deterministic"
+        and cached.get("model") == "locked_pan_zoom_v1"
+    ):
+        await _read_admin_frame(storage, cached)
+        return storage.signed_url(
+            cached["path"],
+            ttl_seconds=max(
+                settings.media_url_ttl_seconds,
+                settings.neironych_video_timeout_seconds + 300,
+            ),
+        )
+
+    frame = await asyncio.to_thread(
+        build_locked_video_end_frame,
+        source_data,
+        max_pixels=settings.max_image_pixels,
+    )
+    path = f"internal/video-frames/{generation_id}/{phase}.png"
+    await storage.write(path, frame.data)
+
+    async with get_session_factory()() as db:
+        row = await GenerationRepository(db).get_for_update(generation_id)
+        if row is None or row.status != GenerationStatus.PROCESSING:
+            raise NexusProviderError(
+                "Video generation stopped before keyframe commit",
+                retryable=False,
+            )
+        report = dict(row.quality_report or {})
+        frames = dict(report.get("provider_frame_requests", {}))
+        frames[phase] = {
+            "state": "completed",
+            "provider": "deterministic",
+            "model": frame.transform,
+            "phase": phase,
+            "path": path,
+            "sha256": sha256(frame.data).hexdigest(),
+            "crop_box": list(frame.crop_box),
+            "width": frame.width,
+            "height": frame.height,
+        }
+        report["provider_frame_requests"] = frames
+        row.quality_report = report
+        await db.commit()
+
+    return storage.signed_url(
+        path,
+        ttl_seconds=max(
+            settings.media_url_ttl_seconds,
+            settings.neironych_video_timeout_seconds + 300,
+        ),
+    )
+
+
 async def _persist_video_identity_submission(
     generation_id: UUID,
     *,
