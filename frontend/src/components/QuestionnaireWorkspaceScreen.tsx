@@ -302,6 +302,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const [plotAreaDraft, setPlotAreaDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [generationInFlight, setGenerationInFlight] = useState(false)
+  const [initialFailedGenerationId, setInitialFailedGenerationId] = useState<string|null>(null)
   const [checkedUnstarted, setCheckedUnstarted] = useState<{sessionId:string; objectKey:string}|null>(null)
   const [checkedFailure, setCheckedFailure] = useState<{sessionId:string; objectKey:string; generationId:string}|null>(null)
   const [uncertainCreation, setUncertainCreation] = useState<{session:DesignSession; objectKey:string; message:string}|null>(null)
@@ -499,8 +500,14 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     void (async () => {
       try {
         const existing = await getQuestionnaireGeneration(project.id, initialGenerationId)
-        const completed = await poll(existing)
-        if (!stopped) setRenderOutput(completed.output_asset)
+        const completed = await poll(
+          existing,
+          (failed) => { if (!stopped) setInitialFailedGenerationId(failed.id) },
+        )
+        if (!stopped) {
+          setInitialFailedGenerationId(null)
+          setRenderOutput(completed.output_asset)
+        }
       } catch (err) {
         if (!stopped) setError(err instanceof Error ? err.message : 'Не удалось восстановить общую концепцию')
       } finally {
@@ -894,7 +901,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     })
   }
 
-  async function poll(generation:Generation) {
+  async function poll(
+    generation:Generation,
+    onFailed?:(generation:Generation)=>void,
+  ) {
     let currentGeneration = generation
     const deadline = Date.now() + 6 * 60 * 1000
     let transientErrors = 0
@@ -915,14 +925,23 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       throw new Error(currentGeneration.error || 'Генерация ещё выполняется. Задача сохранена — проверьте результат чуть позже.')
     }
     if (currentGeneration.status !== 'completed' || !currentGeneration.output_asset) {
+      if (currentGeneration.status === 'failed') onFailed?.(currentGeneration)
       throw new Error(currentGeneration.error || 'Генерация не завершилась')
     }
     return currentGeneration
   }
 
-  async function generateInitial(next:DesignSession) {
+  async function generateInitial(next:DesignSession, replaceFailed=false) {
     if (!plotAreaValid) {
       setError('Укажите размер участка от 4 до 15 соток.')
+      return
+    }
+    if (
+      replaceFailed
+      && (!next.initial_generation_id
+        || initialFailedGenerationId !== next.initial_generation_id)
+    ) {
+      setError('Сначала подтвердите ошибку текущей генерации.')
       return
     }
     setGenerationInFlight(true)
@@ -932,8 +951,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     try {
       const generationSession = await saveQuestionnaireSession(project.id, {
         ...next,
+        initial_generation_id:replaceFailed ? null : next.initial_generation_id,
         plot_area_sotkas:parsedPlotArea,
       })
+      setInitialFailedGenerationId(null)
       setSession(generationSession)
       syncProject(generationSession)
       const queued = await createQuestionnaireGeneration(project.id)
@@ -943,7 +964,11 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
       const queuedState = { ...generationSession, initial_generation_id:queued.id }
       setSession(queuedState)
       syncProject(queuedState)
-      const completed = await poll(queued)
+      const completed = await poll(
+        queued,
+        (failed) => setInitialFailedGenerationId(failed.id),
+      )
+      setInitialFailedGenerationId(null)
       setRenderOutput(completed.output_asset)
     } catch (err) {
       setError(generationErrorMessage(err))
@@ -956,7 +981,10 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   async function reopenInitialAnswers() {
     if (!session) return
     const saved = await persist({ ...session, initial_generation_id:null })
-    if (saved) setRenderOutput(null)
+    if (saved) {
+      setInitialFailedGenerationId(null)
+      setRenderOutput(null)
+    }
   }
 
   async function checkInitialGeneration() {
@@ -966,7 +994,11 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     setError(null)
     try {
       const existing = await getQuestionnaireGeneration(project.id, initialGenerationId)
-      const completed = await poll(existing)
+      const completed = await poll(
+        existing,
+        (failed) => setInitialFailedGenerationId(failed.id),
+      )
+      setInitialFailedGenerationId(null)
       setRenderOutput(completed.output_asset)
     } catch (err) {
       setError(generationErrorMessage(err))
@@ -1475,7 +1507,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         {initialGenerationId && renderOutput && videoContinuationControl}
         {initialGenerationId && renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy} onClick={() => void acceptInitial()}>Принять концепцию</button><button className="secondary-button" disabled={busy} onClick={() => void reopenInitialAnswers()}>Изменить ТЗ · новая генерация</button></div>}
         {(busy || generationInFlight) && initialGenerationId && !renderOutput && <div className="empty-inline">Создаём весь участок одной генерацией…</div>}
-        {initialGenerationId && !renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy || generationInFlight} onClick={() => void checkInitialGeneration()}>Проверить генерацию</button></div>}
+        {initialGenerationId && !renderOutput && initialFailedGenerationId === initialGenerationId
+          ? <div className="questionnaire-actions">
+              <button className="primary-button" disabled={busy || generationInFlight || generationCost?.is_available === false} onClick={() => void generateInitial(session, true)}>Повторить генерацию · {initialGenerationCostLabel()}</button>
+              <button className="secondary-button" disabled={busy || generationInFlight} onClick={() => void reopenInitialAnswers()}>Изменить ТЗ</button>
+            </div>
+          : initialGenerationId && !renderOutput && <div className="questionnaire-actions"><button className="primary-button" disabled={busy || generationInFlight} onClick={() => void checkInitialGeneration()}>Проверить генерацию</button></div>}
         {error && <div className="banner-error">{error}</div>}
       </section></main>
     }
