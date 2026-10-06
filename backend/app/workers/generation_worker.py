@@ -820,7 +820,16 @@ async def _prepare_video_request(
             saved_body = existing.get("request_body")
             if not isinstance(saved_body, str) or not saved_body:
                 raise NexusOutcomeUnknown("Saved Seedance request body is unavailable")
-            return row.provider_task_id, saved_body
+            if existing.get("model") != model:
+                raise NexusOutcomeUnknown("Saved Seedance request model does not match")
+            raw_request_id = existing.get("request_id")
+            if raw_request_id is None:
+                request_id = None
+            elif isinstance(raw_request_id, str) and raw_request_id.strip():
+                request_id = raw_request_id.strip()
+            else:
+                raise NexusOutcomeUnknown("Saved Seedance request id is invalid")
+            return request_id, saved_body
         report["video_request"] = {
             "state": "prepared",
             "model": model,
@@ -829,7 +838,7 @@ async def _prepare_video_request(
         }
         row.quality_report = report
         await db.commit()
-        return row.provider_task_id, request_body
+        return None, request_body
 
 
 async def _persist_video_request_id(
