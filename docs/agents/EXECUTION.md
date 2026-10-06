@@ -789,3 +789,27 @@ No schema, tariff, secret, model, retry threshold, payment amount or provider co
 Guidance used: KSU/local systematic-debugging, TDD and verification-before-completion; claw and
 dev-agents-pack debugger; WondelAI release-it retry/idempotency guidance. AgentSkills yielded no
 runtime-specific payment guidance; Anthropic webapp-testing is not applicable to this backend race.
+
+
+## Seedance cinematic fidelity — 6 October 2026
+
+Goal: make concept videos both visually attractive and geometry-safe. PR #167 removed the
+generative image keyframe drift, but the remaining server prompt still says "cinematic drone
+flyover" while the end frame is only a deterministic crop/zoom/pan of the accepted still. That
+instruction can force Seedance to reveal unseen building surfaces and invent architecture.
+
+Plan:
+1. [ ] RED: pin a motion-prompt contract that forbids orbit/roof-pass/unseen-surface reveal and
+   requires the accepted still to remain authoritative.
+2. [ ] Replace the generic flyover direction with a bounded premium real-estate camera move:
+   stabilized slow dolly-in, small lateral truck and slight rise, constant focal length, smooth
+   ease-in/ease-out, static lighting/scene.
+3. [ ] Explicitly instruct Seedance to reduce parallax rather than hallucinate hidden geometry.
+4. [ ] Persist a server-owned motion profile identifier in the video checkpoint for diagnostics.
+5. [ ] Run focused unit/integration, full CI, merge to dev, wait for exact-SHA deploy/server smoke.
+6. [ ] Run exactly one paid Seedance acceptance and visually review the MP4 for architecture,
+   roof/windows/terrace/pool/site stability plus camera smoothness/composition.
+
+No provider/model/tariff/schema change. Keep seedance-2.0, 1080p/16:9/runtime admin params and the
+existing paid-POST idempotency/recovery rules. If a genuinely larger orbit is desired later, it
+requires additional trustworthy 3D/multi-view geometry rather than prompt wording alone.
