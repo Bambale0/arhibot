@@ -235,6 +235,9 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         assert nexus_calls == []
         assert len(grok_calls) == 1
         assert len(seedance_calls) == 1
+        assert grok_calls[0]["client_request_id"] != seedance_calls[0]["client_request_id"]
+        assert UUID(grok_calls[0]["client_request_id"])
+        assert UUID(seedance_calls[0]["client_request_id"])
 
         completed = await client.get(
             f"/api/v1/generations/{video_id}",
