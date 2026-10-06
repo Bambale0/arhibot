@@ -61,6 +61,20 @@ def test_seedance_25_builds_locked_frame_payload_with_adaptive_ratio() -> None:
     }
 
 
+def test_seedance_25_defaults_locked_frame_payload_to_480p() -> None:
+    provider = NeironychVideoProvider(_settings())
+    payload = provider.build_payload(
+        model="seedance-2.5",
+        prompt="move",
+        start_image_url="https://media.example.test/start.png",
+        end_image_url="https://media.example.test/end.png",
+        params={},
+    )
+
+    assert payload["resolution"] == "480p"
+    assert payload["aspect_ratio"] == "adaptive"
+
+
 @pytest.mark.parametrize("duration", [3, 16])
 def test_seedance_20_rejects_duration_outside_contract(duration: int) -> None:
     provider = NeironychVideoProvider(_settings())
