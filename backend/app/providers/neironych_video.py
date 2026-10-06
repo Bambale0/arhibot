@@ -90,7 +90,7 @@ class NeironychVideoProvider:
                 f"{clean_model} duration must be an integer from 4 to {max_duration}"
             )
 
-        resolution = str(supplied.get("resolution", "1080p")).strip()
+        resolution = str(supplied.get("resolution", "480p")).strip()
         if resolution == "4K":
             resolution = "4k"
         allowed_resolutions = (
