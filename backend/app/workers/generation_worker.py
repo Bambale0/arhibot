@@ -1018,12 +1018,14 @@ async def _run_concept_video(
         request_body=request_body,
         on_request_created=accepted,
     )
-    width, height = _concept_video_dimensions(video_params)
+    dimensions = video_provider.video_dimensions(result.content)
+    if dimensions is None:
+        dimensions = _concept_video_dimensions(video_params)
     return (
         result.content,
         result.request_id,
         video_model,
-        (width, height),
+        dimensions,
         identity_report,
     )
 
