@@ -22,6 +22,11 @@ _TERMINAL_FAILURE = {"failed", "error", "expired", "cancelled", "canceled"}
 _ALLOWED_RESOLUTIONS = {"480p", "720p", "1080p", "4k"}
 _ALLOWED_ASPECT_RATIOS = {"1:1", "16:9", "9:16", "4:3", "3:4", "21:9"}
 _ALLOWED_PARAMS = {"duration", "resolution", "aspect_ratio"}
+_STATUS_VISIBILITY_GRACE_SECONDS = 90.0
+
+
+class NeironychVideoNotVisible(NeironychProviderError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,8 +220,14 @@ class NeironychVideoProvider:
                 },
             )
         if response.status_code >= 400:
+            error_detail = safe_error(response)
+            if response.status_code == 404 and error_detail == "generation_not_found":
+                raise NeironychVideoNotVisible(
+                    "Neironych video request is not visible in status API yet",
+                    retryable=True,
+                )
             raise NeironychProviderError(
-                f"Neironych video status failed ({response.status_code}): {safe_error(response)}",
+                f"Neironych video status failed ({response.status_code}): {error_detail}",
                 retryable=response.status_code in {408, 429} or response.status_code >= 500,
             )
         try:
@@ -356,9 +367,22 @@ class NeironychVideoProvider:
                 await on_request_created(current_id)
 
         deadline = monotonic() + self.settings.neironych_video_timeout_seconds
+        not_visible_since: float | None = None
         while monotonic() < deadline:
             try:
                 status, payload_status = await self._status_request(current_id)
+                not_visible_since = None
+            except NeironychVideoNotVisible as exc:
+                now = monotonic()
+                not_visible_since = not_visible_since or now
+                if now - not_visible_since > _STATUS_VISIBILITY_GRACE_SECONDS:
+                    raise NeironychProviderError(
+                        "Neironych accepted the video request, but it did not become "
+                        "visible in the status API within the recovery window",
+                        retryable=False,
+                    ) from exc
+                await asyncio.sleep(self.settings.neironych_video_poll_seconds)
+                continue
             except NeironychProviderError as exc:
                 if exc.retryable:
                     await asyncio.sleep(self.settings.neironych_video_poll_seconds)
