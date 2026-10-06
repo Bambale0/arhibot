@@ -19,8 +19,9 @@ from app.providers.nexus import NexusOutcomeUnknown
 
 _TERMINAL_SUCCESS = {"completed", "succeeded", "success", "done", "ready"}
 _TERMINAL_FAILURE = {"failed", "error", "expired", "cancelled", "canceled"}
-_ALLOWED_RESOLUTIONS = {"480p", "720p", "1080p", "4k"}
-_ALLOWED_ASPECT_RATIOS = {"1:1", "16:9", "9:16", "4:3", "3:4", "21:9"}
+_ALLOWED_RESOLUTIONS_20 = {"480p", "720p", "1080p", "4k"}
+_ALLOWED_RESOLUTIONS_25 = {"480p", "720p", "1080p"}
+_ALLOWED_ASPECT_RATIOS_20 = {"1:1", "16:9", "9:16", "4:3", "3:4", "21:9"}
 _ALLOWED_PARAMS = {"duration", "resolution", "aspect_ratio"}
 _STATUS_VISIBILITY_GRACE_SECONDS = 90.0
 
@@ -66,8 +67,9 @@ class NeironychVideoProvider:
         end_image_url: str,
         params: dict[str, object] | None,
     ) -> dict[str, object]:
-        if model.strip() != "seedance-2.0":
-            raise ValueError("Concept video currently requires seedance-2.0")
+        clean_model = model.strip()
+        if clean_model not in {"seedance-2.0", "seedance-2.5"}:
+            raise ValueError("Concept video requires seedance-2.0 or seedance-2.5")
         clean_prompt = str(prompt or "").strip()
         if not clean_prompt:
             raise ValueError("Seedance prompt is required")
@@ -82,21 +84,33 @@ class NeironychVideoProvider:
             )
 
         duration = supplied.get("duration", 8)
-        if type(duration) is not int or not 4 <= duration <= 15:
-            raise ValueError("Seedance 2.0 duration must be an integer from 4 to 15")
+        max_duration = 30 if clean_model == "seedance-2.5" else 15
+        if type(duration) is not int or not 4 <= duration <= max_duration:
+            raise ValueError(
+                f"{clean_model} duration must be an integer from 4 to {max_duration}"
+            )
 
         resolution = str(supplied.get("resolution", "1080p")).strip()
         if resolution == "4K":
             resolution = "4k"
-        if resolution not in _ALLOWED_RESOLUTIONS:
-            raise ValueError("Unsupported Seedance 2.0 resolution")
+        allowed_resolutions = (
+            _ALLOWED_RESOLUTIONS_25
+            if clean_model == "seedance-2.5"
+            else _ALLOWED_RESOLUTIONS_20
+        )
+        if resolution not in allowed_resolutions:
+            raise ValueError(f"Unsupported {clean_model} resolution")
 
-        aspect_ratio = str(supplied.get("aspect_ratio", "16:9")).strip()
-        if aspect_ratio not in _ALLOWED_ASPECT_RATIOS:
-            raise ValueError("Unsupported Seedance 2.0 aspect_ratio")
+        if clean_model == "seedance-2.5":
+            # Neironych contract: frame mode on 2.5 requires adaptive or omitted ratio.
+            aspect_ratio = "adaptive"
+        else:
+            aspect_ratio = str(supplied.get("aspect_ratio", "16:9")).strip()
+            if aspect_ratio not in _ALLOWED_ASPECT_RATIOS_20:
+                raise ValueError("Unsupported seedance-2.0 aspect_ratio")
 
         return {
-            "model": model.strip(),
+            "model": clean_model,
             "prompt": clean_prompt,
             "start_image": {
                 "url": self._https_url(start_image_url, "start_image")
