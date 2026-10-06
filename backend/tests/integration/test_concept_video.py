@@ -245,6 +245,7 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         assert identity["same_scene"] is True
         assert identity["confidence"] == 1.0
         assert identity["verification"] == "deterministic_locked_pan_zoom_v1"
+        assert body["quality_report"]["video_motion_profile"] == "safe_cinematic_parallax_v1"
         end_frame = body["quality_report"]["provider_frame_requests"]["video-end"]
         assert end_frame["provider"] == "deterministic"
         assert end_frame["model"] == "locked_pan_zoom_v1"
