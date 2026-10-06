@@ -203,9 +203,18 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
                 url.startswith("https://media.example.test/")
                 for url in kwargs["image_urls"]
             )
+            if len(grok_calls) == 1:
+                return VideoIdentityReview(
+                    same_scene=False,
+                    confidence=0.97,
+                    critical_differences=[
+                        "Roof geometry changed",
+                        "A swimming pool was added",
+                    ],
+                )
             return VideoIdentityReview(
                 same_scene=True,
-                confidence=0.98,
+                confidence=0.99,
                 critical_differences=[],
             )
 
@@ -237,11 +246,16 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         await generation_worker.process_generation(video_id, settings)
         await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(video_id))
 
-        assert len(nexus_calls) == 1
-        assert nexus_calls[0]["model_name"] == "gpt-image-2"
+        assert len(nexus_calls) == 2
+        assert all(call["model_name"] == "gpt-image-2" for call in nexus_calls)
         assert "CAMERA MOVE ONLY" in nexus_calls[0]["prompt"]
-        assert len(grok_calls) == 1
+        assert "CORRECTIVE RETRY" in nexus_calls[1]["prompt"]
+        assert "Roof geometry changed" in nexus_calls[1]["prompt"]
+        assert "A swimming pool was added" in nexus_calls[1]["prompt"]
+        assert len(grok_calls) == 2
+        assert grok_calls[0]["image_urls"][1] != grok_calls[1]["image_urls"][1]
         assert len(seedance_calls) == 1
+        assert seedance_calls[0]["end_image_url"] == grok_calls[1]["image_urls"][1]
 
         completed = await client.get(
             f"/api/v1/generations/{video_id}",
@@ -258,6 +272,9 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         assert body["output_asset"]["width"] == 1920
         assert body["output_asset"]["height"] == 1080
         assert body["quality_report"]["video_identity_review"]["same_scene"] is True
+        attempts = body["quality_report"]["video_identity_attempts"]
+        assert attempts["0"]["review"]["same_scene"] is False
+        assert attempts["1"]["review"]["same_scene"] is True
         assert "request_body" not in body["quality_report"]["video_request"]
         assert "key" not in body["quality_report"]["video_request"]
 
