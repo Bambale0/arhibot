@@ -7,6 +7,7 @@ from app.providers.neironych_video import (
     NeironychVideoNotVisible,
     NeironychVideoProvider,
 )
+from app.providers.nexus import NexusOutcomeUnknown
 
 
 def _settings() -> Settings:
@@ -73,6 +74,66 @@ def test_seedance_25_defaults_locked_frame_payload_to_480p() -> None:
 
     assert payload["resolution"] == "480p"
     assert payload["aspect_ratio"] == "adaptive"
+
+
+def test_seedance_25_builds_start_only_bird_flyover_payload() -> None:
+    provider = NeironychVideoProvider(_settings())
+    payload = provider.build_payload(
+        model="seedance-2.5",
+        prompt="Bounded bird flyover.",
+        start_image_url="https://media.example.test/start.png",
+        end_image_url=None,
+        params={"duration": 8, "resolution": "480p", "aspect_ratio": "16:9"},
+    )
+
+    assert payload["start_image"] == {"url": "https://media.example.test/start.png"}
+    assert "end_image" not in payload
+    assert payload["resolution"] == "480p"
+    assert payload["aspect_ratio"] == "adaptive"
+
+
+@pytest.mark.asyncio
+async def test_seedance_local_poll_timeout_keeps_accepted_request_for_get_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = NeironychVideoProvider(
+        _settings().model_copy(
+            update={
+                "neironych_video_poll_seconds": 0,
+                "neironych_video_timeout_seconds": 1,
+            }
+        )
+    )
+    clock = iter([0.0, 0.0, 2.0])
+
+    async def fake_status(request_id: str):
+        assert request_id == "video-request-pending"
+        return "pending", {"status": "pending"}
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    async def forbidden_create(**_kwargs):
+        raise AssertionError("accepted video request must not be submitted again")
+
+    monkeypatch.setattr(provider, "_status_request", fake_status)
+    monkeypatch.setattr(provider, "create", forbidden_create)
+    monkeypatch.setattr("app.providers.neironych_video.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("app.providers.neironych_video.monotonic", lambda: next(clock))
+
+    with pytest.raises(NexusOutcomeUnknown) as error:
+        await provider.generate(
+            model="seedance-2.5",
+            prompt="Bounded bird flyover.",
+            start_image_url="https://media.example.test/start.png",
+            end_image_url=None,
+            params={"duration": 8, "resolution": "480p", "aspect_ratio": "16:9"},
+            idempotency_key="video-idempotency-key",
+            client_request_id="11111111-1111-4111-8111-111111111111",
+            request_id="video-request-pending",
+        )
+
+    assert error.value.request_id == "video-request-pending"
 
 
 @pytest.mark.parametrize("duration", [3, 16])

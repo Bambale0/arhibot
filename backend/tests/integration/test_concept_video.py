@@ -1,4 +1,5 @@
 import os
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -196,7 +197,8 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
             assert kwargs["request_body"]
             assert '"aspect_ratio":"adaptive"' in kwargs["request_body"]
             assert kwargs["start_image_url"].startswith("https://media.example.test/")
-            assert kwargs["end_image_url"].startswith("https://media.example.test/")
+            assert kwargs["end_image_url"] is None
+            assert '"end_image"' not in kwargs["request_body"]
             callback = kwargs.get("on_request_created")
             if callback is not None and not kwargs.get("request_id"):
                 await callback("seedance-request-1")
@@ -245,19 +247,16 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         identity = body["quality_report"]["video_identity_review"]
         assert identity["same_scene"] is True
         assert identity["confidence"] == 1.0
-        assert identity["verification"] == "deterministic_locked_bird_anchor_v1"
-        assert body["quality_report"]["video_motion_profile"] == "bird_flyover_safe_v1"
+        assert identity["verification"] == "accepted_start_frame_only_v1"
+        assert identity["source_sha256"]
+        assert body["quality_report"]["video_motion_profile"] == "bird_flyover_safe_v2"
         constraints = body["quality_report"]["video_motion_constraints"]
         assert constraints["target_arc_degrees"] == [20, 35]
         assert constraints["max_arc_degrees"] == 45
         assert constraints["rear_facade_reveal"] is False
         assert constraints["resolution"] == "480p"
-        end_frame = body["quality_report"]["provider_frame_requests"]["video-end"]
-        assert end_frame["provider"] == "deterministic"
-        assert end_frame["model"] == "locked_bird_anchor_v1"
-        assert end_frame["state"] == "completed"
-        assert end_frame["crop_box"]
-        assert end_frame["source_sha256"]
+        assert constraints["input_mode"] == "start_image_only"
+        assert "provider_frame_requests" not in body["quality_report"]
         assert "request_body" not in body["quality_report"]["video_request"]
         assert "key" not in body["quality_report"]["video_request"]
 
@@ -279,3 +278,69 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
             assert output is not None
             output_path = LocalMediaStorage(settings).absolute_path(output.storage_path)
         assert output_path.read_bytes() == b"\x00\x00\x00\x18ftypmp42concept-video"
+
+
+@pytest.mark.asyncio
+async def test_accepted_video_poll_timeout_is_requeued_for_get_only_recovery() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        tokens, headers = await _register(client)
+        user_id = UUID(tokens["user"]["id"])
+        project = await client.post(
+            "/api/v1/projects",
+            headers=headers,
+            json={"name": "Video recovery", "context": {}},
+        )
+        assert project.status_code == 201, project.text
+        project_id = UUID(project.json()["id"])
+        generation_id = uuid4()
+
+        async with get_session_factory()() as session:
+            session.add(
+                Generation(
+                    id=generation_id,
+                    user_id=user_id,
+                    project_id=project_id,
+                    type=GenerationType.VIDEO,
+                    status=GenerationStatus.PROCESSING,
+                    origin=GenerationOrigin.QUESTIONNAIRE_VIDEO.value,
+                    prompt=(
+                        "AUROOM_CONCEPT_VIDEO_V1\n"
+                        + '{"source_generation_id":"' + str(uuid4()) + '"}'
+                    ),
+                    credits_charged=0,
+                    model_name="seedance-2.5",
+                    started_at=datetime.now(UTC),
+                    quality_report={
+                        "requires_reconciliation": True,
+                        "video_request": {
+                            "state": "accepted",
+                            "model": "seedance-2.5",
+                            "request_id": "seedance-request-pending",
+                            "key": "auroom-video-recovery",
+                            "client_request_id": str(uuid4()),
+                            "request_body": '{"model":"seedance-2.5"}',
+                        },
+                    },
+                )
+            )
+            await session.commit()
+
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+        await redis_client.lrem(
+            generation_worker.GENERATION_PROCESSING_KEY,
+            0,
+            str(generation_id),
+        )
+
+        await generation_worker._reconcile_database_jobs(get_settings())
+
+        assert str(generation_id) in await redis_client.lrange(
+            GENERATION_QUEUE_KEY, 0, -1
+        )
+        async with get_session_factory()() as session:
+            recovered = await session.get(Generation, generation_id)
+            assert recovered is not None
+            assert recovered.status == GenerationStatus.QUEUED
+
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))

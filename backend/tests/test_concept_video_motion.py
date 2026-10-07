@@ -15,6 +15,8 @@ def test_concept_video_motion_prompt_uses_bounded_bird_flyover() -> None:
     assert "constant focal length" in prompt
     assert "ease-in" in prompt and "ease-out" in prompt
     assert "camera motion only" in prompt
+    assert "start frame" in prompt
+    assert "end frame" not in prompt
     assert "do not orbit" not in prompt
 
 

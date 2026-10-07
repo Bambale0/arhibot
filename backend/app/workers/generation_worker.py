@@ -180,24 +180,23 @@ def _concept_video_identity_prompt(canonical_prompt: str) -> str:
 
 def _concept_video_motion_prompt() -> str:
     return (
-        "Create a premium photorealistic bounded bird's-eye architectural flyover between the "
-        "supplied start and end frames. The accepted start still is the ground truth and the end "
-        "frame is a pixel-derived framing anchor from that exact same still. CAMERA MOTION ONLY. "
-        "Use a slow stabilized camera rise with a slight forward move and a shallow orbital arc "
-        "around the currently visible front corner / visible side of the property. Target about "
-        "20 to 35 degrees of viewpoint change and never exceed 45 degrees. Keep the currently "
-        "visible facades dominant throughout the shot. Use smooth ease-in and ease-out, constant "
-        "focal length, stable horizon and no lens breathing. Do not continue around a corner far "
-        "enough to reveal a hidden rear facade, and do not cross over the roof ridge. If the move "
-        "would require inventing unseen architecture or site geometry, reduce the arc and camera "
-        "rise rather than hallucinating new content. STRICT IDENTITY LOCK: preserve exact house "
-        "and site geometry, footprint, roof, windows, doors, terraces, garage, pool, paths, fence, "
-        "landscaping structure, materials, object count and all relative object positions. No "
-        "architectural morphing, no changing openings, no roof deformation, no object additions/"
-        "removals, no relighting, no weather change, no vegetation animation, no moving water, "
-        "no people and no vehicles. The result should feel like a short high-end real-estate "
-        "drone reveal, with visible parallax and elevation change, not a digital zoom and not a "
-        "full 360-degree orbit."
+        "Create a premium photorealistic bounded bird's-eye architectural flyover from the "
+        "supplied accepted start frame. The accepted start still is the ground truth. "
+        "CAMERA MOTION ONLY. Use a slow stabilized camera rise with a slight forward move and "
+        "a shallow orbital arc around the currently visible front corner / visible side of the "
+        "property. Target about 20 to 35 degrees of viewpoint change and never exceed 45 degrees. "
+        "Keep the currently visible facades dominant throughout the shot. Use smooth ease-in "
+        "and ease-out, constant focal length, stable horizon and no lens breathing. Do not "
+        "continue around a corner far enough to reveal a hidden rear facade, and do not cross "
+        "over the roof ridge. If the move would require inventing unseen architecture or site "
+        "geometry, reduce the arc and camera rise rather than hallucinating new content. "
+        "STRICT IDENTITY LOCK: preserve exact house and site geometry, footprint, roof, windows, "
+        "doors, terraces, garage, pool, paths, fence, landscaping structure, materials, object "
+        "count and all relative object positions. No architectural morphing, no changing "
+        "openings, no roof deformation, no object additions/removals, no relighting, no weather "
+        "change, no vegetation animation, no moving water, no people and no vehicles. The result "
+        "should feel like a short high-end real-estate drone reveal, with visible parallax and "
+        "elevation change, not a digital zoom and not a full 360-degree orbit."
     )
 
 
@@ -940,24 +939,20 @@ async def _run_concept_video(
     runtime_snapshot: dict[str, object],
     settings: Settings,
 ) -> tuple[bytes, str, str, tuple[int, int], dict[str, object]]:
-    del source_prompt  # deterministic keyframe provenance replaces the old visual identity judge
+    del source_prompt  # accepted source bytes are the authoritative identity anchor
 
     video_model = str(runtime_snapshot.get("video_model") or "").strip()
     video_params = dict(runtime_snapshot.get("video_params") or {})
     if not video_model:
         raise NexusProviderError("Concept video runtime snapshot is incomplete", retryable=False)
 
-    end_url = await _ensure_locked_video_end_frame(
-        generation_id,
-        source_data=source_data,
-        settings=settings,
-    )
-
+    source_digest = sha256(source_data).hexdigest()
     identity_report: dict[str, object] = {
         "same_scene": True,
         "confidence": 1.0,
         "critical_differences": [],
-        "verification": "deterministic_locked_bird_anchor_v1",
+        "verification": "accepted_start_frame_only_v1",
+        "source_sha256": source_digest,
     }
     async with get_session_factory()() as db:
         row = await GenerationRepository(db).get_for_update(generation_id)
@@ -965,12 +960,13 @@ async def _run_concept_video(
             raise NexusProviderError("Video generation is no longer processing", retryable=False)
         report = dict(row.quality_report or {})
         report["video_identity_review"] = identity_report
-        report["video_motion_profile"] = "bird_flyover_safe_v1"
+        report["video_motion_profile"] = "bird_flyover_safe_v2"
         report["video_motion_constraints"] = {
             "target_arc_degrees": [20, 35],
             "max_arc_degrees": 45,
             "rear_facade_reveal": False,
             "resolution": str(video_params.get("resolution") or "480p"),
+            "input_mode": "start_image_only",
         }
         row.quality_report = report
         await db.commit()
@@ -981,7 +977,7 @@ async def _run_concept_video(
         model=video_model,
         prompt=video_prompt,
         start_image_url=source_url,
-        end_image_url=end_url,
+        end_image_url=None,
         params=video_params,
     )
     request_body = dumps(
@@ -1010,7 +1006,7 @@ async def _run_concept_video(
         model=video_model,
         prompt=video_prompt,
         start_image_url=source_url,
-        end_image_url=end_url,
+        end_image_url=None,
         params=video_params,
         idempotency_key=video_key,
         client_request_id=video_client_request_id,
@@ -2338,8 +2334,21 @@ async def _reconcile_database_jobs(settings: Settings) -> None:
                     or (frame.get("task_id") and frame.get("task_id") != "sync")
                     for frame in frames.values()
                 )
-                if requires_reconciliation and not resumable_frames and (
-                    not checkpoint.get("task_id") or checkpoint.get("task_id") == "sync"
+                video_request = (generation.quality_report or {}).get("video_request", {})
+                resumable_video = (
+                    isinstance(video_request, dict)
+                    and video_request.get("state") == "accepted"
+                    and isinstance(video_request.get("request_id"), str)
+                    and bool(video_request.get("request_id"))
+                )
+                if (
+                    requires_reconciliation
+                    and not resumable_frames
+                    and not resumable_video
+                    and (
+                        not checkpoint.get("task_id")
+                        or checkpoint.get("task_id") == "sync"
+                    )
                 ):
                     # No documented lookup-by-idempotency-key API. Operator must
                     # confirm provider outcome; never turn ambiguity into another POST.
