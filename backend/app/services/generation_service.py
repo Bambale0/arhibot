@@ -339,7 +339,7 @@ class GenerationService:
             generation.quality_status = "pending"
             generation.quality_report = {
                 "video_runtime": {
-                    "keyframe_strategy": "locked_bird_anchor_v1",
+                    "keyframe_strategy": "accepted_start_frame_only_v1",
                     "judge_model": (runtime.quality_judge_model or "").strip(),
                     "video_model": (runtime.video_model or "").strip(),
                     "video_params": dict(runtime.video_params or {}),
