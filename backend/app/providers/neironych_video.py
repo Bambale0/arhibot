@@ -64,7 +64,7 @@ class NeironychVideoProvider:
         model: str,
         prompt: str,
         start_image_url: str,
-        end_image_url: str,
+        end_image_url: str | None,
         params: dict[str, object] | None,
     ) -> dict[str, object]:
         clean_model = model.strip()
@@ -109,20 +109,22 @@ class NeironychVideoProvider:
             if aspect_ratio not in _ALLOWED_ASPECT_RATIOS_20:
                 raise ValueError("Unsupported seedance-2.0 aspect_ratio")
 
-        return {
+        payload: dict[str, object] = {
             "model": clean_model,
             "prompt": clean_prompt,
             "start_image": {
                 "url": self._https_url(start_image_url, "start_image")
-            },
-            "end_image": {
-                "url": self._https_url(end_image_url, "end_image")
             },
             "duration": duration,
             "resolution": resolution,
             "aspect_ratio": aspect_ratio,
             "n": 1,
         }
+        if end_image_url is not None:
+            payload["end_image"] = {
+                "url": self._https_url(end_image_url, "end_image")
+            }
+        return payload
 
     @staticmethod
     def _request_id(payload: object) -> str:
@@ -383,7 +385,7 @@ class NeironychVideoProvider:
         model: str,
         prompt: str,
         start_image_url: str,
-        end_image_url: str,
+        end_image_url: str | None,
         params: dict[str, object] | None,
         idempotency_key: str,
         client_request_id: str,
@@ -455,7 +457,8 @@ class NeironychVideoProvider:
                 )
             await asyncio.sleep(self.settings.neironych_video_poll_seconds)
 
-        raise NeironychProviderError(
-            "Neironych video generation timed out while polling accepted request",
-            retryable=True,
+        raise NexusOutcomeUnknown(
+            "Neironych video is still pending after the local polling window; "
+            "resume GET status polling for the accepted request",
+            request_id=current_id,
         )
