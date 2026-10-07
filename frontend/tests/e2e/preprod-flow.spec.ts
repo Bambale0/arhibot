@@ -92,7 +92,8 @@ function withMockSitePlan(next:any){
   return {...next,site_plan:{schema:'auroom.site_plan.v1',plot:{area_sotkas:next.plot_area_sotkas,area_m2:next.plot_area_sotkas*100,coordinate_system:'normalized',front_side:'y0',geometry_accuracy:'relative'},objects,warnings:[]}}
 }
 function generation(i:number,status='completed'){return {id:generationIds[i],project_id:projectId,input_asset_id:null,output_asset:status==='completed'?asset(i):null,type:'master_plan',status,credits_charged:1,model_name:'mock',fallback_used:false,composition_mode:'replace',edit_region:null,protected_regions:[],error:null,created_at:now,updated_at:now,started_at:now,completed_at:status==='completed'?now:null}}
-function queuedVideo(){return {id:videoGenerationId,project_id:projectId,input_asset_id:assetIds[0],output_asset:null,type:'video',status:'queued',credits_charged:3,model_name:'seedance-2.0',fallback_used:false,composition_mode:'replace',edit_region:null,protected_regions:[],error:null,created_at:now,updated_at:now,started_at:null,completed_at:null}}
+function queuedVideo(){return {id:videoGenerationId,project_id:projectId,input_asset_id:assetIds[0],output_asset:null,type:'video',status:'queued',credits_charged:3,model_name:'seedance-2.5',fallback_used:false,composition_mode:'replace',edit_region:null,protected_regions:[],error:null,created_at:now,updated_at:now,started_at:null,completed_at:null}}
+function completedVideo(){return {...queuedVideo(),status:'completed',output_asset:{id:'77777777-7777-4777-8777-777777777779',project_id:projectId,type:'video',purpose:'generation_output',original_filename:'flyover.mp4',mime_type:'video/mp4',size_bytes:1234,width:854,height:480,url:'data:video/mp4;base64,AAAA',created_at:now},started_at:now,completed_at:now}}
 async function json(route:Route,data:unknown,status=200){await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)})}
 
 test.beforeEach(async ({page})=>{
@@ -294,6 +295,19 @@ test('initial concept collects all answers before one generation and supports pr
   await expect(page.getByText(/Готовим пролёт по вашей концепции/)).toBeVisible()
 })
 
+
+
+test('completed concept video can be explicitly regenerated',async({page})=>{
+  session={...session,initial_concept_mode:true,source_step_completed:true,selected_objects:['lavochka'],survey_completed_objects:['lavochka'],initial_generation_id:generationIds[0],current_object:null,current_question_id:null}
+  project={...project,context:{...project.context,design_session:session}}
+  videoGeneration=completedVideo()
+
+  await page.goto('/?project=' + projectId)
+  await expect(page.locator('video')).toBeVisible()
+  await expect(page.getByRole('button',{name:'🎬 Создать новый пролёт'})).toBeVisible()
+  await page.getByRole('button',{name:'🎬 Создать новый пролёт'}).click()
+  await expect(page.getByText(/Готовим пролёт по вашей концепции/)).toBeVisible()
+})
 
 
 test('multi-object initial concept waits for every questionnaire, allows answer editing, then generates once',async({page})=>{

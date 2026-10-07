@@ -279,6 +279,55 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
             output_path = LocalMediaStorage(settings).absolute_path(output.storage_path)
         assert output_path.read_bytes() == b"\x00\x00\x00\x18ftypmp42concept-video"
 
+        regenerated = await client.post(
+            f"/api/v1/generations/{source_id}/video",
+            headers=headers,
+        )
+        assert regenerated.status_code == 202, regenerated.text
+        regenerated_id = UUID(regenerated.json()["id"])
+        assert regenerated_id != video_id
+        assert regenerated.json()["status"] == "queued"
+        assert (await client.get("/api/v1/me", headers=headers)).json()[
+            "credits_balance"
+        ] == before - 6
+
+        latest = await client.get(
+            f"/api/v1/generations/{source_id}/video",
+            headers=headers,
+        )
+        assert latest.status_code == 200, latest.text
+        assert latest.json()["id"] == str(regenerated_id)
+        assert latest.json()["status"] == "queued"
+
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(regenerated_id))
+        async with get_session_factory()() as session:
+            row = await session.get(Generation, regenerated_id)
+            assert row is not None
+            row.status = GenerationStatus.FAILED
+            row.error = "simulated terminal video failure"
+            row.completed_at = datetime.now(UTC)
+            await session.commit()
+
+        latest_failed = await client.get(
+            f"/api/v1/generations/{source_id}/video",
+            headers=headers,
+        )
+        assert latest_failed.status_code == 200, latest_failed.text
+        assert latest_failed.json()["id"] == str(regenerated_id)
+        assert latest_failed.json()["status"] == "failed"
+
+        retry = await client.post(
+            f"/api/v1/generations/{source_id}/video",
+            headers=headers,
+        )
+        assert retry.status_code == 202, retry.text
+        retry_id = UUID(retry.json()["id"])
+        assert retry_id not in {video_id, regenerated_id}
+        assert (await client.get("/api/v1/me", headers=headers)).json()[
+            "credits_balance"
+        ] == before - 9
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(retry_id))
+
 
 @pytest.mark.asyncio
 async def test_accepted_video_poll_timeout_is_requeued_for_get_only_recovery() -> None:
