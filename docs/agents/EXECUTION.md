@@ -859,3 +859,27 @@ TDD RED was captured on CI #1082: integration failed on the new 480p even-dimens
 derived video metadata to even dimensions, defaults product/provider fallbacks to 480p and adds
 migration `20261006_0042` for existing Seedance 2.5 runtime rows. Full exact-head CI, dev deploy,
 server smoke and one bounded live visual acceptance remain the release gates.
+
+
+## Bird flyover start-frame recovery — 7 October 2026
+
+Live bounded Bird smoke `142946ce-74d8-4324-b0c9-6632932f1659` on deployed
+`a3f1e7c97be7e8501e04025d1e77c9a572ad41d3` was accepted by Seedance 2.5 as
+`a2da49ba-2854-4ac5-a4d0-fc9352884793` at 480p/8s, but our local polling window
+ended after ~15 minutes. A later GET shows provider terminal `expired` /
+`generation_timeout`. No second POST was issued.
+
+Root-cause/design correction:
+- a real 20–35° Bird arc conflicts with the previous end frame because that end frame was only a
+  crop/pan of the same viewpoint;
+- current Neironych guide explicitly allows optional `start_image` / `end_image`, requires
+  `end_image` only when used, and warns not to launch a new generation merely because the
+  application polling window expired;
+- therefore Bird mode uses the accepted still as `start_image` only, keeps the 45° hard motion
+  ceiling and geometry-lock prompt, and records source SHA-256 as the identity anchor;
+- after an accepted provider request, local poll timeout becomes resumable reconciliation:
+  persist/reuse the same `video_request.request_id`, requeue it, and continue GET-only polling.
+
+TDD RED: CI #1098 failed exactly on the old end-frame call and the missing accepted-video
+requeue path (2 concept-video failures; 101 other integration tests passed). No tariff, image
+routing, model, secret or paid-POST retry policy change.
