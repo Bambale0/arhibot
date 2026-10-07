@@ -1,4 +1,5 @@
 import os
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -277,3 +278,69 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
             assert output is not None
             output_path = LocalMediaStorage(settings).absolute_path(output.storage_path)
         assert output_path.read_bytes() == b"\x00\x00\x00\x18ftypmp42concept-video"
+
+
+@pytest.mark.asyncio
+async def test_accepted_video_poll_timeout_is_requeued_for_get_only_recovery() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        tokens, headers = await _register(client)
+        user_id = UUID(tokens["user"]["id"])
+        project = await client.post(
+            "/api/v1/projects",
+            headers=headers,
+            json={"name": "Video recovery", "context": {}},
+        )
+        assert project.status_code == 201, project.text
+        project_id = UUID(project.json()["id"])
+        generation_id = uuid4()
+
+        async with get_session_factory()() as session:
+            session.add(
+                Generation(
+                    id=generation_id,
+                    user_id=user_id,
+                    project_id=project_id,
+                    type=GenerationType.VIDEO,
+                    status=GenerationStatus.PROCESSING,
+                    origin=GenerationOrigin.QUESTIONNAIRE_VIDEO.value,
+                    prompt=(
+                        "AUROOM_CONCEPT_VIDEO_V1\n"
+                        + '{"source_generation_id":"' + str(uuid4()) + '"}'
+                    ),
+                    credits_charged=0,
+                    model_name="seedance-2.5",
+                    started_at=datetime.now(UTC),
+                    quality_report={
+                        "requires_reconciliation": True,
+                        "video_request": {
+                            "state": "accepted",
+                            "model": "seedance-2.5",
+                            "request_id": "seedance-request-pending",
+                            "key": "auroom-video-recovery",
+                            "client_request_id": str(uuid4()),
+                            "request_body": '{"model":"seedance-2.5"}',
+                        },
+                    },
+                )
+            )
+            await session.commit()
+
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
+        await redis_client.lrem(
+            generation_worker.GENERATION_PROCESSING_KEY,
+            0,
+            str(generation_id),
+        )
+
+        await generation_worker._reconcile_database_jobs(get_settings())
+
+        assert str(generation_id) in await redis_client.lrange(
+            GENERATION_QUEUE_KEY, 0, -1
+        )
+        async with get_session_factory()() as session:
+            recovered = await session.get(Generation, generation_id)
+            assert recovered is not None
+            assert recovered.status == GenerationStatus.QUEUED
+
+        await redis_client.lrem(GENERATION_QUEUE_KEY, 0, str(generation_id))
