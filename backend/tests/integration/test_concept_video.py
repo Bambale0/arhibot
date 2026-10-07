@@ -196,7 +196,8 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
             assert kwargs["request_body"]
             assert '"aspect_ratio":"adaptive"' in kwargs["request_body"]
             assert kwargs["start_image_url"].startswith("https://media.example.test/")
-            assert kwargs["end_image_url"].startswith("https://media.example.test/")
+            assert kwargs["end_image_url"] is None
+            assert '"end_image"' not in kwargs["request_body"]
             callback = kwargs.get("on_request_created")
             if callback is not None and not kwargs.get("request_id"):
                 await callback("seedance-request-1")
@@ -245,19 +246,16 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         identity = body["quality_report"]["video_identity_review"]
         assert identity["same_scene"] is True
         assert identity["confidence"] == 1.0
-        assert identity["verification"] == "deterministic_locked_bird_anchor_v1"
-        assert body["quality_report"]["video_motion_profile"] == "bird_flyover_safe_v1"
+        assert identity["verification"] == "accepted_start_frame_only_v1"
+        assert identity["source_sha256"]
+        assert body["quality_report"]["video_motion_profile"] == "bird_flyover_safe_v2"
         constraints = body["quality_report"]["video_motion_constraints"]
         assert constraints["target_arc_degrees"] == [20, 35]
         assert constraints["max_arc_degrees"] == 45
         assert constraints["rear_facade_reveal"] is False
         assert constraints["resolution"] == "480p"
-        end_frame = body["quality_report"]["provider_frame_requests"]["video-end"]
-        assert end_frame["provider"] == "deterministic"
-        assert end_frame["model"] == "locked_bird_anchor_v1"
-        assert end_frame["state"] == "completed"
-        assert end_frame["crop_box"]
-        assert end_frame["source_sha256"]
+        assert constraints["input_mode"] == "start_image_only"
+        assert "provider_frame_requests" not in body["quality_report"]
         assert "request_body" not in body["quality_report"]["video_request"]
         assert "key" not in body["quality_report"]["video_request"]
 
