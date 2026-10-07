@@ -81,8 +81,8 @@ async def get_generation_video(
     summary="Create video from concept",
     description=(
         "Queues a bounded bird flyover from a completed questionnaire concept. "
-        "AuRoom derives a deterministic pixel-locked framing anchor from the accepted still "
-        "and renders the MP4 with the configured Seedance video model."
+        "AuRoom sends the accepted still as the authoritative start frame and renders the MP4 "
+        "with the configured Seedance video model without generating a second camera keyframe."
     ),
     response_model=GenerationResponse,
     status_code=status.HTTP_202_ACCEPTED,
