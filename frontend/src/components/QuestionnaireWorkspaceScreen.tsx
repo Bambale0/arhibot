@@ -1444,11 +1444,18 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }
 
   const videoContinuationControl = initialGenerationId ? <div className="questionnaire-video-continuation">
-    {videoGeneration?.status === 'completed' && videoGeneration.output_asset?.type === 'video' && <div className="questionnaire-result">
-      <video controls playsInline preload="metadata" src={videoGeneration.output_asset.url}>
-        Ваш браузер не поддерживает воспроизведение видео.
-      </video>
-    </div>}
+    {videoGeneration?.status === 'completed' && videoGeneration.output_asset?.type === 'video' && <>
+      <div className="questionnaire-result">
+        <video controls playsInline preload="metadata" src={videoGeneration.output_asset.url}>
+          Ваш браузер не поддерживает воспроизведение видео.
+        </video>
+      </div>
+      <div className="questionnaire-actions">
+        <button type="button" className="secondary-button questionnaire-wide" disabled={videoBusy} onClick={() => void createConceptVideo()}>
+          {videoBusy ? 'Ставим видео в очередь…' : '🎬 Создать новый пролёт'}
+        </button>
+      </div>
+    </>}
     {videoGeneration && ['queued','processing'].includes(videoGeneration.status) && <div className="empty-inline">🎬 Готовим пролёт по вашей концепции. Можно выйти и вернуться позже.</div>}
     {(!videoGeneration || videoGeneration.status === 'failed') && <div className="questionnaire-actions">
       <button type="button" className="primary-button" disabled={videoBusy} onClick={() => void createConceptVideo()}>
