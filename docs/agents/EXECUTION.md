@@ -883,3 +883,33 @@ Root-cause/design correction:
 TDD RED: CI #1098 failed exactly on the old end-frame call and the missing accepted-video
 requeue path (2 concept-video failures; 101 other integration tests passed). No tariff, image
 routing, model, secret or paid-POST retry policy change.
+
+
+## Concept video regeneration and latest-attempt semantics — 7 October 2026
+
+After deploying the start-frame-only Bird pipeline, an authenticated smoke POST for source
+`99db154a-6d1a-4e34-bf9e-8306865c5c22` returned the historical completed video
+`68259c46-f15e-41c2-a6f7-c116b60fbdb1` instead of creating a new generation. No new
+provider request and no new paid Seedance operation occurred in that smoke.
+
+Root cause: `get_active_video_for_source_asset()` mixed POST idempotency with read/history
+semantics. It treated COMPLETED as active and excluded FAILED. Consequences:
+- a completed video permanently blocked explicit regeneration;
+- a newer failed attempt could be hidden by an older completed video in GET/UI;
+- updated Bird pipelines could not be live-tested against a source that already had a successful
+  historical video.
+
+Fix contract:
+- POST duplicate suppression uses only QUEUED/PROCESSING attempts;
+- GET returns the latest questionnaire-video attempt regardless of terminal state;
+- COMPLETED and FAILED allow a new explicit POST, with normal current pricing/credit reservation;
+- while a new attempt is QUEUED/PROCESSING repeated POST remains idempotent;
+- completed UI exposes an explicit `Создать новый пролёт` action;
+- remove the duplicate `GenerationService.get_video` definition.
+
+TDD RED: CI #1106 integration failed at the new post-completion assertion because the returned
+generation UUID equaled the already-completed UUID. The concurrent admin orbit assertion in the
+first GREEN candidate CI #1109 was an unrelated timing-sensitive failure
+(`max_active_orbit_calls == 2` vs configured 3); the new concept-video integration path had
+already passed before that unrelated test failed. Re-run exact-head CI remains required before
+merge.
