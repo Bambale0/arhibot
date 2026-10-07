@@ -46,6 +46,7 @@ class GenerationRepository:
     async def get_active_video_for_source_asset(
         self, asset_id: UUID, user_id: UUID
     ) -> Generation | None:
+        """Return only an in-flight video that must block duplicate paid POSTs."""
         result = await self.session.execute(
             select(Generation)
             .join(Project, Project.id == Generation.project_id)
@@ -54,12 +55,26 @@ class GenerationRepository:
                 Generation.user_id == user_id,
                 Generation.origin == "questionnaire_video",
                 Generation.status.in_(
-                    [
-                        GenerationStatus.QUEUED,
-                        GenerationStatus.PROCESSING,
-                        GenerationStatus.COMPLETED,
-                    ]
+                    [GenerationStatus.QUEUED, GenerationStatus.PROCESSING]
                 ),
+                Project.deleted_at.is_(None),
+            )
+            .order_by(Generation.created_at.desc(), Generation.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_latest_video_for_source_asset(
+        self, asset_id: UUID, user_id: UUID
+    ) -> Generation | None:
+        """Return the latest video attempt, including terminal success/failure."""
+        result = await self.session.execute(
+            select(Generation)
+            .join(Project, Project.id == Generation.project_id)
+            .where(
+                Generation.input_asset_id == asset_id,
+                Generation.user_id == user_id,
+                Generation.origin == "questionnaire_video",
                 Project.deleted_at.is_(None),
             )
             .order_by(Generation.created_at.desc(), Generation.id.desc())
