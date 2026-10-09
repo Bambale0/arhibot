@@ -883,3 +883,38 @@ Root-cause/design correction:
 TDD RED: CI #1098 failed exactly on the old end-frame call and the missing accepted-video
 requeue path (2 concept-video failures; 101 other integration tests passed). No tariff, image
 routing, model, secret or paid-POST retry policy change.
+
+
+## Concept video appears lost on return — 9 October 2026
+
+User screenshot (white flat-roof house) matched source generation
+`1ac94df4-6d05-45ff-ab72-88a5a61b4561` and video job
+`5cf53faa-b589-40ec-b8d9-d0dffc1f42c0`. The provider accepted its
+single-image 480p/8s Seedance 2.5 request `b4037431-3320-46da-a50e-ab696aeea862`,
+then remained pending well beyond the first local polling window; GET eventually
+reported terminal `expired / generation_timeout`. Worker persisted `failed`;
+no output MP4 exists. Neither diagnosis nor proposed UX fix creates another paid
+provider POST.
+
+Two independent UI/API visibility defects:
+- Questionnaire showed an unchanging "Готовим пролёт" without a manual GET
+  refresh, delayed-status copy, completed-video link or network-failure handling.
+  Its initial GET failure was silently swallowed and allowed a premature create button.
+- `GET /generations/{source}/video` used the *active-only* lookup
+  (`queued|processing|completed`); after terminal failure it returned `null`
+  on project reopen, causing the user to lose the last attempt and error.
+  The service also had two identical `get_video` definitions (the latter
+  shadowed the former).
+
+TDD RED:
+- CI #1114: exactly the new Playwright pending-video refresh assertion failed
+  in Chromium mobile/desktop and WebKit mobile; 231 unrelated E2E passed.
+- CI #1115: the backend integration assertion for retrieving a failed video
+  returned `null` (1 failed, 102 passed).
+
+Fix scope: keep failed video visible through a separate latest-video read query
+while leaving the active-only POST idempotency gate untouched; remove duplicate
+service method; make questionnaire loading, manual GET refresh, delayed/error
+and final video-link states explicit. Never automatically re-buy a video.
+Final exact-head CI, dev deploy, server smoke and re-open of the failed status
+are required before closing.
