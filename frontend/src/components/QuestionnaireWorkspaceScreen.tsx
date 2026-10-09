@@ -1512,7 +1512,7 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         : 'Видеосервис не завершил создание ролика. Готового видео нет.'}
       {' '}Концепция сохранена. Новую попытку можно запустить вручную.
     </div>}
-    {videoLookupComplete && videoStatusIssue && <div className="questionnaire-actions">
+    {videoLookupComplete && videoStatusIssue && !['queued','processing'].includes(videoGeneration?.status || '') && <div className="questionnaire-actions">
       <button type="button" className="secondary-button" disabled={videoStatusBusy} onClick={() => void checkConceptVideoStatus()}>
         {videoStatusBusy ? 'Проверяем…' : 'Проверить статус видео'}
       </button>
