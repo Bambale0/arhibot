@@ -66,8 +66,9 @@ let savedIdea=false
 let hideIdeaFromFeed=false
 let homeProjects:any[]=[]
 let videoGeneration:any=null
+let videoCreateCount=0
 function resetState(){
-  generationCount=0; publication=null; savedIdea=false; hideIdeaFromFeed=false; homeProjects=[]; videoGeneration=null
+  generationCount=0; publication=null; savedIdea=false; hideIdeaFromFeed=false; homeProjects=[]; videoGeneration=null; videoCreateCount=0
   session={session_id:'77777777-7777-4777-8777-777777777777',catalog_version:catalog.version,selected_objects:['lavochka'],plot_area_sotkas:8,site_plan:null,initial_concept_mode:false,survey_completed_objects:[],initial_generation_id:null,initial_concept_accepted:false,current_object:null,current_question_id:null,source_step_completed:false,source_asset_id:null,scene_asset_id:null,answers:{},accepted_objects:[],removed_objects:[],pending_removal_object:null,generation_ids:{},edit_question_ids:[],review_comments:{},edit_regions:{},lock_regions:{},region_mode:null,region_object:null,application_submitted:false}
   project={id:projectId,name:'Лавочка',description:null,status:'active',context:{questionnaire_draft:false,plot_area_m2:800,design_session:session},created_at:now,updated_at:now}
 }
@@ -105,7 +106,7 @@ test.beforeEach(async ({page})=>{
     if(path.endsWith(`/projects/${projectId}`)&&method==='GET') return json(route,project)
     const videoSourceId=generationIds.find((id)=>path.endsWith(`/generations/${id}/video`))
     if(videoSourceId&&method==='GET') return json(route,videoGeneration)
-    if(videoSourceId&&method==='POST'){videoGeneration=queuedVideo();return json(route,videoGeneration,202)}
+    if(videoSourceId&&method==='POST'){videoCreateCount++;videoGeneration=queuedVideo();return json(route,videoGeneration,202)}
     if(path.endsWith(`/generations/${videoGenerationId}`)&&method==='GET') return json(route,videoGeneration || queuedVideo())
     for(let i=0;i<generationIds.length;i++) if(path.endsWith(`/generations/${generationIds[i]}`)&&method==='GET') return json(route,generation(i))
     if(path.endsWith('/questionnaires')&&method==='GET') return json(route,catalog)
@@ -288,10 +289,24 @@ test('initial concept collects all answers before one generation and supports pr
   await expect(page.getByText(/Готовим пролёт по вашей концепции/)).toBeVisible()
   expect(videoGeneration?.type).toBe('video')
 
+  await expect(page.getByRole('button',{name:'Проверить статус видео'})).toBeVisible()
+  await expect(page.getByText(/ожидание занимает больше обычного/i)).toBeVisible()
+  expect(videoCreateCount).toBe(1)
+
   await page.getByRole('button',{name:'Принять концепцию'}).click()
   await expect(page.getByText('Что делаем дальше?')).toBeVisible()
   await expect(page.getByText('Следующая генерация · 1 кр.')).toBeVisible()
   await expect(page.getByText(/Готовим пролёт по вашей концепции/)).toBeVisible()
+  await expect(page.getByRole('button',{name:'Проверить статус видео'})).toBeVisible()
+
+  videoGeneration={
+    ...videoGeneration,status:'completed',
+    output_asset:{...asset(0),type:'video',mime_type:'video/mp4',url:'data:video/mp4;base64,AAAA'},
+  }
+  await page.getByRole('button',{name:'Проверить статус видео'}).click()
+  await expect(page.locator('video')).toHaveAttribute('src','data:video/mp4;base64,AAAA')
+  await expect(page.getByRole('link',{name:'Открыть видео'})).toBeVisible()
+  expect(videoCreateCount).toBe(1)
 })
 
 
