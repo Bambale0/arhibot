@@ -279,6 +279,45 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
             output_path = LocalMediaStorage(settings).absolute_path(output.storage_path)
         assert output_path.read_bytes() == b"\x00\x00\x00\x18ftypmp42concept-video"
 
+        # A provider can later report terminal failure on another attempt.
+        # The source-video lookup must not hide that attempt on reopening
+        # the project. The write/create path must remain independently
+        # idempotent and allow an explicit new attempt after failure.
+        async with get_session_factory()() as session:
+            video = await session.get(Generation, video_id)
+            assert video is not None
+            video.status = GenerationStatus.FAILED
+            video.error = "Seedance generation_timeout"
+            video.output_asset_id = None
+            await session.commit()
+
+        balance_before_lookup = (
+            await client.get("/api/v1/me", headers=headers)
+        ).json()["credits_balance"]
+        failed_lookup = await client.get(
+            f"/api/v1/generations/{source_id}/video",
+            headers=headers,
+        )
+        assert failed_lookup.status_code == 200, failed_lookup.text
+        assert failed_lookup.json() is not None
+        assert failed_lookup.json()["id"] == str(video_id)
+        assert failed_lookup.json()["status"] == "failed"
+        assert failed_lookup.json()["error"] == "Seedance generation_timeout"
+        balance_after_lookup = (
+            await client.get("/api/v1/me", headers=headers)
+        ).json()["credits_balance"]
+        assert balance_after_lookup == balance_before_lookup
+
+        explicitly_retried = await client.post(
+            f"/api/v1/generations/{source_id}/video",
+            headers=headers,
+        )
+        assert explicitly_retried.status_code == 202, explicitly_retried.text
+        assert explicitly_retried.json()["id"] != str(video_id)
+        await redis_client.lrem(
+            GENERATION_QUEUE_KEY, 0, explicitly_retried.json()["id"]
+        )
+
 
 @pytest.mark.asyncio
 async def test_accepted_video_poll_timeout_is_requeued_for_get_only_recovery() -> None:
