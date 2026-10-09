@@ -56,12 +56,10 @@ def test_guide_encodes_ground_areas_without_labels_or_fence_and_keeps_canonical(
         "partial_hedge",
         "partial_fence",
         "unknown_size",
-        "oval",
         "pavilion",
         "attached",
         "complex_house",
         "missing_house_shape",
-        "mansard",
         "oversize",
     ],
 )
@@ -129,7 +127,7 @@ def test_legend_names_only_selected_objects(selected):
     )
     assert guide is not None
     instruction = guide.prompt.split("AUROOM_INITIAL_CONCEPT_V1", 1)[0]
-    assert ("Blue is the selected pool." in instruction) == ("basseyn" in selected)
+    assert ("pool water footprint" in instruction) == ("basseyn" in selected)
     assert ("Dark green is the selected living hedge." in instruction) == ("izgorod" in selected)
     assert "Gray is the selected built fence." in instruction
 

@@ -266,10 +266,17 @@ def _initial_site_scale(session: DesignSession) -> dict[str, object]:
         if isinstance(raw_house_area, (int, float)) and not isinstance(raw_house_area, bool)
         else None
     )
-    floor_count = _house_floor_count_reference(house_answers.get("4"))
+    floor_answer = house_answers.get("4")
+    floor_count = _house_floor_count_reference(floor_answer)
+    attic_area_unknown = (
+        isinstance(floor_answer, str)
+        and "мансард" in floor_answer.casefold()
+        and house_area_m2 is not None
+        and floor_count is not None
+    )
     estimated_footprint_m2 = (
         round(house_area_m2 / floor_count, 1)
-        if house_area_m2 is not None and floor_count
+        if house_area_m2 is not None and floor_count and not attic_area_unknown
         else None
     )
     estimated_footprint_share = (
@@ -278,29 +285,48 @@ def _initial_site_scale(session: DesignSession) -> dict[str, object]:
         else None
     )
     scale_known = plot_sotkas is not None
-    directive = (
-        "Соблюдай правдоподобный относительный масштаб. Размер участка является "
-        "жёстким ориентиром композиции: 1 сотка = 100 м². Площадь дома — общая "
-        "площадь по этажам; estimated_house_footprint_m2 используется только как "
-        "целевое пятно застройки на земле, а не площадь изображения или сумма этажей. "
-        "Доля пятна относится ко всей площади земли внутри границ участка: оставшаяся "
-        "земля должна сохранять соответствующую долю, даже если перспективная проекция "
-        "крыши выглядит крупнее. Не увеличивай дом так, чтобы он визуально занимал "
-        "несоразмерную долю участка. Не растягивай и не сжимай границы участка ради "
-        "удобства композиции: сначала зафиксируй масштаб участка, затем вписывай в него объекты."
-        if scale_known
-        else (
+    if scale_known and attic_area_unknown:
+        directive = (
+            "Соблюдай правдоподобный относительный масштаб участка и объектов. "
+            "Размер участка известен, но точное пятно дома нельзя вывести из общей площади: "
+            "выбрана мансарда, а её доля в общей площади не задана. Не дели общую площадь "
+            "на условные 2.5 этажа и не выдавай такой расчёт за измеренный footprint. "
+            "Используй план только для относительного размещения; точный масштаб дома "
+            "должен оставаться непроверенным до появления достаточных входных размеров."
+        )
+    elif scale_known:
+        directive = (
+            "Соблюдай правдоподобный относительный масштаб. Размер участка является "
+            "жёстким ориентиром композиции: 1 сотка = 100 м². Площадь дома — общая "
+            "площадь по этажам; estimated_house_footprint_m2 используется только как "
+            "целевое пятно застройки на земле, а не площадь изображения или сумма этажей. "
+            "Доля пятна относится ко всей площади земли внутри границ участка: оставшаяся "
+            "земля должна сохранять соответствующую долю, даже если перспективная проекция "
+            "крыши выглядит крупнее. Не увеличивай дом так, чтобы он визуально занимал "
+            "несоразмерную долю участка. Не растягивай и не сжимай границы участка ради "
+            "удобства композиции: сначала зафиксируй масштаб участка, затем вписывай в него объекты."
+        )
+    else:
+        directive = (
             "Точный размер участка отсутствует у исторического/внутреннего проекта. "
             "Не придумывай числовую площадь; сохраняй только правдоподобный визуальный "
             "масштаб объектов относительно доступной сцены."
         )
-    )
     return {
         "plot_area_known": scale_known,
         "plot_area_sotkas": plot_sotkas,
         "plot_area_m2": plot_m2,
         "house_total_area_m2": house_area_m2,
         "house_floor_count_reference": floor_count,
+        "house_footprint_estimate_status": (
+            "unmeasured_attic_area"
+            if attic_area_unknown
+            else (
+                "estimated_from_total_area_and_full_storeys"
+                if estimated_footprint_m2 is not None
+                else "unavailable"
+            )
+        ),
         "estimated_house_footprint_m2": estimated_footprint_m2,
         "estimated_house_footprint_share_of_plot": estimated_footprint_share,
         "plot_to_house_footprint_ratio": (

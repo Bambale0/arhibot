@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from io import BytesIO
 from json import JSONDecoder
-from math import isclose, isfinite, sqrt
+from math import isclose, isfinite, pi, sqrt
 
 from PIL import Image, ImageDraw
 
@@ -16,6 +16,7 @@ GRASS = (112, 149, 79)
 OUTSIDE = (133, 158, 108)
 HOUSE = (193, 169, 135)
 POOL = (57, 145, 186)
+POOL_COVER = (210, 154, 68)
 HEDGE = (48, 93, 49)
 FENCE = (125, 124, 114)
 
@@ -92,33 +93,46 @@ def _geometry_from_spec(spec: dict) -> dict:
         or requested_shape.startswith(("Г-образная", "П-образная"))
     ):
         raise ValueError("Explicit supported house silhouette required")
-    floors = _positive(spec["site_scale"]["house_floor_count_reference"])
-    if not floors.is_integer():
-        raise ValueError("Partial upper floors do not define an exact ground-area ratio")
+    scale = spec["site_scale"]
+    floors = _positive(scale["house_floor_count_reference"])
+    house_scale_certified = floors.is_integer()
+    if not house_scale_certified and scale.get("house_footprint_estimate_status") != "unmeasured_attic_area":
+        raise ValueError("Partial upper floors require an explicit unmeasured-attic scale status")
     plan = spec["site_plan"]
     if plan.get("warnings") or spec["site_scale"].get("ground_footprint_contract", {}).get(
         "layout_requires_review"
     ):
         raise ValueError("Resolve existing layout warnings before drawing a guide")
     house = next(item for item in plan["objects"] if item["object_key"] == "eskez-doma")
-    shape = house.get("footprint_polygon")
+    shape = house.get("footprint_polygon") or (
+        house_object.get("footprint_shape", {}).get("bounding_box_polygon")
+    )
     if not shape or any(not (0 <= x <= 1 and 0 <= y <= 1) for x, y in shape):
-        raise ValueError("Enhanced exact house footprint polygon required")
+        raise ValueError("Enhanced supported house footprint polygon required")
     x, y, w, h = _inside(house["rect"])
     house_polygon = [(x + u * w, y + v * h) for u, v in shape]
     if any(not (0 <= x <= 1 and 0 <= y <= 1) for x, y in house_polygon):
         raise ValueError("House polygon extends outside plot")
-    share = _positive(spec["site_scale"]["ground_footprint_contract"]["target_share"])
-    if not 0 < share < 1 or not isclose(polygon_area(house_polygon), share, abs_tol=0.0001):
-        raise ValueError("House rect/polygon disagrees with ground footprint share")
-    result = {"house_polygon": house_polygon, "house_share": share, "pool_rect": None}
+    share = None
+    if house_scale_certified:
+        share = _positive(scale["ground_footprint_contract"]["target_share"])
+        if not 0 < share < 1 or not isclose(
+            polygon_area(house_polygon), share, abs_tol=0.0001
+        ):
+            raise ValueError("House rect/polygon disagrees with ground footprint share")
+    result = {
+        "house_polygon": house_polygon,
+        "house_share": share,
+        "house_scale_certified": house_scale_certified,
+        "pool_rect": None,
+        "pool_shape": None,
+        "pool_cover_relation": None,
+    }
     pool = next((item for item in objects if item["object_key"] == "basseyn"), None)
     if pool:
-        if (
-            _answer(pool, "Чем накрыть") != "Открытый"
-            or _answer(pool, "Как связан") != "Отдельно во дворе"
-        ):
-            raise ValueError("Only a separate open pool has supported footprint geometry")
+        cover = _answer(pool, "Чем накрыть")
+        if cover not in {"Открытый", "Навес"} or _answer(pool, "Как связан") != "Отдельно во дворе":
+            raise ValueError("Only a separate open or canopy-covered pool has supported geometry")
         constraints = pool["questionnaire_constraints"]
         answer = next(
             (item["answer"] for item in constraints if "размер" in item["question"].lower()), None
@@ -126,8 +140,8 @@ def _geometry_from_spec(spec: dict) -> dict:
         shape_answer = next(
             (item["answer"] for item in constraints if "форма" in item["question"].lower()), None
         )
-        if shape_answer != "Прямоугольник" or not isinstance(answer, str):
-            raise ValueError("Only an explicitly rectangular pool is supported")
+        if shape_answer not in {"Прямоугольник", "Овал"} or not isinstance(answer, str):
+            raise ValueError("Only an explicitly rectangular or oval pool is supported")
         match = re.fullmatch(
             r"\s*(?:Около\s*)?(\d+(?:[.,]\d+)?)\s*[×xх]\s*(\d+(?:[.,]\d+)?)\s*м\s*",
             answer,
@@ -136,15 +150,27 @@ def _geometry_from_spec(spec: dict) -> dict:
         if not match:
             raise ValueError("Explicit pool length and width in metres required")
         length, width = (_positive(float(part.replace(",", "."))) for part in match.groups())
-        pool_share = length * width / _positive(spec["site_scale"]["plot_area_m2"])
-        pw, ph = sqrt(pool_share * length / width), sqrt(pool_share * width / length)
+        plot_area = _positive(scale["plot_area_m2"])
+        pw, ph = length / sqrt(plot_area), width / sqrt(plot_area)
+        fill_fraction = pi / 4 if shape_answer == "Овал" else 1.0
+        pool_share = pw * ph * fill_fraction
         zone = next(item["rect"] for item in plan["objects"] if item["object_key"] == "basseyn")
         zx, zy, zw, zh = _inside(zone)
         if pw > zw or ph > zh:
             raise ValueError("Physical pool footprint exceeds its permitted semantic zone")
-        rect = {"x": zx + zw / 2 - pw / 2, "y": zy + zh / 2 - ph / 2, "width": pw, "height": ph}
+        rect = {
+            "x": zx + zw / 2 - pw / 2,
+            "y": zy + zh / 2 - ph / 2,
+            "width": pw,
+            "height": ph,
+        }
         _inside(rect)
-        result.update(pool_rect=rect, pool_share=pool_share)
+        result.update(
+            pool_rect=rect,
+            pool_share=pool_share,
+            pool_shape="oval" if shape_answer == "Овал" else "rectangle",
+            pool_cover_relation="above_water" if cover == "Навес" else "none",
+        )
     return result
 
 
@@ -175,13 +201,32 @@ def _render(spec: dict, size=(1536, 864)) -> tuple[bytes, str]:
     ImageDraw.Draw(house_mask).polygon(house_points, fill=1)
     if geometry["pool_rect"]:
         pool_points = rectangle(geometry["pool_rect"])
+        pool_box = (
+            min(point[0] for point in pool_points),
+            min(point[1] for point in pool_points),
+            max(point[0] for point in pool_points),
+            max(point[1] for point in pool_points),
+        )
         pool_mask = Image.new("1", size)
-        ImageDraw.Draw(pool_mask).polygon(pool_points, fill=1)
+        pool_mask_draw = ImageDraw.Draw(pool_mask)
+        if geometry["pool_shape"] == "oval":
+            pool_mask_draw.ellipse(pool_box, fill=1)
+        else:
+            pool_mask_draw.polygon(pool_points, fill=1)
         from PIL import ImageChops
 
         if ImageChops.logical_and(house_mask, pool_mask).getbbox():
             raise ValueError("Pool footprint overlaps the house")
-        draw.polygon(pool_points, fill=POOL)
+        if geometry["pool_shape"] == "oval":
+            draw.ellipse(pool_box, fill=POOL)
+        else:
+            draw.polygon(pool_points, fill=POOL)
+        if geometry["pool_cover_relation"] == "above_water":
+            draw.rectangle(
+                pool_box,
+                outline=POOL_COVER,
+                width=max(3, round(side * 0.006)),
+            )
     draw.polygon(house_points, fill=HOUSE)
     boundary = spec.get("boundary_policy", {})
     requested = {item["object_key"] for item in spec["task"]["objects"]}
@@ -212,19 +257,38 @@ def _render(spec: dict, size=(1536, 864)) -> tuple[bytes, str]:
     image.save(output, format="PNG")
     legend = []
     if geometry["pool_rect"]:
-        legend.append("Blue is the selected pool.")
+        legend.append(
+            "Blue is the selected "
+            + ("oval" if geometry["pool_shape"] == "oval" else "rectangular")
+            + " pool water footprint."
+        )
+        if geometry["pool_cover_relation"] == "above_water":
+            legend.append(
+                "The amber outline is the selected open canopy roof projection: it MUST cover "
+                "the blue water footprint, never sit beside it; canopy supports stay outside the water."
+            )
     if "izgorod" in requested:
         legend.append("Dark green is the selected living hedge.")
     if "zabor" in requested:
         legend.append("Gray is the selected built fence.")
+    house_scale = (
+        "the tan house shape is exactly "
+        f"{geometry['house_share']:.1%} of its ground area. "
+        if geometry["house_scale_certified"]
+        else (
+            "the tan house shape is a RELATIVE PLACEMENT ANCHOR only; house footprint scale "
+            "is not certified because the selected attic-area split is unknown. Do not infer "
+            "a numeric house footprint or percentage from this symbol. "
+        )
+    )
     directive = (
         "Use this unlabeled color layout only as a GROUND-PLANE geometry reference. "
-        "The enclosed green square is the conceptual whole plot; the tan house shape is "
-        f"exactly {geometry['house_share']:.1%} of its ground area. "
+        "The enclosed green square is the conceptual whole plot; "
+        + house_scale
         + " ".join(legend)
-        + " Keep every footprint and its relative area and placement "
+        + " Keep the encoded relative placement and explicit pool-cover relationship "
         "when making the photorealistic architectural scene. Add only the requested building "
-        "height/floors above these footprints; do not enlarge the footprint to fill the frame. "
+        "height/floors above these footprints. "
         "This is not an output style reference: replace flat diagram colors with realistic "
         "materials, grass and surroundings. Do not retain a diagram, white studio background, "
         "labels, numbers, measuring lines or grid. Do not add an unselected hard fence or gate. "
