@@ -1506,7 +1506,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         </button>
       </div>
     </>}
-    {videoLookupComplete && videoGeneration?.status === 'failed' && <div className="empty-inline">Видео создать не удалось: сервис не вернул готовый ролик. Концепция сохранена. Новую попытку можно запустить вручную.</div>}
+    {videoLookupComplete && videoGeneration?.status === 'failed' && <div className="empty-inline">
+      {videoGeneration.error?.includes('generation_timeout') || videoGeneration.error?.includes("'status': 'expired'")
+        ? 'Видеосервис не успел создать ролик в отведённое время. Готового видео нет.'
+        : 'Видеосервис не завершил создание ролика. Готового видео нет.'}
+      {' '}Концепция сохранена. Новую попытку можно запустить вручную.
+    </div>}
     {videoLookupComplete && videoStatusIssue && <div className="questionnaire-actions">
       <button type="button" className="secondary-button" disabled={videoStatusBusy} onClick={() => void checkConceptVideoStatus()}>
         {videoStatusBusy ? 'Проверяем…' : 'Проверить статус видео'}
