@@ -291,6 +291,9 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const [sceneAsset, setSceneAsset] = useState<Asset|null>(null)
   const [renderOutput, setRenderOutput] = useState<Asset|null>(null)
   const [videoGeneration, setVideoGeneration] = useState<Generation|null>(null)
+  const [videoLookupSourceId, setVideoLookupSourceId] = useState<string|null>(null)
+  const [videoStatusIssue, setVideoStatusIssue] = useState<string|null>(null)
+  const [videoStatusBusy, setVideoStatusBusy] = useState(false)
   const [videoBusy, setVideoBusy] = useState(false)
   const [draft, setDraft] = useState<string>('')
   const [multi, setMulti] = useState<string[]>([])
@@ -311,6 +314,9 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   const [error, setError] = useState<string|null>(null)
   const [bootstrapVersion, setBootstrapVersion] = useState(0)
   const initialGenerationId = session?.initial_generation_id || null
+  const videoLookupComplete = Boolean(
+    initialGenerationId && videoLookupSourceId === initialGenerationId
+  )
 
   useEffect(() => {
     let stop=false
@@ -360,14 +366,24 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
   }, [project.id, bootstrapVersion])
 
   useEffect(() => {
-    if (!initialGenerationId) {
-      setVideoGeneration(null)
-      return
-    }
+    // Never offer a fresh paid POST before checking whether this source
+    // already has a saved video job (including a terminal failed one).
+    setVideoGeneration(null)
+    setVideoLookupSourceId(null)
+    setVideoStatusIssue(null)
+    if (!initialGenerationId) return
     let stopped = false
     void api.getGenerationVideo(initialGenerationId)
-      .then((generation) => { if (!stopped) setVideoGeneration(generation) })
-      .catch(() => { /* video continuation is optional */ })
+      .then((generation) => {
+        if (stopped) return
+        setVideoGeneration(generation)
+        setVideoLookupSourceId(initialGenerationId)
+      })
+      .catch(() => {
+        if (stopped) return
+        setVideoStatusIssue('Не удалось получить статус видео. Проверьте его ещё раз.')
+        setVideoLookupSourceId(initialGenerationId)
+      })
     return () => { stopped = true }
   }, [initialGenerationId, renderOutput?.id, session?.initial_concept_accepted])
 
@@ -379,12 +395,12 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
         .then((generation) => {
           if (stopped) return
           setVideoGeneration(generation)
-          if (generation.status === 'failed') {
-            setError(generation.error || 'Не удалось создать видео. Концепция сохранена без изменений.')
-          }
+          setVideoStatusIssue(null)
         })
-        .catch(() => { /* keep polling after transient client/network errors */ })
-    }, 2500)
+        .catch(() => {
+          if (!stopped) setVideoStatusIssue('Не удалось обновить статус видео. Попробуйте проверить его вручную.')
+        })
+    }, 10_000)
     return () => { stopped = true; window.clearInterval(timer) }
   }, [videoGeneration?.id, videoGeneration?.status])
 
@@ -1023,8 +1039,28 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     }
   }
 
+  async function checkConceptVideoStatus() {
+    if (!initialGenerationId || videoStatusBusy) return
+    setVideoStatusBusy(true)
+    try {
+      const generation = videoGeneration && videoLookupComplete
+        ? await api.getGeneration(videoGeneration.id)
+        : await api.getGenerationVideo(initialGenerationId)
+      setVideoGeneration(generation)
+      setVideoLookupSourceId(initialGenerationId)
+      setVideoStatusIssue(null)
+    } catch {
+      setVideoStatusIssue('Не удалось обновить статус видео. Попробуйте проверить его ещё раз.')
+    } finally {
+      setVideoStatusBusy(false)
+    }
+  }
+
   async function createConceptVideo() {
-    if (!initialGenerationId || videoBusy || ['queued','processing'].includes(videoGeneration?.status || '')) return
+    if (
+      !initialGenerationId || !videoLookupComplete || videoStatusIssue || videoBusy
+      || ['queued','processing'].includes(videoGeneration?.status || '')
+    ) return
     setVideoBusy(true)
     setError(null)
     try {
@@ -1443,16 +1479,42 @@ export function QuestionnaireWorkspaceScreen({ project, selectedObjects, onBack,
     }
   }
 
+  const videoAgeMinutes = videoGeneration
+    ? (Date.now() - Date.parse(videoGeneration.created_at)) / 60_000
+    : 0
+  const videoWaitIsLong = Number.isFinite(videoAgeMinutes) && videoAgeMinutes >= 10
+
   const videoContinuationControl = initialGenerationId ? <div className="questionnaire-video-continuation">
-    {videoGeneration?.status === 'completed' && videoGeneration.output_asset?.type === 'video' && <div className="questionnaire-result">
-      <video controls playsInline preload="metadata" src={videoGeneration.output_asset.url}>
-        Ваш браузер не поддерживает воспроизведение видео.
-      </video>
+    {!videoLookupComplete && <div className="empty-inline">Проверяем сохранённое видео…</div>}
+    {videoLookupComplete && videoStatusIssue && <div className="banner-error" role="alert">{videoStatusIssue}</div>}
+    {videoLookupComplete && videoGeneration?.status === 'completed' && videoGeneration.output_asset?.type === 'video' && <>
+      <div className="questionnaire-result">
+        <video controls playsInline preload="metadata" src={videoGeneration.output_asset.url}>
+          Ваш браузер не поддерживает воспроизведение видео.
+        </video>
+      </div>
+      <div className="questionnaire-actions">
+        <a className="secondary-button" href={videoGeneration.output_asset.url} target="_blank" rel="noopener noreferrer">Открыть видео</a>
+      </div>
+    </>}
+    {videoLookupComplete && videoGeneration && ['queued','processing'].includes(videoGeneration.status) && <>
+      <div className="empty-inline">🎬 Готовим пролёт по вашей концепции. Задача сохранена в проекте, можно выйти и вернуться позже.</div>
+      {videoWaitIsLong && <p className="region-hint">Ожидание занимает больше обычного. Сервис ещё не отдал видео, повторная платная генерация автоматически не запускается.</p>}
+      <div className="questionnaire-actions">
+        <button type="button" className="secondary-button" disabled={videoStatusBusy} onClick={() => void checkConceptVideoStatus()}>
+          {videoStatusBusy ? 'Проверяем…' : 'Проверить статус видео'}
+        </button>
+      </div>
+    </>}
+    {videoLookupComplete && videoGeneration?.status === 'failed' && <div className="empty-inline">Видео создать не удалось: сервис не вернул готовый ролик. Концепция сохранена. Новую попытку можно запустить вручную.</div>}
+    {videoLookupComplete && videoStatusIssue && <div className="questionnaire-actions">
+      <button type="button" className="secondary-button" disabled={videoStatusBusy} onClick={() => void checkConceptVideoStatus()}>
+        {videoStatusBusy ? 'Проверяем…' : 'Проверить статус видео'}
+      </button>
     </div>}
-    {videoGeneration && ['queued','processing'].includes(videoGeneration.status) && <div className="empty-inline">🎬 Готовим пролёт по вашей концепции. Можно выйти и вернуться позже.</div>}
-    {(!videoGeneration || videoGeneration.status === 'failed') && <div className="questionnaire-actions">
+    {videoLookupComplete && !videoStatusIssue && (!videoGeneration || videoGeneration.status === 'failed') && <div className="questionnaire-actions">
       <button type="button" className="primary-button" disabled={videoBusy} onClick={() => void createConceptVideo()}>
-        {videoBusy ? 'Ставим видео в очередь…' : '🎬 Создать видео'}
+        {videoBusy ? 'Ставим видео в очередь…' : videoGeneration?.status === 'failed' ? '🎬 Повторить создание видео' : '🎬 Создать видео'}
       </button>
     </div>}
   </div> : null
