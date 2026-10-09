@@ -307,6 +307,19 @@ test('initial concept collects all answers before one generation and supports pr
   await expect(page.locator('video')).toHaveAttribute('src','data:video/mp4;base64,AAAA')
   await expect(page.getByRole('link',{name:'Открыть видео'})).toBeVisible()
   expect(videoCreateCount).toBe(1)
+
+  // A failed video must remain visible after returning to the project.
+  // Provider internals are diagnostics, not customer-facing error copy.
+  videoGeneration={
+    ...videoGeneration,status:'failed',output_asset:null,
+    error:"Neironych video generation failed: {'request_id': 'b4037431', 'status': 'expired', 'error': {'code': 'generation_timeout'}}",
+  }
+  await page.goto('/?project=' + projectId)
+  await expect(page.getByText(/Видеосервис не успел создать ролик/)).toBeVisible()
+  await expect(page.getByRole('button',{name:'🎬 Повторить создание видео'})).toBeVisible()
+  await expect(page.getByText(/Neironych video generation failed/)).toHaveCount(0)
+  await expect(page.getByText(/b4037431/)).toHaveCount(0)
+  expect(videoCreateCount).toBe(1)
 })
 
 
