@@ -918,3 +918,35 @@ service method; make questionnaire loading, manual GET refresh, delayed/error
 and final video-link states explicit. Never automatically re-buy a video.
 Final exact-head CI, dev deploy, server smoke and re-open of the failed status
 are required before closing.
+
+
+## Architectural overview motion — 14 October 2026
+
+Baseline `dev`: `5cfae6f49ec37d5d75a8e8551c611a873ec5d728`. Operator requested a more visible
+camera rise and lateral change of viewpoint rather than a slight animated zoom. Scope: the
+existing questionnaire concept-video flow (accepted still -> Seedance 2.5 start-image-only ->
+MP4 -> Telegram), without changing the selected model, billing, provider payload or idempotency.
+
+Observed pre-change worker motion prompt: slow rise + slight forward move + shallow 20-35 degree
+arc. On the running archibot worker it lacks an explicit staged ascent, lateral truck and
+house-centered composition. A successful video and Telegram delivery were observed earlier on
+14 October; visual correctness still requires MP4 inspection. One-view input cannot reliably
+reveal unknown rear facades; reduce the arc rather than inventing geometry.
+
+Plan and acceptance:
+1. [ ] RED: add prompt-contract regression tests for staged first-quarter/middle-half/final-quarter
+   ascent, lateral translation, house-centered framing, no push-in/zoom and retained architecture lock.
+2. [ ] Minimal worker prompt revision to emphasize physical rise and truck, weak forward component,
+   explicit parallax and static scene. Keep arc target 20-35 degrees / cap 45 degrees, no rear reveal,
+   duration-independent phases, configurable resolution/duration, no new provider or paid retry.
+3. [ ] Version the persisted `video_motion_profile` diagnostic and assert it in the concept-video
+   integration test, preserving the original request body and credit/idempotency invariants.
+4. [ ] Focused test + entire repo CI on the exact head; dev PR and dev-only deploy/smoke if permitted.
+5. [ ] Only after exact deployed SHA and provider/budget preflight, perform bounded paid visual
+   A/B acceptance on accepted houses if available; report geometry and motion, never infer success
+   from a 200/202 status. No production promotion without explicit authorization.
+
+Observability: use the existing video quality report motion profile/constraints and provider
+request ID, without logging provider tokens or customer content. Rollback: revert the prompt
+change through a PR to dev; existing completed video assets stay immutable. No migrations,
+secrets, tariffs, schema, frontend or admin-configuration changes.
