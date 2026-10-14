@@ -199,6 +199,9 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
             assert kwargs["start_image_url"].startswith("https://media.example.test/")
             assert kwargs["end_image_url"] is None
             assert '"end_image"' not in kwargs["request_body"]
+            assert "noticeable camera rise" in kwargs["prompt"].lower()
+            assert "lateral truck" in kwargs["prompt"].lower()
+            assert "house centered" in kwargs["request_body"].lower()
             callback = kwargs.get("on_request_created")
             if callback is not None and not kwargs.get("request_id"):
                 await callback("seedance-request-1")
@@ -249,7 +252,7 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         assert identity["confidence"] == 1.0
         assert identity["verification"] == "accepted_start_frame_only_v1"
         assert identity["source_sha256"]
-        assert body["quality_report"]["video_motion_profile"] == "bird_flyover_safe_v2"
+        assert body["quality_report"]["video_motion_profile"] == "architectural_overview_rise_v1"
         constraints = body["quality_report"]["video_motion_constraints"]
         assert constraints["target_arc_degrees"] == [20, 35]
         assert constraints["max_arc_degrees"] == 45
