@@ -950,3 +950,36 @@ Observability: use the existing video quality report motion profile/constraints 
 request ID, without logging provider tokens or customer content. Rollback: revert the prompt
 change through a PR to dev; existing completed video assets stay immutable. No migrations,
 secrets, tariffs, schema, frontend or admin-configuration changes.
+
+
+### Architecture review follow-up — 14 October 2026
+
+GitHub Codex review on PR #178 identified mutable prompt configuration and motion-profile
+provenance for resumed paid requests. The provenance fix preserves the original profile whenever
+a `video_request.request_body` already exists, including legacy unversioned requests.
+
+The existing operator-managed PostgreSQL `generation_runtime_settings.video_params` JSONB now
+accepts an optional `motion_prompt` (nonblank string, maximum 5000 characters). The authenticated
+admin AI settings expose it in a separate textarea. Empty textarea removes the override and
+restores the default. The immutable video-runtime snapshot captures it per newly admitted job.
+The worker removes the operator field before the provider call, composes it with server-owned
+identity/geometry/arc limits, and fingerprints the effective prompt into the new
+`architectural_overview_custom_<sha256-12>` diagnostic profile; previously prepared/accepted
+requests keep their original saved body and profile. No DB migration is required.
+
+Verification evidence:
+- Existing deployed worker RED: the old prompt did not support camera override or the new admin
+  `video_params.motion_prompt` field (TypeError / schema rejection).
+- Isolated extraction of exact branch motion helpers and corresponding tests on SentinelX:
+  8/8 successful, including architecture-lock preservation, distinct custom fingerprints, and
+  old prepared-request profile provenance.
+- Added parametrized PostgreSQL integration test for both standard and operator-defined motion,
+  including provider wire exclusion, immutable request snapshot, idempotency and output.
+- Added frontend admin E2E for editing/clearing motion instructions and keeping provider params
+  separate. Exact-head full CI remains the merge gate; no live paid video generation made yet.
+
+Deployment caution: the connected SentinelX host is labelled `archibot-prod` and the deployed
+API responds with `environment=production` and `APP_ENV=production`, matching current `dev`
+release SHA. The `Deploy dev` workflow targets `/root/arhibot`; do not assume this is an
+isolated staging environment. Do not merge this PR until deployment blast radius is resolved
+or the operator explicitly authorizes changing the live environment.
