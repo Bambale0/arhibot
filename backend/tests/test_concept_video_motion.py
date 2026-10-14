@@ -42,3 +42,31 @@ def test_concept_video_motion_prompt_locks_scene_and_lighting() -> None:
     assert "no moving water" in prompt
     assert "no people" in prompt
     assert "no vehicles" in prompt
+
+
+def test_concept_video_motion_prompt_stages_real_architectural_overview() -> None:
+    prompt = _concept_video_motion_prompt().lower()
+
+    # Duration-independent staging: the admin may change video duration.
+    for stage in ("first quarter", "middle half", "final quarter"):
+        assert stage in prompt
+
+    # Physically moving the camera must dominate digital enlargement.
+    assert "noticeable camera rise" in prompt
+    assert "lateral truck" in prompt
+    assert "house centered" in prompt
+    assert "not a push-in" in prompt
+    assert "not a digital zoom" in prompt
+    assert "parallax" in prompt
+    assert "more of the roof and site" in prompt
+
+
+def test_concept_video_motion_prompt_preserves_framing_as_camera_rises() -> None:
+    prompt = _concept_video_motion_prompt().lower()
+
+    assert "original accepted viewpoint" in prompt
+    assert "keep the entire house in frame" in prompt
+    assert "no abrupt camera cuts" in prompt
+    assert "rear facade" in prompt
+    assert "reduce the arc" in prompt
+    assert "constant focal length" in prompt
