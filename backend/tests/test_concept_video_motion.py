@@ -97,3 +97,33 @@ def test_motion_profile_uses_new_version_for_fresh_requests() -> None:
     assert _concept_video_motion_profile_for_request(
         {"video_request": {"state": "prepared"}}
     ) == CONCEPT_VIDEO_MOTION_PROFILE
+
+
+
+def test_operator_camera_path_replaces_stages_but_cannot_remove_architecture_lock() -> None:
+    override = "Move camera straight upward in a stable overhead overview."
+    prompt = _concept_video_motion_prompt(override).lower()
+
+    assert override.lower() in prompt
+    assert "first quarter" not in prompt
+    assert "strict identity lock" in prompt
+    assert "preserve exact house and site geometry" in prompt
+    assert "never reveal a hidden rear facade" in prompt
+    assert "never exceed 45 degrees" in prompt
+    assert "reduce the arc" in prompt
+
+
+def test_operator_camera_profiles_are_versioned_by_effective_text() -> None:
+    first = "Move camera upward, then truck slightly left."
+    second = "Move camera upward, then truck slightly right."
+    a = _concept_video_motion_profile_for_request({}, motion_override=first)
+    b = _concept_video_motion_profile_for_request({}, motion_override=second)
+
+    assert a.startswith("architectural_overview_custom_")
+    assert a != b
+    assert a == _concept_video_motion_profile_for_request({}, motion_override=first)
+    assert _concept_video_motion_profile_for_request({}) == CONCEPT_VIDEO_MOTION_PROFILE
+    assert _concept_video_motion_profile_for_request(
+        {"video_motion_profile": "bird_flyover_safe_v2", "video_request": {"request_body": "{}"}},
+        motion_override=second,
+    ) == "bird_flyover_safe_v2"
