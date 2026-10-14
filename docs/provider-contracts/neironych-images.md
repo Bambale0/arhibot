@@ -54,3 +54,29 @@ argument.
 
 The secret is available to Grok/Seedance workers even though standard image generation stays
 on Nexus.
+
+## Nano Banana 2.1 / Qwen3.8 Max trial (2026-10-15)
+
+The live capability endpoint exposed `nano-banana-2.1` for
+`POST /v1/images/generations` and `qwen3.8-max` for
+`POST /v1/chat/completions`. These are Neironych model IDs, not Nexus aliases.
+
+One real, non-retried Neironych image POST using
+`{"model":"nano-banana-2.1","resolution":"1k","aspect_ratio":"16:9","n":1,"response_format":"b64_json"}`
+succeeded with an architectural JPEG of 1376x768 pixels. A separate Qwen3.8-Max
+multimodal Chat Completions request accepted the result and returned a
+schema-conformant JSON review of the building's floors, roof, garage and terrace.
+
+The Neironych image adapter accepts the Nano family protocol separately from GPT:
+`resolution` and `aspect_ratio` for Nano, `size` and `quality` for GPT.
+Image-edit reference limits are 3 for standard Nano and 14 for Nano Pro.
+An **explicit provider selector on the admin-only Sandbox** allows isolated
+Nano generation without changing the primary/fallback settings for customers.
+The sandbox persists the selected provider with the individual job.
+
+**Scope guard:** Qwen was successfully exercised through Neironych directly,
+but the normal still-image worker does not currently run a semantic
+LLM result audit from `quality_judge_model`. This change does not pretend
+otherwise: making Qwen authoritative for customer outputs requires a separate
+checkpointed, idempotent QA integration and quality/latency evaluation.
+Do not switch live production runtime as part of this capability PR.
