@@ -343,7 +343,7 @@ export function adminUpdateGenerationSettings(payload: {
 export function adminListGenerationSandboxHistory(limit = 30) {
   return request<AdminAiHistoryItem[]>(`/admin/generation/sandbox/history?limit=${limit}`)
 }
-export function adminCreateGenerationSandbox(payload: { model_name: string; prompt: string; params: Record<string, unknown> }) {
+export function adminCreateGenerationSandbox(payload: { model_name: string; provider?: 'nexus' | 'neironych'; prompt: string; params: Record<string, unknown> }) {
   return request<Generation>('/admin/generation/sandbox', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 }
 export function adminCreateGenerationFlyoverGif(payload: { source_generation_id: string; model_name: string; prompt: string; params: Record<string, unknown>; keyframe_count: number; inbetween_frames: number; frame_duration_ms: number }) {
