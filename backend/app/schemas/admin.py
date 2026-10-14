@@ -20,7 +20,7 @@ _PROVIDER_FIELDS = frozenset(
         "images", "mask", "n", "response_format",
     }
 )
-_NEIRONYCH_IMAGE_PARAMS = frozenset({"size", "quality", "aspect_ratio"})
+_NEIRONYCH_IMAGE_PARAMS = frozenset({"size", "quality", "resolution", "aspect_ratio"})
 _VIDEO_PARAMS = frozenset({"duration", "resolution", "aspect_ratio", "motion_prompt"})
 
 
@@ -236,6 +236,7 @@ class IdeaSaveResponse(BaseModel):
 
 class AdminAiSandboxCreate(BaseModel):
     model_name: str = Field(min_length=1, max_length=120)
+    provider: GenerationProvider | None = None
     prompt: str = Field(min_length=1, max_length=8000)
     params: dict[str, Any] = Field(default_factory=dict)
 
