@@ -140,3 +140,58 @@ async def test_url_image_invalid_bytes_keep_reconciliation(monkeypatch):
     result = neironych.NeironychImageResult("sync", "https://cdn.example/image.png")
     with pytest.raises(NexusOutcomeUnknown):
         await worker._provider_image_data(result, Settings())
+
+
+def test_nano_banana_21_uses_native_neironych_resolution_and_aspect_ratio():
+    endpoint, body = provider().build_request(
+        model_name='nano-banana-2.1', prompt='A photorealistic house',
+        image_url=None, model_params={'resolution': '1k', 'aspect_ratio': '16:9'},
+    )
+    assert endpoint == '/v1/images/generations'
+    assert body['model'] == 'nano-banana-2.1'
+    assert body['resolution'] == '1k'
+    assert body['aspect_ratio'] == '16:9'
+    assert body['n'] == 1 and body['response_format'] == 'b64_json'
+    assert 'size' not in body and 'quality' not in body
+
+
+@pytest.mark.parametrize('model, params', [
+    ('nano-banana-2.1', {'size': '1024x1024'}),
+    ('nano-banana-2.1', {'quality': 'high'}),
+    ('nano-banana-2.1', {'resolution': '8k'}),
+    ('nano-banana-2.1', {'aspect_ratio': '21:9'}),
+    ('nano-banana-2-lite', {'resolution': '2k'}),
+    ('gpt-image-2', {'resolution': '1k'}),
+])
+def test_neironych_rejects_wrong_model_family_params_before_purchase(model, params):
+    with pytest.raises(NexusProviderError):
+        provider().build_request(model_name=model, prompt='A house',
+                                 image_url=None, model_params=params)
+
+
+def test_nano_banana_21_edit_accepts_three_references_not_four():
+    refs = [f'https://media.example/frame-{n}.png' for n in range(4)]
+    endpoint, body = provider().build_request(
+        model_name='nano-banana-2.1', prompt='Keep architecture unchanged',
+        image_url=refs[0], reference_image_urls=refs[1:3],
+        model_params={'resolution': '1k', 'aspect_ratio': '16:9'},
+    )
+    assert endpoint == '/v1/images/edits'
+    assert len(body['images']) == 3
+    with pytest.raises(NexusProviderError, match='3'):
+        provider().build_request(
+            model_name='nano-banana-2.1', prompt='A house',
+            image_url=refs[0], reference_image_urls=refs[1:],
+            model_params={},
+        )
+
+
+def test_nano_pro_can_use_four_references_and_extended_aspect_ratio():
+    refs = [f'https://media.example/frame-{n}.png' for n in range(4)]
+    endpoint, body = provider().build_request(
+        model_name='nano-banana-pro', prompt='A house',
+        image_url=refs[0], reference_image_urls=refs[1:],
+        model_params={'resolution': '2k', 'aspect_ratio': '21:9'},
+    )
+    assert endpoint == '/v1/images/edits'
+    assert len(body['images']) == 4 and body['aspect_ratio'] == '21:9'

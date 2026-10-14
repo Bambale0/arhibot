@@ -432,7 +432,7 @@ class AdminService:
             await self.session.refresh(project)
 
         runtime = await self.repository.get_generation_settings()
-        provider = runtime.primary_provider if runtime is not None else "nexus"
+        provider = payload.provider or (runtime.primary_provider if runtime is not None else "nexus")
         envelope = ADMIN_SANDBOX_PROMPT_PREFIX + dumps(
             {"prompt": payload.prompt, "params": payload.params, "provider": provider},
             ensure_ascii=False,

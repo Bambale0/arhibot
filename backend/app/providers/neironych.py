@@ -100,7 +100,7 @@ class NeironychImageProvider:
                       reference_image_urls: list[str] | None = None) -> tuple[str, dict]:
         # Model choice remains in the admin control plane. Only the documented
         # image protocol is supported; never silently send Nexus-only knobs.
-        allowed = {"size", "quality", "aspect_ratio"}
+        allowed = {"size", "quality", "resolution", "aspect_ratio"}
         reserved = {"model", "model_name", "prompt", "images", "image_url", "image_urls",
                     "mask", "n", "response_format"}
         unknown = set(model_params or {}) - allowed - reserved
@@ -108,28 +108,63 @@ class NeironychImageProvider:
             raise NexusProviderError("Unsupported Neironych image parameters: "
                                      + ", ".join(sorted(unknown)), retryable=False)
         params = {key: value for key, value in (model_params or {}).items() if key in allowed}
-        if params.get("quality", "auto") not in {"auto", "low", "medium", "high"}:
-            raise NexusProviderError("Invalid Neironych image quality", retryable=False)
-        size = params.get("size", "auto")
-        match = re.fullmatch(r"([1-9][0-9]*)x([1-9][0-9]*)", str(size))
-        if size != "auto" and match is None:
-            raise NexusProviderError("Neironych size must be auto or WIDTHxHEIGHT", retryable=False)
-        aspect = params.pop("aspect_ratio", None)
-        if aspect is not None:
-            ratio = re.fullmatch(r"([1-9][0-9]*):([1-9][0-9]*)", str(aspect))
-            if ratio is None or match is None:
-                raise NexusProviderError("Neironych geometry requires an explicit WIDTHxHEIGHT size", retryable=False)
-            width, height = map(int, ratio.groups())
-            edge = max(map(int, match.groups()))
-            # The worker's frozen source geometry is authoritative. Keep the
-            # operator's configured long-edge resolution, changing only shape.
-            params["size"] = f"{max(1, round(edge * width / max(width, height)))}x{max(1, round(edge * height / max(width, height)))}"
+        nano_models = {"nano-banana-2", "nano-banana-2-lite", "nano-banana-2.1",
+                       "nano-banana-pro"}
+        if model_name.startswith("nano-banana-") and model_name not in nano_models:
+            raise NexusProviderError("Unsupported Neironych Nano Banana model", retryable=False)
+        is_nano = model_name in nano_models
+        if is_nano:
+            if {"size", "quality"} & params.keys():
+                raise NexusProviderError(
+                    "Nano Banana accepts resolution/aspect_ratio, not size/quality",
+                    retryable=False,
+                )
+            resolution = params.get("resolution", "1k")
+            valid_resolutions = {"1k"} if model_name == "nano-banana-2-lite" else {"1k", "2k", "4k"}
+            if not isinstance(resolution, str) or resolution not in valid_resolutions:
+                raise NexusProviderError("Unsupported Nano Banana resolution", retryable=False)
+            if "resolution" in params:
+                params["resolution"] = resolution
+            aspect = params.get("aspect_ratio")
+            allowed_aspects = {"1:1", "16:9", "9:16", "4:3", "3:4"}
+            if model_name == "nano-banana-pro":
+                allowed_aspects |= {"3:2", "2:3", "5:4", "4:5", "21:9"}
+            if aspect is not None and (
+                not isinstance(aspect, str) or aspect not in allowed_aspects
+            ):
+                raise NexusProviderError("Unsupported Nano Banana aspect ratio", retryable=False)
+        else:
+            if "resolution" in params:
+                raise NexusProviderError(
+                    "Neironych GPT image models require size, not resolution",
+                    retryable=False,
+                )
+            if params.get("quality", "auto") not in {"auto", "low", "medium", "high"}:
+                raise NexusProviderError("Invalid Neironych image quality", retryable=False)
+            size = params.get("size", "auto")
+            match = re.fullmatch(r"([1-9][0-9]*)x([1-9][0-9]*)", str(size))
+            if size != "auto" and match is None:
+                raise NexusProviderError("Neironych size must be auto or WIDTHxHEIGHT", retryable=False)
+            aspect = params.pop("aspect_ratio", None)
+            if aspect is not None:
+                ratio = re.fullmatch(r"([1-9][0-9]*):([1-9][0-9]*)", str(aspect))
+                if ratio is None or match is None:
+                    raise NexusProviderError("Neironych geometry requires an explicit WIDTHxHEIGHT size", retryable=False)
+                width, height = map(int, ratio.groups())
+                edge = max(map(int, match.groups()))
+                # Preserve the configured long edge without passing Nexus-only knobs.
+                params["size"] = f"{max(1, round(edge * width / max(width, height)))}x{max(1, round(edge * height / max(width, height)))}"
         params.update(model=model_name, prompt=build_image_output_prompt(
             build_visual_fidelity_prompt(prompt)), n=1, response_format="b64_json")
         references = list(dict.fromkeys(url.strip() for url in [image_url, *(reference_image_urls or [])]
                                        if isinstance(url, str) and url.strip()))
-        if len(references) > 16:
-            raise NexusProviderError("Neironych supports at most 16 input images", retryable=False)
+        reference_limit = (14 if model_name == "nano-banana-pro"
+                           else 3 if is_nano else 16)
+        if len(references) > reference_limit:
+            raise NexusProviderError(
+                f"Neironych {model_name} supports at most {reference_limit} input images",
+                retryable=False,
+            )
         if references:
             params["images"] = [{"image_url": url} for url in references]
         return "/v1/images/edits" if references else "/v1/images/generations", params

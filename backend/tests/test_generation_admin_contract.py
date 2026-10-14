@@ -113,3 +113,27 @@ def test_generation_runtime_rejects_invalid_motion_prompt(invalid) -> None:
         GenerationRuntimeUpdate(
             primary_model="model", video_params={"motion_prompt": invalid}
         )
+
+
+def test_admin_runtime_accepts_native_nano_resolution_configuration() -> None:
+    runtime = GenerationRuntimeUpdate(
+        primary_provider='neironych',
+        primary_model='nano-banana-2.1',
+        primary_params={'resolution': '1k', 'aspect_ratio': '16:9'},
+    )
+    assert runtime.primary_params == {'resolution': '1k', 'aspect_ratio': '16:9'}
+
+
+def test_admin_sandbox_provider_override_is_explicit_and_validated() -> None:
+    sandbox = AdminAiSandboxCreate(
+        model_name='nano-banana-2.1',
+        prompt='A house',
+        provider='neironych',
+        params={'resolution': '1k', 'aspect_ratio': '16:9'},
+    )
+    assert sandbox.provider == 'neironych'
+    assert AdminAiSandboxCreate(model_name='gpt-image-2', prompt='A house').provider is None
+    with pytest.raises(ValidationError):
+        AdminAiSandboxCreate(
+            model_name='nano-banana-2.1', prompt='A house', provider='unsupported'
+        )
