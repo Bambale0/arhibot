@@ -21,7 +21,7 @@ _PROVIDER_FIELDS = frozenset(
     }
 )
 _NEIRONYCH_IMAGE_PARAMS = frozenset({"size", "quality", "aspect_ratio"})
-_VIDEO_PARAMS = frozenset({"duration", "resolution", "aspect_ratio"})
+_VIDEO_PARAMS = frozenset({"duration", "resolution", "aspect_ratio", "motion_prompt"})
 
 
 class AdminOverviewResponse(BaseModel):
@@ -396,6 +396,14 @@ class GenerationRuntimeUpdate(BaseModel):
                 "video_params contains unsupported fields: "
                 + ", ".join(sorted(unknown_video_params))
             )
+        if "motion_prompt" in self.video_params:
+            motion_prompt = self.video_params["motion_prompt"]
+            if (
+                not isinstance(motion_prompt, str)
+                or not motion_prompt.strip()
+                or len(motion_prompt) > 5000
+            ):
+                raise ValueError("video_params.motion_prompt must be non-empty text up to 5000 chars")
         provider_groups = (
             ("primary_params", self.primary_provider, self.primary_params),
             ("fallback_params", self.fallback_provider, self.fallback_params),

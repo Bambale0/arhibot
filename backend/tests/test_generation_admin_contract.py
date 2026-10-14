@@ -97,3 +97,19 @@ def test_generation_prompt_template_must_include_questionnaire_prompt() -> None:
 
     payload = PromptTemplateUpdate(template="Render carefully. {user_prompt}")
     assert payload.template == "Render carefully. {user_prompt}"
+
+
+
+def test_generation_runtime_accepts_admin_motion_prompt() -> None:
+    params = {"duration": 8, "resolution": "480p", "aspect_ratio": "16:9",
+              "motion_prompt": "Rise gradually and truck left."}
+    settings = GenerationRuntimeUpdate(primary_model="model", video_params=params)
+    assert settings.video_params["motion_prompt"] == "Rise gradually and truck left."
+
+
+@pytest.mark.parametrize("invalid", ["", "   ", 3, None, [], {}, "x" * 5001])
+def test_generation_runtime_rejects_invalid_motion_prompt(invalid) -> None:
+    with pytest.raises(ValidationError, match="motion_prompt"):
+        GenerationRuntimeUpdate(
+            primary_model="model", video_params={"motion_prompt": invalid}
+        )
