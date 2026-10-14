@@ -295,3 +295,30 @@ async def test_admin_ai_creation_snapshots_provider_in_envelope_and_audit(
         if isinstance(call.args[0], AdminAuditLog)
     )
     assert audit.details["provider"] == (provider or "nexus")
+
+
+@pytest.mark.asyncio
+async def test_sandbox_explicit_neironych_provider_does_not_change_global_route(monkeypatch):
+    service, row, session = _service(primary_provider='nexus')
+    actor = SimpleNamespace(id=uuid4())
+    project = Project(id=uuid4(), user_id=actor.id, context={'admin_ai_sandbox': True})
+    service.projects.get_admin_ai_sandbox = AsyncMock(return_value=project)
+    create = AsyncMock(return_value=SimpleNamespace(id=uuid4()))
+    monkeypatch.setattr(admin_service, 'build_generation_service',
+                        lambda *_: SimpleNamespace(create=create))
+    payload = AdminAiSandboxCreate(
+        provider='neironych', model_name='nano-banana-2.1',
+        prompt='A realistic house',
+        params={'resolution': '1k', 'aspect_ratio': '16:9'},
+    )
+    await service.create_ai_sandbox_generation(actor, payload)
+    envelope = create.call_args.args[1].prompt
+    snapshot = loads(envelope.removeprefix(admin_service.ADMIN_SANDBOX_PROMPT_PREFIX))
+    assert snapshot['provider'] == 'neironych'
+    assert snapshot['params'] == {'resolution': '1k', 'aspect_ratio': '16:9'}
+    assert row.primary_provider == 'nexus' and row.primary_model == 'old-primary'
+    audit = next(
+        call.args[0] for call in session.add.call_args_list
+        if isinstance(call.args[0], AdminAuditLog)
+    )
+    assert audit.details['provider'] == 'neironych'
