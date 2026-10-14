@@ -420,7 +420,8 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   const [judgeModel,setJudgeModel]=useState(settings.quality_judge_model || 'grok-4.5')
   const [videoEnabled,setVideoEnabled]=useState(settings.video_enabled)
   const [videoModel,setVideoModel]=useState(settings.video_model || 'seedance-2.5')
-  const [videoParams,setVideoParams]=useState(JSON.stringify(settings.video_params || {duration:8,resolution:'480p',aspect_ratio:'16:9'},null,2))
+  const [videoParams,setVideoParams]=useState(JSON.stringify(Object.fromEntries(Object.entries(settings.video_params || {duration:8,resolution:'480p',aspect_ratio:'16:9'}).filter(([key])=>key!=='motion_prompt')),null,2))
+  const [videoMotionPrompt,setVideoMotionPrompt]=useState(typeof settings.video_params?.motion_prompt==='string' ? settings.video_params.motion_prompt : '')
   const [providerMargin,setProviderMargin]=useState(String(settings.masked_edit_provider_context_margin_fraction))
   const [featherFraction,setFeatherFraction]=useState(String(settings.masked_edit_feather_fraction))
   const [featherMin,setFeatherMin]=useState(String(settings.masked_edit_feather_min_px))
@@ -526,6 +527,9 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
     if(featherMinValue>featherMaxValue){onError('Минимальный feather не может быть больше максимального');return}
     setBusy(true);onError(null)
     try{
+      const videoProviderParams=parseSandboxParams(videoParams)
+      delete videoProviderParams.motion_prompt
+      if(videoMotionPrompt.trim()) videoProviderParams.motion_prompt=videoMotionPrompt.trim()
       const saved=await api.adminUpdateGenerationSettings({
         primary_model:primary.trim(),
         fallback_model:fallback.trim()||null,
@@ -536,7 +540,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
         quality_judge_model:judgeModel.trim()||null,
         video_enabled:videoEnabled,
         video_model:videoModel.trim()||null,
-        video_params:JSON.parse(videoParams||'{}') as Record<string,unknown>,
+        video_params:videoProviderParams,
         masked_edit_provider_context_margin_fraction:margin,
         masked_edit_feather_fraction:featherFractionValue,
         masked_edit_feather_min_px:featherMinValue,
@@ -599,6 +603,10 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
       <label>Grok judge model<input value={judgeModel} onChange={e=>setJudgeModel(e.target.value)} placeholder="grok-4.5"/></label>
       <label>Seedance model<input value={videoModel} onChange={e=>setVideoModel(e.target.value)} placeholder="seedance-2.5"/></label>
       <label className="admin-span-2">Video params<textarea className="admin-code" value={videoParams} onChange={e=>setVideoParams(e.target.value)}/><small>Например: {"{"}"duration":8,"resolution":"480p","aspect_ratio":"16:9"{"}"}</small></label>
+      <label className="admin-span-2">Траектория камеры Seedance (необязательно)
+        <textarea className="admin-code" value={videoMotionPrompt} maxLength={5000} onChange={e=>setVideoMotionPrompt(e.target.value)} placeholder="Например: камера поднимается над домом и плавно смещается влево; здание остаётся в центре кадра"/>
+        <small>Пустое поле — стандартный подъём с боковой дугой. Система всегда добавляет обязательную защиту геометрии. Настройка фиксируется отдельно для каждой новой видеозадачи и не меняет уже запущенные генерации.</small>
+      </label>
       <div className="admin-span-2"><h3>Masked edit quality</h3><small>Контекст provider шире final commit region; финальный compositor по-прежнему запрещает изменения снаружи пользовательской области.</small></div>
       <label>Provider margin, доля<input type="number" min="0" max="0.25" step="0.005" value={providerMargin} onChange={e=>setProviderMargin(e.target.value)}/></label>
       <label>Feather fraction<input type="number" min="0" max="0.1" step="0.001" value={featherFraction} onChange={e=>setFeatherFraction(e.target.value)}/></label>
