@@ -1,4 +1,8 @@
-from app.workers.generation_worker import _concept_video_motion_prompt
+from app.workers.generation_worker import (
+    CONCEPT_VIDEO_MOTION_PROFILE,
+    _concept_video_motion_profile_for_request,
+    _concept_video_motion_prompt,
+)
 
 
 def test_concept_video_motion_prompt_uses_bounded_bird_flyover() -> None:
@@ -70,3 +74,26 @@ def test_concept_video_motion_prompt_preserves_framing_as_camera_rises() -> None
     assert "rear facade" in prompt
     assert "reduce the arc" in prompt
     assert "constant focal length" in prompt
+
+
+def test_motion_profile_keeps_original_version_for_inflight_video() -> None:
+    old_report = {
+        "video_motion_profile": "bird_flyover_safe_v2",
+        "video_request": {
+            "state": "accepted",
+            "request_body": '{"model":"seedance-2.5","prompt":"original video prompt"}',
+            "request_id": "previous-provider-request",
+        },
+    }
+
+    assert _concept_video_motion_profile_for_request(old_report) == "bird_flyover_safe_v2"
+    assert _concept_video_motion_profile_for_request(
+        {"video_request": {"request_body": '{"model":"seedance-2.5"}'}}
+    ) == "legacy_unversioned_request"
+
+
+def test_motion_profile_uses_new_version_for_fresh_requests() -> None:
+    assert _concept_video_motion_profile_for_request({}) == CONCEPT_VIDEO_MOTION_PROFILE
+    assert _concept_video_motion_profile_for_request(
+        {"video_request": {"state": "prepared"}}
+    ) == CONCEPT_VIDEO_MOTION_PROFILE
