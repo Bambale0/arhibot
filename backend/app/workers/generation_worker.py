@@ -179,6 +179,17 @@ def _concept_video_identity_prompt(canonical_prompt: str) -> str:
     )
 
 
+def _concept_video_motion_profile_for_request(report: dict[str, object]) -> str:
+    """An already prepared paid request must retain its original motion profile."""
+    stored_request = report.get("video_request")
+    if isinstance(stored_request, dict) and stored_request.get("request_body"):
+        original_profile = report.get("video_motion_profile")
+        if isinstance(original_profile, str) and original_profile:
+            return original_profile
+        return "legacy_unversioned_request"
+    return CONCEPT_VIDEO_MOTION_PROFILE
+
+
 def _concept_video_motion_prompt() -> str:
     return (
         "Create a premium photorealistic bird's-eye architectural overview from the supplied "
@@ -972,7 +983,7 @@ async def _run_concept_video(
             raise NexusProviderError("Video generation is no longer processing", retryable=False)
         report = dict(row.quality_report or {})
         report["video_identity_review"] = identity_report
-        report["video_motion_profile"] = CONCEPT_VIDEO_MOTION_PROFILE
+        report["video_motion_profile"] = _concept_video_motion_profile_for_request(report)
         report["video_motion_constraints"] = {
             "target_arc_degrees": [20, 35],
             "max_arc_degrees": 45,
