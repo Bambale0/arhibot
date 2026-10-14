@@ -96,7 +96,7 @@ test('admin can tune and clear video camera motion without altering Seedance wir
   const motion=page.getByLabel('Траектория камеры Seedance (необязательно)')
   const wire=page.getByLabel('Video params')
   await expect(motion).toHaveValue('Rise and truck left.')
-  await expect(wire).not.toContainText('motion_prompt')
+  expect(await wire.inputValue()).not.toContain('motion_prompt')
 
   await motion.fill('Start at house level, rise steeply, then truck right.')
   await page.getByRole('button',{name:'Сохранить AI'}).click()
