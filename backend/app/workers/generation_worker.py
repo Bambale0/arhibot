@@ -179,7 +179,9 @@ def _concept_video_identity_prompt(canonical_prompt: str) -> str:
     )
 
 
-def _concept_video_motion_profile_for_request(report: dict[str, object]) -> str:
+def _concept_video_motion_profile_for_request(
+    report: dict[str, object], *, motion_override: str | None = None
+) -> str:
     """An already prepared paid request must retain its original motion profile."""
     stored_request = report.get("video_request")
     if isinstance(stored_request, dict) and stored_request.get("request_body"):
@@ -187,15 +189,20 @@ def _concept_video_motion_profile_for_request(report: dict[str, object]) -> str:
         if isinstance(original_profile, str) and original_profile:
             return original_profile
         return "legacy_unversioned_request"
+    if motion_override:
+        fingerprint = sha256(_concept_video_motion_prompt(motion_override).encode("utf-8"))
+        return f"architectural_overview_custom_{fingerprint.hexdigest()[:12]}"
     return CONCEPT_VIDEO_MOTION_PROFILE
 
 
-def _concept_video_motion_prompt() -> str:
-    return (
+def _concept_video_motion_prompt(motion_override: str | None = None) -> str:
+    introduction = (
         "Create a premium photorealistic bird's-eye architectural overview from the supplied "
         "accepted start frame. The accepted start still is the ground truth. Start from the "
         "original accepted viewpoint; CAMERA MOTION ONLY. The camera must travel through "
         "space, not animate a crop of the still. "
+    )
+    default_camera_path = (
         "FIRST QUARTER: establish the original framing, then begin a noticeable camera rise "
         "with very little forward motion. Keep the entire house in frame. "
         "MIDDLE HALF: continue a visible vertical ascent and a lateral truck along the "
@@ -206,6 +213,8 @@ def _concept_video_motion_prompt() -> str:
         "FINAL QUARTER: ease into a distinctly elevated three-quarter overview, showing more "
         "of the roof and site than the first frame. Keep the entire house in frame and the "
         "horizon stable; no abrupt camera cuts. "
+    )
+    identity_and_motion_limits = (
         "Target about 20 to 35 degrees of viewpoint change and never exceed 45 degrees. "
         "Keep currently visible facades dominant. Never reveal a hidden rear facade or cross "
         "over the roof ridge. Do not push straight toward the house or use digital zoom, "
@@ -221,7 +230,8 @@ def _concept_video_motion_prompt() -> str:
         "The result should feel like a high-end real-estate drone overview with clear vertical "
         "and lateral parallax, not a digital zoom and not a full 360-degree orbit."
     )
-
+    camera_path = motion_override.strip() if motion_override else default_camera_path
+    return introduction + camera_path + " " + identity_and_motion_limits
 
 def _quality_retry_prompt(prompt: str, report: dict[str, object]) -> str:
     if report.get("framing_error"):
@@ -966,6 +976,14 @@ async def _run_concept_video(
 
     video_model = str(runtime_snapshot.get("video_model") or "").strip()
     video_params = dict(runtime_snapshot.get("video_params") or {})
+    raw_motion_override = video_params.pop("motion_prompt", None)
+    if raw_motion_override is not None and (
+        not isinstance(raw_motion_override, str)
+        or not raw_motion_override.strip()
+        or len(raw_motion_override) > 5000
+    ):
+        raise NexusProviderError("Invalid video camera motion settings", retryable=False)
+    motion_override = raw_motion_override.strip() if raw_motion_override else None
     if not video_model:
         raise NexusProviderError("Concept video runtime snapshot is incomplete", retryable=False)
 
@@ -983,7 +1001,9 @@ async def _run_concept_video(
             raise NexusProviderError("Video generation is no longer processing", retryable=False)
         report = dict(row.quality_report or {})
         report["video_identity_review"] = identity_report
-        report["video_motion_profile"] = _concept_video_motion_profile_for_request(report)
+        report["video_motion_profile"] = _concept_video_motion_profile_for_request(
+            report, motion_override=motion_override
+        )
         report["video_motion_constraints"] = {
             "target_arc_degrees": [20, 35],
             "max_arc_degrees": 45,
@@ -995,7 +1015,7 @@ async def _run_concept_video(
         await db.commit()
 
     video_provider = NeironychVideoProvider(settings)
-    video_prompt = _concept_video_motion_prompt()
+    video_prompt = _concept_video_motion_prompt(motion_override)
     prepared_payload = video_provider.build_payload(
         model=video_model,
         prompt=video_prompt,
