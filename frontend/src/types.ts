@@ -227,6 +227,8 @@ export type AdminAiHistoryItem = {
 }
 
 export type AdminGenerationSettings = {
+  primary_provider?: 'nexus' | 'neironych'
+  fallback_provider?: 'nexus' | 'neironych'
   primary_model: string | null
   fallback_model: string | null
   primary_timeout_seconds: number
