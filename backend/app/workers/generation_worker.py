@@ -211,6 +211,7 @@ def _concept_video_motion_prompt() -> str:
         "and lateral parallax, not a digital zoom and not a full 360-degree orbit."
     )
 
+
 def _quality_retry_prompt(prompt: str, report: dict[str, object]) -> str:
     if report.get("framing_error"):
         return (
