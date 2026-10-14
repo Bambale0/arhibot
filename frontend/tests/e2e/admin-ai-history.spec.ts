@@ -86,6 +86,7 @@ async function json(route:Route, data:unknown, status=200) {
 // Regression: persisted history must survive a full Mini App reload.
 test('admin AI history survives reload and an older still can launch a GIF flyover', async ({ page }) => {
   let submittedFlyover:Record<string,unknown>|null=null
+  let submittedSandbox:Record<string,unknown>|null=null
   await page.addInitScript(() => {
     sessionStorage.setItem('auroom.access_token','e2e')
       })
@@ -107,6 +108,10 @@ test('admin AI history survives reload and an older still can launch a GIF flyov
       updated_at:now,
     })
     if(path.endsWith('/admin/generation/sandbox/history')) return json(route,history)
+    if(path.endsWith('/admin/generation/sandbox')&&method==='POST') {
+      submittedSandbox=req.postDataJSON() as Record<string,unknown>
+      return json(route,newestStill,202)
+    }
     if(path.endsWith('/admin/generation/flyover-gif')&&method==='POST') {
       submittedFlyover=req.postDataJSON() as Record<string,unknown>
       return json(route,{...olderStill,id:'55555555-5555-4555-8555-555555555555',status:'queued',output_asset:null,started_at:null,completed_at:null})
@@ -172,5 +177,18 @@ test('admin AI history survives reload and an older still can launch a GIF flyov
     keyframe_count:6,
     inbetween_frames:3,
     frame_duration_ms:120,
+  })
+
+  // A single Nano Banana 2.1 test must not change the global AI settings.
+  await page.getByLabel('AI Sandbox provider').selectOption('neironych')
+  await expect(page.getByLabel('Neironych model ID')).toBeVisible()
+  await page.getByLabel('Neironych model ID').fill('nano-banana-2.1')
+  await page.getByLabel('Prompt',{exact:true}).fill('Photoreal exterior')
+  await page.getByLabel('Model params (JSON)').fill('{"resolution":"1k","aspect_ratio":"16:9"}')
+  await page.getByRole('button',{name:'Запустить тест'}).click()
+  await expect.poll(()=>submittedSandbox).not.toBeNull()
+  expect(submittedSandbox).toMatchObject({
+    provider:'neironych',model_name:'nano-banana-2.1',
+    prompt:'Photoreal exterior',params:{resolution:'1k',aspect_ratio:'16:9'},
   })
 })
