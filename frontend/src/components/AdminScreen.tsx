@@ -433,6 +433,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   const [maxStraightEdge,setMaxStraightEdge]=useState(String(settings.masked_edit_max_straight_edge_fraction))
   const [qualityRetries,setQualityRetries]=useState(String(settings.generation_quality_max_retries))
   const [busy,setBusy]=useState(false)
+  const [sandboxProvider,setSandboxProvider]=useState<'nexus'|'neironych'>(settings.primary_provider || 'nexus')
   const [sandboxModel,setSandboxModel]=useState('')
   const [sandboxPrompt,setSandboxPrompt]=useState('')
   const [sandboxParams,setSandboxParams]=useState('{}')
@@ -560,6 +561,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
     setSandboxBusy(true);onError(null)
     try{
       const created=await api.adminCreateGenerationSandbox({
+        provider:sandboxProvider,
         model_name:sandboxModel.trim(),
         prompt:sandboxPrompt.trim(),
         params:parseSandboxParams(sandboxParams),
@@ -620,11 +622,12 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
       <label>Quality retries<input type="number" min="0" max="3" step="1" value={qualityRetries} onChange={e=>setQualityRetries(e.target.value)}/></label>
       <div className="admin-form-actions"><button type="button" className="primary-button" disabled={busy} onClick={()=>void saveSettings()}>Сохранить AI</button></div></div>
     <div className="admin-subpanel">
-      <div className="admin-panel-title"><div><h3>AI Sandbox</h3><p>Одноразовый админский тест Nexus. Model ID, prompt и params применяются только к этому запуску: primary/fallback клиентов не меняются, кредиты не списываются.</p></div></div>
+      <div className="admin-panel-title"><div><h3>AI Sandbox</h3><p>Одноразовый тест Nexus или Нейроныча. Выбранная модель и параметры действуют только для этой задачи: настройки пользователей не изменяются. Кредиты AuRoom не списываются; вызов оплачивается провайдеру.</p></div></div>
       <div className="admin-form-grid">
-        <label className="admin-span-2">Nexus model ID<input value={sandboxModel} onChange={e=>setSandboxModel(e.target.value)} placeholder="provider/model-id"/></label>
+        <label>AI Sandbox provider<select value={sandboxProvider} onChange={e=>setSandboxProvider(e.target.value as 'nexus'|'neironych')}><option value="nexus">Nexus</option><option value="neironych">Нейроныч</option></select></label>
+        <label className="admin-span-2">{sandboxProvider==='neironych'?'Neironych model ID':'Nexus model ID'}<input value={sandboxModel} onChange={e=>setSandboxModel(e.target.value)} placeholder={sandboxProvider==='neironych'?'nano-banana-2.1':'provider/model-id'}/></label>
         <label className="admin-span-2">Prompt<textarea value={sandboxPrompt} onChange={e=>setSandboxPrompt(e.target.value)} placeholder="Опишите тестовый рендер"/></label>
-        <label className="admin-span-2">Model params (JSON)<textarea className="admin-code" value={sandboxParams} onChange={e=>setSandboxParams(e.target.value)}/></label>
+        <label className="admin-span-2">Model params (JSON)<textarea className="admin-code" value={sandboxParams} onChange={e=>setSandboxParams(e.target.value)}/><small>{sandboxProvider==='neironych'?'Для Nano Banana 2.1: {"resolution":"1k","aspect_ratio":"16:9"}':'Параметры выбранной модели в формате JSON'}</small></label>
         <div className="admin-form-actions"><button type="button" className="primary-button" disabled={sandboxBusy||!sandboxModel.trim()||!sandboxPrompt.trim()} onClick={()=>void runSandbox()}>{sandboxBusy?'Ставим в очередь…':'Запустить тест'}</button></div>
       </div>
       {sandboxGeneration && <div className="admin-card-list"><article className="admin-list-card admin-idea-card">
