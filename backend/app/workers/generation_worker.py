@@ -73,6 +73,7 @@ ADMIN_SANDBOX_PROMPT_PREFIX = "AUROOM_ADMIN_SANDBOX_V1\n"
 ADMIN_ORBIT_PROMPT_PREFIX = "AUROOM_ADMIN_ORBIT_V1\n"
 ADMIN_FLYOVER_GIF_PROMPT_PREFIX = "AUROOM_ADMIN_FLYOVER_GIF_V1\n"
 CONCEPT_VIDEO_PROMPT_PREFIX = "AUROOM_CONCEPT_VIDEO_V1\n"
+CONCEPT_VIDEO_MOTION_PROFILE = "architectural_overview_rise_v1"
 QUESTIONNAIRE_PROMPT_PREFIXES = (
     QUESTIONNAIRE_PROMPT_PREFIX,
     INITIAL_CONCEPT_PROMPT_PREFIX,
@@ -180,25 +181,35 @@ def _concept_video_identity_prompt(canonical_prompt: str) -> str:
 
 def _concept_video_motion_prompt() -> str:
     return (
-        "Create a premium photorealistic bounded bird's-eye architectural flyover from the "
-        "supplied accepted start frame. The accepted start still is the ground truth. "
-        "CAMERA MOTION ONLY. Use a slow stabilized camera rise with a slight forward move and "
-        "a shallow orbital arc around the currently visible front corner / visible side of the "
-        "property. Target about 20 to 35 degrees of viewpoint change and never exceed 45 degrees. "
-        "Keep the currently visible facades dominant throughout the shot. Use smooth ease-in "
-        "and ease-out, constant focal length, stable horizon and no lens breathing. Do not "
-        "continue around a corner far enough to reveal a hidden rear facade, and do not cross "
-        "over the roof ridge. If the move would require inventing unseen architecture or site "
-        "geometry, reduce the arc and camera rise rather than hallucinating new content. "
+        "Create a premium photorealistic bird's-eye architectural overview from the supplied "
+        "accepted start frame. The accepted start still is the ground truth. Start from the "
+        "original accepted viewpoint; CAMERA MOTION ONLY. The camera must travel through "
+        "space, not animate a crop of the still. "
+        "FIRST QUARTER: establish the original framing, then begin a noticeable camera rise "
+        "with very little forward motion. Keep the entire house in frame. "
+        "MIDDLE HALF: continue a visible vertical ascent and a lateral truck along the "
+        "currently visible side, forming a controlled shallow orbital arc around the visible "
+        "front corner. Use foreground/background parallax to communicate actual camera "
+        "translation. Gently tilt down as the camera rises to keep the house centered and "
+        "dominant, not a push-in. "
+        "FINAL QUARTER: ease into a distinctly elevated three-quarter overview, showing more "
+        "of the roof and site than the first frame. Keep the entire house in frame and the "
+        "horizon stable; no abrupt camera cuts. "
+        "Target about 20 to 35 degrees of viewpoint change and never exceed 45 degrees. "
+        "Keep currently visible facades dominant. Never reveal a hidden rear facade or cross "
+        "over the roof ridge. Do not push straight toward the house or use digital zoom, "
+        "scaling or cropping to simulate movement. Use smooth ease-in and ease-out, "
+        "constant focal length, no lens breathing and no sudden changes in speed. If the "
+        "move would require inventing unseen architecture or site geometry, reduce the arc "
+        "and camera rise rather than hallucinating new content. "
         "STRICT IDENTITY LOCK: preserve exact house and site geometry, footprint, roof, windows, "
         "doors, terraces, garage, pool, paths, fence, landscaping structure, materials, object "
         "count and all relative object positions. No architectural morphing, no changing "
         "openings, no roof deformation, no object additions/removals, no relighting, no weather "
-        "change, no vegetation animation, no moving water, no people and no vehicles. The result "
-        "should feel like a short high-end real-estate drone reveal, with visible parallax and "
-        "elevation change, not a digital zoom and not a full 360-degree orbit."
+        "change, no vegetation animation, no moving water, no people and no vehicles. "
+        "The result should feel like a high-end real-estate drone overview with clear vertical "
+        "and lateral parallax, not a digital zoom and not a full 360-degree orbit."
     )
-
 
 def _quality_retry_prompt(prompt: str, report: dict[str, object]) -> str:
     if report.get("framing_error"):
@@ -960,7 +971,7 @@ async def _run_concept_video(
             raise NexusProviderError("Video generation is no longer processing", retryable=False)
         report = dict(row.quality_report or {})
         report["video_identity_review"] = identity_report
-        report["video_motion_profile"] = "bird_flyover_safe_v2"
+        report["video_motion_profile"] = CONCEPT_VIDEO_MOTION_PROFILE
         report["video_motion_constraints"] = {
             "target_arc_degrees": [20, 35],
             "max_arc_degrees": 45,
