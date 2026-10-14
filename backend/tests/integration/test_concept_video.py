@@ -69,9 +69,11 @@ async def _register(
     return tokens, headers
 
 
+@pytest.mark.parametrize("camera_override", [None, "Move the camera visibly upward and truck left, keeping the house in frame."])
 @pytest.mark.asyncio
 async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
     monkeypatch: pytest.MonkeyPatch,
+    camera_override: str | None,
 ) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -98,6 +100,7 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
                     "duration": 8,
                     "resolution": "480p",
                     "aspect_ratio": "16:9",
+                    **({"motion_prompt": camera_override} if camera_override else {}),
                 },
             },
         )
@@ -199,9 +202,16 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
             assert kwargs["start_image_url"].startswith("https://media.example.test/")
             assert kwargs["end_image_url"] is None
             assert '"end_image"' not in kwargs["request_body"]
-            assert "noticeable camera rise" in kwargs["prompt"].lower()
-            assert "lateral truck" in kwargs["prompt"].lower()
-            assert "house centered" in kwargs["request_body"].lower()
+            assert "motion_prompt" not in kwargs["params"]
+            assert '"motion_prompt"' not in kwargs["request_body"]
+            if camera_override:
+                assert camera_override.lower() in kwargs["prompt"].lower()
+                assert "first quarter" not in kwargs["prompt"].lower()
+                assert "strict identity lock" in kwargs["prompt"].lower()
+            else:
+                assert "noticeable camera rise" in kwargs["prompt"].lower()
+                assert "lateral truck" in kwargs["prompt"].lower()
+                assert "house centered" in kwargs["request_body"].lower()
             callback = kwargs.get("on_request_created")
             if callback is not None and not kwargs.get("request_id"):
                 await callback("seedance-request-1")
@@ -252,7 +262,11 @@ async def test_concept_video_continuation_is_idempotent_and_outputs_mp4(
         assert identity["confidence"] == 1.0
         assert identity["verification"] == "accepted_start_frame_only_v1"
         assert identity["source_sha256"]
-        assert body["quality_report"]["video_motion_profile"] == "architectural_overview_rise_v1"
+        expected_profile = generation_worker._concept_video_motion_profile_for_request(
+            {}, motion_override=camera_override
+        )
+        assert body["quality_report"]["video_motion_profile"] == expected_profile
+        assert body["quality_report"]["video_runtime"]["video_params"].get("motion_prompt") == camera_override
         constraints = body["quality_report"]["video_motion_constraints"]
         assert constraints["target_arc_degrees"] == [20, 35]
         assert constraints["max_arc_degrees"] == 45
