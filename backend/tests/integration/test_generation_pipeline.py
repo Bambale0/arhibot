@@ -322,6 +322,31 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
             assert generation.telegram_delivery_attempts == 3
             assert generation.telegram_notified_at is not None
 
+            # A malformed/unpreviewable image must still deliver the full
+            # original with the normal caption and Mini App navigation.
+            generation.telegram_delivery_status = "pending"
+            generation.telegram_notified_at = None
+            await session.commit()
+
+        from app.telegram_bot import generation_notifications as notifier
+
+        def unavailable_preview(_path):  # noqa: ANN001
+            raise ValueError("invalid image")
+
+        monkeypatch.setattr(notifier, "build_light_generation_preview", unavailable_preview)
+        sent, failed = await deliver_pending_generations_once(
+            api=telegram,  # type: ignore[arg-type]
+            webapp_url="https://app.example.test/",
+        )
+        assert (sent, failed) == (1, 0)
+        assert [name for name, _ in telegram.calls][-1] == "sendDocument"
+        fallback_document = telegram.calls[-1][1]
+        assert fallback_document["path"] == output_path
+        assert "Генерация готова" in fallback_document["caption"]
+        fallback_keyboard = fallback_document["reply_markup"]["inline_keyboard"]
+        assert f"project={project_id}" in fallback_keyboard[0][0]["web_app"]["url"]
+        assert f"generation={generation_id}" in fallback_keyboard[1][0]["web_app"]["url"]
+
 
 @pytest.mark.asyncio
 async def test_public_reserved_prompt_is_rejected_and_internal_questionnaire_origin_bypasses_template(
