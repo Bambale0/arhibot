@@ -1394,6 +1394,11 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             not admin_internal_generation
             and not concept_video_generation
             and not (initial_concept_generation and initial_layout_guide)
+            and not (
+                initial_concept_generation
+                and isinstance((generation.quality_report or {}).get(SCENE_QA_KEY), dict)
+                and (generation.quality_report or {}).get(SCENE_QA_KEY, {}).get("candidate_path")
+            )
             and (
             runtime is None
             or not runtime.primary_model.strip()
