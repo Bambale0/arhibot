@@ -18,7 +18,7 @@ const settings = {
   primary_params:{},
   fallback_params:{},
   mode_params:{},
-  quality_judge_model:'grok-4.5',
+  quality_judge_model:null,
   video_enabled:true,
   video_model:'seedance-2.5',
   video_params:{duration:8,resolution:'480p',aspect_ratio:'16:9',motion_prompt:'Rise and truck left.'},
@@ -95,20 +95,26 @@ test('admin can tune and clear video camera motion without altering Seedance wir
 
   const motion=page.getByLabel('Траектория камеры Seedance (необязательно)')
   const wire=page.getByLabel('Video params')
+  const judge=page.getByLabel('Проверка готовых фото')
+  await expect(judge).toHaveValue('')
   await expect(motion).toHaveValue('Rise and truck left.')
   expect(await wire.inputValue()).not.toContain('motion_prompt')
 
+  await judge.fill('qwen3.8-max')
   await motion.fill('Start at house level, rise steeply, then truck right.')
   await page.getByRole('button',{name:'Сохранить AI'}).click()
   await expect.poll(()=>requests.length).toBe(1)
+  expect(requests[0].quality_judge_model).toBe('qwen3.8-max')
   expect(requests[0].video_params).toMatchObject({
     duration:8,resolution:'480p',aspect_ratio:'16:9',
     motion_prompt:'Start at house level, rise steeply, then truck right.',
   })
 
+  await judge.fill('')
   await motion.fill('')
   await page.getByRole('button',{name:'Сохранить AI'}).click()
   await expect.poll(()=>requests.length).toBe(2)
+  expect(requests[1].quality_judge_model).toBe(null)
   const cleared=requests[1].video_params as Record<string,unknown>
   expect(cleared).toMatchObject({duration:8,resolution:'480p',aspect_ratio:'16:9'})
   expect('motion_prompt' in cleared).toBe(false)

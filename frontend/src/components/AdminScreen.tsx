@@ -417,7 +417,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   const [primaryParams,setPrimaryParams]=useState(JSON.stringify(settings.primary_params,null,2))
   const [fallbackParams,setFallbackParams]=useState(JSON.stringify(settings.fallback_params,null,2))
   const [modeParams,setModeParams]=useState(JSON.stringify(settings.mode_params,null,2))
-  const [judgeModel,setJudgeModel]=useState(settings.quality_judge_model || 'grok-4.5')
+  const [judgeModel,setJudgeModel]=useState(settings.quality_judge_model ?? '')
   const [videoEnabled,setVideoEnabled]=useState(settings.video_enabled)
   const [videoModel,setVideoModel]=useState(settings.video_model || 'seedance-2.5')
   const [videoParams,setVideoParams]=useState(JSON.stringify(Object.fromEntries(Object.entries(settings.video_params || {duration:8,resolution:'480p',aspect_ratio:'16:9'}).filter(([key])=>key!=='motion_prompt')),null,2))
@@ -600,7 +600,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
     <div className="admin-form-grid"><label>Primary model<input value={primary} onChange={e=>setPrimary(e.target.value)}/></label><label>Fallback model<input value={fallback} onChange={e=>setFallback(e.target.value)}/></label><label>Primary timeout, сек<input type="number" min="30" max="600" value={primaryTimeout} onChange={e=>setPrimaryTimeout(e.target.value)}/><small>Срок подтверждения создания задачи. Принятая задача ожидается до общего таймаута провайдера; резервная модель запускается только после подтверждённой ошибки задачи.</small></label><label className="admin-span-2">Primary params<textarea className="admin-code" value={primaryParams} onChange={e=>setPrimaryParams(e.target.value)}/></label><label className="admin-span-2">Fallback params<textarea className="admin-code" value={fallbackParams} onChange={e=>setFallbackParams(e.target.value)}/></label><label className="admin-span-2">Параметры по сценариям<textarea className="admin-code" value={modeParams} onChange={e=>setModeParams(e.target.value)}/></label>
       <div className="admin-span-2"><h3>Видео после концепции</h3><small>Seedance 2.5 получает принятую концепцию как authoritative start frame без Nexus/Grok и без второго keyframe. Сервер задаёт bounded Bird flyover 20–35° (max 45°), 480p и identity-lock.</small></div>
       <label><span><input type="checkbox" checked={videoEnabled} onChange={e=>setVideoEnabled(e.target.checked)}/> Видео включено</span></label>
-      <label>Grok judge model<input value={judgeModel} onChange={e=>setJudgeModel(e.target.value)} placeholder="grok-4.5"/></label>
+      <label>Проверка готовых фото<input value={judgeModel} onChange={e=>setJudgeModel(e.target.value)} placeholder="qwen3.8-max"/><small>qwen3.8-max через Нейроныча проверяет все объекты первой концепции до выдачи изображения. Пустое поле отключает эту проверку. Grok 4.5 оставлен для совместимости со старыми настройками и не проверяет фото.</small></label>
       <label>Seedance model<input value={videoModel} onChange={e=>setVideoModel(e.target.value)} placeholder="seedance-2.5"/></label>
       <label className="admin-span-2">Video params<textarea className="admin-code" value={videoParams} onChange={e=>setVideoParams(e.target.value)}/><small>Например: {"{"}"duration":8,"resolution":"480p","aspect_ratio":"16:9"{"}"}</small></label>
       <label className="admin-span-2">Траектория камеры Seedance (необязательно)
