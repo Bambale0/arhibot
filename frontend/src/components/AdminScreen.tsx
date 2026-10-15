@@ -417,7 +417,7 @@ function GenerationPanel({ settings, prices, prompts, onSettings, onPrices, onPr
   const [primaryParams,setPrimaryParams]=useState(JSON.stringify(settings.primary_params,null,2))
   const [fallbackParams,setFallbackParams]=useState(JSON.stringify(settings.fallback_params,null,2))
   const [modeParams,setModeParams]=useState(JSON.stringify(settings.mode_params,null,2))
-  const [judgeModel,setJudgeModel]=useState(settings.quality_judge_model || 'grok-4.5')
+  const [judgeModel,setJudgeModel]=useState(settings.quality_judge_model ?? '')
   const [videoEnabled,setVideoEnabled]=useState(settings.video_enabled)
   const [videoModel,setVideoModel]=useState(settings.video_model || 'seedance-2.5')
   const [videoParams,setVideoParams]=useState(JSON.stringify(Object.fromEntries(Object.entries(settings.video_params || {duration:8,resolution:'480p',aspect_ratio:'16:9'}).filter(([key])=>key!=='motion_prompt')),null,2))
