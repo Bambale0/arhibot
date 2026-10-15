@@ -29,7 +29,7 @@ function TelegramAuthError({ message, onRetry }: { message?: string | null; onRe
     <p>{message || 'Telegram-сессия не была подтверждена.'}</p>
     <p>Закройте Mini App и снова запустите его через кнопку бота. Ваши проекты сохранятся.</p>
     <div className="questionnaire-actions">
-      {closeApp && <button className="primary-button" onClick={() => closeApp()}>Закрыть AuRoom</button>}
+      {closeApp && <button className="primary-button" onClick={() => window.Telegram?.WebApp?.close?.()}>Закрыть AuRoom</button>}
       {!needsReopen && <button className={closeApp ? 'secondary-button' : 'primary-button'} onClick={onRetry}>Повторить вход</button>}
     </div>
   </div></div>
