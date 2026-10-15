@@ -86,6 +86,8 @@ def test_qwen_image_request_uses_one_downsampled_data_uri_and_strict_schema():
     )
     assert "Баня" in payload["messages"][0]["content"][0]["text"]
     assert "summer kitchen" in payload["messages"][0]["content"][0]["text"].lower()
+    assert "no selected house" in payload["messages"][0]["content"][0]["text"].lower()
+    assert "interior sauna" in payload["messages"][0]["content"][0]["text"].lower()
     assert "api_key" not in str(payload)
 
 
