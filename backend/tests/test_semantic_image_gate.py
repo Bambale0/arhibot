@@ -14,7 +14,7 @@ from app.providers.neironych_scene_qa import (
     QwenSceneProvider, SceneQualityReview, validate_scene_verdict,
 )
 from app.workers.semantic_scene_gate import (
-    SemanticSceneRejected, selected_scene_objects, read_candidate,
+    selected_scene_objects, read_candidate,
 )
 
 
