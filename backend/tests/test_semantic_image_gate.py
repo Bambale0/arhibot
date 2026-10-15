@@ -372,3 +372,35 @@ async def test_incomplete_qwen_verdict_is_terminal_rejection_not_indefinite_reco
     assert saved["verdict"]["passed"] is False
     assert saved["verdict"]["missing_object_keys"] == ["besedka"]
     paid_post.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cached_qwen_verdict_can_finish_after_provider_credentials_removed(monkeypatch, tmp_path):
+    """A completed paid QA decision must not require another provider setup."""
+    data = _png()
+    review = {
+        "passed": True,
+        "missing_object_keys": [],
+        "objects": [
+            {"object_key": "banya", "status": "present", "evidence": "enclosed bathhouse"},
+            {"object_key": "besedka", "status": "present", "evidence": "gazebo"},
+        ],
+        "notes": "",
+    }
+    checkpoint = {
+        "model": "qwen3.8-max",
+        "state": "reviewed",
+        "candidate_sha256": sha256(data).hexdigest(),
+        "candidate_path": "internal/semantic-scene/candidate.png",
+        "verdict": review,
+    }
+    _fake_scene_db(monkeypatch, checkpoint)
+
+    def must_not_create_provider(settings):
+        raise AssertionError("Previously paid verdict must remain usable without Qwen credentials")
+
+    monkeypatch.setattr(gate, "QwenSceneProvider", must_not_create_provider)
+    settings = _settings(tmp_path)
+    settings.neironych_api_key = None
+    result = await gate.evaluate_candidate(uuid4(), data, _canonical(), settings)
+    assert result == review
