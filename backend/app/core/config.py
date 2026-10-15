@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     jwt_audience: str = "ai-architecture-api"
     access_token_ttl_seconds: int = 900
     refresh_token_ttl_seconds: int = 2_592_000
+    # Briefly tolerate duplicate *failed* refreshes during concurrent Telegram WebViews.
+    # Never issue credentials for an already rotated refresh token.
+    refresh_token_reuse_grace_seconds: int = 15
     refresh_token_secret: str = "local-only-change-me-refresh-secret-32-bytes"
 
     telegram_bot_token: str | None = None
@@ -102,6 +105,8 @@ class Settings(BaseSettings):
             raise ValueError("ACCESS_TOKEN_TTL_SECONDS must be at least 60")
         if self.refresh_token_ttl_seconds <= self.access_token_ttl_seconds:
             raise ValueError("REFRESH_TOKEN_TTL_SECONDS must exceed access-token TTL")
+        if not 0 <= self.refresh_token_reuse_grace_seconds <= 30:
+            raise ValueError("REFRESH_TOKEN_REUSE_GRACE_SECONDS must be between 0 and 30")
         if self.telegram_init_data_ttl_seconds < 60:
             raise ValueError("TELEGRAM_INIT_DATA_TTL_SECONDS must be at least 60")
         if self.redis_socket_connect_timeout_seconds <= 0 or self.redis_socket_timeout_seconds <= 0:
