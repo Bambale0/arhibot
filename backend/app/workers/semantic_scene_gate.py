@@ -134,6 +134,12 @@ async def evaluate_candidate(
     selected = selected_scene_objects(canonical_prompt)
     if not selected:
         raise ValueError("No initial concept objects to review")
+    # Preflight credentials, preview decoding, length, and strict JSON schema
+    # BEFORE recording a paid 'submitted' intent.
+    provider = QwenSceneProvider(settings)
+    provider.build_payload(
+        model=SUPPORTED_JUDGE, image_data=image_data, selected_objects=selected,
+    )
     digest = sha256(image_data).hexdigest()
     async with get_session_factory()() as db:
         row = await GenerationRepository(db).get_for_update(generation_id)
@@ -174,7 +180,6 @@ async def evaluate_candidate(
 
     # Synchronous chat endpoint: no documented safe POST replay even if
     # Idempotency-Key was supplied. A timeout means outcome unknown.
-    provider = QwenSceneProvider(settings)
     review, request_id = await provider.review_scene(
         model=SUPPORTED_JUDGE,
         image_data=image_data,
