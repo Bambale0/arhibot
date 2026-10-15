@@ -66,7 +66,7 @@ test('Telegram expired initData does not logout the newly refreshed session', as
   await expect(page.getByRole('heading', { name: 'Не удалось войти через Telegram' })).toBeVisible()
   await expect(page.getByText(/Данные Telegram устарели/)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Закрыть AuRoom' })).toBeVisible()
-  expect(refreshRequests).toBe(1)
+  expect(refreshRequests).toBe(2) // exactly one bounded recovery retry
   expect(telegramRequests).toBe(1)
   expect(logoutRequests).toBe(0)
 
@@ -107,5 +107,51 @@ test('a stale refresh cookie cannot trigger logout before successful Telegram re
   await page.goto('/')
   await expect(page.getByRole('button', { name: 'Создать проект' })).toBeVisible()
   expect(telegramRequests).toBe(1)
+  expect(logoutRequests).toBe(0)
+})
+
+test('competing refresh rotates the shared cookie and recovers without Telegram re-login', async ({ page }) => {
+  await telegramFrame(page)
+  let refreshRequests = 0
+  let telegramRequests = 0
+  let logoutRequests = 0
+
+  await page.route('**/api/v1/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/auth/refresh')) {
+      refreshRequests += 1
+      if (refreshRequests === 1) {
+        return json(route, 401, {
+          type: 'refresh_token_rotated', title: 'Race with another Telegram WebView', status: 401,
+        })
+      }
+      return json(route, 200, {
+        access_token: 'recovered-access',
+        refresh_token: 'recovered-refresh',
+        token_type: 'bearer',
+        expires_in: 900,
+        user,
+      })
+    }
+    if (path.endsWith('/auth/telegram')) {
+      telegramRequests += 1
+      return json(route, 500, { type: 'unnecessary_telegram_login', status: 500 })
+    }
+    if (path.endsWith('/auth/logout')) {
+      logoutRequests += 1
+      return json(route, 200, { status: 'ok' })
+    }
+    if (path.endsWith('/me')) return json(route, 200, user)
+    if (path.endsWith('/projects')) return json(route, 200, {
+      items: [], next_cursor: null, has_more: false,
+    })
+    if (path.endsWith('/telegram/content')) return json(route, 200, {})
+    return json(route, 200, { items: [] })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'Создать проект' })).toBeVisible()
+  expect(refreshRequests).toBe(2)
+  expect(telegramRequests).toBe(0)
   expect(logoutRequests).toBe(0)
 })
