@@ -63,6 +63,16 @@ from app.repositories.projects import ProjectRepository
 from app.services.asset_service import AssetService, LocalMediaStorage
 from app.services.credit_service import CreditService
 from app.services.generation_service import GENERATION_QUEUE_KEY
+from app.workers.semantic_scene_gate import (
+    SCENE_QA_KEY,
+    SCENE_QA_VERSION,
+    SUPPORTED_JUDGE,
+    SemanticSceneRejected,
+    checkpoint_candidate,
+    evaluate_candidate,
+    read_candidate,
+    selected_scene_objects,
+)
 from app.workers.heartbeat import worker_heartbeat, worker_singleton
 
 logger = logging.getLogger(__name__)
@@ -1097,10 +1107,18 @@ async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -
             return
         generation.status = GenerationStatus.FAILED
         generation.error = str(error)[:1000] or "Generation failed"
-        if isinstance(error, (GenerationQualityRejected, ConceptVideoIdentityRejected)):
+        if isinstance(error, (GenerationQualityRejected, ConceptVideoIdentityRejected, SemanticSceneRejected)):
             generation.quality_status = "rejected"
             if isinstance(error, GenerationQualityRejected):
-                generation.quality_report = error.report
+                generation.quality_report = {
+                    **(generation.quality_report or {}),
+                    **error.report,
+                }
+            elif isinstance(error, SemanticSceneRejected):
+                generation.quality_report = {
+                    **(generation.quality_report or {}),
+                    SCENE_QA_KEY: error.report,
+                }
             else:
                 generation.quality_report = {
                     **(generation.quality_report or {}),
@@ -1393,6 +1411,32 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             )
             return
 
+        # Freeze the image judge before the first paid image submission. Old
+        # accepted jobs without a policy checkpoint keep their original flow.
+        semantic_qa_checkpoint = dict(
+            (generation.quality_report or {}).get(SCENE_QA_KEY) or {}
+        )
+        if (
+            initial_concept_generation
+            and not semantic_qa_checkpoint
+            and not (generation.quality_report or {}).get("provider_request")
+            and getattr(runtime, "quality_judge_model", None) == SUPPORTED_JUDGE
+        ):
+            try:
+                selected_scene_objects(generation.prompt)
+            except ValueError as exc:
+                await session.rollback()
+                await _mark_failed_and_refund(generation_id, exc)
+                return
+            semantic_qa_checkpoint = {
+                "version": SCENE_QA_VERSION,
+                "model": SUPPORTED_JUDGE,
+                "state": "configured",
+            }
+            generation.quality_report = {
+                **(generation.quality_report or {}),
+                SCENE_QA_KEY: semantic_qa_checkpoint,
+            }
         generation.status = GenerationStatus.PROCESSING
         if generation.started_at is None:
             generation.started_at = datetime.now(UTC)
@@ -1838,6 +1882,20 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 max_pixels=settings.max_image_pixels,
             )
         else:
+            cached_semantic_candidate = (
+                semantic_qa_checkpoint if semantic_qa_checkpoint.get("candidate_path")
+                else None
+            )
+            if cached_semantic_candidate is not None:
+                if cached_semantic_candidate.get("state") == "submitted":
+                    raise NexusOutcomeUnknown(
+                        "Qwen image review has already been submitted; no duplicate request",
+                        request_id=cached_semantic_candidate.get("request_id"),
+                    )
+                data = await read_candidate(cached_semantic_candidate, settings)
+                model_name = str(cached_semantic_candidate["image_model"])
+                provider_task_id = cached_semantic_candidate.get("provider_task_id")
+                fallback_used = bool(cached_semantic_candidate.get("fallback_used"))
             max_quality_retries = (
                 int(quality_settings["max_retries"]) if quality_settings is not None else 0
             )
@@ -1853,8 +1911,9 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             previous_failure: dict[str, object] | None = (
                 quality_attempts[-1].get("initial") if quality_attempts else None
             )
-            for quality_attempt in range(
-                resume_attempt, max(max_quality_retries, resume_attempt) + 1
+            for quality_attempt in (
+                range(resume_attempt, max(max_quality_retries, resume_attempt) + 1)
+                if cached_semantic_candidate is None else ()
             ):
                 if quality_attempt > 0:
                     record_masked_edit_retry()
@@ -2177,6 +2236,25 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                     record_masked_edit_quality_rejected()
                     raise GenerationQualityRejected(quality_report)
 
+        # The candidate and Qwen verdict are durable before the public output
+        # asset is published. Recovered reviews reuse the saved bytes/verdict;
+        # an ambiguous synchronous Qwen POST never triggers a second paid POST.
+        if semantic_qa_checkpoint:
+            if not semantic_qa_checkpoint.get("candidate_path"):
+                validated_candidate = asset_service._validate_image(data)
+                await checkpoint_candidate(
+                    generation_id,
+                    validated_candidate.data,
+                    image_model=model_name,
+                    provider_task_id=provider_task_id,
+                    fallback_used=fallback_used,
+                    extension=validated_candidate.extension,
+                    settings=settings,
+                )
+            await evaluate_candidate(
+                generation_id, data, generation.prompt, settings,
+            )
+
         async with get_session_factory()() as session:
             generation = await GenerationRepository(session).get_for_update(generation_id)
             if generation is None or generation.status != GenerationStatus.PROCESSING:
@@ -2250,7 +2328,7 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
             if quality_report is not None:
                 generation.quality_report = quality_report
                 generation.quality_status = "passed"
-            if concept_video_generation:
+            if concept_video_generation or semantic_qa_checkpoint:
                 generation.quality_status = "passed"
             if generation.quality_report:
                 generation.quality_report = {
@@ -2307,6 +2385,16 @@ async def process_generation(generation_id: UUID, settings: Settings) -> None:
                 )
             except Exception:
                 logger.warning("Could not clean concept video frame cache for %s", generation_id, exc_info=True)
+        if semantic_qa_checkpoint:
+            try:
+                await _cleanup_internal_frames(
+                    generation_id, settings, folder_name="semantic-scene"
+                )
+            except Exception:
+                logger.warning(
+                    "Could not clean semantic QA candidate for %s",
+                    generation_id, exc_info=True,
+                )
         if guide_relative_path is not None:
             guide_path = guide_storage.absolute_path(guide_relative_path)
             try:
@@ -2371,6 +2459,17 @@ async def _reconcile_database_jobs(settings: Settings) -> None:
                     # /v1/responses is synchronous. Replaying the same key returns 409
                     # instead of the lost result, so an ambiguous Grok review must be
                     # reconciled manually rather than converted into a second paid call.
+                    continue
+                scene_review = (generation.quality_report or {}).get(
+                    SCENE_QA_KEY, {}
+                )
+                if (
+                    requires_reconciliation
+                    and isinstance(scene_review, dict)
+                    and scene_review.get("state") == "submitted"
+                ):
+                    # Synchronous /v1/chat/completions does not expose a
+                    # safe idempotent replay/read-by-key operation.
                     continue
                 resumable_frames = bool(frames) and all(
                     frame.get("state") == "completed"
