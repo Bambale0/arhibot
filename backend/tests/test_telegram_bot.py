@@ -319,7 +319,7 @@ def test_webapp_section_url_replaces_stale_navigation() -> None:
 def test_send_photo_bytes_uploads_lightweight_preview_as_multipart(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    preview = b"\\xff\\xd8" + b"small-jpeg-bytes" + b"\\xff\\xd9"
+    preview = bytes.fromhex("ffd8") + b"small-jpeg-bytes" + bytes.fromhex("ffd9")
     captured: dict[str, object] = {}
 
     class FakeResponse:
