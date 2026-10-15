@@ -314,3 +314,55 @@ def test_webapp_section_url_replaces_stale_navigation() -> None:
     assert "generation=" not in url
     assert "section=create" in url
     assert "keep=1" in url
+
+
+def test_send_photo_bytes_uploads_lightweight_preview_as_multipart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preview = bytes.fromhex("ffd8") + b"small-jpeg-bytes" + bytes.fromhex("ffd9")
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"ok": True, "result": {"message_id": 18}}
+
+    class FakeClient:
+        def __init__(self, *, timeout: int) -> None:
+            captured["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, *, data: dict, files: dict):
+            captured["url"] = url
+            captured["data"] = data
+            filename, photo, media_type = files["photo"]
+            captured["filename"] = filename
+            captured["bytes"] = photo
+            captured["media_type"] = media_type
+            return FakeResponse()
+
+    monkeypatch.setattr(telegram_main.httpx, "Client", FakeClient)
+    result = TelegramBotApi("fake-token").send_photo_bytes(
+        chat_id=123,
+        data=preview,
+        caption="Генерация готова",
+        reply_markup={"inline_keyboard": []},
+    )
+
+    assert result == {"message_id": 18}
+    assert captured["url"] == "https://api.telegram.org/botfake-token/sendPhoto"
+    assert captured["bytes"] == preview
+    assert captured["filename"] == "preview.jpg"
+    assert captured["media_type"] == "image/jpeg"
+    assert captured["data"] == {
+        "chat_id": "123",
+        "caption": "Генерация готова",
+        "reply_markup": '{"inline_keyboard": []}',
+    }

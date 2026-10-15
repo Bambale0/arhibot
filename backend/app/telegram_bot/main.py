@@ -310,6 +310,48 @@ class TelegramBotApi:
             )
         return payload.get("result")
 
+    def send_photo_bytes(
+        self,
+        *,
+        chat_id: int | str,
+        data: bytes,
+        caption: str,
+        reply_markup: dict[str, Any],
+        timeout: int = 35,
+    ) -> Any:
+        """Send a separately optimized JPEG preview; never upload the original twice."""
+        fields = {
+            "chat_id": str(chat_id),
+            "caption": caption,
+            "reply_markup": json.dumps(reply_markup, ensure_ascii=False),
+        }
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                response = client.post(
+                    f"{self.base_url}/sendPhoto",
+                    data=fields,
+                    files={"photo": ("preview.jpg", data, "image/jpeg")},
+                )
+        except (OSError, httpx.HTTPError) as exc:
+            raise TelegramApiError("Telegram API request failed: sendPhoto") from exc
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise TelegramApiError(
+                f"Telegram API request failed in sendPhoto: HTTP {response.status_code}"
+            ) from exc
+        if not payload.get("ok"):
+            params = payload.get("parameters") or {}
+            wait = params.get("retry_after")
+            retry_after = wait if isinstance(wait, int) and wait > 0 else None
+            raise TelegramApiError(
+                "Telegram API error in sendPhoto: "
+                f"{payload.get('description', 'unknown error')}",
+                retry_after=retry_after,
+            )
+        return payload.get("result")
+
 
 def normalize_command(text: str) -> str:
     token = text.strip().split(maxsplit=1)[0] if text.strip() else ""
