@@ -176,7 +176,18 @@ async function refreshSession(): Promise<void> {
           options.headers = { 'Content-Type': 'application/json' }
           options.body = JSON.stringify({ refresh_token: legacyToken })
         }
-        const response = await fetchWithTimeout(`${API_BASE}/auth/refresh`, options)
+        let response = await fetchWithTimeout(`${API_BASE}/auth/refresh`, options)
+        if (response.status === 401 && !legacyToken) {
+          const failure = await parseError(response)
+          if (failure.errorType === 'refresh_token_rotated') {
+            // Another Telegram WebView may have just written the new HttpOnly
+            // cookie. One bounded retry lets this view recover it without
+            // reusing stale Telegram initData or ever calling /auth/logout.
+            await new Promise((resolve) => window.setTimeout(resolve, 250))
+            requireCurrentSession(version)
+            response = await fetchWithTimeout(`${API_BASE}/auth/refresh`, options)
+          }
+        }
         if (!response.ok) throw await parseError(response)
         const pair = (await response.json()) as TokenPair
         requireCurrentSession(version)
