@@ -1107,7 +1107,9 @@ async def _mark_failed_and_refund(generation_id: UUID, error: Exception | str) -
             return
         generation.status = GenerationStatus.FAILED
         generation.error = str(error)[:1000] or "Generation failed"
-        if isinstance(error, (GenerationQualityRejected, ConceptVideoIdentityRejected, SemanticSceneRejected)):
+        if isinstance(
+            error, (GenerationQualityRejected, ConceptVideoIdentityRejected, SemanticSceneRejected)
+        ):
             generation.quality_status = "rejected"
             if isinstance(error, GenerationQualityRejected):
                 generation.quality_report = {
