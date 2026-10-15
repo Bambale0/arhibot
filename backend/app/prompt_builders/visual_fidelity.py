@@ -224,6 +224,40 @@ def _initial_selected_details(spec: dict, objects: list[dict]) -> None:
         "kind"
     ) != "synthetic_site":
         return
+    selected_keys = {obj.get("object_key") for obj in objects}
+    if "eskez-doma" not in selected_keys:
+        # A synthetic site may contain only secondary structures. Relative-to-house
+        # questionnaire answers then have no visible anchor. Keep canonical
+        # answers intact while giving the image model an explicit plot fallback.
+        unresolved_keys = {
+            item.get("object_key")
+            for item in spec.get("site_plan", {}).get("warnings", [])
+            if item.get("code") == "house_relative_constraint_without_house"
+        }
+        affected = [
+            obj["object_key"]
+            for obj in objects
+            if obj.get("object_key") in unresolved_keys
+        ]
+        if affected:
+            spec.setdefault("site_layout", {})["house_relative_fallback"] = {
+                "approximate": True,
+                "affected_object_keys": affected,
+                "reference_house_in_scene": False,
+                "direction_mapping": {
+                    "left_of_house": "plot_left",
+                    "right_of_house": "plot_right",
+                    "behind_house": "plot_back",
+                    "front_of_house": "plot_front",
+                },
+                "directive": (
+                    "The synthetic plot contains NO selected house or source house image. "
+                    "A house-relative answer is unanchored and cannot be honored literally. "
+                    "Use the corresponding side of the plot and the site_plan rectangles "
+                    "as approximate placement zones, never invent a house as an anchor. "
+                    "Preserve all selected object identities and visibly distinct volumes."
+                ),
+            }
     for obj in objects:
         constraints = obj.get("questionnaire_constraints", [])
         if obj.get("object_key") == "eskez-doma":
@@ -293,6 +327,45 @@ def _initial_scene_priority(spec: dict) -> str:
         return ""
     requirements = []
     keys = {obj.get("object_key") for obj in spec.get("task", {}).get("objects", [])}
+    if spec.get("site_layout", {}).get("house_relative_fallback"):
+        requirements.append(
+            "HOUSE-FREE PLOT: No house was selected or provided as a source image. "
+            "House-relative positions in the questionnaire have no anchor. "
+            "Use the corresponding left, right, back or front PLOT zones from "
+            "site_plan.rect, not imaginary positions beside an absent house. "
+            "Do not invent a house. Both selected structures must remain distinct "
+            "and entirely visible, regardless of camera composition."
+        )
+    if "banya" in keys:
+        requirements.append(
+            "ENCLOSED BATHHOUSE (banya) IS MANDATORY: render a clearly recognizable "
+            "bath/sauna BUILDING with full enclosing exterior walls, a proper roof, "
+            "visible entry door and architectural mass. Keep its selected style, "
+            "floors, scale, roof and placement. A summer kitchen, open gazebo, "
+            "barbecue canopy, pergola, outdoor dining room or roof-only shelter "
+            "is NOT a bathhouse and can never count toward this requirement. "
+            "Never omit or hide the bathhouse behind another object."
+        )
+        if "banya" in spec.get("visual_acceptance_contract", {}).get(
+            "required_roof_chimneys_on_objects", []
+        ):
+            requirements.append(
+                "The bathhouse has a selected wood stove: show its OWN visible "
+                "chimney rising from the bathhouse roof, not from the gazebo or "
+                "another building. Do not substitute an outdoor barbecue flue."
+            )
+        if "besedka" in keys:
+            requirements.append(
+                "BATHHOUSE AND GAZEBO MUST BE TWO VISIBLY DISTINCT OBJECTS: "
+                "one full enclosed bathhouse and one separate gazebo, each with "
+                "its own readable footprint. Do not merge them into a single "
+                "summer kitchen or count a gazebo as the bathhouse."
+            )
+        if "letnyaya-kuhnya" not in keys:
+            requirements.append(
+                "No separate summer kitchen was selected. Do not invent one "
+                "instead of the required bathhouse or gazebo."
+            )
     if "zabor" not in keys:
         requirements.append(
             "No newly invented fence or hard boundary wall, mesh or fence infill on this property. "
@@ -575,6 +648,13 @@ def build_visual_fidelity_prompt(prompt: str) -> str:
         _initial_surface_layout(spec, objects)
         _house_footprint(spec, objects)
     spec["visual_acceptance_contract"] = {
+        # This is an instruction contract for the provider, not evidence that
+        # the pixels were audited by an external semantic judge.
+        "required_selected_object_keys": [
+            obj["object_key"]
+            for obj in objects
+            if isinstance(obj, dict) and obj.get("object_key")
+        ],
         "required_roof_chimneys_on_objects": required_chimneys,
         "chimney_directive": "Every listed object must have its OWN visible chimney physically emerging from ITS roof. Only NEWLY ADDED objects must fit entirely inside the edit mask. During a local refinement preserve existing chimneys outside the selected area; do not move or recreate the whole building. A chimney on the main house cannot substitute for a bath wood-stove chimney. Do not show an interior stove/fireplace.",
         "hedge_is_only_requested_boundary": bool(hedge_only),
