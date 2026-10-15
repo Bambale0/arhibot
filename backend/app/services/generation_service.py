@@ -73,6 +73,14 @@ def _public_quality_report(report: dict | None) -> dict | None:
             for key, value in video_request.items()
             if key not in {"key", "request_body", "request_id"}
         }
+    image_review = public.get("image_scene_review")
+    if isinstance(image_review, dict):
+        # Candidate file paths, digests and payment correlation identifiers are
+        # worker-only reconciliation state, never public API fields.
+        public["image_scene_review"] = {
+            key: value for key, value in image_review.items()
+            if key in {"version", "model", "state", "verdict"}
+        }
     return public
 
 
