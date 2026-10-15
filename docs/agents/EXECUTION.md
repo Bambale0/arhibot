@@ -983,3 +983,60 @@ API responds with `environment=production` and `APP_ENV=production`, matching cu
 release SHA. The `Deploy dev` workflow targets `/root/arhibot`; do not assume this is an
 isolated staging environment. Do not merge this PR until deployment blast radius is resolved
 or the operator explicitly authorizes changing the live environment.
+
+
+### Telegram Mini App refresh-token replay and expired initData — 2026-10-15
+
+**Baseline**: dev `5b797dfcc6a2ee98e654dbdc83635e61996e3360`.
+**Branch**: `fix/telegram-refresh-replay-20261015`. **User outcome**:
+Telegram Mini App no longer logs out an otherwise valid recently refreshed
+session if a second WebView repeats the previous token within 15 seconds;
+when its signed initData is expired, the user sees a clear relaunch action
+instead of an endless retry.
+
+**Root cause**: 09:58:51Z `/auth/refresh` 200; 09:58:55Z same old token replay
+produced 401 and revoked **all** 4 tokens in its family, including the
+newly issued token created at 09:58:51.355 and revoked at 09:58:54.969.
+Mini App `restoreSession` additionally called `/auth/logout` on a
+background 401; all further `/auth/telegram` attempts returned 401. The
+Telegram identity provider itself resolves correctly to the same configured
+bot, TTL 3600s unchanged. The exact signed initData failure reason was not
+captured: expired timestamp and invalid signature both produce 401; do not
+assert which occurred without verification.
+
+**Acceptance/test plan**:
+1. [x] Read-only production API, session database and Telegram getMe checks.
+2. [x] RED isolated original-service reproduction: 4-second replay invoked
+       family revocation instead of a benign denied replay.
+3. [x] Add typed/configurable 15-second grace (0..30s) for already-used
+       rotated tokens; old tokens remain invalid. Old/deliberately revoked
+       tokens retain the security revocation path. Green isolated 4/20/unused
+       cases, no DB changes in production.
+4. [x] Remove background cookie logout on auth recovery error; add actionable
+       expired Telegram Mini App UI, a single bounded raced-cookie refresh
+       recovery retry, and new browser regressions.
+5. [x] Add isolated integration test of recent replay preserving newly rotated
+       token, and later replay still revoking the family.
+6. [ ] Run full exact-head backend/unit, integration, frontend build,
+       mobile/desktop Chromium + mobile WebKit; fix any failures.
+7. [ ] Review PR and confirm green exact SHA, then get permission before
+       merging `dev` due live `archibot-prod` auto-deploy.
+8. [ ] Postrelease real user Telegram login and server smoke; monitor auth 401
+       counts without storing credentials or signed initData.
+
+**Risks**: A used refresh token is still denied; within the brief grace it
+cannot revoke the active family, reducing security-triggered denial of service
+from benign concurrent browser refreshes. After grace, replay compromise
+detection remains unchanged. Closing a long-open Telegram Mini App and
+reopening through the bot is still necessary to obtain new signed initData;
+do not increase the signature TTL silently. No migrations, secrets, credits,
+providers, external API calls, or user content changes. Rollback by PR revert;
+operator may set grace to 0 for an emergency stricter replay policy.
+
+**Guidance consulted**: `Bambale0/claw/.agents/skills/release-hardening/SKILL.md`,
+`wondelai/skills/refactoring-patterns/SKILL.md`,
+`Bambale0/dev-agents-pack/docs/qa-audit-checklist.md`,
+`agentskills/agentskills/docs/skill-creation/evaluating-skills.mdx`,
+`anthropics/skills/skills/webapp-testing/SKILL.md`,
+`Bambale0/ksu/.clinerules/skills/systematic-debugging/SKILL.md`,
+`.agents/skills/test-driven-development/SKILL.md`.

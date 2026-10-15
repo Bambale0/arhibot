@@ -1,14 +1,20 @@
 import os
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 pytestmark = pytest.mark.integration
 
 if os.getenv("RUN_INTEGRATION_TESTS") != "1":
     pytest.skip("set RUN_INTEGRATION_TESTS=1 with a migrated test database", allow_module_level=True)
 
+from app.core.config import get_settings  # noqa: E402
+from app.core.security import hash_refresh_token  # noqa: E402
+from app.db.models.users import RefreshToken  # noqa: E402
+from app.db.session import get_session_factory  # noqa: E402
 from app.main import app  # noqa: E402
 
 
@@ -49,14 +55,45 @@ async def test_email_register_me_refresh_login_flow() -> None:
         rotated = refresh.json()
         assert rotated["refresh_token"] != tokens["refresh_token"]
 
+        # A second WebView can still hold the old HttpOnly cookie just after
+        # rotation. Reject it without killing the newer, already issued token.
         reuse = await client.post(
             "/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
         )
         assert reuse.status_code == 401, reuse.text
-        assert reuse.json()["type"] == "refresh_token_reused"
+        assert reuse.json()["type"] == "refresh_token_rotated"
+        still_valid = await client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": rotated["refresh_token"]}
+        )
+        assert still_valid.status_code == 200, still_valid.text
+
+        # A much later replay is no longer a benign concurrent-WebView race:
+        # preserve strict compromise/revocation detection beyond the grace.
+        settings = get_settings()
+        async with get_session_factory()() as db:
+            previous = (
+                await db.execute(
+                    select(RefreshToken)
+                    .where(
+                        RefreshToken.token_hash == hash_refresh_token(
+                            tokens["refresh_token"], settings
+                        )
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one()
+            previous.used_at = datetime.now(UTC) - timedelta(
+                seconds=settings.refresh_token_reuse_grace_seconds + 5
+            )
+            await db.commit()
+        old_replay = await client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
+        )
+        assert old_replay.status_code == 401, old_replay.text
+        assert old_replay.json()["type"] == "refresh_token_reused"
 
         family_revoked = await client.post(
-            "/api/v1/auth/refresh", json={"refresh_token": rotated["refresh_token"]}
+            "/api/v1/auth/refresh", json={"refresh_token": still_valid.json()["refresh_token"]}
         )
         assert family_revoked.status_code == 401, family_revoked.text
 

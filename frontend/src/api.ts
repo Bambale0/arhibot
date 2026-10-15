@@ -83,9 +83,20 @@ async function parseError(response: Response): Promise<ApiError> {
   const title = typeof body.title === 'string' ? body.title : `HTTP ${response.status}`
   const detail = typeof body.detail === 'string' ? body.detail : undefined
   const errorType = typeof body.type === 'string' ? body.type : undefined
-  const tokenError = errorType === 'invalid_access_token' || errorType === 'invalid_refresh_token' || errorType === 'refresh_token_reused'
+  const tokenError = errorType === 'invalid_access_token' || errorType === 'invalid_refresh_token' || errorType === 'refresh_token_reused' || errorType === 'refresh_token_rotated'
   if (response.status === 401 && tokenError) {
     return new ApiError(response.status, 'Сессия истекла. Откройте приложение заново.', detail, errorType)
+  }
+  if (response.status === 401 && errorType === 'telegram_auth_invalid') {
+    const isExpired = (detail || '').toLowerCase().includes('expired')
+    return new ApiError(
+      response.status,
+      isExpired
+        ? 'Данные Telegram устарели. Закройте AuRoom и откройте его заново через бота.'
+        : 'Не удалось проверить данные Telegram. Закройте AuRoom и откройте его заново через бота.',
+      detail,
+      errorType,
+    )
   }
   const message = response.status === 401
     ? 'Не удалось подтвердить вход. Проверьте данные или откройте приложение заново.'
@@ -165,7 +176,18 @@ async function refreshSession(): Promise<void> {
           options.headers = { 'Content-Type': 'application/json' }
           options.body = JSON.stringify({ refresh_token: legacyToken })
         }
-        const response = await fetchWithTimeout(`${API_BASE}/auth/refresh`, options)
+        let response = await fetchWithTimeout(`${API_BASE}/auth/refresh`, options)
+        if (response.status === 401 && !legacyToken) {
+          const failure = await parseError(response)
+          if (failure.errorType === 'refresh_token_rotated') {
+            // Another Telegram WebView may have just written the new HttpOnly
+            // cookie. One bounded retry lets this view recover it without
+            // reusing stale Telegram initData or ever calling /auth/logout.
+            await new Promise((resolve) => window.setTimeout(resolve, 250))
+            requireCurrentSession(version)
+            response = await fetchWithTimeout(`${API_BASE}/auth/refresh`, options)
+          }
+        }
         if (!response.ok) throw await parseError(response)
         const pair = (await response.json()) as TokenPair
         requireCurrentSession(version)
@@ -175,15 +197,6 @@ async function refreshSession(): Promise<void> {
   return refreshPromise
 }
 
-async function clearBrowserRefreshCookie(): Promise<void> {
-  try {
-    await serializeAuth(() => fetchWithTimeout(`${API_BASE}/auth/logout`, {
-      method: 'POST',
-      credentials: 'same-origin',
-    }))
-  } catch { /* best-effort cookie cleanup */ }
-}
-
 export async function restoreSession(): Promise<User | null> {
   const version = sessionVersion
   try {
@@ -191,8 +204,10 @@ export async function restoreSession(): Promise<User | null> {
     return await getMe()
   } catch (error) {
     if (error instanceof ApiError && error.status === 401 && version === sessionVersion) {
+      // A second Telegram WebView may have just rotated this cookie.
+      // Never revoke a possibly healthy token family from background startup.
+      // Only the user's explicit sign-out may call /auth/logout.
       clearTokens()
-      await clearBrowserRefreshCookie()
       return null
     }
     throw error
