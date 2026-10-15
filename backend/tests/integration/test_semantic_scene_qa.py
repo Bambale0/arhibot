@@ -15,17 +15,21 @@ if os.getenv("RUN_INTEGRATION_TESTS") != "1":
 
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 
-from test_initial_layout_recovery import prepare  # noqa: E402
-from test_generation_pipeline import _png  # noqa: E402
 from test_framing_retry_recovery import _recover_reserved  # noqa: E402
+from test_generation_pipeline import _png  # noqa: E402
+from test_initial_layout_recovery import prepare  # noqa: E402
 
 from app.core.config import get_settings  # noqa: E402
 from app.db.models.admin import GenerationRuntimeSettings  # noqa: E402
 from app.db.models.generations import Generation  # noqa: E402
 from app.db.session import get_session_factory  # noqa: E402
 from app.main import app  # noqa: E402
-from app.providers.neironych_scene_qa import SceneQualityReview, QwenSceneProvider  # noqa: E402
-from app.providers.nexus import NexusImageProvider, NexusImageResult, NexusOutcomeUnknown  # noqa: E402
+from app.providers.neironych_scene_qa import QwenSceneProvider, SceneQualityReview  # noqa: E402
+from app.providers.nexus import (  # noqa: E402
+    NexusImageProvider,
+    NexusImageResult,
+    NexusOutcomeUnknown,
+)
 from app.questionnaires.catalog import build_catalog  # noqa: E402
 from app.questionnaires.generation_prompt import build_initial_concept_prompt  # noqa: E402
 from app.schemas.questionnaires import DesignSession  # noqa: E402
@@ -67,7 +71,9 @@ def _review(status):
     return SceneQualityReview.model_validate({
         "objects": [
             {"object_key": "banya", "status": status,
-             "evidence": "enclosed wood-fired bath" if status == "present" else "open summer kitchen"},
+             "evidence": (
+                 "enclosed wood-fired bath" if status == "present" else "open summer kitchen"
+             )},
             {"object_key": "besedka", "status": "present", "evidence": "separate gazebo"},
         ],
         "overall_pass": status == "present",
