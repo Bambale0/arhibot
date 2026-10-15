@@ -21,7 +21,18 @@ function Loader() {
 }
 
 function TelegramAuthError({ message, onRetry }: { message?: string | null; onRetry: () => void }) {
-  return <div className="boot-loader"><div className="wordmark"><span className="wordmark-dot" />AuRoom</div><div className="empty-state"><h2>Не удалось войти через Telegram</h2><p>{message || 'Telegram-сессия не была подтверждена. Повторите вход.'}</p><button className="primary-button" onClick={onRetry}>Повторить вход</button></div></div>
+  const needsReopen = message?.startsWith('Данные Telegram устарели')
+    || message?.startsWith('Не удалось проверить данные Telegram')
+  const closeApp = window.Telegram?.WebApp?.close
+  return <div className="boot-loader"><div className="wordmark"><span className="wordmark-dot" />AuRoom</div><div className="empty-state">
+    <h2>Не удалось войти через Telegram</h2>
+    <p>{message || 'Telegram-сессия не была подтверждена.'}</p>
+    <p>Закройте Mini App и снова запустите его через кнопку бота. Ваши проекты сохранятся.</p>
+    <div className="questionnaire-actions">
+      {closeApp && <button className="primary-button" onClick={() => closeApp()}>Закрыть AuRoom</button>}
+      {!needsReopen && <button className={closeApp ? 'secondary-button' : 'primary-button'} onClick={onRetry}>Повторить вход</button>}
+    </div>
+  </div></div>
 }
 function initialSection(): AppSection {
   const params = new URLSearchParams(window.location.search)
