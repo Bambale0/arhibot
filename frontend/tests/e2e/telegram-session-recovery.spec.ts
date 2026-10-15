@@ -16,6 +16,10 @@ async function json(route: Route, status: number, data: object) {
 }
 
 async function telegramFrame(page: Page) {
+  // The real Telegram SDK would overwrite the synthetic WebApp bridge.
+  await page.route('**/js/telegram-web-app.js', (route) => route.fulfill({
+    status: 200, contentType: 'application/javascript', body: '',
+  }))
   await page.addInitScript(() => {
     ;(window as unknown as { __telegramCloseCount: number }).__telegramCloseCount = 0
     window.Telegram = {
