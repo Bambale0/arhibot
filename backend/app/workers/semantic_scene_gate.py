@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from hashlib import sha256
 from json import JSONDecodeError, JSONDecoder
-from uuid import UUID, NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from app.core.config import Settings
 from app.db.session import get_session_factory
@@ -109,7 +109,9 @@ async def checkpoint_candidate(
             raise NexusOutcomeUnknown("Semantic candidate was already submitted for review")
         if existing.get("candidate_path"):
             if existing.get("candidate_sha256") != digest:
-                raise NexusOutcomeUnknown("Saved semantic candidate differs; do not buy another image")
+                raise NexusOutcomeUnknown(
+                    "Saved semantic candidate differs; do not buy another image"
+                )
             return
         if existing.get("model") != SUPPORTED_JUDGE:
             raise ValueError("Unexpected frozen semantic QA model")
@@ -172,7 +174,9 @@ async def evaluate_candidate(
             **checkpoint,
             "state": "submitted",
             "request_key": key,
-            "client_request_id": str(uuid5(NAMESPACE_URL, f"auroom:semantic-scene:{generation_id}")),
+            "client_request_id": str(
+                uuid5(NAMESPACE_URL, f"auroom:semantic-scene:{generation_id}")
+            ),
             "required_object_keys": [o["object_key"] for o in selected],
         }
         row.quality_report = {**(row.quality_report or {}), SCENE_QA_KEY: checkpoint}
@@ -202,7 +206,10 @@ async def evaluate_candidate(
             if row is None or row.status != GenerationStatus.PROCESSING:
                 raise NexusOutcomeUnknown("Semantic review completed after job stopped")
             stored = dict((row.quality_report or {}).get(SCENE_QA_KEY) or {})
-            if stored.get("state") != "submitted" or stored.get("request_key") != checkpoint["request_key"]:
+            if (
+                stored.get("state") != "submitted"
+                or stored.get("request_key") != checkpoint["request_key"]
+            ):
                 raise NexusOutcomeUnknown("Semantic review state changed before verdict commit")
             stored.update(state="reviewed", verdict=verdict, request_id=request_id)
             row.quality_report = {**(row.quality_report or {}), SCENE_QA_KEY: stored}
