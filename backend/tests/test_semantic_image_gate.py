@@ -335,3 +335,38 @@ async def test_ambiguous_qwen_post_recovery_never_reposts(monkeypatch, tmp_path)
             )
     assert row.quality_report["image_scene_review"]["state"] == "submitted"
     post.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_incomplete_qwen_verdict_is_terminal_rejection_not_indefinite_reconciliation(
+    monkeypatch, tmp_path,
+):
+    data = _png()
+    checkpoint = {
+        "model": "qwen3.8-max",
+        "state": "candidate_ready",
+        "candidate_sha256": sha256(data).hexdigest(),
+        "candidate_path": "internal/semantic-scene/candidate.png",
+    }
+    row, _ = _fake_scene_db(monkeypatch, checkpoint)
+    incomplete = SceneQualityReview.model_validate({
+        "objects": [
+            {"object_key": "banya", "status": "present", "evidence": "enclosed sauna"},
+        ],
+        "overall_pass": True,
+        "notes": "",
+    })
+    paid_post = AsyncMock(return_value=(incomplete, "qwen-answered"))
+    monkeypatch.setattr(gate.QwenSceneProvider, "review_scene", paid_post)
+
+    for _ in range(2):
+        with pytest.raises(gate.SemanticSceneRejected):
+            await gate.evaluate_candidate(
+                uuid4(), data, _canonical(), _settings(tmp_path),
+            )
+
+    saved = row.quality_report["image_scene_review"]
+    assert saved["state"] == "reviewed"
+    assert saved["verdict"]["passed"] is False
+    assert saved["verdict"]["missing_object_keys"] == ["besedka"]
+    paid_post.assert_awaited_once()
