@@ -30,6 +30,10 @@ self-reissue Telegram initData from inside the same WebView.
   revoke the family as before. No token plaintext is stored or logged.
 - Client boot no longer calls `/auth/logout` if refresh failed. That endpoint
   retains full revocation only for an explicit user sign-out.
+- On `refresh_token_rotated` with cookie-backed refresh, the other WebView may
+  have already saved a newer cookie. The client attempts exactly **one**
+  refresh again after a short delay before falling back to Telegram login.
+  Legacy explicit-token refreshes are never replayed this way.
 - Invalid/expired Telegram signed initData remains a **401**. A clear error
   instructs the user to close the Mini App and launch again via its own bot,
   which provides a new signed initData; the UI has a Telegram `WebApp.close`
