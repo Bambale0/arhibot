@@ -56,3 +56,27 @@ def test_generation_preview_invalid_image_raises_for_original_fallback(tmp_path)
     source.write_bytes(b"not a real png")
     with pytest.raises(ValueError, match="preview"):
         build_light_generation_preview(source)
+
+
+def test_high_entropy_render_stays_under_telegram_preview_budget(tmp_path):
+    from random import Random
+
+    size = (1600, 1200)
+    noisy = Image.frombytes("RGB", size, Random(17).randbytes(size[0] * size[1] * 3))
+    source = tmp_path / "large-random-render.png"
+    noisy.save(source, "PNG")
+    preview = build_light_generation_preview(source)
+    assert len(preview) <= LIGHT_PREVIEW_MAX_BYTES
+    with Image.open(BytesIO(preview)) as image:
+        assert image.format == "JPEG"
+        assert max(image.size) <= LIGHT_PREVIEW_MAX_SIDE
+
+
+def test_extreme_panorama_is_padded_for_telegram_photo_rules(tmp_path):
+    source = tmp_path / "panorama.png"
+    Image.new("RGB", (4000, 100), "cyan").save(source, "PNG")
+    preview = build_light_generation_preview(source)
+    with Image.open(BytesIO(preview)) as image:
+        width, height = image.size
+        assert max(width / height, height / width) <= 20
+        assert max(image.size) <= LIGHT_PREVIEW_MAX_SIDE
