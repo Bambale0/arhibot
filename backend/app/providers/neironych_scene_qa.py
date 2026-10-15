@@ -9,7 +9,6 @@ import base64
 import json
 from io import BytesIO
 from typing import Literal
-from urllib.parse import urlsplit
 
 import httpx
 from PIL import Image
