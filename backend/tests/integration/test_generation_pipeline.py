@@ -240,28 +240,43 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
 
         class FakeTelegramApi:
             def __init__(self) -> None:
-                self.calls: list[dict] = []
+                self.calls: list[tuple[str, dict]] = []
+                self.fail_document_once = False
+
+            def send_photo_bytes(self, **kwargs):  # noqa: ANN003
+                self.calls.append(("sendPhoto", kwargs))
+                return {"message_id": len(self.calls)}
 
             def send_document_file(self, **kwargs):  # noqa: ANN003
-                self.calls.append(kwargs)
-                return {"message_id": 1}
+                self.calls.append(("sendDocument", kwargs))
+                if self.fail_document_once:
+                    self.fail_document_once = False
+                    raise RuntimeError("Telegram temporary failure after preview")
+                return {"message_id": len(self.calls)}
 
         telegram = FakeTelegramApi()
         sent, failed = await deliver_pending_generations_once(
             api=telegram,  # type: ignore[arg-type]
             webapp_url="https://app.example.test/",
         )
-        assert sent == 1
-        assert failed == 0
-        assert len(telegram.calls) == 1
-        telegram_payload = telegram.calls[0]
-        assert telegram_payload["chat_id"] == "900000001"
-        assert telegram_payload["path"] == output_path
-        assert telegram_payload["path"].read_bytes() == output_path.read_bytes()
-        assert "Add a bathhouse only in the editable area" not in telegram_payload["caption"]
-        keyboard = telegram_payload["reply_markup"]["inline_keyboard"]
+        assert (sent, failed) == (1, 0)
+        assert [name for name, _ in telegram.calls] == ["sendPhoto", "sendDocument"]
+        photo_payload = telegram.calls[0][1]
+        assert photo_payload["chat_id"] == "900000001"
+        assert len(photo_payload["data"]) <= 650 * 1024
+        with Image.open(BytesIO(photo_payload["data"])) as image:
+            assert image.format == "JPEG"
+        assert "Add a bathhouse only in the editable area" not in photo_payload["caption"]
+        keyboard = photo_payload["reply_markup"]["inline_keyboard"]
         assert f"project={project_id}" in keyboard[0][0]["web_app"]["url"]
         assert f"generation={generation_id}" in keyboard[1][0]["web_app"]["url"]
+
+        document_payload = telegram.calls[1][1]
+        assert document_payload["chat_id"] == "900000001"
+        assert document_payload["path"] == output_path
+        assert document_payload["path"].read_bytes() == output_path.read_bytes()
+        assert "Оригинал" in document_payload["caption"]
+        assert document_payload["reply_markup"] == {"inline_keyboard": []}
 
         async with get_session_factory()() as session:
             generation = await session.get(Generation, generation_id)
@@ -270,26 +285,41 @@ async def test_generation_worker_completes_masked_pipeline_and_preserves_pixels(
             assert generation.telegram_delivery_attempts == 1
             assert generation.telegram_notified_at is not None
 
-            # Simulate a process crash after Telegram accepted the document but before
-            # AuRoom committed the final "sent" state. Delivery is intentionally
-            # at-least-once: the next maintenance pass retries instead of losing it.
-            generation.telegram_delivery_status = "sending"
+            # Recover a partial delivery: photo is confirmed, original upload
+            # not yet confirmed. The next pass MUST NOT resend the photo.
+            generation.telegram_delivery_status = "preview_sent"
             generation.telegram_notified_at = None
             await session.commit()
+
+        telegram.fail_document_once = True
+        sent, failed = await deliver_pending_generations_once(
+            api=telegram,  # type: ignore[arg-type]
+            webapp_url="https://app.example.test/",
+        )
+        assert (sent, failed) == (0, 1)
+        assert [name for name, _ in telegram.calls] == [
+            "sendPhoto", "sendDocument", "sendDocument",
+        ]
+        async with get_session_factory()() as session:
+            generation = await session.get(Generation, generation_id)
+            assert generation is not None
+            assert generation.telegram_delivery_status == "preview_sent"
+            assert generation.telegram_delivery_attempts == 2
+            assert generation.telegram_notified_at is None
 
         retried_sent, retried_failed = await deliver_pending_generations_once(
             api=telegram,  # type: ignore[arg-type]
             webapp_url="https://app.example.test/",
         )
-        assert retried_sent == 1
-        assert retried_failed == 0
-        assert len(telegram.calls) == 2
-
+        assert (retried_sent, retried_failed) == (1, 0)
+        assert [name for name, _ in telegram.calls] == [
+            "sendPhoto", "sendDocument", "sendDocument", "sendDocument",
+        ]
         async with get_session_factory()() as session:
             generation = await session.get(Generation, generation_id)
             assert generation is not None
             assert generation.telegram_delivery_status == "sent"
-            assert generation.telegram_delivery_attempts == 2
+            assert generation.telegram_delivery_attempts == 3
             assert generation.telegram_notified_at is not None
 
 
