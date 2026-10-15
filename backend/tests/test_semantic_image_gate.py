@@ -1,21 +1,29 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from io import BytesIO
-from uuid import uuid4
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import httpx
 import pytest
 from PIL import Image
 
 from app.core.config import Settings
+from app.domain.generations.enums import GenerationStatus
+from app.providers import neironych_scene_qa
 from app.providers.neironych_scene_qa import (
-    QwenSceneProvider, SceneQualityReview, validate_scene_verdict,
+    QwenSceneProvider,
+    SceneQualityReview,
+    validate_scene_verdict,
 )
-from app.workers.semantic_scene_gate import (
-    selected_scene_objects, read_candidate,
-)
+from app.providers.nexus import NexusOutcomeUnknown
+from app.services.asset_service import LocalMediaStorage
+from app.services.generation_service import _public_quality_report
+from app.workers import semantic_scene_gate as gate
+from app.workers.semantic_scene_gate import read_candidate, selected_scene_objects
 
 
 def _settings(tmp_path=None):
@@ -46,8 +54,13 @@ def _canonical(selected=("banya", "besedka")):
         }
         for key in selected
     ]
-    return ("AUROOM_INITIAL_CONCEPT_V1\nSTRUCTURED_SPEC:\n"
-            + json.dumps({"schema": "auroom.initial_concept.v1", "task": {"objects": objects}}, ensure_ascii=False))
+    return (
+        "AUROOM_INITIAL_CONCEPT_V1\\nSTRUCTURED_SPEC:\\n"
+        + json.dumps(
+            {"schema": "auroom.initial_concept.v1", "task": {"objects": objects}},
+            ensure_ascii=False,
+        )
+    )
 
 
 def test_selected_objects_are_read_only_from_canonical_initial_concept():
@@ -68,7 +81,9 @@ def test_qwen_image_request_uses_one_downsampled_data_uri_and_strict_schema():
     assert payload["response_format"]["type"] == "json_schema"
     assert payload["response_format"]["json_schema"]["strict"] is True
     assert payload["messages"][0]["content"][1]["type"] == "image_url"
-    assert payload["messages"][0]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert payload["messages"][0]["content"][1]["image_url"]["url"].startswith(
+        "data:image/jpeg;base64,"
+    )
     assert "Баня" in payload["messages"][0]["content"][0]["text"]
     assert "summer kitchen" in payload["messages"][0]["content"][0]["text"].lower()
     assert "api_key" not in str(payload)
@@ -116,7 +131,6 @@ def test_qwen_review_accepts_all_visible_named_buildings():
 
 @pytest.mark.asyncio
 async def test_qwen_api_success_is_one_post_with_strict_json(monkeypatch):
-    from app.providers import neironych_scene_qa
     requests = []
     body = {"objects": [
         {"object_key": "banya", "status": "present", "evidence": "Building"},
@@ -146,8 +160,6 @@ async def test_qwen_api_success_is_one_post_with_strict_json(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_qwen_ambiguous_timeout_never_retries(monkeypatch):
-    from app.providers import neironych_scene_qa
-    from app.providers.nexus import NexusOutcomeUnknown
     sent = []
 
     def handle(request):
@@ -170,8 +182,6 @@ async def test_qwen_ambiguous_timeout_never_retries(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_saved_candidate_digest_is_required(tmp_path):
-    from app.services.asset_service import LocalMediaStorage
-    from hashlib import sha256
     settings = _settings(tmp_path)
     storage = LocalMediaStorage(settings)
     path = "internal/semantic-scene/test-id/candidate.png"
@@ -186,11 +196,7 @@ async def test_saved_candidate_digest_is_required(tmp_path):
 
 @pytest.mark.asyncio
 async def test_submitted_checkpoint_blocks_repurchase(monkeypatch, tmp_path):
-    from app.workers import semantic_scene_gate as gate
-    from app.domain.generations.enums import GenerationStatus
-    from types import SimpleNamespace
     expected = _canonical()
-    from hashlib import sha256
     saved = {"state": "submitted", "model": "qwen3.8-max",
              "candidate_sha256": sha256(_png()).hexdigest(),
              "candidate_path": "internal/semantic-scene/a.png"}
@@ -204,14 +210,12 @@ async def test_submitted_checkpoint_blocks_repurchase(monkeypatch, tmp_path):
     monkeypatch.setattr(gate, "GenerationRepository", lambda _: repo)
     post = AsyncMock(side_effect=AssertionError("Must not resubmit Qwen"))
     monkeypatch.setattr(gate.QwenSceneProvider, "review_scene", post)
-    from app.providers.nexus import NexusOutcomeUnknown
     with pytest.raises(NexusOutcomeUnknown):
         await gate.evaluate_candidate(uuid4(), _png(), expected, _settings(tmp_path))
     post.assert_not_awaited()
 
 
 def test_private_qwen_checkpoint_is_redacted_from_generation_api():
-    from app.services.generation_service import _public_quality_report
     checkpoint = {
         "version": "architectural-image-qa.v1",
         "model": "qwen3.8-max",
@@ -235,9 +239,6 @@ def test_private_qwen_checkpoint_is_redacted_from_generation_api():
 
 
 def _fake_scene_db(monkeypatch, checkpoint):
-    from app.workers import semantic_scene_gate as gate
-    from app.domain.generations.enums import GenerationStatus
-    from types import SimpleNamespace
     row = SimpleNamespace(status=GenerationStatus.PROCESSING,
                           quality_report={"image_scene_review": dict(checkpoint)})
     session = AsyncMock()
@@ -250,8 +251,6 @@ def _fake_scene_db(monkeypatch, checkpoint):
 
 @pytest.mark.asyncio
 async def test_candidate_checkpoint_reused_and_verdict_persisted_once(monkeypatch, tmp_path):
-    from app.workers import semantic_scene_gate as gate
-    from hashlib import sha256
     data = _png()
     row, session = _fake_scene_db(
         monkeypatch, {"model": "qwen3.8-max", "state": "configured",
@@ -292,8 +291,6 @@ async def test_candidate_checkpoint_reused_and_verdict_persisted_once(monkeypatc
 
 @pytest.mark.asyncio
 async def test_failed_bathhouse_review_refuses_publishing_and_never_reposts(monkeypatch, tmp_path):
-    from app.workers import semantic_scene_gate as gate
-    from hashlib import sha256
     image_data = _png()
     checkpoint = {
         "model": "qwen3.8-max", "state": "candidate_ready",
@@ -322,9 +319,6 @@ async def test_failed_bathhouse_review_refuses_publishing_and_never_reposts(monk
 
 @pytest.mark.asyncio
 async def test_ambiguous_qwen_post_recovery_never_reposts(monkeypatch, tmp_path):
-    from app.workers import semantic_scene_gate as gate
-    from app.providers.nexus import NexusOutcomeUnknown
-    from hashlib import sha256
     image_data = _png()
     checkpoint = {
         "model": "qwen3.8-max", "state": "candidate_ready",
