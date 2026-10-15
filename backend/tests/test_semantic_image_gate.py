@@ -55,7 +55,7 @@ def _canonical(selected=("banya", "besedka")):
         for key in selected
     ]
     return (
-        "AUROOM_INITIAL_CONCEPT_V1\\nSTRUCTURED_SPEC:\\n"
+        "AUROOM_INITIAL_CONCEPT_V1\nSTRUCTURED_SPEC:\n"
         + json.dumps(
             {"schema": "auroom.initial_concept.v1", "task": {"objects": objects}},
             ensure_ascii=False,
