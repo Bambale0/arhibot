@@ -127,6 +127,21 @@ class AuthService:
             raise self._invalid_refresh_token()
 
         if stored.revoked_at is not None or stored.used_at is not None:
+            # A second WebView can submit the previous cookie just after
+            # another WebView rotated it. The old token is *never* accepted,
+            # but a bounded benign race must not revoke the brand-new session.
+            # Replays outside this window remain a compromise signal.
+            if stored.used_at is not None and stored.replaced_by_token_id is not None:
+                elapsed = now - stored.used_at
+                if timedelta(0) <= elapsed <= timedelta(
+                    seconds=self.settings.refresh_token_reuse_grace_seconds
+                ):
+                    raise AppError(
+                        type="refresh_token_rotated",
+                        title="Refresh token already rotated",
+                        status=401,
+                        detail="This token was just rotated. Use the newest session credentials.",
+                    )
             await self.repository.revoke_token_family(stored.family_id, now)
             await self.repository.session.commit()
             raise AppError(
