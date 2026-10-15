@@ -32,7 +32,7 @@ def test_generation_preview_is_small_true_jpeg_with_original_unchanged(tmp_path,
     source = tmp_path / "generation.png"
     source.write_bytes(original)
     preview = build_light_generation_preview(source)
-    assert preview.startswith(b"\\xff\\xd8")
+    assert preview[:2] == bytes.fromhex("ffd8")
     assert 0 < len(preview) <= LIGHT_PREVIEW_MAX_BYTES
     with Image.open(BytesIO(preview)) as im:
         assert im.format == "JPEG"
