@@ -1013,7 +1013,8 @@ assert which occurred without verification.
        tokens retain the security revocation path. Green isolated 4/20/unused
        cases, no DB changes in production.
 4. [x] Remove background cookie logout on auth recovery error; add actionable
-       expired Telegram Mini App UI and new browser regressions.
+       expired Telegram Mini App UI, a single bounded raced-cookie refresh
+       recovery retry, and new browser regressions.
 5. [x] Add isolated integration test of recent replay preserving newly rotated
        token, and later replay still revoking the family.
 6. [ ] Run full exact-head backend/unit, integration, frontend build,
