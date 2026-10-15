@@ -11,7 +11,6 @@ from json import JSONDecodeError, JSONDecoder
 from uuid import UUID, NAMESPACE_URL, uuid5
 
 from app.core.config import Settings
-from app.db.models.generations import Generation
 from app.db.session import get_session_factory
 from app.domain.generations.enums import GenerationStatus
 from app.providers.neironych_scene_qa import QwenSceneProvider, validate_scene_verdict
