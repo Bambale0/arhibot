@@ -5,7 +5,6 @@ No external Neironych or Nexus requests are made by these tests.
 from __future__ import annotations
 
 import os
-from uuid import UUID
 from unittest.mock import AsyncMock
 
 import pytest
@@ -24,7 +23,6 @@ from app.core.config import get_settings  # noqa: E402
 from app.db.models.admin import GenerationRuntimeSettings  # noqa: E402
 from app.db.models.generations import Generation  # noqa: E402
 from app.db.session import get_session_factory  # noqa: E402
-from app.domain.generations.enums import GenerationStatus  # noqa: E402
 from app.main import app  # noqa: E402
 from app.providers.neironych_scene_qa import SceneQualityReview, QwenSceneProvider  # noqa: E402
 from app.providers.nexus import NexusImageProvider, NexusImageResult, NexusOutcomeUnknown  # noqa: E402
