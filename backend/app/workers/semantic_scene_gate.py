@@ -195,10 +195,22 @@ async def evaluate_candidate(
         verdict = validate_scene_verdict(
             review, checkpoint["required_object_keys"],
         )
-    except ValueError as exc:
-        raise NexusOutcomeUnknown(
-            "Qwen returned an incomplete paid verdict; do not re-submit"
-        ) from exc
+    except ValueError:
+        # The synchronous provider gave a definite (but incomplete) answer:
+        # reject/refund and persist it. Do NOT strand credits in reconciliation,
+        # and do NOT buy a second QA response to correct its missing keys.
+        expected_keys = checkpoint["required_object_keys"]
+        present_keys = {
+            item.object_key for item in review.objects if item.status == "present"
+        }
+        verdict = {
+            "passed": False,
+            "missing_object_keys": [
+                key for key in expected_keys if key not in present_keys
+            ],
+            "objects": [item.model_dump() for item in review.objects],
+            "notes": "Incomplete or duplicated Qwen object list; verification rejected",
+        }
 
     try:
         async with get_session_factory()() as db:
