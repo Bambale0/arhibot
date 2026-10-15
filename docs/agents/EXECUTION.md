@@ -983,3 +983,24 @@ API responds with `environment=production` and `APP_ENV=production`, matching cu
 release SHA. The `Deploy dev` workflow targets `/root/arhibot`; do not assume this is an
 isolated staging environment. Do not merge this PR until deployment blast radius is resolved
 or the operator explicitly authorizes changing the live environment.
+
+
+### Qwen 3.8 Max initial-image semantic QA gate — 15 October 2026
+
+Operator goal: replace nonfunctional Grok semantic QA with Neironych `qwen3.8-max` in initial concept rendering, so a selected enclosed bathhouse cannot be silently replaced by a summer kitchen/gazebo. An earlier actual questionnaire result included `banya` and `besedka`, but lacked a recognizable bathhouse. Prompt-hardening PR #180 is a separate complementary change; its full CI is green.
+
+Baseline: `dev` at `5b797dfcc6a2ee98e654dbdc83635e61996e3360`. Current changes: PR #181, branch `feat/qwen38-semantic-image-gate-20261015`. No migrations or changes to main Nexus image routing, tariffs, Seedance 2.0 video model, admin auth or customer projects.
+
+1. [x] Audit canonical questionnaire scene contract, generated image worker, result/credit lifecycle, provider endpoint, recovery state machine, admin setting, existing tests, and full CI.
+2. [x] Add typed Qwen image review adapter using `/v1/chat/completions`; send a bounded JPEG preview and selected object names / visual constraints only. Strict per-object verdict rejects absent/uncertain/substituted objects, with an exterior-only bathhouse rubric (do not infer unseen interior sauna; do not invent a missing house).
+3. [x] Freeze the judge choice for newly admitted initial concept jobs when admin `quality_judge_model=qwen3.8-max`; leave legacy paid tasks unaltered.
+4. [x] Save an immutable candidate with SHA256 and metadata before reviewer purchase. Save `submitted` intent before synchronous Qwen call, prohibit duplicate POST on ambiguous outcomes, persist a single reviewed verdict, reuse frozen candidate on recovery.
+5. [x] Fail/refund without publishing absent bathhouse; no automatic new image payment. Keep private request keys, paths, SHA and provider correlation out of the public API response.
+6. [x] Add unit and integration QA mock tests, including rejection/refund, incomplete verdict, credential failure, worker-crash recovery and no-double-call semantics; frontend browser E2E toggles Qwen off/on in authenticated Admin.
+7. [ ] Full CI must be green for exact final SHA; inspect test logs and review comments. Prior CI run on `17e2f00` passed integration+frontend, backend had 755 pass and 1 assertion failure: missing text about absent selected house and unseen interior sauna. Prompt-contract fix is on the next SHA.
+8. [ ] Only merge/release after explicit operator production deployment authorization. Here `dev` auto-deploys to a server named `archibot-prod`, responding as `production`; no merge/deploy implied by green CI.
+9. [ ] Postrelease smoke and (if explicitly authorized) a bounded live initial-concept acceptance test. A previous isolated single-call calibration was recorded `submitted` with unknown provider outcome; no retry is permitted.
+
+References: `docs/plans/2026-10-15-qwen-semantic-image-gate.md`, `backend/tests/test_semantic_image_gate.py`, `backend/tests/integration/test_semantic_scene_qa.py`; upstream TDD `obra/superpowers/skills/test-driven-development/SKILL.md`; release `Bambale0/claw/.agents/skills/release-hardening/SKILL.md`; `wondelai/skills/clean-code/SKILL.md`; `Bambale0/dev-agents-pack/docs/qa-audit-checklist.md`; `agentskills/agentskills/docs/skill-creation/evaluating-skills.mdx`; `anthropics/skills/skills/webapp-testing/SKILL.md`; `Bambale0/ksu/.clinerules/skills/test-driven-development/SKILL.md`; repository-local `.agents/skills/verification-before-completion/SKILL.md`.
+
+Rollback: revert Qwen to blank/Grok in admin for **new jobs only**, do not rewrite existing frozen checkpoints and never replay an ambiguous paid request. Other provider routing unchanged. Observability: user-visible `quality_status` + sanitized `quality_report.image_scene_review`, private PostgreSQL checkpoint and correlation ID, existing refund event idempotency.
