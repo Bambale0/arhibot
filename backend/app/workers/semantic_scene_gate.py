@@ -136,12 +136,8 @@ async def evaluate_candidate(
     selected = selected_scene_objects(canonical_prompt)
     if not selected:
         raise ValueError("No initial concept objects to review")
-    # Preflight credentials, preview decoding, length, and strict JSON schema
-    # BEFORE recording a paid 'submitted' intent.
-    provider = QwenSceneProvider(settings)
-    provider.build_payload(
-        model=SUPPORTED_JUDGE, image_data=image_data, selected_objects=selected,
-    )
+    # Reusing a paid, persisted verdict does not depend on current
+    # credentials or operator routing. Only a NEW review needs preflight.
     digest = sha256(image_data).hexdigest()
     async with get_session_factory()() as db:
         row = await GenerationRepository(db).get_for_update(generation_id)
@@ -169,6 +165,12 @@ async def evaluate_candidate(
         if state != "candidate_ready":
             raise NexusOutcomeUnknown("Unexpected semantic scene audit state")
 
+        # Preflight the single new paid request BEFORE the durable submission
+        # intent. A previous reviewed/submitted job never constructs a client.
+        provider = QwenSceneProvider(settings)
+        provider.build_payload(
+            model=SUPPORTED_JUDGE, image_data=image_data, selected_objects=selected,
+        )
         key = f"auroom-{generation_id}-semantic-scene-v1"
         checkpoint = {
             **checkpoint,
