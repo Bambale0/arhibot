@@ -190,8 +190,10 @@ async def test_submitted_checkpoint_blocks_repurchase(monkeypatch, tmp_path):
     from app.domain.generations.enums import GenerationStatus
     from types import SimpleNamespace
     expected = _canonical()
+    from hashlib import sha256
     saved = {"state": "submitted", "model": "qwen3.8-max",
-             "candidate_sha256": "irrelevant", "candidate_path": "internal/semantic-scene/a.png"}
+             "candidate_sha256": sha256(_png()).hexdigest(),
+             "candidate_path": "internal/semantic-scene/a.png"}
     row = SimpleNamespace(status=GenerationStatus.PROCESSING,
                           quality_report={"image_scene_review": saved})
     session = AsyncMock()
@@ -206,3 +208,136 @@ async def test_submitted_checkpoint_blocks_repurchase(monkeypatch, tmp_path):
     with pytest.raises(NexusOutcomeUnknown):
         await gate.evaluate_candidate(uuid4(), _png(), expected, _settings(tmp_path))
     post.assert_not_awaited()
+
+
+def test_private_qwen_checkpoint_is_redacted_from_generation_api():
+    from app.services.generation_service import _public_quality_report
+    checkpoint = {
+        "version": "architectural-image-qa.v1",
+        "model": "qwen3.8-max",
+        "state": "reviewed",
+        "candidate_path": "internal/semantic-scene/hidden/candidate.png",
+        "candidate_sha256": "private-checksum",
+        "provider_task_id": "private-task",
+        "request_key": "private-idempotency-key",
+        "client_request_id": "private-client-id",
+        "request_id": "private-response-id",
+        "verdict": {"passed": True, "missing_object_keys": []},
+    }
+    result = _public_quality_report({"image_scene_review": checkpoint})
+    assert result["image_scene_review"] == {
+        "version": "architectural-image-qa.v1", "model": "qwen3.8-max",
+        "state": "reviewed", "verdict": {"passed": True, "missing_object_keys": []},
+    }
+    for private in ("internal/", "private-checksum", "private-task", "private-id"):
+        assert private not in str(result)
+    assert checkpoint["request_key"] == "private-idempotency-key"
+
+
+def _fake_scene_db(monkeypatch, checkpoint):
+    from app.workers import semantic_scene_gate as gate
+    from app.domain.generations.enums import GenerationStatus
+    from types import SimpleNamespace
+    row = SimpleNamespace(status=GenerationStatus.PROCESSING,
+                          quality_report={"image_scene_review": dict(checkpoint)})
+    session = AsyncMock()
+    session.__aenter__.return_value = session
+    repo = SimpleNamespace(get_for_update=AsyncMock(return_value=row))
+    monkeypatch.setattr(gate, "get_session_factory", lambda: lambda: session)
+    monkeypatch.setattr(gate, "GenerationRepository", lambda _: repo)
+    return row, session
+
+
+@pytest.mark.asyncio
+async def test_candidate_checkpoint_reused_and_verdict_persisted_once(monkeypatch, tmp_path):
+    from app.workers import semantic_scene_gate as gate
+    from hashlib import sha256
+    data = _png()
+    row, session = _fake_scene_db(
+        monkeypatch, {"model": "qwen3.8-max", "state": "configured",
+                      "version": gate.SCENE_QA_VERSION},
+    )
+    generation_id = uuid4()
+    await gate.checkpoint_candidate(
+        generation_id, data, image_model="nexus-test",
+        provider_task_id="accepted-image-id", fallback_used=False,
+        extension="png", settings=_settings(tmp_path),
+    )
+    snap = row.quality_report["image_scene_review"]
+    assert snap["state"] == "candidate_ready"
+    assert snap["candidate_sha256"] == sha256(data).hexdigest()
+    assert await read_candidate(snap, _settings(tmp_path)) == data
+
+    review = SceneQualityReview.model_validate({
+        "objects": [
+            {"object_key": "banya", "status": "present", "evidence": "sauna with chimney"},
+            {"object_key": "besedka", "status": "present", "evidence": "separate gazebo"},
+        ], "overall_pass": True, "notes": "",
+    })
+    paid_post = AsyncMock(return_value=(review, "qwen-req-id"))
+    monkeypatch.setattr(gate.QwenSceneProvider, "review_scene", paid_post)
+    result = await gate.evaluate_candidate(
+        generation_id, data, _canonical(), _settings(tmp_path),
+    )
+    assert result["passed"] is True
+    assert row.quality_report["image_scene_review"]["state"] == "reviewed"
+    assert row.quality_report["image_scene_review"]["request_id"] == "qwen-req-id"
+    cached = await gate.evaluate_candidate(
+        generation_id, data, _canonical(), _settings(tmp_path),
+    )
+    assert cached == result
+    paid_post.assert_awaited_once()
+    assert session.commit.await_count >= 3
+
+
+@pytest.mark.asyncio
+async def test_failed_bathhouse_review_refuses_publishing_and_never_reposts(monkeypatch, tmp_path):
+    from app.workers import semantic_scene_gate as gate
+    from hashlib import sha256
+    image_data = _png()
+    checkpoint = {
+        "model": "qwen3.8-max", "state": "candidate_ready",
+        "candidate_sha256": sha256(image_data).hexdigest(),
+        "candidate_path": "internal/semantic-scene/candidate.png",
+    }
+    row, session = _fake_scene_db(monkeypatch, checkpoint)
+    review = SceneQualityReview.model_validate({
+        "objects": [
+            {"object_key": "banya", "status": "substituted", "evidence": "outdoor summer kitchen"},
+            {"object_key": "besedka", "status": "present", "evidence": "gazebo"},
+        ], "overall_pass": False, "notes": "no enclosed bath",
+    })
+    paid_post = AsyncMock(return_value=(review, "req-bath-missing"))
+    monkeypatch.setattr(gate.QwenSceneProvider, "review_scene", paid_post)
+    for _ in range(2):
+        with pytest.raises(gate.SemanticSceneRejected):
+            await gate.evaluate_candidate(
+                uuid4(), image_data, _canonical(), _settings(tmp_path),
+            )
+    assert row.quality_report["image_scene_review"]["state"] == "reviewed"
+    assert row.quality_report["image_scene_review"]["verdict"]["missing_object_keys"] == ["banya"]
+    paid_post.assert_awaited_once()
+    assert session.commit.await_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_qwen_post_recovery_never_reposts(monkeypatch, tmp_path):
+    from app.workers import semantic_scene_gate as gate
+    from app.providers.nexus import NexusOutcomeUnknown
+    from hashlib import sha256
+    image_data = _png()
+    checkpoint = {
+        "model": "qwen3.8-max", "state": "candidate_ready",
+        "candidate_sha256": sha256(image_data).hexdigest(),
+        "candidate_path": "internal/semantic-scene/candidate.png",
+    }
+    row, _ = _fake_scene_db(monkeypatch, checkpoint)
+    post = AsyncMock(side_effect=NexusOutcomeUnknown("response lost"))
+    monkeypatch.setattr(gate.QwenSceneProvider, "review_scene", post)
+    for _ in range(2):
+        with pytest.raises(NexusOutcomeUnknown):
+            await gate.evaluate_candidate(
+                uuid4(), image_data, _canonical(), _settings(tmp_path),
+            )
+    assert row.quality_report["image_scene_review"]["state"] == "submitted"
+    post.assert_awaited_once()
