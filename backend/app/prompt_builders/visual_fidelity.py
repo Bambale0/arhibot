@@ -347,9 +347,11 @@ def selected_visual_constraints(object_key: str, constraints: list[dict]) -> dic
     if isinstance(materials, list) and materials:
         result["facade_finishes"] = list(materials)
     if object_key == "eskez-doma":
-        fireplace = _answer(constraints, "будет ли камин")
-        if fireplace in ("Да", "Нет"):
-            result["chimney"] = "required" if fireplace == "Да" else "not_requested"
+        heating = _answer(constraints, "печное отопление")
+        if heating is None:  # Historical catalog revisions keep their original wording.
+            heating = _answer(constraints, "будет ли камин")
+        if heating in ("Да", "Нет"):
+            result["chimney"] = "required" if heating == "Да" else "not_requested"
     if object_key == "banya":
         stove = _answer(constraints, "печь")
         if stove == "Дровяная, с трубой":
@@ -394,7 +396,7 @@ def _selected_relationship_directives(object_key: str, constraints: list[dict]) 
         directives.append(
             "No chimney, stove pipe or flue on this electric bath. Other objects' selected chimneys remain required."
             if object_key == "banya" else
-            "Do not invent a fireplace chimney on this object. Other objects' selected chimneys remain required."
+            "No chimney, stove pipe or flue on this house. Other objects' selected chimneys remain required."
         )
     relation = selected.get("pool_cover_relation")
     if relation in {"above_water", "encloses_water"}:

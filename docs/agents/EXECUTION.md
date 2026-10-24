@@ -983,3 +983,34 @@ API responds with `environment=production` and `APP_ENV=production`, matching cu
 release SHA. The `Deploy dev` workflow targets `/root/arhibot`; do not assume this is an
 isolated staging environment. Do not merge this PR until deployment blast radius is resolved
 or the operator explicitly authorizes changing the live environment.
+
+
+## Active work — stove heating questionnaire (2026-10-24)
+
+- Baseline: `origin/dev@5b797df`; isolated `fix/stove-heating-question` worktree.
+- Existing: database-managed versioned catalog/admin API; house answer `11б` is already yes/no; canonical prompts and visual fidelity adapter interpret it as fireplace.
+- Missing: stove wording and explicit prohibition when No. Reuse existing answer ID and choices, preserving historical catalogs and unrelated operator edits.
+- Outcome: “Печное отопление?”; Да requires the house roof chimney; Нет forbids it; no outdoor fireplace. Bath chimney remains independent.
+- Configuration: catalog remains database/admin managed; publish a narrow data migration, no new environment values or permissions. Existing generation prompt/audit records provide observability.
+- Verification seams: catalog, initial/refinement prompts, visual adapter, migration preservation and API catalog. No paid provider requests.
+- Steps: 1. Preflight completed. 2. Regression tests pending. 3. Narrow implementation/migration pending. 4. Checks and PR to dev pending.
+- Rollout: production is not authorized; PR only. AI pixel compliance requires subsequent visual acceptance.
+
+Guidance discovery (connected GitHub, current branches):
+- `Bambale0/claw`: `docs/agents/SKILLS_REGISTRY.md`, `.agents/skills/backend-integration/SKILL.md` — preserve backend boundaries, migrations and tests.
+- `wondelai/skills`: `clean-code/SKILL.md` — focused regression tests and small changes.
+- `Bambale0/dev-agents-pack`: `docs/qa-audit-checklist.md` — trace question → stored answer → provider prompt, compatibility and regression coverage.
+- `Bambale0/ksu`: `.clinerules/skills/verification-before-completion/SKILL.md`; local mandatory `.agents/skills/verification-before-completion/SKILL.md` — evidence before completion claims.
+- `agentskills/agentskills`: focused questionnaire/testing discovery found no applicable application implementation skill.
+- `anthropics/skills`: reviewed `skills/webapp-testing/SKILL.md`; no browser changes or Playwright helper needed for this backend catalog change; API tests cover delivery.
+- Material skill conflict: upstream tool-repo-specific registry/preflight paths are not target AuRoom paths; follow AuRoom instructions. No helper scripts executed.
+
+Verification progress:
+- RED: new stove regressions failed on original title, missing explicit prohibition and new visual-adapter wording (7 failed, 2 passed).
+- GREEN: 92 focused tests initially passed; final broader checks recorded below.
+- Isolated PostgreSQL 16 and Redis containers on loopback ports 55443/56443, no live database access. Fresh `alembic upgrade head` and `alembic check` passed (existing cyclic FK warning only).
+- 15 questionnaire API/lifecycle/migration integration tests passed; migration test covers preservation of custom operator edits, historical snapshot and repeat invocation.
+- `npm run typecheck`, `npm run build`, compileall, Ruff correctness and `git diff --check` passed.
+- Setup retries: initial integration attempt omitted provider test credentials (503), rerun with dummy credentials passed. One unit invocation from root picked up the old editable installation; corrected to backend working directory. No production requests or deploy.
+- Final unit/contract run from backend: `python -m pytest -q -m 'not integration'` → 750 passed, 16 skipped in 65.91s. Final focused run → 31 passed.
+- Steps 1–3 complete. Step 4 local verification complete; exact-commit GitHub CI and PR review remain the release gate. No merge/deploy authorized.

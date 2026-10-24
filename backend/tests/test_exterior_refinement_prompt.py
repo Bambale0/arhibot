@@ -106,7 +106,7 @@ def test_current_catalog_uses_chimney_only_refinement_label() -> None:
     house = next(item for item in catalog["questionnaires"] if item["key"] == "eskez-doma")
     edit = next(question for question in house["questions"] if question["id"] == "15б")
 
-    assert catalog["version"] == "2026-09-25.1"
-    assert "Дымоход / труба" in edit["options"]
+    assert catalog["version"] == "2026-10-24.1"
+    assert "Печное отопление, труба" in edit["options"]
     assert "Камин, труба" not in edit["options"]
-    assert edit["edit_targets"]["Дымоход / труба"] == ["11б"]
+    assert edit["edit_targets"]["Печное отопление, труба"] == ["11б"]
