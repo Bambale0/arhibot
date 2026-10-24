@@ -41,3 +41,14 @@ Before merging questionnaire visual changes, ask:
 3. Is the active question still the strongest element on a phone?
 4. Can a user complete the step one-handed without hunting for the action?
 5. Did the visual change leave questionnaire semantics, skip rules and branching untouched?
+
+## Stove heating
+
+The house question `11б` is “Печное отопление?” with Да/Нет choices (skip defaults to Нет).
+Да requires a visible smoke chimney emerging from the house roof. Нет requires no house
+chimney. Neither answer requests an outdoor stove/fireplace or an interior view. Bath heating
+remains independent. The refinement choice “Печное отопление, труба” returns to `11б`.
+
+Catalog revision `2026-10-24.1` is published through a narrow data migration, preserving
+unrelated operator settings and historical versions. Existing projects retain their pinned
+catalog wording and answer IDs. Normal catalog editing remains in authenticated web admin.

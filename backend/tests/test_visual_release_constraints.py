@@ -57,7 +57,7 @@ def test_house_no_fireplace_does_not_suppress_selected_bath_stove():
     assert objects['eskez-doma']['selected_visual_constraints']['chimney'] == 'not_requested'
     assert objects['banya']['selected_visual_constraints']['chimney'] == 'required'
     assert 'Object eskez-doma:' in text
-    assert 'Do not invent a fireplace chimney on this object' in text
+    assert 'No chimney, stove pipe or flue on this house' in text
 
 
 @pytest.mark.parametrize('cover,relation', [('Навес', 'above_water'), ('Павильон', 'encloses_water'), ('Открытый', 'none')])

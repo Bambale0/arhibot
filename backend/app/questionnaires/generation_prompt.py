@@ -333,21 +333,27 @@ def _boundary_policy(session: DesignSession) -> dict[str, object]:
 
 
 def _house_exterior_features(session: DesignSession) -> dict[str, object]:
-    fireplace = session.answers.get("eskez-doma", {}).get("11б")
+    heating = session.answers.get("eskez-doma", {}).get("11б")
+    house_present = (
+        "eskez-doma" in session.selected_objects
+        and "eskez-doma" not in session.removed_objects
+        and session.pending_removal_object != "eskez-doma"
+    )
     return {
-        "roof_chimney_required": (
-            "eskez-doma" in session.selected_objects and fireplace == "Да"
-            and "eskez-doma" not in session.removed_objects
-            and session.pending_removal_object != "eskez-doma"
-        ),
+        "roof_chimney_required": house_present and heating == "Да",
+        "roof_chimney_forbidden": house_present and heating == "Нет",
         "interior_fireplace_visible_required": False,
         "interior_layout_inference_forbidden": True,
         "directive": (
-            "Если roof_chimney_required=true, покажи видимую каминную трубу из кровли "
-            "основного дома в архитектурно правдоподобном месте. Не ставь её отдельно "
-            "на участке или на другом здании. Сам камин, топку, мебель и комнаты внутри "
-            "не показывай специально и не придумывай их расположение. В доработке "
-            "сохраняй существующий дымовой канал, если наружная труба не является целью правки."
+            "Если roof_chimney_required=true, покажи видимую дымовую трубу печного отопления, "
+            "выходящую из кровли основного дома в архитектурно правдоподобном месте. "
+            "Если roof_chimney_forbidden=true, основной дом должен быть без дымовых труб; "
+            "при правке отопления удали существующую трубу дома. Эти правила относятся "
+            "только к основному дому: труба бани определяется её собственным ответом. "
+            "Не добавляй отдельную печь, камин или трубу на участке либо на другом здании. "
+            "Печь, топку, мебель и комнаты внутри не показывай специально и не придумывай "
+            "их расположение. При локальной правке вне отопления сохраняй существующий "
+            "дымовой канал за пределами разрешённой области изменения."
         ),
     }
 
@@ -724,10 +730,10 @@ def build_questionnaire_generation_prompt(
 
     spec = {
         "schema": "auroom.questionnaire_render.v1",
+        "house_exterior_features": _house_exterior_features(session),
         **({
             "site_scale": _initial_site_scale(session),
             "boundary_policy": _boundary_policy(session),
-            "house_exterior_features": _house_exterior_features(session),
         } if session.initial_concept_mode else {}),
         "task": {
             "object_key": object_key,
