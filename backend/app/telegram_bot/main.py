@@ -162,6 +162,20 @@ def webapp_section_url(webapp_url: str, section: str) -> str:
     )
 
 
+def webapp_admin_url(webapp_url: str) -> str:
+    safe_url = canonicalize_webapp_url(webapp_url)
+    parsed = urlsplit(safe_url)
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key not in {"section", "billing", "project", "generation", "idea", "admin"}
+    ]
+    query.append(("admin", "1"))
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment)
+    )
+
+
 def mini_app_keyboard(
     webapp_url: str,
     content: TelegramBotContent,
@@ -347,6 +361,41 @@ def send_start(
     )
 
 
+def dispatch_command(
+    api: TelegramBotApi,
+    *,
+    chat_id: int | str,
+    text: str,
+    webapp_url: str,
+    content: TelegramBotContent,
+    summary: TelegramUserSummary | None = None,
+) -> bool:
+    command = normalize_command(text)
+    if command in {"/start", "/app"}:
+        send_start(api, chat_id, webapp_url, content, summary)
+        return True
+    if command == "/admin":
+        api.call(
+            "sendMessage",
+            {
+                "chat_id": chat_id,
+                "text": content.start_text,
+                "reply_markup": {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": content.open_button_text,
+                                "web_app": {"url": webapp_admin_url(webapp_url)},
+                            }
+                        ]
+                    ]
+                },
+            },
+        )
+        return True
+    return False
+
+
 def _best_effort_setup(api: TelegramBotApi, method: str, payload: dict[str, Any]) -> None:
     try:
         api.call(method, payload)
@@ -479,18 +528,30 @@ def run_polling() -> None:
                 if chat_id is None or not isinstance(text, str):
                     continue
 
-                if normalize_command(text) in {"/start", "/app"}:
+                command = normalize_command(text)
+                if command in {"/start", "/app", "/admin"}:
                     if content is None:
                         content = load_bot_content(content_url)
                         if content is not None:
                             apply_bot_content(api, webapp_url, content)
                     if content is not None:
-                        summary = load_user_summary(
-                            summary_url,
-                            telegram_user_id=chat_id,
-                            bot_token=token,
+                        summary = (
+                            load_user_summary(
+                                summary_url,
+                                telegram_user_id=chat_id,
+                                bot_token=token,
+                            )
+                            if command != "/admin"
+                            else None
                         )
-                        send_start(api, chat_id, webapp_url, content, summary)
+                        dispatch_command(
+                            api,
+                            chat_id=chat_id,
+                            text=text,
+                            webapp_url=webapp_url,
+                            content=content,
+                            summary=summary,
+                        )
                     else:
                         logger.warning("Cannot answer Telegram command until content is configured")
         except TelegramApiError as exc:
