@@ -158,6 +158,46 @@ def test_normalize_command_supports_bot_username_and_payload() -> None:
     assert normalize_command(" /app ") == "/app"
 
 
+def test_admin_command_sends_admin_web_app_button() -> None:
+    sent: list[tuple[str, object]] = []
+
+    class FakeApi:
+        def call(self, method: str, payload=None, *, timeout: int = 15):
+            sent.append((method, payload))
+            return True
+
+    handled = telegram_main.dispatch_command(
+        FakeApi(),  # type: ignore[arg-type]
+        chat_id=123,
+        text="/admin@auroom_bot",
+        webapp_url="https://archi.example.com/app?section=history&keep=1",
+        content=content(),
+    )
+
+    assert handled is True
+    assert sent == [
+        (
+            "sendMessage",
+            {
+                "chat_id": 123,
+                "text": "Welcome",
+                "reply_markup": {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "Open app",
+                                "web_app": {
+                                    "url": "https://archi.example.com/app?keep=1&admin=1"
+                                },
+                            }
+                        ]
+                    ]
+                },
+            },
+        )
+    ]
+
+
 def test_configure_bot_keeps_running_when_branding_is_rate_limited() -> None:
     calls: list[str] = []
 
