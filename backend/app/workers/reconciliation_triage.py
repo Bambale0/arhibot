@@ -72,7 +72,9 @@ async def audit_stale_generations(
         async with session.begin():
             await session.execute(text("SET TRANSACTION READ ONLY"))
             total = (
-                await session.execute(select(func.count()).select_from(Generation).where(*condition))
+                await session.execute(
+                    select(func.count()).select_from(Generation).where(*condition)
+                )
             ).scalar_one()
             rows = (
                 await session.execute(
