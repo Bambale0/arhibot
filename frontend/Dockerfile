@@ -1,6 +1,7 @@
 FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS build
 WORKDIR /app
-COPY package*.json ./
+COPY package*.json .npmrc ./
+COPY vendor/picomatch ./vendor/picomatch
 RUN npm ci --no-audit --no-fund
 COPY . .
 ARG VITE_API_BASE_URL=/api/v1
