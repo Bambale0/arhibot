@@ -115,9 +115,22 @@ trap - ERR
 export_snapshot
 
 
+# Creating a safe backup never grants permission to delete old ones.
+# Retention is explicitly opt-in, and only complete, checksum-verified,
+# off-site-confirmed snapshots may be considered when enabled by an operator.
 retention_days=$(compose exec -T postgres psql -U app -d app -Atc "select backup_retention_days from operational_settings where id=1" 2>/dev/null | tr -d '[:space:]' || true)
-if [[ "${retention_days}" =~ ^[1-9][0-9]*$ ]]; then
-  find "${backup_root}" -mindepth 1 -maxdepth 1 -type d -mtime "+${retention_days}" -print -exec rm -rf {} +
+if [[ "${AUROOM_BACKUP_RETENTION_DELETE_VERIFIED:-0}" == "1" && "${retention_days}" =~ ^[1-9][0-9]*$ ]]; then
+  while IFS= read -r -d '' candidate; do
+    [[ "${candidate}" != "${target}" ]] || continue
+    [[ -f "${candidate}/SHA256SUMS" && -s "${candidate}/OFFSITE_OK" ]] || continue
+    if ! python3 "${script_dir}/backup_manifest.py" verify "${candidate}" >/dev/null; then
+      echo "AuRoom retention skipped an invalid verified snapshot: ${candidate}" >&2
+      continue
+    fi
+    # This branch is unreachable by default. Production deletion requires
+    # explicit AUROOM_BACKUP_RETENTION_DELETE_VERIFIED=1 approval.
+    rm -rf -- "${candidate}"
+  done < <(find "${backup_root}" -mindepth 1 -maxdepth 1 -type d -mtime "+${retention_days}" -print0)
 fi
 
 echo "AuRoom runtime backup: ${target}"
