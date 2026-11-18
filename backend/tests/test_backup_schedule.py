@@ -33,6 +33,10 @@ else: sys.exit(1)
 ''')
     docker.chmod(0o755)
     root = app / 'backups'
+    historic = root / '20000101T000000Z'
+    historic.mkdir(parents=True)
+    (historic / 'HISTORIC_KEEP').write_text('never delete without consent')
+    os.utime(historic, (946684800, 946684800))
     env = {**os.environ, 'PATH': str(tools)+os.pathsep+os.environ['PATH'], 'FIXTURE_MEDIA': str(archive), 'FAIL_MEDIA': '1'}
     command = ['bash', str(REPO / 'ops/backup_runtime.sh'), str(app), str(root), 'scheduled']
     failed = subprocess.run(command, env=env, capture_output=True, text=True)
@@ -43,6 +47,8 @@ else: sys.exit(1)
     assert success.returncode == 0, success.stderr
     assert 'AuRoom runtime backup:' in success.stdout
     assert len(list(root.glob('*/SHA256SUMS'))) == 1
+    # A configured retention_days is NOT permission to delete backups.
+    assert (historic / 'HISTORIC_KEEP').read_text() == 'never delete without consent'
     skipped = subprocess.run(command, env=env, capture_output=True, text=True)
     assert skipped.returncode == 0
     assert 'next interval not reached' in skipped.stdout
