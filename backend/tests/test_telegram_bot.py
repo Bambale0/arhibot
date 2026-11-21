@@ -314,3 +314,19 @@ def test_webapp_section_url_replaces_stale_navigation() -> None:
     assert "generation=" not in url
     assert "section=create" in url
     assert "keep=1" in url
+
+def test_telegram_poll_backoff_increases_and_caps(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(telegram_main.random, "uniform", lambda _lo, _hi: 0.0)
+
+    assert telegram_main._poll_retry_delay(1) == 2.0
+    assert telegram_main._poll_retry_delay(2) == 4.0
+    assert telegram_main._poll_retry_delay(5) == 32.0
+    assert telegram_main._poll_retry_delay(50) == 60.0
+
+
+def test_telegram_poll_backoff_respects_retry_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(telegram_main.random, "uniform", lambda _lo, _hi: 0.0)
+
+    assert telegram_main._poll_retry_delay(1, retry_after=5) == 5.0
+    assert telegram_main._poll_retry_delay(10, retry_after=120) == 120.0
+    assert telegram_main._poll_retry_delay(1, retry_after=None) == 2.0
