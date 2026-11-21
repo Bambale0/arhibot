@@ -121,6 +121,34 @@ jobs:
             ops/provision_neironych_key.py \
             "${remote}:${DEPLOY_APP_DIR}/.release/"
 
+      # A failed release must not even rotate the runtime API key. The
+      # candidate checkout guard runs before secret provisioning and deploy.
+      - name: Refuse unsafe dev deploy before changing server secrets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          remote="${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}"
+          ssh -p "${DEPLOY_SSH_PORT}" "${remote}" bash -s -- "${DEPLOY_APP_DIR}" <<'REMOTE'
+          set -Eeuo pipefail
+          app_dir="$1"
+          archive="${app_dir}/.release/arhibot-source.tar.gz"
+          [[ -s "${archive}" ]] || { echo "Missing release archive" >&2; exit 1; }
+
+          # Stream exactly the reviewed candidate guard; no host code writes.
+          tar -xOzf "${archive}" ops/release_worktree_guard.py | python3 - "${app_dir}"
+
+          # The forced backup script refuses disabled policy only after the
+          # API key step; check it here before any production secret mutation.
+          policy=$(docker compose --project-directory "${app_dir}/backend" \
+            -f "${app_dir}/backend/docker-compose.yml" \
+            exec -T postgres psql -U app -d app -Atc \
+            "select backup_interval_hours from operational_settings where id=1" | tr -d '[:space:]')
+          [[ "${policy}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "Refusing deploy before key provisioning: runtime DB/media backups are disabled or policy is unreadable" >&2
+            exit 1
+          }
+          REMOTE
+
       - name: Configure Neironych dev key
         env:
           NEIRONYCH_API_KEY: ${{ secrets.NEIRONYCH_API_KEY }}
