@@ -90,6 +90,14 @@ class ReleaseWorktreeGuardTests(unittest.TestCase):
         self.assertIn("Refusing deploy: runtime DB/media backups disabled", source)
         self.assertLess(source.index("release_worktree_guard.py"), source.index("mutation_started=1"))
 
+    def test_preflight_precedes_api_key_provisioning(self) -> None:
+        workflow = (GUARD.parent.parent / ".github" / "workflows" / "deploy-dev.yml").read_text(encoding="utf-8")
+        self.assertIn("Refuse unsafe dev deploy before changing server secrets", workflow)
+        self.assertLess(
+            workflow.index("Refuse unsafe dev deploy before changing server secrets"),
+            workflow.index("Configure Neironych dev key"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
