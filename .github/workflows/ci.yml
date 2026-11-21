@@ -15,6 +15,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  deploy-safety:
+    name: Fail-closed deploy guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Validate deploy scripts
+        run: |
+          bash -n ops/deploy_docker.sh
+          python3 -m py_compile ops/release_worktree_guard.py
+
+      - name: Verify safety behavior
+        run: python3 -m unittest discover -s backend/tests -p test_release_worktree_guard.py -v
+
   backend:
     name: Backend tests
     runs-on: ubuntu-latest
