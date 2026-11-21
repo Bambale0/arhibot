@@ -130,6 +130,29 @@ python3 -m py_compile "${candidate}/ops/runtime_preflight.py"
 # The public development host is internet-facing; fail closed before touching code, DB, or containers.
 python3 "${candidate}/ops/runtime_preflight.py" "${app_dir}/backend/.env"
 
+# Never deploy over unreviewed tracked/untracked changes. The candidate's
+# guard also checks that this is the expected repository root.
+python3 "${candidate}/ops/release_worktree_guard.py" "${app_dir}" || {
+  echo "Refusing deploy: host checkout contains unreviewed changes." >&2
+  exit 1
+}
+
+# Git does not report ignored host data. Simulate the exact destructive sync
+# and stop if rsync would delete anything, without logging sensitive paths.
+dry_run="$(rsync --archive --delete --dry-run --itemize-changes \
+  --exclude='backend/.env' \
+  --exclude='.backup.env' \
+  --exclude='.runtime-monitor/' \
+  --exclude='.runtime-mutation.lock' \
+  --exclude='.git/' \
+  --exclude='backups/' \
+  --exclude='.release/' \
+  "${candidate}/" "${app_dir}/")"
+if [[ "${dry_run}" == *'*deleting'* ]]; then
+  echo "Refusing deploy: rsync would delete host files; preserve and review them first." >&2
+  exit 1
+fi
+
 disk_used_pct=$(df -P "${app_dir}" | awk 'NR==2 {gsub(/%/, "", $5); print $5}')
 if [[ "${disk_used_pct}" =~ ^[0-9]+$ ]] && (( disk_used_pct >= 90 )); then
   echo "Refusing deploy: host disk usage is ${disk_used_pct}% (safety limit 90%)." >&2
@@ -161,7 +184,8 @@ if find "${app_dir}" -mindepth 1 -maxdepth 1 \
   backup_output=$("${candidate}/ops/backup_runtime.sh" "${app_dir}" "${app_dir}/backups/runtime" force)
   echo "${backup_output}"
   if [[ "${backup_output}" == "AuRoom backup skipped: runtime backups disabled by operator" ]]; then
-    echo "Runtime DB/media snapshot disabled by operator policy"
+    echo "Refusing deploy: runtime DB/media backups disabled by operator; a verified recovery point is mandatory." >&2
+    exit 1
   else
     runtime_backup=$(printf '%s\n' "${backup_output}" | sed -n 's/^AuRoom runtime backup: //p' | tail -n1)
     [[ -n "${runtime_backup}" ]] || { echo "Could not determine pre-migration runtime backup path" >&2; exit 1; }
