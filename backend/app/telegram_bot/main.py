@@ -1,6 +1,7 @@
 import json
 import logging
 import mimetypes
+import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -410,6 +411,20 @@ def configure_bot(
     apply_bot_content(api, webapp_url, content)
 
 
+def _poll_retry_delay(failures: int, *, retry_after: int | None = None) -> float:
+    """Respect Telegram flood control and back off on repeated transient errors.
+
+    The cap applies to our own exponential delay, not Telegram's retry_after.
+    A successful getUpdates call resets the failure counter.
+    """
+    base_delay = min(60.0, float(2 ** min(max(failures, 1), 6)))
+    jitter = random.uniform(0.0, min(1.0, base_delay / 4.0))
+    delay = base_delay + jitter
+    if retry_after is not None and retry_after > 0:
+        return max(delay, float(retry_after))
+    return delay
+
+
 def run_polling() -> None:
     settings = get_settings()
     token = (settings.telegram_bot_token or "").strip()
@@ -447,6 +462,7 @@ def run_polling() -> None:
     logger.info("Telegram bot started with Mini App URL %s", webapp_url)
 
     offset: int | None = None
+    consecutive_failures = 0
     last_content_refresh = time.monotonic()
     while True:
         try:
@@ -467,6 +483,7 @@ def run_polling() -> None:
                 payload["offset"] = offset
 
             updates = api.call("getUpdates", payload, timeout=35) or []
+            consecutive_failures = 0
             for update in updates:
                 update_id = update.get("update_id")
                 if isinstance(update_id, int):
@@ -494,11 +511,14 @@ def run_polling() -> None:
                     else:
                         logger.warning("Cannot answer Telegram command until content is configured")
         except TelegramApiError as exc:
-            logger.warning("Telegram polling error: %s", exc)
-            time.sleep(max(exc.retry_after or 2, 1))
+            consecutive_failures += 1
+            delay = _poll_retry_delay(consecutive_failures, retry_after=exc.retry_after)
+            logger.warning("Telegram polling error: %s (retry in %.1fs)", exc, delay)
+            time.sleep(delay)
         except Exception:
+            consecutive_failures += 1
             logger.exception("Unexpected Telegram polling failure")
-            time.sleep(2)
+            time.sleep(_poll_retry_delay(consecutive_failures))
 
 
 if __name__ == "__main__":
